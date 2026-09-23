@@ -3,6 +3,16 @@ name: AgentHarness release
 'on':
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      repair_run_id:
+        description: Successful tag run whose portable artifacts should be restored
+        required: true
+        type: string
+      repair_tag:
+        description: Published version tag to repair
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +26,7 @@ env:
 
 jobs:
   verify:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -121,16 +132,39 @@ jobs:
         shell: bash
         run: |
           tag="v$VERSION"
+          for file in dist/agentharness-artifacts/*; do basename "$file"; done | sort > expected-assets.txt
+          assets_match() {
+            release_id=$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq '.id') || exit 1
+            gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" --jq '.[].name' | sort > actual-assets.txt || exit 1
+            cmp -s expected-assets.txt actual-assets.txt
+          }
+          upload_missing() {
+            for file in dist/agentharness-artifacts/*; do
+              name="${file##*/}"
+              if ! grep -Fxq "$name" actual-assets.txt; then gh release upload "$tag" "$file"; fi
+            done
+          }
           if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
-            if [ "$(node -p "JSON.parse(require('fs').readFileSync('release-state.json')).isDraft")" = false ]; then
-              echo "Release $tag is already published; preserving its immutable assets."
-              exit 0
-            fi
+            draft=$(node -p "JSON.parse(require('fs').readFileSync('release-state.json')).isDraft")
           else
             gh release create "$tag" --target "$GITHUB_SHA" --draft --title "AgentHarness $VERSION" --generate-notes
+            draft=true
           fi
-          gh release upload "$tag" dist/agentharness-artifacts/* --clobber
-          gh release edit "$tag" --draft=false --latest
+          if [ "$draft" = true ]; then
+            gh release upload "$tag" dist/agentharness-artifacts/* --clobber
+            gh release edit "$tag" --draft=false --latest
+          fi
+          for attempt in 1 2 3; do
+            if assets_match; then exit 0; fi
+            echo "Release $tag assets differ from the staged files; retrying upload ($attempt/3)."
+            upload_missing
+            sleep 3
+          done
+          if ! assets_match; then
+            diff -u expected-assets.txt actual-assets.txt || true
+            echo "Release $tag assets differ from the staged files." >&2
+            exit 1
+          fi
       - name: npm setup status
         if: vars.AGENTHARNESS_NPM_PUBLISH != 'true'
         run: echo 'GitHub Release is published. npm publication is disabled until AGENTHARNESS_NPM_PUBLISH=true and npm authentication is configured.' >> "$GITHUB_STEP_SUMMARY"
@@ -169,3 +203,72 @@ jobs:
             exit 0
           fi
           npm publish "agentharness-$VERSION.tgz" --access public --provenance --tag latest
+
+  repair:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.repair_run_id }}
+          github-token: ${{ github.token }}
+          pattern: portable-*
+          path: dist/agentharness-artifacts
+          merge-multiple: true
+      - name: Restore and verify published assets
+        shell: bash
+        run: |
+          tag='${{ inputs.repair_tag }}'
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable version tag, got $tag" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          archives=(dist/agentharness-artifacts/agentharness-*.tgz)
+          if [ "${#archives[@]}" -ne 5 ]; then
+            echo "Expected five portable archives, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          gh release view "$tag" --json isDraft --jq '.isDraft' | grep -Fxq false
+          args=()
+          for archive in "${archives[@]}"; do args+=(--artifact "$archive"); done
+          node scripts/agentharness-stage-npx.mjs "${args[@]}" --github \
+            --base-url "https://github.com/$GH_REPO" --out dist/agentharness-release
+          npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts
+          cp "dist/agentharness-artifacts/agentharness-$version.tgz" dist/agentharness-artifacts/agentharness-npm.tgz
+          cp dist/agentharness-release/install.sh dist/agentharness-release/install.ps1 dist/agentharness-artifacts/
+          cp "dist/agentharness-release/releases/$version/manifest.json" dist/agentharness-artifacts/
+          (cd dist/agentharness-artifacts && sha256sum -- *.tgz install.sh install.ps1 manifest.json > SHA256SUMS)
+          for file in dist/agentharness-artifacts/*; do basename "$file"; done | sort > expected-assets.txt
+          assets_match() {
+            release_id=$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq '.id') || exit 1
+            gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" --jq '.[].name' | sort > actual-assets.txt || exit 1
+            cmp -s expected-assets.txt actual-assets.txt
+          }
+          upload_missing() {
+            for file in dist/agentharness-artifacts/*; do
+              name="${file##*/}"
+              if ! grep -Fxq "$name" actual-assets.txt; then gh release upload "$tag" "$file"; fi
+            done
+          }
+          for attempt in 1 2 3; do
+            if assets_match; then exit 0; fi
+            echo "Release $tag assets differ from the staged files; retrying upload ($attempt/3)."
+            upload_missing
+            sleep 3
+          done
+          if ! assets_match; then
+            diff -u expected-assets.txt actual-assets.txt || true
+            echo "Release $tag assets differ from the staged files." >&2
+            exit 1
+          fi
