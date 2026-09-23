@@ -134,25 +134,30 @@ jobs:
           tag="v$VERSION"
           for file in dist/agentharness-artifacts/*; do basename "$file"; done | sort > expected-assets.txt
           assets_match() {
-            gh release view "$tag" --json assets --jq '.assets[].name' | sort > actual-assets.txt
+            release_id=$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq '.id') || exit 1
+            gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" --jq '.[].name' | sort > actual-assets.txt || exit 1
             cmp -s expected-assets.txt actual-assets.txt
           }
+          upload_missing() {
+            for file in dist/agentharness-artifacts/*; do
+              name="${file##*/}"
+              if ! grep -Fxq "$name" actual-assets.txt; then gh release upload "$tag" "$file"; fi
+            done
+          }
           if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
-            if [ "$(node -p "JSON.parse(require('fs').readFileSync('release-state.json')).isDraft")" = false ]; then
-              if assets_match; then
-                echo "Release $tag already contains all expected assets."
-                exit 0
-              fi
-            fi
+            draft=$(node -p "JSON.parse(require('fs').readFileSync('release-state.json')).isDraft")
           else
             gh release create "$tag" --target "$GITHUB_SHA" --draft --title "AgentHarness $VERSION" --generate-notes
+            draft=true
           fi
-          gh release upload "$tag" dist/agentharness-artifacts/* --clobber
-          gh release edit "$tag" --draft=false --latest
+          if [ "$draft" = true ]; then
+            gh release upload "$tag" dist/agentharness-artifacts/* --clobber
+            gh release edit "$tag" --draft=false --latest
+          fi
           for attempt in 1 2 3; do
             if assets_match; then exit 0; fi
             echo "Release $tag assets differ from the staged files; retrying upload ($attempt/3)."
-            gh release upload "$tag" dist/agentharness-artifacts/* --clobber
+            upload_missing
             sleep 3
           done
           if ! assets_match; then
@@ -246,13 +251,20 @@ jobs:
           (cd dist/agentharness-artifacts && sha256sum -- *.tgz install.sh install.ps1 manifest.json > SHA256SUMS)
           for file in dist/agentharness-artifacts/*; do basename "$file"; done | sort > expected-assets.txt
           assets_match() {
-            gh release view "$tag" --json assets --jq '.assets[].name' | sort > actual-assets.txt
+            release_id=$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq '.id') || exit 1
+            gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" --jq '.[].name' | sort > actual-assets.txt || exit 1
             cmp -s expected-assets.txt actual-assets.txt
           }
+          upload_missing() {
+            for file in dist/agentharness-artifacts/*; do
+              name="${file##*/}"
+              if ! grep -Fxq "$name" actual-assets.txt; then gh release upload "$tag" "$file"; fi
+            done
+          }
           for attempt in 1 2 3; do
-            gh release upload "$tag" dist/agentharness-artifacts/* --clobber
             if assets_match; then exit 0; fi
             echo "Release $tag assets differ from the staged files; retrying upload ($attempt/3)."
+            upload_missing
             sleep 3
           done
           if ! assets_match; then
