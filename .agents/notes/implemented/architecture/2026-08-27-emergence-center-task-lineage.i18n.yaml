@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-27-emergence-center-task-lineage.md
+2026-08-27-emergence-center-task-lineage.md: da5d41647c0521605e0937023e34c443a0d01d16
+2026-08-27-emergence-center-task-lineage.zh.md: 24987494157ffdbf39346cf0b74e19afa6b02ba3

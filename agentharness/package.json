@@ -1,0 +1,16 @@
+{
+  "name": "@agentharness/distribution",
+  "version": "0.2.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.tests.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
+  }
+}

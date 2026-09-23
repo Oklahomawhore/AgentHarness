@@ -1,0 +1,275 @@
+name: AgentHarness portable acceptance
+
+'on':
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-installer-mcp:
+    name: Browser, installer, and MCP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      DSH_TELEMETRY_DISABLED: '1'
+      AGENTHARNESS_ACCEPTANCE_PORT: '33080'
+      AGENTHARNESS_RELEASE_PORT: '43177'
+      AGENTHARNESS_RELEASE_TOKEN: ci-portable-accept
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify public npm bootstrap and source export
+        run: pnpm run test:agentharness-public
+
+      - name: Install Chromium
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+
+      - name: Build shipped artifacts
+        run: pnpm run build
+
+      - name: Run Chinese Task lifecycle and lineage in Chromium
+        env:
+          DSH_SNAPSHOT: replay
+        run: pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/emergence-center.e2e.ts
+
+      - name: Pack the source-free portable runtime
+        run: node scripts/agentharness-pack-portable.mjs --skip-build --out "${{ runner.temp }}/agentharness-portable/linux-x64"
+
+      - name: Start the loopback release server
+        run: |
+          node scripts/agentharness-serve-lan-release.mjs \
+            --artifact "${{ runner.temp }}/agentharness-portable/agentharness-linux-x64.tgz" \
+            --out "${{ runner.temp }}/agentharness-release" \
+            --port "$AGENTHARNESS_RELEASE_PORT" \
+            --host 127.0.0.1 \
+            --advertise-host 127.0.0.1 \
+            --token "$AGENTHARNESS_RELEASE_TOKEN" \
+            > "${{ runner.temp }}/agentharness-release-server.log" 2>&1 &
+          echo "$!" > "${{ runner.temp }}/agentharness-release-server.pid"
+          curl --fail --silent --show-error --retry 30 --retry-connrefused --retry-delay 1 \
+            "http://127.0.0.1:$AGENTHARNESS_RELEASE_PORT/$AGENTHARNESS_RELEASE_TOKEN/install.sh" > /dev/null
+
+      - name: Install through the published curl command
+        run: |
+          mkdir -p \
+            "${{ runner.temp }}/agentharness-user/.cursor" \
+            "${{ runner.temp }}/agentharness-user/.codebuddy"
+          printf '%s\n' '{}' > "${{ runner.temp }}/agentharness-user/.cursor/mcp.json"
+          printf '%s\n' '{"mcpServers":{"agentharness":{"command":"/conflicting/node","args":[]}}}' \
+            > "${{ runner.temp }}/agentharness-user/.codebuddy/mcp.json"
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:$AGENTHARNESS_RELEASE_PORT/$AGENTHARNESS_RELEASE_TOKEN/install.sh" \
+            | env \
+                HOME="${{ runner.temp }}/agentharness-user" \
+                XDG_DATA_HOME="${{ runner.temp }}/agentharness-data" \
+                DSH_HOME="${{ runner.temp }}/agentharness-home" \
+                AGENTHARNESS_RUNTIME_DIR="${{ runner.temp }}/agentharness-state" \
+                AGENTHARNESS_BIN_DIR="${{ runner.temp }}/agentharness-bin" \
+                AGENTHARNESS_PORT="$AGENTHARNESS_ACCEPTANCE_PORT" \
+                AGENTHARNESS_NO_OPEN=1 \
+                sh
+
+      - name: Verify installed browser and MCP journeys
+        env:
+          HOME: ${{ runner.temp }}/agentharness-user
+          XDG_DATA_HOME: ${{ runner.temp }}/agentharness-data
+          DSH_HOME: ${{ runner.temp }}/agentharness-home
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}/agentharness-state
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}/agentharness-bin
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
+        run: |
+          "${{ runner.temp }}/agentharness-bin/agentharness" status
+          node scripts/agentharness-portable-browser-e2e.mjs \
+            --url "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \
+            --screenshot "${{ runner.temp }}/agentharness-portable-browser.png" \
+            --expect-mcp-guidance
+          node scripts/agentharness-portable-live-e2e.mjs \
+            --root "${{ runner.temp }}/agentharness-data/agentharness/current" \
+            --url "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \
+            --expect-existing
+          "${{ runner.temp }}/agentharness-bin/agentharness" restart
+          "${{ runner.temp }}/agentharness-bin/agentharness" status
+          "${{ runner.temp }}/agentharness-bin/agentharness" mcp-guide | grep -F agentharness_task_list
+
+      - name: Stop acceptance services
+        if: always()
+        env:
+          HOME: ${{ runner.temp }}/agentharness-user
+          XDG_DATA_HOME: ${{ runner.temp }}/agentharness-data
+          DSH_HOME: ${{ runner.temp }}/agentharness-home
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}/agentharness-state
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}/agentharness-bin
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
+        run: |
+          if test -x "${{ runner.temp }}/agentharness-bin/agentharness"; then
+            "${{ runner.temp }}/agentharness-bin/agentharness" stop || true
+          fi
+          if test -f "${{ runner.temp }}/agentharness-release-server.pid"; then
+            release_pid=$(cat "${{ runner.temp }}/agentharness-release-server.pid")
+            kill "$release_pid" || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: agentharness-portable-acceptance-diagnostics
+          path: |
+            ${{ runner.temp }}/agentharness-portable-browser.png
+            ${{ runner.temp }}/agentharness-release-server.log
+            ${{ runner.temp }}/agentharness-state/server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows-installer-mcp:
+    name: Windows installer, runtime, and MCP
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      DSH_TELEMETRY_DISABLED: '1'
+      AGENTHARNESS_ACCEPTANCE_PORT: '33081'
+      AGENTHARNESS_RELEASE_PORT: '43178'
+      AGENTHARNESS_RELEASE_TOKEN: ci-portable-win
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable Developer Mode for pnpm links
+        shell: pwsh
+        run: >-
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
+          /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and pack the Windows x64 runtime
+        shell: pwsh
+        run: |
+          pnpm run build
+          node scripts/agentharness-pack-portable.mjs --skip-build --target win32-x64 --out "${{ runner.temp }}\agentharness-portable\win32-x64"
+
+      - name: Start the loopback release server
+        shell: pwsh
+        run: |
+          $Arguments = @(
+            'scripts/agentharness-serve-lan-release.mjs',
+            '--artifact', '${{ runner.temp }}\agentharness-portable\agentharness-win32-x64.tgz',
+            '--out', '${{ runner.temp }}\agentharness-release-win',
+            '--port', $env:AGENTHARNESS_RELEASE_PORT,
+            '--host', '127.0.0.1',
+            '--advertise-host', '127.0.0.1',
+            '--token', $env:AGENTHARNESS_RELEASE_TOKEN
+          )
+          $Release = Start-Process node -ArgumentList $Arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput '${{ runner.temp }}\agentharness-release-win.log' -RedirectStandardError '${{ runner.temp }}\agentharness-release-win.err.log'
+          Set-Content -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid' -Value $Release.Id
+          for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+          throw 'Windows release server did not become ready'
+
+      - name: Install through the published PowerShell command
+        shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}\agentharness-user-win
+          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
+          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
+          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:HOME\.cursor" | Out-Null
+          Set-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Value '{}'
+          Invoke-RestMethod "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Invoke-Expression
+
+      - name: Verify installed runtime and MCP journey
+        shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}\agentharness-user-win
+          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
+          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
+          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
+        run: |
+          $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
+          & $Command status
+          if ($LASTEXITCODE -ne 0) { throw 'status failed' }
+          node scripts/agentharness-portable-live-e2e.mjs --root '${{ runner.temp }}\agentharness-data-win\agentharness\current' --url "http://127.0.0.1:$env:AGENTHARNESS_ACCEPTANCE_PORT" --expect-existing
+          & $Command restart
+          if ($LASTEXITCODE -ne 0) { throw 'restart failed' }
+          & $Command status
+          if ($LASTEXITCODE -ne 0) { throw 'status after restart failed' }
+          $Guide = & $Command mcp-guide | Out-String
+          if (-not $Guide.Contains('agentharness_task_list')) { throw 'MCP guide does not name agentharness_task_list' }
+          $Cursor = Get-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Raw | ConvertFrom-Json
+          if (-not $Cursor.mcpServers.'agentharness') { throw 'Cursor MCP configuration was not installed' }
+
+      - name: Stop Windows acceptance services
+        if: always()
+        shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}\agentharness-user-win
+          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
+          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
+          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
+        run: |
+          $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
+          if (Test-Path -LiteralPath $Command) { & $Command stop }
+          if (Test-Path -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid') {
+            $ReleasePid = [int](Get-Content -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid')
+            Stop-Process -Id $ReleasePid -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: agentharness-portable-windows-diagnostics
+          path: |
+            ${{ runner.temp }}\agentharness-release-win.log
+            ${{ runner.temp }}\agentharness-release-win.err.log
+            ${{ runner.temp }}\agentharness-state-win\server.log
+          if-no-files-found: ignore
+          retention-days: 7

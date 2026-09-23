@@ -1,0 +1,17 @@
+- insert:
+    - id: agentharness-volcengine-tls-evidence
+      name: '@agentharness/evidence-volcengine-tls'
+      disabled: !!js process.env.AGENTHARNESS_TLS_TOPIC_ID == null
+      config:
+        providerId: agentharness-tls
+        label: AgentHarness Volcengine TLS
+        endpoint: !!js process.env.AGENTHARNESS_TLS_ENDPOINT ?? 'https://tls-cn-beijing.volces.com'
+        region: !!js process.env.AGENTHARNESS_TLS_REGION ?? 'cn-beijing'
+        topicId: !!js process.env.AGENTHARNESS_TLS_TOPIC_ID
+        accessKeyRef: AGENTHARNESS_TLS_ACCESS_KEY
+        secretKeyRef: AGENTHARNESS_TLS_SECRET_KEY
+        lookbackMs: 900000
+        sort: desc
+        maxQueryBytes: 2048
+        maxResponseBytes: 20971520
+        maxSummaryBytes: 4096

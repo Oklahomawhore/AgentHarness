@@ -1,0 +1,46 @@
+# 公开发行准备
+
+[English](public-release.md) | 中文
+
+本文说明 AgentHarness npm 启动包及本分支的公开发布。公开仓库为 [Oklahomawhore/AgentHarness](https://github.com/Oklahomawhore/AgentHarness)；npm 包名所有权和认证仍是独立的发行前提。
+
+## 用户安装
+
+发布后，`npx agentharness` 安装固定版本的便携发行包，其中包含本分支的 DeepSeek Harness 运行时和 Node.js，然后启动本地 Web 界面。npx 需要 Node.js，各平台还需要[根 README](../README.zh.md)所列工具。DeepSeek Harness 已包含在便携依赖闭包中，用户无需另行安装上游 npm 包。启动包没有 npm postinstall hook。
+
+全新安装生成独立集群凭据。已有凭据保持不变；加入其他团队使用 `agentharness cluster join --secret-stdin`。用户自行填写模型 API key。安装器配置受支持的 MCP 客户端，保留冲突配置。重复运行相同启动包会再次下载其固定版本。npx 可能缓存 GitHub URL 启动包，因此 `latest` URL 不保证升级；npm 发布前可使用带版本号的 Release URL 指定新版。安装后的命令用于查看状态、日志和关闭服务。
+
+## 自动发行
+
+[AgentHarness release 工作流](../.github/workflows/agentharness-release.yml)仅在推送稳定版本 tag `vMAJOR.MINOR.PATCH` 时运行。tag 指向的提交必须已进入 `main`，否则工作流拒绝发布；[分支协作流程](development.zh.md#agentharness-branch-workflow)规定在审查后的 release 合并提交上打 tag。产物和 npm 版本取自 tag，重跑同一 run 仍使用该版本。分支推送和 Pull Request 不启动这一发布矩阵，工作流也不向源码提交版本变更。
+
+五个平台在各自原生 runner 上构建和执行打包 smoke：macOS arm64/x64、Linux arm64/x64、Windows x64。全部成功后创建草稿 Release，上传便携归档、两个安装器、npm tarball、manifest 和 SHA256SUMS，再公开已推送的 tag。已公开的同版本 Release 不覆盖。发布权限仅授予 Release job。其他 CI 工作流保持原有触发方式；AgentHarness 的自动发布不依赖上游 runner 或账号。
+
+产物位于本仓库 GitHub Releases。公开 npm 启动包的安装器使用 `https://github.com/Oklahomawhore/AgentHarness/releases/download/v<version>/`，并固定归档校验值。手工复现 staging：
+
+```sh
+pnpm run stage:agentharness-npx -- \
+  --artifact dist/agentharness-portable/agentharness-darwin-arm64.tgz \
+  --out dist/agentharness-public-release \
+  --base-url https://github.com/Oklahomawhore/AgentHarness --github
+```
+
+其他目标重复传入 `--artifact`。本地构建可通过 `AGENTHARNESS_RELEASE_VERSION` 指定便携发行版本，源码 workspace 包版本不变。省略 `--github` 时继续支持原静态托管目录。
+
+## npm 认证
+
+GitHub Release 自动发布不需要个人令牌，使用工作流的 `GITHUB_TOKEN`。npm 发布默认关闭，GitHub Release 仍提供可安装的 npm tarball。先确认 `agentharness` 包名所有权，再在 npm 配置本仓库 `agentharness-release.yml` 的 Trusted Publisher（允许发布），或配置拥有该包发布权限的细粒度 `NPM_TOKEN` 仓库 secret；然后将仓库变量 `AGENTHARNESS_NPM_PUBLISH` 设为 `true`。
+
+npm job 在 GitHub Release 成功后下载已发布的原始 tarball，核验 SHA256SUMS，再以 provenance 和 `latest` tag 发布。版本已存在时跳过；npm 失败不会删除 GitHub Release，配置修复后可重跑失败 job。认证规则见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。npm 发布成功之前，不宣称 `npx agentharness` 已对公众可用。
+
+## 源码公开
+
+根目录 `.env` 仅供本地使用；`.env.example` 不含 API key。此公开仓库从全新的 Git 历史开始。导出其他源码工作区时，应撤销已泄露的凭据；从当前索引移除文件不会移除旧提交、标签或其他 ref。导出不含旧 Git 元数据的源码：
+
+```sh
+pnpm run export:agentharness-public
+```
+
+导出器从已跟踪和未被忽略的工作区文件创建新的 `dist/agentharness-public-source`，保留内部符号链接，排除环境文件和 Git 元数据，并拒绝识别出的凭据及与本地密钥完全相同的值。输出目录已存在时会拒绝执行。检查旁边的 audit JSON，在导出目录内初始化新仓库；不要推送原仓库的分支、标签或 mirror。启发式扫描不能替代全面密钥审计；此导出明确舍弃上游 Git 历史，同时保留许可证与署名文件。
+
+内部验收仓库地址通过明确的环境变量提供。可选 Azure provider 工作流使用仓库变量 `DSH_PI_AI_OPENAI_BASE_URL`。上游 issue、社区、发行及文档链接仍指向上游；创建 GitHub 仓库后配置本分支的支持渠道和发行工作流。公开前检查已记录的诊断、浏览器快照、Agent Notes 和截图是否包含个人或业务信息。

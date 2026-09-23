@@ -1,0 +1,15 @@
+.git
+.agents/worktrees
+.artifacts
+.cache
+.agentharness-install
+.pnpm-store
+.storages
+.sessions
+.worktrees
+**/node_modules
+**/lib
+**/*.tsbuildinfo
+coverage
+tmp
+worktrees

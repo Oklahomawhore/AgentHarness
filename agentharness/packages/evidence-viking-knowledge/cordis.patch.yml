@@ -1,0 +1,18 @@
+- insert:
+    - id: agentharness-viking-knowledge
+      name: '@agentharness/evidence-viking-knowledge'
+      disabled: !!js process.env.AGENTHARNESS_VIKING_KNOWLEDGE_COLLECTION == null
+      config:
+        providerId: agentharness-viking-knowledge
+        label: AgentHarness Viking Knowledge
+        executable: viking-cli
+        collection: !!js process.env.AGENTHARNESS_VIKING_KNOWLEDGE_COLLECTION
+        project: !!js process.env.AGENTHARNESS_VIKING_PROJECT ?? 'KOX'
+        region: !!js process.env.AGENTHARNESS_VIKING_REGION ?? 'cn-beijing'
+        cloud: volcengine
+        cwd: !!js process.cwd()
+        accessKeyRef: AGENTHARNESS_VIKING_ACCESS_KEY
+        secretKeyRef: AGENTHARNESS_VIKING_SECRET_KEY
+        maxOutputBytes: 2097152
+        maxSummaryBytes: 8192
+        graceMs: 3000

@@ -1,0 +1,171 @@
+name: AgentHarness release
+
+'on':
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentharness-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Public distribution tests
+        run: node --test scripts/agentharness-public.test.mjs scripts/agentharness-release.test.mjs
+      - name: Release identity
+        id: version
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          node scripts/agentharness-release-ref.mjs
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: ubuntu-24.04
+            target: linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: windows-2025
+            target: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      AGENTHARNESS_RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows symlinks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install browser for native runtime smoke
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      - name: Build and smoke the complete runtime
+        env:
+          # Hosted runners have no multicast route; the portable smoke exercises local startup.
+          AGENTHARNESS_LAN_DISCOVERY: 'false'
+        run: node scripts/agentharness-pack-portable.mjs --target ${{ matrix.target }}
+      - name: Linux quality checks
+        if: matrix.target == 'linux-x64'
+        run: |
+          pnpm run lint:contracts-ready
+          pnpm exec vitest run scripts/agentharness-portable-release.spec.ts scripts/agentharness-pack-portable.spec.ts scripts/translation-pairing.spec.ts packages/bundle/base/tests/base.spec.ts packages/mcp/mcp/tests/mcp.spec.ts packages/mcp/mcp-client/tests/apply.spec.ts
+          pnpm run doc-sync
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.target }}
+          path: dist/agentharness-portable/agentharness-${{ matrix.target }}.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: portable-*
+          path: dist/agentharness-artifacts
+          merge-multiple: true
+      - name: Stage GitHub download URLs and npm package
+        shell: bash
+        run: |
+          args=()
+          for archive in dist/agentharness-artifacts/*.tgz; do args+=(--artifact "$archive"); done
+          node scripts/agentharness-stage-npx.mjs "${args[@]}" --github \
+            --base-url "https://github.com/$GH_REPO" --out dist/agentharness-release
+          npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts
+          cp "dist/agentharness-artifacts/agentharness-$VERSION.tgz" dist/agentharness-artifacts/agentharness-npm.tgz
+          cp dist/agentharness-release/install.sh dist/agentharness-release/install.ps1 dist/agentharness-artifacts/
+          cp "dist/agentharness-release/releases/$VERSION/manifest.json" dist/agentharness-artifacts/
+          (cd dist/agentharness-artifacts && sha256sum -- *.tgz install.sh install.ps1 manifest.json > SHA256SUMS)
+      - name: Publish complete GitHub Release
+        shell: bash
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
+            if [ "$(node -p "JSON.parse(require('fs').readFileSync('release-state.json')).isDraft")" = false ]; then
+              echo "Release $tag is already published; preserving its immutable assets."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --draft --title "AgentHarness $VERSION" --generate-notes
+          fi
+          gh release upload "$tag" dist/agentharness-artifacts/* --clobber
+          gh release edit "$tag" --draft=false --latest
+      - name: npm setup status
+        if: vars.AGENTHARNESS_NPM_PUBLISH != 'true'
+        run: echo 'GitHub Release is published. npm publication is disabled until AGENTHARNESS_NPM_PUBLISH=true and npm authentication is configured.' >> "$GITHUB_STEP_SUMMARY"
+
+  npm:
+    if: vars.AGENTHARNESS_NPM_PUBLISH == 'true'
+    needs: [verify, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Publish the exact released npm tarball
+        shell: bash
+        run: |
+          gh release download "v$VERSION" --pattern "agentharness-$VERSION.tgz" --pattern SHA256SUMS
+          sha256sum --check --ignore-missing SHA256SUMS
+          if npm view "agentharness@$VERSION" dist.integrity --json > published.json 2>/dev/null; then
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              import { createHash } from "node:crypto";
+              const file = "agentharness-" + process.env.VERSION + ".tgz";
+              const actual = "sha512-" + createHash("sha512").update(readFileSync(file)).digest("base64");
+              if (JSON.parse(readFileSync("published.json", "utf8")) !== actual) throw new Error("npm version already exists with different bytes");
+            '
+            echo "npm version $VERSION already contains these bytes."
+            exit 0
+          fi
+          npm publish "agentharness-$VERSION.tgz" --access public --provenance --tag latest

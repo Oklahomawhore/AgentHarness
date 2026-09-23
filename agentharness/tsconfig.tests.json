@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "composite": false,
+    "incremental": false,
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@deepseek-ai/cordis": ["vendor/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-credentials": ["packages/credentials/credentials/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-development-evidence": ["packages/collaboration/development-evidence/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-subprocess": ["packages/subprocess/subprocess/lib/types/index.d.ts"]
+    }
+  },
+  "include": ["packages/*/tests/**/*.ts"]
+}

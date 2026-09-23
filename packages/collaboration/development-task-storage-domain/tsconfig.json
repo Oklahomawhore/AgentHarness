@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "lib/types" },
+  "include": ["src"],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../../vendor/schemastery" },
+    { "path": "../development-room" },
+    { "path": "../development-room-storage-domain" },
+    { "path": "../development-task" },
+    { "path": "../../runtime-diagnostics/invariants" },
+    { "path": "../../storage/storage-domain" }
+  ]
+}

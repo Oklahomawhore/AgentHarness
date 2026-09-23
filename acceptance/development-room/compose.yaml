@@ -1,0 +1,107 @@
+name: agentharness-development-room-plugin
+
+x-room-node: &room-node
+  image: agentharness-development-room:local
+  init: true
+  restart: "no"
+  working_dir: /dsh
+  secrets:
+    - gitee-credentials
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - "const fs=require('node:fs'); const repo='/workspace/'+process.env.AGENTHARNESS_WORK_REPOSITORY_NAME+'/.git'; if(!fs.existsSync(repo)) process.exit(1); fetch('http://127.0.0.1:3080/').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"
+    interval: 2s
+    timeout: 2s
+    retries: 30
+    start_period: 5s
+
+services:
+  node-a:
+    <<: *room-node
+    build:
+      context: ../..
+      dockerfile: acceptance/development-room/Dockerfile
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3080"
+      - --trusted-host
+      - 127.0.0.1:3081
+    environment:
+      DSH_HOME: /var/lib/dsh
+      DSH_ROOM_NODE_ID: node-a
+      AGENTHARNESS_WORK_ROLE: frontend
+      AGENTHARNESS_WORK_BASE_BRANCH: main
+      AGENTHARNESS_WORK_BRANCH: codex/agentharness-mesh-e2e
+      AGENTHARNESS_WORK_REPOSITORY_NAME: agentharness-frontend
+      AGENTHARNESS_WORK_REPOSITORY_URL: https://gitee.com/AGENTHARNESS_2/agentharness-frontend.git
+      AGENTHARNESS_GIT_CREDENTIALS_ENABLED: ${AGENTHARNESS_GIT_CREDENTIALS_ENABLED:-0}
+    ports:
+      - 127.0.0.1:3081:3080
+    volumes:
+      - node-a-home:/var/lib/dsh
+      - node-a-workspace:/workspace
+
+  node-b:
+    <<: *room-node
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3080"
+      - --trusted-host
+      - 127.0.0.1:3082
+    environment:
+      DSH_HOME: /var/lib/dsh
+      DSH_ROOM_NODE_ID: node-b
+      AGENTHARNESS_WORK_ROLE: backend
+      AGENTHARNESS_WORK_BASE_BRANCH: main
+      AGENTHARNESS_WORK_BRANCH: codex/agentharness-mesh-e2e
+      AGENTHARNESS_WORK_REPOSITORY_NAME: agentharness-backend
+      AGENTHARNESS_WORK_REPOSITORY_URL: https://gitee.com/AGENTHARNESS_2/agentharness-backend.git
+      AGENTHARNESS_GIT_CREDENTIALS_ENABLED: ${AGENTHARNESS_GIT_CREDENTIALS_ENABLED:-0}
+    ports:
+      - 127.0.0.1:3082:3080
+    volumes:
+      - node-b-home:/var/lib/dsh
+      - node-b-workspace:/workspace
+
+  node-c:
+    <<: *room-node
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3080"
+      - --trusted-host
+      - 127.0.0.1:3083
+    environment:
+      DSH_HOME: /var/lib/dsh
+      DSH_ROOM_NODE_ID: node-c
+      AGENTHARNESS_WORK_ROLE: algorithm
+      AGENTHARNESS_WORK_BASE_BRANCH: main
+      AGENTHARNESS_WORK_BRANCH: codex/agentharness-mesh-e2e
+      AGENTHARNESS_WORK_REPOSITORY_NAME: agentharness-agents
+      AGENTHARNESS_WORK_REPOSITORY_URL: https://gitee.com/AGENTHARNESS_2/agentharness-agents.git
+      AGENTHARNESS_GIT_CREDENTIALS_ENABLED: ${AGENTHARNESS_GIT_CREDENTIALS_ENABLED:-0}
+    ports:
+      - 127.0.0.1:3083:3080
+    volumes:
+      - node-c-home:/var/lib/dsh
+      - node-c-workspace:/workspace
+
+volumes:
+  node-a-home:
+  node-a-workspace:
+  node-b-home:
+  node-b-workspace:
+  node-c-home:
+  node-c-workspace:
+
+secrets:
+  gitee-credentials:
+    file: ${AGENTHARNESS_GIT_CREDENTIALS_FILE:-./empty-git-credentials}
