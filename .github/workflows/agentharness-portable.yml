@@ -129,7 +129,7 @@ jobs:
             kill "$release_pid" || true
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: agentharness-portable-acceptance-diagnostics
@@ -263,7 +263,7 @@ jobs:
             Stop-Process -Id $ReleasePid -Force -ErrorAction SilentlyContinue
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: agentharness-portable-windows-diagnostics
