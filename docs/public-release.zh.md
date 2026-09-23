@@ -14,7 +14,9 @@
 
 [AgentHarness release 工作流](../.github/workflows/agentharness-release.yml)仅在推送稳定版本 tag `vMAJOR.MINOR.PATCH` 时运行。tag 指向的提交必须已进入 `main`，否则工作流拒绝发布；[分支协作流程](development.zh.md#agentharness-branch-workflow)规定在审查后的 release 合并提交上打 tag。产物和 npm 版本取自 tag，重跑同一 run 仍使用该版本。分支推送和 Pull Request 不启动这一发布矩阵，工作流也不向源码提交版本变更。
 
-五个平台在各自原生 runner 上构建和执行打包 smoke：macOS arm64/x64、Linux arm64/x64、Windows x64。全部成功后创建草稿 Release，上传便携归档、两个安装器、npm tarball、manifest 和 SHA256SUMS，再公开已推送的 tag。已公开的同版本 Release 不覆盖。发布权限仅授予 Release job。其他 CI 工作流保持原有触发方式；AgentHarness 的自动发布不依赖上游 runner 或账号。
+五个平台在各自原生 runner 上构建和执行打包 smoke：macOS arm64/x64、Linux arm64/x64、Windows x64。全部成功后创建草稿 Release，上传便携归档、两个安装器、npm tarball、manifest 和 SHA256SUMS，再公开已推送的 tag。工作流核验公开后的附件名称，缺失时重试上传；已完整的同版本 Release 保持不变。发布权限仅授予 Release job。其他 CI 工作流保持原有触发方式；AgentHarness 的自动发布不依赖上游 runner 或账号。
+
+如果已公开的 Release 缺少附件，可以手动运行同一工作流，填写成功的 tag run ID 作为 `repair_run_id`、稳定版本 tag 作为 `repair_tag`。修复 job 下载五个平台已通过的构建产物，重新生成 npm 启动包和校验文件，上传至已公开的 Release 并核验附件名称。手动运行不会重新构建运行时，也不会发布新版本。
 
 产物位于本仓库 GitHub Releases。公开 npm 启动包的安装器使用 `https://github.com/Oklahomawhore/AgentHarness/releases/download/v<version>/`，并固定归档校验值。手工复现 staging：
 
