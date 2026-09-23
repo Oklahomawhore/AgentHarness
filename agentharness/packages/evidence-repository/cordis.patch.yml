@@ -1,0 +1,19 @@
+- insert:
+    - id: agentharness-repository-evidence
+      name: '@agentharness/evidence-repository'
+      disabled: !!js process.env.AGENTHARNESS_REPOSITORY_EVIDENCE_ROOT == null
+      config:
+        providerId: agentharness-repository
+        label: AgentHarness Repository
+        executable: git
+        root: !!js process.env.AGENTHARNESS_REPOSITORY_EVIDENCE_ROOT
+        repositoryId: !!js process.env.AGENTHARNESS_REPOSITORY_ID ?? 'agentharness-project'
+        pathspecs: ['.']
+        includeUntracked: true
+        ignoreCase: true
+        maxQueryTerms: 8
+        minTermCharacters: 2
+        maxMatchesPerFile: 8
+        maxOutputBytes: 2097152
+        maxSummaryBytes: 4096
+        graceMs: 3000

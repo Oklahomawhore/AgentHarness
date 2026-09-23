@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-08-23-installed-python-wheel-black-box-ci.md
+2026-08-23-installed-python-wheel-black-box-ci.md: 6ac3a7e4b8fff2e1223e98c526587c0845760927
+2026-08-23-installed-python-wheel-black-box-ci.zh.md: 7cb5edcd49199ee0577c20868e765cf6045bf847

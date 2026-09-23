@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-20-host-mcp-call-seam.md
+2026-08-20-host-mcp-call-seam.md: ee1b0be950cf64ecbfeb041dabc067404e9aad3b
+2026-08-20-host-mcp-call-seam.zh.md: 1586cab06a39825a39f8aaf73b5a41dbaa195a5b

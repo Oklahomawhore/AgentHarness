@@ -1,0 +1,133 @@
+- strong: 涌现协作中心
+- text: Task 是可派生、可汇合的共享上下文；每个 Agent Session 自主连接
+- button "新建任务"
+- button "刷新"
+- button "关闭涌现协作中心": ×
+- complementary:
+  - strong: 三步共享上下文
+  - list:
+    - listitem: 保存协作身份
+    - listitem: 新建一个 Task 上下文
+    - listitem: 在需要加入的 Agent Session 中调用 agentharness_task_connect
+  - text: 协作显示名
+  - textbox "协作显示名": 浏览器验收用户
+  - button "身份已生效" [disabled]
+  - status: 协作身份已生效：浏览器验收用户
+  - textbox "搜索 Task 名称、上下文或编号"
+  - navigation:
+    - button "我的任务"
+    - button "全部"
+  - button "Merge 修订 r1 网页汇合任务 浏览器验收用户":
+    - text: Merge 修订 r1
+    - strong: 网页汇合任务
+    - text: 浏览器验收用户
+  - button "Fork 修订 r1 网页派生任务二 浏览器验收用户":
+    - text: Fork 修订 r1
+    - strong: 网页派生任务二
+    - text: 浏览器验收用户
+  - button "Fork 修订 r1 网页派生任务一 浏览器验收用户":
+    - text: Fork 修订 r1
+    - strong: 网页派生任务一
+    - text: 浏览器验收用户
+  - button "Root 修订 r2 网页共享上下文验收 浏览器验收用户":
+    - text: Root 修订 r2
+    - strong: 网页共享上下文验收
+    - text: 浏览器验收用户
+- main "任务有向无环谱系图":
+  - application:
+    - img:
+      - group "Edge from task-{{uuid}} to task-{{uuid}}"
+    - img:
+      - group "Edge from task-{{uuid}} to task-{{uuid}}"
+    - img:
+      - group "Edge from task-{{uuid}} to task-{{uuid}}"
+    - img:
+      - group "Edge from task-{{uuid}} to task-{{uuid}}"
+    - group:
+      - text: Merge · r1
+      - strong: 网页汇合任务
+      - text: 浏览器验收用户 · 运行正常
+    - group:
+      - text: Fork · r1
+      - strong: 网页派生任务二
+      - text: 浏览器验收用户 · 运行正常
+    - group:
+      - text: Fork · r1
+      - strong: 网页派生任务一
+      - text: 浏览器验收用户 · 运行正常
+    - group:
+      - text: Root · r2
+      - strong: 网页共享上下文验收
+      - text: 浏览器验收用户 · 运行正常
+    - img "任务图缩略图"
+    - button "放大图谱":
+      - img
+    - button "缩小图谱":
+      - img
+    - button "显示全部任务":
+      - img
+    - img
+- complementary:
+  - text: Merge · 修订 r1
+  - heading "网页汇合任务" [level=1]
+  - text: 运行正常
+  - region "让 Agent Session 加入当前 Task":
+    - heading "让 Agent Session 加入当前 Task" [level=2]
+    - paragraph: 配置只安装能力；真正加入必须在目标 Codex/Cursor/Claude Session 内调用 agentharness_task_connect，其他 Session 不受影响。
+    - code: task-{{uuid}}
+    - article:
+      - strong: Cursor
+      - text: 同名冲突
+      - list "智能体连接进度":
+        - listitem: 已配置
+        - listitem: 在线
+        - listitem: Session 已连接
+        - listitem: 已确认上下文
+      - paragraph: Cursor 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
+      - paragraph:
+        - strong: 下一步：
+        - text: 运行 agentharness mcp-guide 获取准确接入命令；检查 /Users/example/.cursor/mcp.json，移除或改名冲突项后按指南重新添加，再刷新本页。
+    - article:
+      - strong: Codex
+      - text: 同名冲突
+      - list "智能体连接进度":
+        - listitem: 已配置
+        - listitem: 在线
+        - listitem: Session 已连接
+        - listitem: 已确认上下文
+      - paragraph: Codex 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
+      - paragraph:
+        - strong: 下一步：
+        - text: 运行 agentharness mcp-guide 获取准确接入命令；在 Codex MCP 配置中移除或改名同名项后重新添加，重启 Codex，再刷新本页。
+    - article:
+      - strong: Claude Code
+      - text: 同名冲突
+      - list "智能体连接进度":
+        - listitem: 已配置
+        - listitem: 在线
+        - listitem: Session 已连接
+        - listitem: 已确认上下文
+      - paragraph: Claude Code 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
+      - paragraph:
+        - strong: 下一步：
+        - text: 运行 agentharness mcp-guide 获取准确接入命令；检查 /Users/example/.claude.json，移除或改名冲突项后按指南重新添加，再刷新本页。
+    - article:
+      - strong: Doubao
+      - text: 需要手动配置
+      - list "智能体连接进度":
+        - listitem: 已配置
+        - listitem: 在线
+        - listitem: Session 已连接
+        - listitem: 已确认上下文
+      - paragraph: 已检测到 Doubao，但当前只支持手动接入；系统没有修改未公开的客户端配置。
+      - paragraph:
+        - strong: 下一步：
+        - text: 运行 agentharness mcp-guide，按 Doubao 的说明手动添加；重启客户端后刷新本页。
+  - heading "共享上下文" [level=2]
+  - text: 这里只保存主动发布的内容，不收集私聊、完整 Session 或内部推理。
+  - article:
+    - strong: 初始上下文
+    - paragraph: 网页汇合任务的增量上下文。
+  - paragraph: 这个 Task 包含创建时固定的父 Task 上下文快照。
+  - textbox "发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。"
+  - button "发布上下文" [disabled]

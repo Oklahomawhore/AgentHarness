@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "distributionVersion": "0.2.0-alpha.1",
+  "deepseekHarness": ">=0.1.0-rc.5 <0.2.0",
+  "requiredServices": [
+    "credentials",
+    "developmentEvidence",
+    "subprocess"
+  ],
+  "upstreamGaps": [
+    "automatic-external-remote-assembly",
+    "plugin-lock-and-compatibility-enforcement"
+  ]
+}

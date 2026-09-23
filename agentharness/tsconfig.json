@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/evidence-repository" },
+    { "path": "./packages/evidence-volcengine-tls" },
+    { "path": "./packages/evidence-viking-knowledge" }
+  ]
+}

@@ -1,0 +1,21 @@
+- banner:
+  - strong: 开发工作台
+  - text: 任务、日志与调试页面由 Harness 统一管理
+  - button "↻"
+  - button "关闭工作台": ×
+- navigation "开发工作台":
+  - button "Example Agent {{node}} {{fixture}} {{fixturePort}} 运行中 · 等待页面就绪":
+    - text: Example Agent {{node}} {{fixture}} {{fixturePort}}
+    - emphasis: 运行中 · 等待页面就绪
+- button "Agent"
+- button "Local-debug"
+- link "新窗口打开":
+  - /url: {{fixtureOrigin}}/local-debug
+- button "停止"
+- main:
+  - strong: 等待页面就绪
+  - text: HTTP 503
+  - heading "运行日志" [level=2]
+  - heading "stdout" [level=3]
+  - text: fixture listening on {{fixturePort}}
+- separator "拖动左下角调整工作台大小"
