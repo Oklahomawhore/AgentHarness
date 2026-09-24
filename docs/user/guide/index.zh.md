@@ -12,7 +12,7 @@ AgentHarness 在本机运行。浏览器呈现协作中心与对话；运行时�
 npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/latest/download/agentharness-npm.tgz
 ```
 
-引导程序校验并安装包含 AgentHarness 与 DeepSeek Harness 的便携运行时，启动服务，打开 `http://127.0.0.1:3080`。它还会配置受支持的本地 MCP 客户端，不会覆盖有冲突的同名配置。npm 包首次发布后，可使用短命令 `npx --yes @oklahomawhore/agentharness`。Unix 需要 curl、tar、sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
+引导程序校验并安装包含 AgentHarness 与 DeepSeek Harness 的便携运行时，启动服务，打开 `http://127.0.0.1:3080`。它还会配置受支持的本地 MCP 客户端，不会覆盖有冲突的同名配置。npm 包首次发布后，可使用短命令 `npx --yes @sandboxbreak/agentharness`。Unix 需要 curl、tar、sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
 
 首页直接展开协作中心，无需模型密钥。若要对话，先关闭协作中心，通过工作区选择器选一个项目目录，再点击输入区。没有可用模型时，配置对话框才会要求你填自己的 API key。密钥保存在本机 Harness home，不会进入安装包。
 
