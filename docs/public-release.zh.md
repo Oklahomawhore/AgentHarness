@@ -6,7 +6,7 @@
 
 ## 用户安装
 
-发布后，`npx agentharness` 安装固定版本的便携发行包，其中包含本分支的 DeepSeek Harness 运行时和 Node.js，然后启动本地 Web 界面。npx 需要 Node.js，各平台还需要[根 README](../README.zh.md)所列工具。DeepSeek Harness 已包含在便携依赖闭包中，用户无需另行安装上游 npm 包。启动包没有 npm postinstall hook。
+发布后，`npx --yes @oklahomawhore/agentharness` 安装固定版本的便携发行包，其中包含本分支的 DeepSeek Harness 运行时和 Node.js，然后启动本地 Web 界面。npx 需要 Node.js，各平台还需要[根 README](../README.zh.md)所列工具。DeepSeek Harness 已包含在便携依赖闭包中，用户无需另行安装上游 npm 包。启动包没有 npm postinstall hook。
 
 全新安装生成独立集群凭据。已有凭据保持不变；加入其他团队使用 `agentharness cluster join --secret-stdin`。用户自行填写模型 API key。安装器配置受支持的 MCP 客户端，保留冲突配置。重复运行相同启动包会再次下载其固定版本。npx 可能缓存 GitHub URL 启动包，因此 `latest` URL 不保证升级；npm 发布前可使用带版本号的 Release URL 指定新版。安装后的命令用于查看状态、日志和关闭服务。
 
@@ -31,9 +31,9 @@ pnpm run stage:agentharness-npx -- \
 
 ## npm 认证
 
-GitHub Release 自动发布不需要个人令牌，使用工作流的 `GITHUB_TOKEN`。npm 发布默认关闭，GitHub Release 仍提供可安装的 npm tarball。先确认 `agentharness` 包名所有权，再在 npm 配置本仓库 `agentharness-release.yml` 的 Trusted Publisher（允许发布），或配置拥有该包发布权限的细粒度 `NPM_TOKEN` 仓库 secret；然后将仓库变量 `AGENTHARNESS_NPM_PUBLISH` 设为 `true`。
+GitHub Release 自动发布不需要个人令牌，使用工作流的 `GITHUB_TOKEN`。npm 发布默认关闭，GitHub Release 仍提供可安装的 npm tarball。先确认 npm 账号拥有 `@oklahomawhore` scope，再在 npm 为 `@oklahomawhore/agentharness` 配置本仓库 `agentharness-release.yml` 的 Trusted Publisher（允许发布），或配置拥有该包发布权限的细粒度 `NPM_TOKEN` 仓库 secret；然后将仓库变量 `AGENTHARNESS_NPM_PUBLISH` 设为 `true`。
 
-npm job 在 GitHub Release 成功后下载已发布的原始 tarball，核验 SHA256SUMS，再以 provenance 和 `latest` tag 发布。版本已存在时跳过；npm 失败不会删除 GitHub Release，配置修复后可重跑失败 job。认证规则见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。npm 发布成功之前，不宣称 `npx agentharness` 已对公众可用。
+npm job 在 GitHub Release 成功后下载已发布的原始 tarball，核验 SHA256SUMS，再以 provenance 和 `latest` tag 发布。版本已存在时跳过；npm 失败不会删除 GitHub Release，配置修复后可重跑失败 job。认证规则见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。npm 发布成功之前，不宣称 `npx --yes @oklahomawhore/agentharness` 已对公众可用。
 
 ## 源码公开
 

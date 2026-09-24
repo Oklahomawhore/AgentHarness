@@ -15,7 +15,7 @@
 npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.1/agentharness-npm.tgz
 ```
 
-首次发布 npm 包后，可以使用更短的 `npx --yes agentharness`。macOS/Linux 需要 curl、tar 和 sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
+首次发布 npm 包后，可以使用更短的 `npx --yes @oklahomawhore/agentharness`。macOS/Linux 需要 curl、tar 和 sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
 
 **应用打开时，协作中心已经展开。** 不填 API key 也能浏览界面、创建 Task。准备与模型对话时，先关闭协作中心，选择本机项目目录作为工作区，再点击对话输入区。如果尚无可用模型，此时才弹出 API key 配置；填写你自己的 DeepSeek key。密钥只保存在本机 Harness home，不进入发行包。
 
