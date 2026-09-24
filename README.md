@@ -12,7 +12,7 @@ English | [中文](README.zh.md)
 Install [Node.js 22.19+ or 24+](https://nodejs.org/) and run this single command. It installs AgentHarness, the bundled DeepSeek Harness runtime, and a portable Node runtime, then opens the local Web app at `http://127.0.0.1:3080`:
 
 ```sh
-npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.2/agentharness-npm.tgz
+npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.3/agentharness-npm.tgz
 ```
 
 The shorter `npx --yes @sandboxbreak/agentharness` command will work after the first npm publication. macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar.
