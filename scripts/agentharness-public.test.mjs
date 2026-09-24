@@ -32,6 +32,7 @@ test('bootstrap preserves existing team input and creates fresh private cluster 
     assert.equal(run([], { AGENTHARNESS_TEST_EXIT: '7' }).status, 7)
     assert.equal(run(['--unknown']).status, 1)
     assert.match(run(['--help']).stdout, /DeepSeek Harness/)
+    assert.match(run(['--help']).stdout, /@oklahomawhore\/agentharness/)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

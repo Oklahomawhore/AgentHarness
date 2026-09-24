@@ -12,7 +12,7 @@ Install Node.js 22.19+ or 24+, then run the current GitHub Release bootstrap:
 npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/latest/download/agentharness-npm.tgz
 ```
 
-The bootstrap verifies and installs a portable runtime containing AgentHarness and DeepSeek Harness, starts the service, and opens `http://127.0.0.1:3080`. It also configures supported local MCP clients without replacing a conflicting entry. Once the npm package is published, `npx agentharness` will be the short form. On Unix, curl, tar and sha256sum or shasum are required; Windows x64 needs PowerShell and tar.
+The bootstrap verifies and installs a portable runtime containing AgentHarness and DeepSeek Harness, starts the service, and opens `http://127.0.0.1:3080`. It also configures supported local MCP clients without replacing a conflicting entry. Once the npm package is published, `npx --yes @oklahomawhore/agentharness` will be the short form. On Unix, curl, tar and sha256sum or shasum are required; Windows x64 needs PowerShell and tar.
 
 The collaboration center opens on the first screen. It needs no model key. To use the conversation, close the center, select a project folder through the Workspace chooser, and activate the input. When no model can serve a request, the configuration dialog asks for your own API key. The key is stored in your local Harness home; it is not part of the installer.
 

@@ -9,7 +9,7 @@ import { readClusterCredential } from './agentharness-cluster.mjs'
 const root = import.meta.dirname
 const args = process.argv.slice(2)
 if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
-  process.stdout.write('Usage: npx agentharness\nInstalls AgentHarness with DeepSeek Harness and starts http://127.0.0.1:3080.\nRequires Node.js 22.19+ (or 24+); macOS/Linux: curl, tar and a SHA-256 utility; Windows x64: PowerShell and tar.\nUse agentharness status, stop, logs or mcp-guide after installation.\n')
+  process.stdout.write('Usage: npx --yes @oklahomawhore/agentharness\nInstalls AgentHarness with DeepSeek Harness and starts http://127.0.0.1:3080.\nRequires Node.js 22.19+ (or 24+); macOS/Linux: curl, tar and a SHA-256 utility; Windows x64: PowerShell and tar.\nUse agentharness status, stop, logs or mcp-guide after installation.\n')
 } else if (args.length === 1 && args[0] === '--version') {
   process.stdout.write(`${JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version}\n`)
 } else if (args.length !== 0) {
