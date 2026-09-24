@@ -19,11 +19,11 @@ The shorter `npx --yes agentharness` command will work after the first npm publi
 
 **The collaboration center is open when the app starts.** You can explore it and create a Task without an API key. To begin a model conversation, close the center, choose a local project folder as your Workspace, then activate the conversation input. If no model is usable, the API-key dialog appears at that point. Enter your own DeepSeek key; it is stored locally in your Harness home and never bundled in the release.
 
-![First launch: the open collaboration center shows how to create shared context](assets/agentharness-first-run.png)
+![First launch: the open collaboration center shows how to create shared context](assets/agentharness-first-run.en.png)
 
 With a Task created, the center shows its lineage, Agent-session guidance, and published context:
 
-![AgentHarness collaboration center with a Task, Agent connection guidance, and shared context](assets/agentharness-collaboration.png)
+![AgentHarness collaboration center with a Task, Agent connection guidance, and shared context](assets/agentharness-collaboration.en.png)
 
 1. Set a collaboration display name and save it.
 2. Choose **New task → New independent task**, then enter a Task name and initial shared context.
