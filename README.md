@@ -15,7 +15,7 @@ Install [Node.js 22.19+ or 24+](https://nodejs.org/) and run this single command
 npx --yes @sandboxbreak/agentharness
 ```
 
-If npm is unavailable, the [versioned GitHub Release tarball](https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.3/agentharness-npm.tgz) is an alternative. macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar.
+Versioned installers and archives are available in [GitHub Releases](https://github.com/Oklahomawhore/AgentHarness/releases/tag/v0.2.3). macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar.
 
 **The collaboration center is open when the app starts.** You can explore it and create a Task without an API key. To begin a model conversation, close the center, choose a local project folder as your Workspace, then activate the conversation input. If no model is usable, the API-key dialog appears at that point. Enter your own DeepSeek key; it is stored locally in your Harness home and never bundled in the release.
 
