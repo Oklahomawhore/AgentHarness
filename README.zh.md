@@ -19,11 +19,11 @@ npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.1
 
 **应用打开时，协作中心已经展开。** 不填 API key 也能浏览界面、创建 Task。准备与模型对话时，先关闭协作中心，选择本机项目目录作为工作区，再点击对话输入区。如果尚无可用模型，此时才弹出 API key 配置；填写你自己的 DeepSeek key。密钥只保存在本机 Harness home，不进入发行包。
 
-![首次启动：展开的协作中心说明如何创建共享上下文](assets/agentharness-first-run.png)
+![首次启动：展开的协作中心说明如何创建共享上下文](assets/agentharness-first-run.zh.png)
 
 创建 Task 后，协作中心会展示任务谱系、Agent Session 指引与已发布的上下文：
 
-![AgentHarness 协作中心：Task、Agent 连接指引与共享上下文](assets/agentharness-collaboration.png)
+![AgentHarness 协作中心：Task、Agent 连接指引与共享上下文](assets/agentharness-collaboration.zh.png)
 
 1. 填写协作显示名并保存。
 2. 点击**新建任务 → 新建独立任务**，填写 Task 名称和初始共享上下文。
