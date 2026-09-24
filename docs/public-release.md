@@ -6,7 +6,7 @@ This reference covers the AgentHarness npm bootstrap and publication of this for
 
 ## User installation
 
-After publication, `npx agentharness` installs a pinned portable release containing this fork's DeepSeek Harness runtime and Node.js, then starts the local Web UI. It requires Node.js to run npx, plus the platform utilities listed in the [root README](../README.md). DeepSeek Harness is included in the portable dependency closure; users do not install the upstream npm package separately. There is no npm postinstall hook.
+After publication, `npx --yes @oklahomawhore/agentharness` installs a pinned portable release containing this fork's DeepSeek Harness runtime and Node.js, then starts the local Web UI. It requires Node.js to run npx, plus the platform utilities listed in the [root README](../README.md). DeepSeek Harness is included in the portable dependency closure; users do not install the upstream npm package separately. There is no npm postinstall hook.
 
 Fresh installs generate independent cluster credentials. Existing credentials remain unchanged; joining another team uses `agentharness cluster join --secret-stdin`. Users supply their own model API keys. Supported MCP clients are configured by the installer, and conflicts remain untouched. Repeated runs of the same bootstrap download its pinned portable release again. npx can cache a GitHub URL bootstrap, so its `latest` URL does not guarantee an upgrade; use a versioned Release URL to select a newer bootstrap before npm publication. Installed commands manage status, logs and shutdown.
 
@@ -31,9 +31,9 @@ Repeat `--artifact` for other targets. Local builds can set `AGENTHARNESS_RELEAS
 
 ## npm authentication
 
-Automatic GitHub Releases use the workflow's `GITHUB_TOKEN`, without a personal token. npm publication is disabled by default; GitHub Releases still provide an installable npm tarball. First establish ownership of `agentharness`, then configure an npm Trusted Publisher for this repository's `agentharness-release.yml` with publish permission, or a granular repository secret `NPM_TOKEN` authorized to publish the package. Set the repository variable `AGENTHARNESS_NPM_PUBLISH` to `true` afterward.
+Automatic GitHub Releases use the workflow's `GITHUB_TOKEN`, without a personal token. npm publication is disabled by default; GitHub Releases still provide an installable npm tarball. First establish ownership of the npm `@oklahomawhore` scope, then configure an npm Trusted Publisher for `@oklahomawhore/agentharness` and this repository's `agentharness-release.yml` with publish permission, or a granular repository secret `NPM_TOKEN` authorized to publish the package. Set the repository variable `AGENTHARNESS_NPM_PUBLISH` to `true` afterward.
 
-The npm job downloads the exact released tarball after GitHub publication, checks SHA256SUMS and publishes with provenance and the `latest` tag. Existing versions are skipped. npm failure does not delete the GitHub Release; rerun the failed job after correcting authentication. See [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) for authentication rules. Do not advertise `npx agentharness` as publicly available before npm publication succeeds.
+The npm job downloads the exact released tarball after GitHub publication, checks SHA256SUMS and publishes with provenance and the `latest` tag. Existing versions are skipped. npm failure does not delete the GitHub Release; rerun the failed job after correcting authentication. See [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) for authentication rules. Do not advertise `npx --yes @oklahomawhore/agentharness` as publicly available before npm publication succeeds.
 
 ## Source disclosure
 

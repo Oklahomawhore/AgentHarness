@@ -123,8 +123,8 @@ jobs:
           for archive in dist/agentharness-artifacts/*.tgz; do args+=(--artifact "$archive"); done
           node scripts/agentharness-stage-npx.mjs "${args[@]}" --github \
             --base-url "https://github.com/$GH_REPO" --out dist/agentharness-release
-          npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts
-          cp "dist/agentharness-artifacts/agentharness-$VERSION.tgz" dist/agentharness-artifacts/agentharness-npm.tgz
+          packed=$(npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts)
+          mv "dist/agentharness-artifacts/$packed" dist/agentharness-artifacts/agentharness-npm.tgz
           cp dist/agentharness-release/install.sh dist/agentharness-release/install.ps1 dist/agentharness-artifacts/
           cp "dist/agentharness-release/releases/$VERSION/manifest.json" dist/agentharness-artifacts/
           (cd dist/agentharness-artifacts && sha256sum -- *.tgz install.sh install.ps1 manifest.json > SHA256SUMS)
@@ -189,20 +189,20 @@ jobs:
       - name: Publish the exact released npm tarball
         shell: bash
         run: |
-          gh release download "v$VERSION" --pattern "agentharness-$VERSION.tgz" --pattern SHA256SUMS
+          gh release download "v$VERSION" --pattern agentharness-npm.tgz --pattern SHA256SUMS
           sha256sum --check --ignore-missing SHA256SUMS
-          if npm view "agentharness@$VERSION" dist.integrity --json > published.json 2>/dev/null; then
+          if npm view "@oklahomawhore/agentharness@$VERSION" dist.integrity --json > published.json 2>/dev/null; then
             node --input-type=module -e '
               import { readFileSync } from "node:fs";
               import { createHash } from "node:crypto";
-              const file = "agentharness-" + process.env.VERSION + ".tgz";
+              const file = "agentharness-npm.tgz";
               const actual = "sha512-" + createHash("sha512").update(readFileSync(file)).digest("base64");
               if (JSON.parse(readFileSync("published.json", "utf8")) !== actual) throw new Error("npm version already exists with different bytes");
             '
             echo "npm version $VERSION already contains these bytes."
             exit 0
           fi
-          npm publish "agentharness-$VERSION.tgz" --access public --provenance --tag latest
+          npm publish agentharness-npm.tgz --access public --provenance --tag latest
 
   repair:
     if: github.event_name == 'workflow_dispatch'
@@ -244,8 +244,8 @@ jobs:
           for archive in "${archives[@]}"; do args+=(--artifact "$archive"); done
           node scripts/agentharness-stage-npx.mjs "${args[@]}" --github \
             --base-url "https://github.com/$GH_REPO" --out dist/agentharness-release
-          npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts
-          cp "dist/agentharness-artifacts/agentharness-$version.tgz" dist/agentharness-artifacts/agentharness-npm.tgz
+          packed=$(npm pack ./dist/agentharness-release/npm --ignore-scripts --pack-destination dist/agentharness-artifacts)
+          mv "dist/agentharness-artifacts/$packed" dist/agentharness-artifacts/agentharness-npm.tgz
           cp dist/agentharness-release/install.sh dist/agentharness-release/install.ps1 dist/agentharness-artifacts/
           cp "dist/agentharness-release/releases/$version/manifest.json" dist/agentharness-artifacts/
           (cd dist/agentharness-artifacts && sha256sum -- *.tgz install.sh install.ps1 manifest.json > SHA256SUMS)
