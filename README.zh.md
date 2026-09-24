@@ -12,7 +12,7 @@
 安装 [Node.js 22.19+ 或 24+](https://nodejs.org/)，运行下面这条命令。它会安装 AgentHarness、内含的 DeepSeek Harness 和便携 Node 运行时，然后在 `http://127.0.0.1:3080` 打开本地 Web 界面：
 
 ```sh
-npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.1/agentharness-npm.tgz
+npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.2/agentharness-npm.tgz
 ```
 
 首次发布 npm 包后，可以使用更短的 `npx --yes @oklahomawhore/agentharness`。macOS/Linux 需要 curl、tar 和 sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
