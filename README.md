@@ -12,10 +12,10 @@ English | [中文](README.zh.md)
 Install [Node.js 22.19+ or 24+](https://nodejs.org/) and run this single command. It installs AgentHarness, the bundled DeepSeek Harness runtime, and a portable Node runtime, then opens the local Web app at `http://127.0.0.1:3080`:
 
 ```sh
-npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/latest/download/agentharness-npm.tgz
+npx --yes agentharness
 ```
 
-After the first npm publication, the shorter `npx agentharness` command will work too. Until then, use the Release command above. macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar.
+macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar. If npm is unavailable, the [GitHub Release bootstrap](https://github.com/Oklahomawhore/AgentHarness/releases/latest/download/agentharness-npm.tgz) can also be run with `npx --yes <URL>`.
 
 **The collaboration center is open when the app starts.** You can explore it and create a Task without an API key. To begin a model conversation, close the center, choose a local project folder as your Workspace, then activate the conversation input. If no model is usable, the API-key dialog appears at that point. Enter your own DeepSeek key; it is stored locally in your Harness home and never bundled in the release.
 
