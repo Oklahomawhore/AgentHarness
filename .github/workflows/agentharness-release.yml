@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Public distribution tests
@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: pnpm
@@ -108,7 +108,7 @@ jobs:
       VERSION: ${{ needs.verify.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - uses: actions/download-artifact@v4
@@ -181,7 +181,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.verify.outputs.version }}
     steps:
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
@@ -216,7 +216,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - uses: actions/download-artifact@v4
