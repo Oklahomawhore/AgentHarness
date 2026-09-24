@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-24-agentharness-scoped-bootstrap.md
-2026-09-24-agentharness-scoped-bootstrap.md: 618c43541b841ff7bff37813c7f94a945ce21f18
-2026-09-24-agentharness-scoped-bootstrap.zh.md: 503ab4075587016aaea5ecdf0ad1697559c73172
+2026-09-24-agentharness-scoped-bootstrap.md: a7891d0d2cf77a5c64ed0098bfa3275514a3cac1
+2026-09-24-agentharness-scoped-bootstrap.zh.md: 2f82179e0454e6d93c92782e27ce3602803d171d

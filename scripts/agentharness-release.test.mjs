@@ -73,7 +73,7 @@ test('staging generates a packable npm bootstrap with matching GitHub URLs', asy
     const stage = spawnSync(process.execPath, [join(import.meta.dirname, 'agentharness-stage-npx.mjs'), '--github', '--base-url', baseUrl, '--artifact', archive, '--out', output], { encoding: 'utf8' })
     assert.equal(stage.status, 0, stage.stderr)
     const pkg = JSON.parse(await readFile(join(output, 'npm/package.json'), 'utf8'))
-    assert.equal(pkg.name, '@oklahomawhore/agentharness')
+    assert.equal(pkg.name, '@sandboxbreak/agentharness')
     assert.equal(pkg.version, '0.1.7')
     assert.deepEqual(pkg.bin, { agentharness: 'bin.mjs' })
     assert.equal(pkg.author, 'Wangshu Zhu')
