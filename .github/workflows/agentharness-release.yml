@@ -191,7 +191,7 @@ jobs:
         run: |
           gh release download "v$VERSION" --pattern agentharness-npm.tgz --pattern SHA256SUMS
           sha256sum --check --ignore-missing SHA256SUMS
-          if npm view "@oklahomawhore/agentharness@$VERSION" dist.integrity --json > published.json 2>/dev/null; then
+          if npm view "@sandboxbreak/agentharness@$VERSION" dist.integrity --json > published.json 2>/dev/null; then
             node --input-type=module -e '
               import { readFileSync } from "node:fs";
               import { createHash } from "node:crypto";
