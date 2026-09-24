@@ -6,9 +6,9 @@ This reference covers the AgentHarness npm bootstrap and publication of this for
 
 ## User installation
 
-After publication, `npx --yes @sandboxbreak/agentharness` installs a pinned portable release containing this fork's DeepSeek Harness runtime and Node.js, then starts the local Web UI. It requires Node.js to run npx, plus the platform utilities listed in the [root README](../README.md). DeepSeek Harness is included in the portable dependency closure; users do not install the upstream npm package separately. There is no npm postinstall hook.
+`npx --yes @sandboxbreak/agentharness` installs a pinned portable release containing this fork's DeepSeek Harness runtime and Node.js, then starts the local Web UI. It requires Node.js to run npx, plus the platform utilities listed in the [root README](../README.md). DeepSeek Harness is included in the portable dependency closure; users do not install the upstream npm package separately. There is no npm postinstall hook.
 
-Fresh installs generate independent cluster credentials. Existing credentials remain unchanged; joining another team uses `agentharness cluster join --secret-stdin`. Users supply their own model API keys. Supported MCP clients are configured by the installer, and conflicts remain untouched. Repeated runs of the same bootstrap download its pinned portable release again. npx can cache a GitHub URL bootstrap, so its `latest` URL does not guarantee an upgrade; use a versioned Release URL to select a newer bootstrap before npm publication. Installed commands manage status, logs and shutdown.
+Fresh installs generate independent cluster credentials. Existing credentials remain unchanged; joining another team uses `agentharness cluster join --secret-stdin`. Users supply their own model API keys. Supported MCP clients are configured by the installer, and conflicts remain untouched. Repeated runs of the same bootstrap download its pinned portable release again. Installed commands manage status, logs and shutdown.
 
 ## Automatic releases
 
@@ -31,9 +31,9 @@ Repeat `--artifact` for other targets. Local builds can set `AGENTHARNESS_RELEAS
 
 ## npm authentication
 
-Automatic GitHub Releases use the workflow's `GITHUB_TOKEN`, without a personal token. npm publication is disabled by default; GitHub Releases still provide an installable npm tarball. The npm user `sandboxbreak` owns the `@sandboxbreak` scope. Configure an npm Trusted Publisher for `@sandboxbreak/agentharness` and this repository's `agentharness-release.yml` with publish permission, or a granular repository secret `NPM_TOKEN` authorized to publish the package. Set the repository variable `AGENTHARNESS_NPM_PUBLISH` to `true` afterward.
+Automatic GitHub Releases use the workflow's `GITHUB_TOKEN`, without a personal token. The npm user `sandboxbreak` owns the `@sandboxbreak` scope. npm's Trusted Publisher authorizes `Oklahomawhore/AgentHarness` and `agentharness-release.yml` to publish `@sandboxbreak/agentharness` directly. The npm job has `id-token: write` and does not receive `NPM_TOKEN`; set the repository variable `AGENTHARNESS_NPM_PUBLISH` to `true` to enable it on tag runs.
 
-The npm job downloads the exact released tarball after GitHub publication, checks SHA256SUMS and publishes with provenance and the `latest` tag. Existing versions are skipped. npm failure does not delete the GitHub Release; rerun the failed job after correcting authentication. See [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) for authentication rules. Do not advertise `npx --yes @sandboxbreak/agentharness` as publicly available before npm publication succeeds.
+The npm job downloads the exact released tarball after GitHub publication, checks SHA256SUMS and publishes with provenance and the `latest` tag. An existing version passes only when its registry integrity matches the released tarball. npm failure does not delete the GitHub Release; rerun the failed job after correcting authentication. Newly published versions may take several minutes to become installable while npm scans them. See [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) for authentication rules.
 
 ## Source disclosure
 
