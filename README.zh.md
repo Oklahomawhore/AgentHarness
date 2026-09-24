@@ -12,10 +12,10 @@
 安装 [Node.js 22.19+ 或 24+](https://nodejs.org/)，运行下面这条命令。它会安装 AgentHarness、内含的 DeepSeek Harness 和便携 Node 运行时，然后在 `http://127.0.0.1:3080` 打开本地 Web 界面：
 
 ```sh
-npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/download/v0.2.3/agentharness-npm.tgz
+npx --yes @sandboxbreak/agentharness
 ```
 
-首次发布 npm 包后，可以使用更短的 `npx --yes @sandboxbreak/agentharness`。macOS/Linux 需要 curl、tar 和 sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
+带版本的安装脚本与归档文件可在 [GitHub Releases](https://github.com/Oklahomawhore/AgentHarness/releases/tag/v0.2.3) 获取。macOS/Linux 需要 curl、tar 和 sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
 
 **应用打开时，协作中心已经展开。** 不填 API key 也能浏览界面、创建 Task。准备与模型对话时，先关闭协作中心，选择本机项目目录作为工作区，再点击对话输入区。如果尚无可用模型，此时才弹出 API key 配置；填写你自己的 DeepSeek key。密钥只保存在本机 Harness home，不进入发行包。
 

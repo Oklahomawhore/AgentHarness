@@ -180,12 +180,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.verify.outputs.version }}
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
+      - name: Use npm CLI with trusted publishing support
+        run: npm install --global npm@11.19.1
       - name: Publish the exact released npm tarball
         shell: bash
         run: |
