@@ -2,31 +2,39 @@
 
 English | [中文](README.zh.md)
 
-**Collaborative context engineering for people and agents.**
+**One shared goal for your team and their agents.**
 
-Work on one problem across separate agent sessions. AgentHarness gives each shared Task a place for goals, findings, and decisions: publish the context collaborators need, connect their sessions, and carry selected context into follow-up work.
+Frontend, backend, and ML engineers need to deliver a feature together. A company owner needs to see how the team's work is progressing and where a decision is needed. AgentHarness puts requirements, published progress, blockers, and decisions in one shared Task, so teammates and their agents can pick up each other's work. This is context engineering for team collaboration.
 
 [Try it](#run) · [User guide](docs/user/guide/index.md) · [Design white paper](docs/whitepaper.md) · [Contribute](CONTRIBUTING.md)
 
 ![A Task with its revision, session connection guidance, and explicitly published context](assets/agentharness-collaboration.en.png)
 
-The collaboration center shows the Task's lineage, each client's connection guidance, and the context people have chosen to share.
+Open a Task to read the team's published updates and decisions, see who contributed them, and connect your own agent session.
 
-## One task, several perspectives
+## Frontend, backend, and ML: ship one feature together
 
-When teammates work in separate agent sessions, findings and decisions can remain scattered across conversations. AgentHarness makes selected context available around a shared Task, with explicit publications and fixed source revisions.
+Suppose your team is building a “Recommended for you” feature. The frontend engineer builds the cards, the backend engineer serves the recommendations, and the ML engineer develops retrieval and ranking. Each works with their own agent; the shared Task holds the requirements and the information their teammates need.
 
-For example, a team investigating a slow API can use this workflow:
+Here is what they might publish as the work progresses:
 
-| Step | What collaborators do | What carries forward |
+| Who | Update published to the Task | Who can act on it |
 | --- | --- | --- |
-| Define the task | Record the goal, constraints, and starting references. | A common starting point. |
-| Publish a finding | Add a concise finding and its source under **Shared context**. | An explicit contribution, attributed to its publisher. |
-| Bring in another session | Connect a colleague's Codex, Cursor, or Claude session to the Task. | That session can receive the Task's shared context. |
-| Explore alternatives | Fork Tasks for separate approaches; preview and select inherited publications. | Context from a fixed parent revision. |
-| Bring findings together | Create a Merge Task from two or more Tasks. | Selected context with its source Tasks and revisions. |
+| Frontend engineer | “The cards are ready. I need item IDs, titles, and image URLs; the empty state still needs a decision.” | Backend can check the response fields; the team can settle the empty state. |
+| Backend engineer | “The test endpoint is ready. Here are the API description and sample response; integration is waiting on ranking output.” | Frontend can connect the UI; ML can align its output with the endpoint. |
+| ML engineer | “Ranking output is ready. Here are the evaluation notes; new users still need a fallback strategy.” | Backend can integrate it; the team can decide what to show new users. |
 
-Fork and Merge create new Tasks and preserve their parents. A Merge brings context together; collaborators still evaluate conflicting conclusions and manage code changes in their development tools. Private chats, full session histories, and internal reasoning are not published automatically.
+Each collaborator connects their own Codex, Cursor, or Claude session to the Task, so it can receive these published requirements and updates. When another teammate takes over, they can read the same context and continue from the recorded decisions.
+
+## Company owner and employees: check progress in one place
+
+A company owner wants to know: What is ready? What is blocked? What needs my decision? Employees need a clear goal and a record of the decisions that affect their work.
+
+1. **Set the goal together.** Create a Task with the scope and acceptance criteria, for example: “Demo recommendations to the customer on Friday; the first version covers existing users.”
+2. **Publish useful progress.** Employees add what is done, what is blocked, and the next step, with references to demos or test results: “The page is ready; integration is waiting on the API fields.”
+3. **Check progress and make a decision.** The owner opens the same Task to read the published updates and adds a decision such as: “Show popular items to new users in the first version.” The team and connected agent sessions can use that decision in subsequent work.
+
+Progress visibility comes from updates that participants explicitly publish. You can check the latest shared account of the work whenever you open the Task; unpublished work and automatic completion percentages are not part of this view.
 
 <a id="run"></a>
 ## Try it
@@ -55,6 +63,8 @@ The [user guide](docs/user/guide/index.md) covers service controls, MCP setup, a
 ## What to expect
 
 AgentHarness is a **developer preview**; compatibility-breaking changes are expected. You can use Tasks locally or collaborate between configured nodes. Task context consists of initial material, explicit publications, and selected inherited context. Tasks have no approval or completion workflow, and parent revisions stay fixed after creation.
+
+To explore different approaches, Fork a Task and select which publications to inherit from a fixed parent revision. To bring findings together, create a Merge Task from two or more Tasks. Both create new Tasks and preserve their parents; collaborators still evaluate conflicting conclusions and manage code changes in their development tools. Private chats, full session histories, and internal reasoning are not published automatically.
 
 The [design white paper](docs/whitepaper.md) explores the broader direction of collaborative context engineering. The [user guide](docs/user/guide/index.md) describes the available workflow; the [collaboration reference](packages/collaboration/README.md) explains its implementation.
 
