@@ -2,46 +2,72 @@
 
 English | [中文](README.zh.md)
 
-![AgentHarness: a shared workspace for people and agents](assets/agentharness-hero.png)
+**Collaborative context engineering for people and agents.**
 
-**A shared workspace for people and their agents.** AgentHarness opens a local collaboration center where you create a Task, connect individual Agent sessions, and publish the context those sessions may share. Tasks can fork and merge while retaining the context selected at creation. A Room manages membership behind each Task; the visible workspace is Task-first.
+Work on one problem across separate agent sessions. AgentHarness gives each shared Task a place for goals, findings, and decisions: publish the context collaborators need, connect their sessions, and carry selected context into follow-up work.
+
+[Try it](#run) · [User guide](docs/user/guide/index.md) · [Design white paper](docs/whitepaper.md) · [Contribute](CONTRIBUTING.md)
+
+![A Task with its revision, session connection guidance, and explicitly published context](assets/agentharness-collaboration.en.png)
+
+The collaboration center shows the Task's lineage, each client's connection guidance, and the context people have chosen to share.
+
+## One task, several perspectives
+
+When teammates work in separate agent sessions, findings and decisions can remain scattered across conversations. AgentHarness makes selected context available around a shared Task, with explicit publications and fixed source revisions.
+
+For example, a team investigating a slow API can use this workflow:
+
+| Step | What collaborators do | What carries forward |
+| --- | --- | --- |
+| Define the task | Record the goal, constraints, and starting references. | A common starting point. |
+| Publish a finding | Add a concise finding and its source under **Shared context**. | An explicit contribution, attributed to its publisher. |
+| Bring in another session | Connect a colleague's Codex, Cursor, or Claude session to the Task. | That session can receive the Task's shared context. |
+| Explore alternatives | Fork Tasks for separate approaches; preview and select inherited publications. | Context from a fixed parent revision. |
+| Bring findings together | Create a Merge Task from two or more Tasks. | Selected context with its source Tasks and revisions. |
+
+Fork and Merge create new Tasks and preserve their parents. A Merge brings context together; collaborators still evaluate conflicting conclusions and manage code changes in their development tools. Private chats, full session histories, and internal reasoning are not published automatically.
 
 <a id="run"></a>
 ## Try it
 
-Install [Node.js 22.19+ or 24+](https://nodejs.org/) and run this single command. It installs AgentHarness, the bundled DeepSeek Harness runtime, and a portable Node runtime, then opens the local Web app at `http://127.0.0.1:3080`:
+Use Node.js **22.19.x or a later 22.x release, or 24+**. On macOS/Linux, also install curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar. Then run:
 
 ```sh
 npx --yes @sandboxbreak/agentharness
 ```
 
-Versioned installers and archives are available in [GitHub Releases](https://github.com/Oklahomawhore/AgentHarness/releases/tag/v0.2.3). macOS/Linux need curl, tar, and sha256sum or shasum; Windows x64 needs PowerShell and tar.
+The installer downloads AgentHarness with its bundled DeepSeek Harness and portable Node runtime, starts the service, and opens the local app at `http://127.0.0.1:3080`. [GitHub Releases](https://github.com/Oklahomawhore/AgentHarness/releases) provides versioned installers and archives.
 
-**The collaboration center is open when the app starts.** You can explore it and create a Task without an API key. To begin a model conversation, close the center, choose a local project folder as your Workspace, then activate the conversation input. If no model is usable, the API-key dialog appears at that point. Enter your own DeepSeek key; it is stored locally in your Harness home and never bundled in the release.
+**You can create a Task without a model API key.** In the collaboration center that opens on startup:
 
-![First launch: the open collaboration center shows how to create shared context](assets/agentharness-first-run.en.png)
+1. Enter a collaboration display name and save it.
+2. Choose **New task → New independent task**, then enter a name and initial shared context.
+3. Publish a finding or decision under **Shared context**. Select the Task to see its revision, lineage, and published material.
+4. Follow the Agent-session guidance to connect one specific session. Ask that session to call `agentharness_task_connect` for the Task. Each additional session joins separately.
 
-With a Task created, the center shows its lineage, Agent-session guidance, and published context:
+Client MCP configuration prepares the connection. **Session connected** means an individual session joined; **Context acknowledged** means it received the Task revision on a subsequent MCP call.
 
-![AgentHarness collaboration center with a Task, Agent connection guidance, and shared context](assets/agentharness-collaboration.en.png)
+To use the app's built-in model conversation, close the center, choose a local project folder as your Workspace, and activate the conversation input. If no model is usable, the API-key dialog asks for your own DeepSeek key. The key is stored in your local Harness home and is not bundled in the release.
 
-1. Set a collaboration display name and save it.
-2. Choose **New task → New independent task**, then enter a Task name and initial shared context.
-3. Select the Task and follow the Agent-session instructions. The installer configures supported local MCP clients; each Codex, Cursor, or Claude session joins explicitly from that session.
-4. Publish the decisions you want another Task to inherit. Fork a Task or merge Tasks to create new context branches. Private chats and internal reasoning are not published automatically.
+The [user guide](docs/user/guide/index.md) covers service controls, MCP setup, and connecting teammates' installations. Separate machines need a configured collaboration cluster; joining a shared Task does not configure that network connection.
 
-Run `agentharness status`, `agentharness logs`, or `agentharness stop` to manage the installation. See the [user guide](docs/user/guide/index.md) for Workspace selection, MCP setup, and multi-node configuration.
+## What to expect
 
-## What AgentHarness is for
+AgentHarness is a **developer preview**; compatibility-breaking changes are expected. You can use Tasks locally or collaborate between configured nodes. Task context consists of initial material, explicit publications, and selected inherited context. Tasks have no approval or completion workflow, and parent revisions stay fixed after creation.
 
-AgentHarness helps collaborators keep a task's decisions, sources, and next steps together while they work in separate agent sessions. People choose what context to publish; private chats and internal reasoning stay private. Today the product supports local Tasks and configured-node collaboration. Broader interoperability remains a design goal, described in the [bilingual white paper](docs/whitepaper.md).
+The [design white paper](docs/whitepaper.md) explores the broader direction of collaborative context engineering. The [user guide](docs/user/guide/index.md) describes the available workflow; the [collaboration reference](packages/collaboration/README.md) explains its implementation.
 
-AgentHarness is an independent open-source distribution built on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and [Cordis](https://github.com/cordiverse/cordis). It retains the upstream `@deepseek-ai/dsh-*` package names and plugin architecture and is pinned to the published `dsh-v0.1.5-rc.2` release candidate ([provenance](UPSTREAM.md)). The runtime includes a Volcengine Coding Plan endpoint, but no shared API key. **This is a developer preview; compatibility-breaking changes are expected.**
+## Project and upstream
+
+AgentHarness is an independent project maintained by **Wangshu Zhu**, an algorithm engineer at a startup. **Neither the project nor its author is affiliated with or endorsed by DeepSeek.**
+
+The project is built on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and [Cordis](https://github.com/cordiverse/cordis). It retains upstream package names and plugin architecture; [upstream provenance](UPSTREAM.md) records the pinned release and attribution. Model access uses your own credentials.
 
 <a id="run-from-source"></a>
 ## Contribute and develop
 
-Use the [contribution guide](CONTRIBUTING.md) for the branch workflow and [development guide](docs/development.md) to run from source. Developers can copy `.env.example` to `.env`, supply their own key, and run `pnpm start`. Please remove keys and private data from [issues](https://github.com/Oklahomawhore/AgentHarness/issues) and [pull requests](https://github.com/Oklahomawhore/AgentHarness/pulls). Agents should follow [AGENTS.md](AGENTS.md).
+Use the [development guide](docs/development.md) to run from source and the [contribution guide](CONTRIBUTING.md) for the branch and PR workflow. Reproducible examples of context handoffs, installation reports, and documentation improvements are useful contributions. Remove keys and private data from [issues](https://github.com/Oklahomawhore/AgentHarness/issues) and [pull requests](https://github.com/Oklahomawhore/AgentHarness/pulls). Agents should follow [AGENTS.md](AGENTS.md).
 
 ## License
 
