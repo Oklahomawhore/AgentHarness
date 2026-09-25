@@ -2,7 +2,7 @@
 /** Manage an installed AgentHarness runtime and print client-specific MCP setup. */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, openSync, realpathSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -218,6 +218,8 @@ async function startRuntime(args, environment) {
   const logPath = join(directory, 'server.log')
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const log = openSync(logPath, 'a', 0o600)
+  const logOffset = fstatSync(log).size
+  let exitResult
   let child
   try {
     const runtimeArguments = hasPortOption(args) ? ['--no-open', ...args] : ['--no-open', '--port', String(port), ...args]
@@ -233,6 +235,8 @@ async function startRuntime(args, environment) {
       stdio: ['ignore', log, log],
     })
     if (child.pid === undefined) throw new Error('AgentHarness process did not receive a PID')
+    child.once('exit', (code, signal) => { exitResult = signal === null ? `exit code ${code}` : `signal ${signal}` })
+    child.once('error', error => { exitResult = error.message })
     child.unref()
   } finally {
     closeSync(log)
@@ -249,13 +253,19 @@ async function startRuntime(args, environment) {
   }, null, 2)}\n`, { mode: 0o600 })
 
   const ready = await waitFor(async () => {
-    if (!processExists(child.pid)) return true
+    if (exitResult !== undefined) return true
     return endpointReady(port)
   }, STARTUP_TIMEOUT_MS)
-  if (!ready || !processExists(child.pid) || !await endpointReady(port)) {
-    if (processExists(child.pid)) process.kill(child.pid, 'SIGTERM')
-    await removeRuntimeState(environment)
-    throw new Error(`AgentHarness did not become ready at ${url}; inspect ${logPath}`)
+  if (!ready || exitResult !== undefined || !await endpointReady(port)) {
+    const reason = exitResult === undefined
+      ? `did not become ready within ${STARTUP_TIMEOUT_MS / 1000}s at ${url}`
+      : `exited before readiness (${exitResult})`
+    if (exitResult === undefined) await stopRuntime(environment, true)
+    else await removeRuntimeState(environment)
+    const output = (await readFile(logPath)).subarray(logOffset).toString('utf8')
+      .replace(/([?&]token=)[^\s&#]+/gu, '$1[redacted]')
+      .trim().slice(-8_000)
+    throw new Error(`AgentHarness ${reason}; inspect ${logPath}${output === '' ? '' : `\nStartup output:\n${output}`}`)
   }
   process.stdout.write(`AgentHarness ${version} is ready at ${url}\nLogs: ${logPath}\n`)
   if (environment.AGENTHARNESS_NO_OPEN !== '1') {

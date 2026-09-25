@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const root = resolve(import.meta.dirname, '..')
 test('bootstrap preserves existing team input and creates fresh private cluster material', { skip: process.platform === 'win32' }, async () => {
@@ -12,6 +13,7 @@ test('bootstrap preserves existing team input and creates fresh private cluster 
   try {
     await cp(join(root, 'scripts/agentharness-npx-bin.mjs'), join(directory, 'bin.mjs'))
     await cp(join(root, 'scripts/agentharness-cluster.mjs'), join(directory, 'agentharness-cluster.mjs'))
+    await cp(dirname(fileURLToPath(import.meta.resolve('yaml/package.json'))), join(directory, 'node_modules/yaml'), { recursive: true })
     await writeFile(join(directory, 'install.sh'), 'printf "%s" "$AGENTHARNESS_MESH_SECRET" > "$AGENTHARNESS_TEST_SECRET_FILE"\nexit "${AGENTHARNESS_TEST_EXIT:-0}"\n')
     const secretFile = join(directory, 'secret')
     const env = { ...process.env, DSH_HOME: directory, AGENTHARNESS_TEST_SECRET_FILE: secretFile, AGENTHARNESS_MESH_SECRET: '' }
@@ -27,6 +29,9 @@ test('bootstrap preserves existing team input and creates fresh private cluster 
     assert.equal(await readFile(secretFile, 'utf8'), 'test-team-secret')
     const managed = 'persisted-private-cluster-material-from-an-earlier-install'
     await writeFile(join(directory, '.credentials.yaml'), `AGENTHARNESS_MESH_SECRET: ${JSON.stringify(managed)}\n`, { mode: 0o600 })
+    assert.equal(run().status, 0)
+    assert.equal(await readFile(secretFile, 'utf8'), managed)
+    await writeFile(join(directory, '.credentials.yaml'), `version: 1\nrefs:\n  AGENTHARNESS_MESH_SECRET: ${JSON.stringify(managed)}\n`, { mode: 0o600 })
     assert.equal(run().status, 0)
     assert.equal(await readFile(secretFile, 'utf8'), managed)
     assert.equal(run([], { AGENTHARNESS_TEST_EXIT: '7' }).status, 7)

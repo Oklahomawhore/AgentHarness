@@ -4,7 +4,6 @@ import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readClusterCredential } from './agentharness-cluster.mjs'
 
 const root = import.meta.dirname
 const args = process.argv.slice(2)
@@ -26,6 +25,7 @@ if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
     // The installer retains an existing credential; fresh installs own a private cluster.
     let stored
     try {
+      const { readClusterCredential } = await import('./agentharness-cluster.mjs')
       stored = await readClusterCredential({ ...process.env, AGENTHARNESS_MESH_SECRET: '' })
     } catch (error) {
       process.stderr.write(`agentharness: ${error instanceof Error ? error.message : String(error)}\n`)

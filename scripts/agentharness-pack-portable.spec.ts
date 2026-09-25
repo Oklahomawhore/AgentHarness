@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { copyClusterRuntime } from './agentharness-portable-fixture.ts'
 import { parsePortableArguments, portableCommand, prunePortableSources, validatePortableOutput, verifyPortablePayload } from './agentharness-pack-portable.mjs'
 import { portableEnvironment, portableWebArguments } from './agentharness-portable-start.mjs'
 
@@ -129,7 +130,7 @@ describe('AgentHarness portable release', () => {
     await mkdir(join(version, 'lib'), { recursive: true })
     await mkdir(join(home, 'storages'), { recursive: true })
     await cp(resolve(import.meta.dirname, 'agentharness-portable-start.mjs'), join(version, 'start.mjs'))
-    await cp(resolve(import.meta.dirname, 'agentharness-cluster.mjs'), join(version, 'agentharness-cluster.mjs'))
+    await copyClusterRuntime(version)
     await cp(resolve(import.meta.dirname, 'agentharness-node-identity.mjs'), join(version, 'agentharness-node-identity.mjs'))
     await writeFile(join(home, 'agentharness-node.json'), JSON.stringify({ version: 1, nodeId: 'agentharness-existing-node' }))
     await writeFile(join(home, 'storages', 'development_rooms.json'), JSON.stringify({

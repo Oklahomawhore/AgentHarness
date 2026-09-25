@@ -75,6 +75,7 @@ test('staging generates a packable npm bootstrap with matching GitHub URLs', asy
     const pkg = JSON.parse(await readFile(join(output, 'npm/package.json'), 'utf8'))
     assert.equal(pkg.name, '@sandboxbreak/agentharness')
     assert.equal(pkg.version, '0.1.7')
+    assert.deepEqual(pkg.dependencies, { yaml: '^2.9.0' })
     assert.deepEqual(pkg.bin, { agentharness: 'bin.mjs' })
     assert.equal(pkg.author, 'Wangshu Zhu')
     const pack = spawnSync('npm', ['pack', './npm', '--json', '--ignore-scripts', '--pack-destination', root], { cwd: output, encoding: 'utf8' })

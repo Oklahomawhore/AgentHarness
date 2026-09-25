@@ -30,7 +30,7 @@ npx --yes @sandboxbreak/agentharness
 3. 选中 Task，按照 Agent Session 指引操作。安装器会配置受支持的本地 MCP 客户端；每个 Codex、Cursor 或 Claude Session 都需要从各自的会话中主动加入。
 4. 主动发布希望后续 Task 继承的决策。可以派生一个 Task，也可以汇合多个 Task。私聊和内部推理不会自动公开。
 
-安装后可运行 `agentharness status`、`agentharness logs`、`agentharness stop` 管理进程。工作区选择、MCP 配置和多节点设置详见[用户指南](docs/user/guide/index.zh.md)。
+安装后可运行 `agentharness status`、`agentharness logs`、`agentharness stop` 管理进程。启动失败会报告进程退出码或就绪超时，并展示本次启动的输出。工作区选择、MCP 配置和多节点设置详见[用户指南](docs/user/guide/index.zh.md)。
 
 ## AgentHarness 用来做什么
 
