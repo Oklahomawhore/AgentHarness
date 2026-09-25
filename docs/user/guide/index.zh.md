@@ -6,13 +6,13 @@ AgentHarness 在本机运行。浏览器呈现协作中心与对话；运行时�
 
 ## 1. 启动应用
 
-安装 Node.js 22.19+ 或 24+，然后运行当前 GitHub Release 引导命令：
+使用 Node.js 22.19.x 或更新的 22.x 版本，或 24+，然后运行已发布的 npm 引导命令：
 
 ```sh
-npx --yes https://github.com/Oklahomawhore/AgentHarness/releases/latest/download/agentharness-npm.tgz
+npx --yes @sandboxbreak/agentharness
 ```
 
-引导程序校验并安装包含 AgentHarness 与 DeepSeek Harness 的便携运行时，启动服务，打开 `http://127.0.0.1:3080`。它还会配置受支持的本地 MCP 客户端，不会覆盖有冲突的同名配置。npm 包首次发布后，可使用短命令 `npx --yes @sandboxbreak/agentharness`。Unix 需要 curl、tar、sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
+引导程序校验并安装包含 AgentHarness 与 DeepSeek Harness 的便携运行时，启动服务，打开 `http://127.0.0.1:3080`。它还会配置受支持的本地 MCP 客户端，不会覆盖有冲突的同名配置。[GitHub Releases](https://github.com/Oklahomawhore/AgentHarness/releases) 提供带版本的安装脚本与归档文件。Unix 需要 curl、tar、sha256sum 或 shasum；Windows x64 需要 PowerShell 和 tar。
 
 首页直接展开协作中心，无需模型密钥。若要对话，先关闭协作中心，通过工作区选择器选一个项目目录，再点击输入区。没有可用模型时，配置对话框才会要求你填自己的 API key。密钥保存在本机 Harness home，不会进入安装包。
 
