@@ -30,7 +30,7 @@ With a Task created, the center shows its lineage, Agent-session guidance, and p
 3. Select the Task and follow the Agent-session instructions. The installer configures supported local MCP clients; each Codex, Cursor, or Claude session joins explicitly from that session.
 4. Publish the decisions you want another Task to inherit. Fork a Task or merge Tasks to create new context branches. Private chats and internal reasoning are not published automatically.
 
-Run `agentharness status`, `agentharness logs`, or `agentharness stop` to manage the installation. See the [user guide](docs/user/guide/index.md) for Workspace selection, MCP setup, and multi-node configuration.
+Run `agentharness status`, `agentharness logs`, or `agentharness stop` to manage the installation. Startup failures report the process exit code or readiness timeout and output from that launch. See the [user guide](docs/user/guide/index.md) for Workspace selection, MCP setup, and multi-node configuration.
 
 ## What AgentHarness is for
 

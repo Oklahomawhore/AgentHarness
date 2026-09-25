@@ -2,7 +2,7 @@
 /** Verify a fresh installed portable runtime serves the Workspace onboarding UI in Chromium. */
 
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -48,13 +48,15 @@ function waitForReady(child) {
 }
 
 async function stop(child) {
-  if (child.exitCode !== null) return
-  child.kill('SIGINT')
-  await Promise.race([
-    new Promise(resolveExit => child.once('exit', resolveExit)),
-    new Promise(resolveTimeout => setTimeout(resolveTimeout, 10_000)),
-  ])
-  if (child.exitCode === null) child.kill('SIGKILL')
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = new Promise(resolveExit => child.once('exit', resolveExit))
+  const timer = setTimeout(() => { child.kill('SIGKILL') }, 10_000)
+  try {
+    child.kill('SIGINT')
+    await exited
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function assert(condition, message) {
@@ -92,15 +94,17 @@ async function main(args) {
   delete environment.DEEPSEEK_API_KEY
   delete environment.AGENTHARNESS_PROVIDER_API_KEY
   const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const child = spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', String(port)], {
+  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', String(port)], {
     cwd: current,
     env: environment,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  let child = start()
   let browser
   try {
     const baseUrl = await waitForReady(child)
-    browser = await chromium.launch()
+    const executablePath = process.env.DSH_PLAYWRIGHT_EXECUTABLE_PATH
+    browser = await chromium.launch(executablePath === undefined ? {} : { executablePath })
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
     const pageErrors = []
     page.on('pageerror', error => pageErrors.push(error.message))
@@ -113,6 +117,14 @@ async function main(args) {
     assert(await chooser.isVisible(), 'Workspace chooser is not visible')
     assert((await page.locator('body').innerText()).includes('选择一个工作区开始'), 'fresh Workspace prompt is absent')
     assert(pageErrors.length === 0, `portable browser raised page errors: ${pageErrors.join('; ')}`)
+    const credentialsPath = join(harnessHome, '.credentials.yaml')
+    const credentials = await readFile(credentialsPath, 'utf8')
+    await stop(child)
+    child = start()
+    const restartedUrl = await waitForReady(child)
+    const restartedPage = await page.goto(restartedUrl, { waitUntil: 'domcontentloaded' })
+    assert(restartedPage?.ok(), 'restarted portable Web endpoint is unavailable')
+    assert(await readFile(credentialsPath, 'utf8') === credentials, 'restart changed persisted credentials')
     process.stdout.write(`Installed portable browser smoke passed: ${basename(portableRoot)}\n`)
   } finally {
     await browser?.close()

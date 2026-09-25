@@ -5,6 +5,8 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parseCredentialsDocument } from '@deepseek-ai/dsh-credentials-local'
+import { copyClusterRuntime } from './agentharness-portable-fixture.ts'
 import { collaborationBrowserUrl, renderMcpGuide } from './agentharness-portable-command.mjs'
 import { createLanReleaseServer, detectLanAddress, parseLanArguments } from './agentharness-serve-lan-release.mjs'
 import {
@@ -18,7 +20,6 @@ import {
 } from './agentharness-stage-portable-release.mjs'
 
 const commandScript = resolve(import.meta.dirname, 'agentharness-portable-command.mjs')
-const clusterScript = resolve(import.meta.dirname, 'agentharness-cluster.mjs')
 const TEST_CLUSTER_SECRET = 'test-cluster-secret-material-that-is-long-enough'
 const temporaryDirectories: string[] = []
 const runningServers: ReturnType<typeof createServer>[] = []
@@ -64,7 +65,7 @@ async function portableArchive(root: string, version = '1.2.3', platform = proce
   const runtimeName = platform === 'win32' ? 'node.exe' : 'node'
   await writeFile(join(payload, 'runtime', runtimeName), platform === 'win32' ? 'fake PE runtime' : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 })
   await cp(commandScript, join(payload, 'agentharness.mjs'))
-  await cp(clusterScript, join(payload, 'agentharness-cluster.mjs'))
+  await copyClusterRuntime(payload)
   await writeFile(join(payload, 'start.mjs'), '')
   await writeFile(join(payload, 'mcp.mjs'), '')
   await writeFile(join(payload, 'agentharness-portable.json'), `${JSON.stringify({
@@ -197,7 +198,7 @@ describe('AgentHarness portable release staging', () => {
     expect(installed.stdout).toContain('Joined AgentHarness cluster')
     const credentials = await readFile(join(home, '.dsh', '.credentials.yaml'), 'utf8')
     expect(credentials).toContain('AGENTHARNESS_MESH_SECRET')
-    expect(credentials).toContain(JSON.stringify(TEST_CLUSTER_SECRET))
+    expect(parseCredentialsDocument(credentials, 'installed credentials').refs.get('AGENTHARNESS_MESH_SECRET')).toBe(TEST_CLUSTER_SECRET)
   })
 
   it('stages and installs twice through the exact curl pipe without Git, pnpm, or system Node', async () => {
@@ -323,13 +324,52 @@ describe('AgentHarness LAN release server and installed command', () => {
     expect((await fetch(`http://127.0.0.1:${port}/abcdefghijkl/%2e%2e/package.json`)).status).toBe(404)
   })
 
+  it('reports this launch failure and exit code without stale log output or browser tokens', async () => {
+    const fixture = await temporaryDirectory('agentharness failed start ')
+    const portable = join(fixture, 'portable')
+    const state = join(fixture, 'state')
+    await mkdir(portable, { recursive: true })
+    await mkdir(state)
+    await cp(commandScript, join(portable, 'agentharness.mjs'))
+    await copyClusterRuntime(portable)
+    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
+    await writeFile(join(state, 'server.log'), 'stale launch failure\n')
+    await writeFile(join(portable, 'start.mjs'), [
+      "console.error('credentials-local: unknown top-level key AGENTHARNESS_MESH_SECRET')",
+      "console.error('dsh web: http://127.0.0.1:3080/?token=private-browser-token')",
+      'process.exitCode = 7',
+    ].join('\n'))
+    // An owned bound socket reserves the port without answering the HTTP probe.
+    const reservation = createServer()
+    await listen(reservation, 0)
+    const address = reservation.address()
+    if (address === null || typeof address === 'string') throw new Error('port reservation failed')
+    const child = spawn(process.execPath, [join(portable, 'agentharness.mjs'), 'start'], {
+      env: { ...process.env, AGENTHARNESS_ACTIVE_ROOT: portable, AGENTHARNESS_RUNTIME_DIR: state, AGENTHARNESS_PORT: String(address.port), AGENTHARNESS_NO_OPEN: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+    const code = await new Promise<number | null>((resolveExit, reject) => {
+      child.once('error', reject)
+      child.once('close', resolveExit)
+    })
+    expect(code).toBe(1)
+    await expect(stderr.replaceAll(join(state, 'server.log'), '<log>')).toMatchFileSnapshot('./tests/expected/agentharness-start-failure.txt')
+    expect(stderr).toContain('exited before readiness (exit code 7)')
+    expect(stderr).toContain('credentials-local: unknown top-level key AGENTHARNESS_MESH_SECRET')
+    expect(stderr).not.toContain('stale launch failure')
+    expect(stderr).not.toContain('private-browser-token')
+    await expect(readFile(join(state, 'server.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('starts, reports, and stops a detached packed runtime', async () => {
     const fixture = await temporaryDirectory('agentharness command test ')
     const portable = join(fixture, 'portable')
     const state = join(fixture, 'state')
     await mkdir(portable, { recursive: true })
     await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await cp(clusterScript, join(portable, 'agentharness-cluster.mjs'))
+    await copyClusterRuntime(portable)
     await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ product: 'AgentHarness', version: '9.8.7' }))
     await writeFile(join(portable, 'start.mjs'), [
       'import { createServer } from \'node:http\'',
@@ -398,7 +438,7 @@ describe('AgentHarness LAN release server and installed command', () => {
     const state = join(fixture, 'state')
     await mkdir(portable, { recursive: true })
     await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await cp(clusterScript, join(portable, 'agentharness-cluster.mjs'))
+    await copyClusterRuntime(portable)
     await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ product: 'AgentHarness', version: '9.8.8' }))
     await writeFile(join(portable, 'start.mjs'), [
       'import { createServer } from \'node:http\'',
