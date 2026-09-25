@@ -55,19 +55,24 @@ pnpm run typecheck
 
 ### AgentHarness 分支协作流程
 
-`main` 是受控的发布分支，`develop` 汇集下一次发布的已审查改动。贡献者从 `develop` 建立 `feature/<topic>`、`fix/<topic>` 或 `docs/<topic>` 分支，提交 Pull Request 时明确选择 `develop` 为目标分支，即使 GitHub 将 `main` 显示为仓库默认分支。维护者在相关本地检查通过后审查并合并；合入 `develop` 不会发版。上游原有 CI 工作流保持各自的触发方式，AgentHarness 不为这些分支或 Pull Request 增加发布矩阵 CI。
+`main` 是默认分支，也是唯一长期开发主线。它包含下一版本经过审查的改动；已发布 tag 和产物标识发行版本。贡献者从最新 `origin/main` 创建短期 `feature/<topic>`、`fix/<topic>` 或 `docs/<topic>` 分支；除非另有命名要求，agent（智能体）使用 `codex/<topic>`。普通 Pull Request 以 `main` 为目标。流程不设置 `develop` 集成分支、按日期命名的候选发布分支或发布后的回合并。
 
-发布负责人可在选定的发版日从 `develop` 建立一个 `release/YYYY-MM-DD` 分支；按天发版是可选节奏，不由定时任务强制执行。建立后冻结新功能，稳定性修复提交到该 release 分支，其他开发继续进入 `develop`。同一天第二次切分支时加 `-2` 后缀；如果要紧急修复已发布版本，则从 `main` 切 release 分支，仍走相同的审查和打 tag 流程。避免并行维护多个发布候选分支。
+每个 Pull Request 应能独立审查，并在审查与[相关本地检查](../AGENTS.md#run-relevant-checks-locally)通过后合并。未完成的工作保留在主题分支上，或拆出可独立使用的增量再合入；`main` 必须保持可用。并行协作者使用各自的主题分支和 worktree。存在依赖的 Pull Request 可以按照[堆叠流程](cookbook/responding-to-pr-review-on-a-stack.zh.md)临时以父主题分支为目标，最底层仍以 `main` 为目标；这不引入另一条长期集成分支。确认依赖工作已保留后，删除已合并的主题分支。
 
-审查和相关检查通过后，通过 Pull Request 以合并提交将 release 分支合入 `main`。复制该合并提交的准确 SHA，选择一个未使用的稳定语义版本，在此提交上创建并推送附注 tag（下列版本号仅为示例）：
+拆分独立改动，传播修复前先修正引入问题的 PR。独立与堆叠主题分支均可采用 merge-forward 或 rebase。改写历史的推送必须使用 `--force-with-lease`，并在远端发生变化时中止；禁止直接使用 `--force`。获取更新的基线前，保留进行中的 merge-forward 检查点（[历史策略](../.agents/notes/implemented/process/2026-08-02-native-github-stacks-and-optional-rebases.zh.md)）。禁止强制推送 `main`。
+
+发布负责人选择可从 `origin/main` 到达、经过审查的准确提交，验证该候选版本，并选择一个未使用的稳定语义版本。即使 `main` 继续前进，候选版本也由 SHA 固定。新增稳定性修复或紧急修复同样通过主题分支 Pull Request 合入 `main`；需要包含这些修复时，重新选择并验证候选版本。在经过验证的提交上创建并推送附注 tag（下列版本号仅为示例）：
 
 ```sh
 git fetch origin main --tags
-git tag -a v1.2.3 <release-merge-commit-sha> -m "AgentHarness v1.2.3"
+git merge-base --is-ancestor <verified-main-commit-sha> origin/main
+git tag -a v1.2.3 <verified-main-commit-sha> -m "AgentHarness v1.2.3"
 git push origin v1.2.3
 ```
 
-只有 tag 会启动 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)；合并 `main`、更新文档、推送 `develop` 或 release 分支都不会触发。不要移动或复用已发布 tag。Release 成功后，通过 Pull Request 将 `main` 合回 `develop`，让稳定性修复进入下一轮开发，然后删除 release 分支。产物和 npm 发布细节见[发行指南](public-release.zh.md)。
+祖先关系检查命令成功后才能打 tag。推送 tag 会在 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)中启动新版本发布；分支推送和 Pull Request 不会。不要移动或复用已发布 tag。工作流保留现有 Release 附件的手动修复入口。产物和 npm 发布细节见[发行指南](public-release.zh.md)。上游 CI 工作流保留各自配置的触发条件；本分支策略不为分支推送或 Pull Request 增加发布矩阵 CI。
+
+AgentHarness 当前维护一条开发主线。若要独立维护旧版本，需要另行制定维护策略并修改发布校验：当前校验会拒绝不在 `main` 上的提交。[单 main 决策](../.agents/notes/implemented/process/2026-09-26-agentharness-single-main-development.zh.md)记录了这一范围及取舍。
 
 <a id="typescript-project-layout"></a>
 

@@ -79,7 +79,7 @@ The project is built on [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 <a id="run-from-source"></a>
 ## Contribute and develop
 
-Use the [development guide](docs/development.md) to run from source and the [contribution guide](CONTRIBUTING.md) for the branch and PR workflow. Reproducible examples of context handoffs, installation reports, and documentation improvements are useful contributions. Remove keys and private data from [issues](https://github.com/Oklahomawhore/AgentHarness/issues) and [pull requests](https://github.com/Oklahomawhore/AgentHarness/pulls). Agents should follow [AGENTS.md](AGENTS.md).
+Use the [development guide](docs/development.md) to run from source. Short-lived topic branches merge into the single development line, `main`, through PRs; releases use verified commits with version tags. The [contribution guide](CONTRIBUTING.md) explains the workflow. Reproducible examples of context handoffs, installation reports, and documentation improvements are useful contributions. Remove keys and private data from [issues](https://github.com/Oklahomawhore/AgentHarness/issues) and [pull requests](https://github.com/Oklahomawhore/AgentHarness/pulls). Agents should follow [AGENTS.md](AGENTS.md).
 
 ## License
 

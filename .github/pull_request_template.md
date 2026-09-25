@@ -1,5 +1,6 @@
 ## Motivation
 
+<!-- 普通 PR 从最新 main 创建短期分支，并以 main 为目标；依赖堆叠 PR 请注明父 PR，最底层以 main 为目标。协作流程：CONTRIBUTING.md。 -->
 <!-- 用一句话说明需要解决的问题，并以 Fixes #NN 或 Related #NN 引用同仓库 Issue。 -->
 
 ## Changes

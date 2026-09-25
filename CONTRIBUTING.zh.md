@@ -16,7 +16,9 @@ AgentHarness 由 Wangshu Zhu 维护。对本发行版的贡献请提交到这个
 
 ## 审查与发布
 
-从 `develop` 创建开发分支，并将 Pull Request 提交到 `develop`；release 分支和受控合入 `main` 的步骤见 [AgentHarness 分支协作流程](docs/development.zh.md#agentharness-branch-workflow)。附上复现或验证说明，并指出兼容性变更。合并 Pull Request 不会发版；版本 tag、便携产物和 npm 发布见[发行指南](docs/public-release.zh.md)。
+`main` 是唯一长期开发分支。从最新 `main` 创建短期主题分支，并将 Pull Request 提交到 `main`；紧急修复和文档改动也遵循这一流程。[AgentHarness 分支协作流程](docs/development.zh.md#agentharness-branch-workflow)说明审查、依赖改动和发布版本选择。附上复现或验证说明，并指出兼容性变更；审查和相关检查通过后再合并，然后删除已合并的主题分支。
+
+合并 Pull Request 不会发版。维护者选择经过验证的 `main` 提交，推送一个新的稳定版本 tag；便携产物和 npm 发布见[发行指南](docs/public-release.zh.md)。`main` 可以包含下一版本的开发内容；已发布 tag 和产物标识用户安装的版本。
 
 ## 署名
 
