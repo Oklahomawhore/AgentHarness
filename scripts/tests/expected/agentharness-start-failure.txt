@@ -1,0 +1,4 @@
+agentharness: AgentHarness exited before readiness (exit code 7); inspect <log>
+Startup output:
+credentials-local: unknown top-level key AGENTHARNESS_MESH_SECRET
+dsh web: http://127.0.0.1:3080/?token=[redacted]

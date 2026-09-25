@@ -60,6 +60,8 @@ To use the app's built-in model conversation, close the center, choose a local p
 
 The [user guide](docs/user/guide/index.md) covers service controls, MCP setup, and connecting teammates' installations. Separate machines need a configured collaboration cluster; joining a shared Task does not configure that network connection.
 
+Startup failures report the process exit code or readiness timeout and output from that launch.
+
 ## What to expect
 
 AgentHarness is a **developer preview**; compatibility-breaking changes are expected. You can use Tasks locally or collaborate between configured nodes. Task context consists of initial material, explicit publications, and selected inherited context. Tasks have no approval or completion workflow, and parent revisions stay fixed after creation.
