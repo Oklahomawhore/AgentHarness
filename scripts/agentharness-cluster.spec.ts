@@ -81,6 +81,37 @@ it('requires explicit replacement of a versioned cluster', async () => {
 })
 
 it.each([
+  'refs: { BAD-KEY: private-secret-value }',
+  'refs: { OTHER_KEY: 123 }',
+  'refs: { OTHER_KEY: "" }',
+  'records: { invalid: { kind: grant, payload: null } }',
+  'records: { llm/example: { kind: grant, payload: null, unknown: private-secret-value } }',
+  'records: { llm/example: { kind: grant } }',
+  'records: { llm/example: { kind: grant, payload: .inf } }',
+  'records: { llm/example: { kind: private-secret-value } }',
+  'records: { llm/example: { kind: api-key, key: "" } }',
+  'records: { llm/example: { kind: api-key, env: { BAD-KEY: private-secret-value } } }',
+])('rejects provider-invalid unrelated entries before adding or retaining a cluster: %s', async (section) => {
+  const text = `version: 1\n${section}\n`
+  const { environment, filename } = await fixture(text)
+  expect(() => parseCredentialsDocument(text, filename)).toThrow()
+  await expect(joinCluster(secret, { environment })).rejects.toMatchObject({
+    message: `credentials document at ${filename} contains invalid references or records; repair these entries before changing clusters`,
+  })
+  expect(await readFile(filename, 'utf8')).toBe(text)
+  await expect(ensureClusterCredential(environment)).rejects.toThrow()
+  expect(await readFile(filename, 'utf8')).toBe(text)
+
+  const reference = `AGENTHARNESS_MESH_SECRET: ${JSON.stringify(secret)}`
+  const withCluster = section.startsWith('refs:')
+    ? text.replace('refs: {', `refs: { ${reference},`)
+    : `${text}refs: { ${reference} }\n`
+  await writeFile(filename, withCluster, { mode: 0o600 })
+  await expect(joinCluster(secret, { environment })).rejects.toThrow('contains invalid references or records')
+  expect(await readFile(filename, 'utf8')).toBe(withCluster)
+})
+
+it.each([
   `version: 1\nrefs:\n  AGENTHARNESS_MESH_SECRET: ${JSON.stringify(secret)}\nAGENTHARNESS_MESH_SECRET: ${JSON.stringify(replacement)}\n`,
   'version: 2\nrefs: {}\n',
   'version: 1\nrefs: []\n',

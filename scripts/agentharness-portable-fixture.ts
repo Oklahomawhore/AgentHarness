@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { build } from 'tsdown'
 
 /**
  * Copy production sources into a portable fixture without requiring a repository build.
@@ -19,4 +20,19 @@ export async function copyClusterRuntime(destination: string): Promise<void> {
   const source = await readFile(join(import.meta.dirname, '../packages/util/atomic-write/src/index.ts'), 'utf8')
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } })
   await writeFile(join(atomic, 'index.js'), compiled.outputText)
+  const provider = join(modules, '@deepseek-ai', 'dsh-credentials-local')
+  await build({
+    config: false,
+    entry: { index: join(import.meta.dirname, '../packages/credentials/credentials-local/src/index.ts') },
+    outDir: provider,
+    tsconfig: join(import.meta.dirname, '../tsconfig.base.json'),
+    platform: 'node',
+    format: 'esm',
+    target: 'es2022',
+    fixedExtension: false,
+    dts: false,
+    deps: { alwaysBundle: [/.*/], onlyBundle: false },
+    logLevel: 'silent',
+  })
+  await writeFile(join(provider, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }))
 }

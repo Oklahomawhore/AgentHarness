@@ -2,7 +2,6 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, stat } from 'node:fs/promises'
-import { isMap, isScalar, parseDocument } from 'yaml'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -40,7 +39,9 @@ export function describeClusterSecret(value) {
 }
 
 /** Parse both released credential layouts without discarding comments or unrelated records. */
-function parseCredentialDocument(text, filename) {
+async function parseCredentialDocument(text, filename) {
+  // Release staging only uses secret validation and must run before dependency installation.
+  const { isMap, isScalar, parseDocument } = await import('yaml')
   const document = parseDocument(text ?? '', { prettyErrors: false, uniqueKeys: true })
   if (document.errors.length > 0) {
     throw new Error(`cannot read credentials document at ${filename}: ${document.errors.map(error => error.code).join(', ')}`)
@@ -87,10 +88,10 @@ async function readCredentialFile(environment) {
       throw new Error(`credentials document at ${filename} must be owner-only; run chmod 600 before retrying`)
     }
     const text = await readFile(filename, 'utf8')
-    const document = parseCredentialDocument(text, filename)
+    const document = await parseCredentialDocument(text, filename)
     return { document, secret: document.getIn(['refs', MESH_SECRET_REF]) }
   } catch (error) {
-    if (error?.code === 'ENOENT') return { document: parseCredentialDocument(undefined, filename), secret: undefined }
+    if (error?.code === 'ENOENT') return { document: await parseCredentialDocument(undefined, filename), secret: undefined }
     throw error
   }
 }
@@ -99,6 +100,8 @@ async function readCredentialFile(environment) {
 async function updateStoredSecret(environment, select) {
   // The npm bootstrap only reads credentials; writes run inside the built runtime.
   const { withFileLock, writeFileAtomic } = await import('@deepseek-ai/dsh-atomic-write')
+  const { parseCredentialsDocument } = await import('@deepseek-ai/dsh-credentials-local')
+  const { isMap } = await import('yaml')
   const filename = join(harnessHome(environment), '.credentials.yaml')
   await mkdir(dirname(filename), { recursive: true, mode: 0o700 })
   return withFileLock(filename, async () => {
@@ -107,8 +110,15 @@ async function updateStoredSecret(environment, select) {
     if (stored.secret !== secret) {
       if (!isMap(stored.document.get('refs', true))) stored.document.set('refs', stored.document.createNode({}))
       stored.document.setIn(['refs', MESH_SECRET_REF], secret)
-      await writeFileAtomic(filename, stored.document.toString(), { mode: 0o600, dirMode: 0o700 })
     }
+    const text = stored.document.toString()
+    try {
+      parseCredentialsDocument(text, filename)
+    } catch {
+      // Provider validation can quote invalid tag values; only the file location is safe here.
+      throw new Error(`credentials document at ${filename} contains invalid references or records; repair these entries before changing clusters`)
+    }
+    if (stored.secret !== secret) await writeFileAtomic(filename, text, { mode: 0o600, dirMode: 0o700 })
     return { secret, changed: stored.secret !== secret }
   }, { waitMs: 30_000 })
 }
@@ -133,7 +143,7 @@ export async function ensureClusterCredential(environment = process.env) {
   return Object.freeze({ secret, source: 'credentials-file', ...describeClusterSecret(secret) })
 }
 
-/** Join one cluster, refusing an accidental cluster replacement. */
+/** Join one cluster with a valid managed document, refusing an accidental replacement. */
 export async function joinCluster(secretInput, options = {}) {
   const environment = options.environment ?? process.env
   const secret = validateClusterSecret(secretInput)
