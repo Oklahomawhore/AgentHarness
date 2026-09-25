@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseStageArguments, renderInstallScript, renderPowerShellInstallScript, stagePortableRelease } from './agentharness-stage-portable-release.mjs'
@@ -60,9 +60,15 @@ test('GitHub staging rejects origins before reading artifacts', async () => {
   assert.equal(parsed.github, true)
   await assert.rejects(stagePortableRelease(parsed), /GitHub repository URL/)
 })
-test('staging generates a packable npm bootstrap with matching GitHub URLs', async () => {
+test('staging without installed dependencies generates a packable npm bootstrap with matching GitHub URLs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agentharness-github-release-'))
   try {
+    const checkout = join(root, 'checkout')
+    await mkdir(join(checkout, 'scripts'), { recursive: true })
+    for (const name of ['agentharness-stage-npx.mjs', 'agentharness-stage-portable-release.mjs', 'agentharness-cluster.mjs', 'agentharness-npx-bin.mjs']) {
+      await cp(join(import.meta.dirname, name), join(checkout, 'scripts', name))
+    }
+    for (const name of ['package.json', 'LICENSE']) await cp(join(import.meta.dirname, '..', name), join(checkout, name))
     const payload = join(root, 'payload')
     await mkdir(payload)
     await writeFile(join(payload, 'agentharness-portable.json'), JSON.stringify({ product: 'AgentHarness', version: '0.1.7', platform: 'linux', arch: 'x64', runtime: { node: 'runtime/node' } }))
@@ -70,11 +76,12 @@ test('staging generates a packable npm bootstrap with matching GitHub URLs', asy
     const tar = spawnSync('tar', ['-czf', archive, '-C', payload, '.'], { encoding: 'utf8' })
     assert.equal(tar.status, 0, tar.stderr)
     const output = join(root, 'release')
-    const stage = spawnSync(process.execPath, [join(import.meta.dirname, 'agentharness-stage-npx.mjs'), '--github', '--base-url', baseUrl, '--artifact', archive, '--out', output], { encoding: 'utf8' })
+    const stage = spawnSync(process.execPath, [join(checkout, 'scripts/agentharness-stage-npx.mjs'), '--github', '--base-url', baseUrl, '--artifact', archive, '--out', output], { cwd: checkout, encoding: 'utf8' })
     assert.equal(stage.status, 0, stage.stderr)
     const pkg = JSON.parse(await readFile(join(output, 'npm/package.json'), 'utf8'))
     assert.equal(pkg.name, '@sandboxbreak/agentharness')
     assert.equal(pkg.version, '0.1.7')
+    assert.deepEqual(pkg.dependencies, { yaml: '^2.9.0' })
     assert.deepEqual(pkg.bin, { agentharness: 'bin.mjs' })
     assert.equal(pkg.author, 'Wangshu Zhu')
     const pack = spawnSync('npm', ['pack', './npm', '--json', '--ignore-scripts', '--pack-destination', root], { cwd: output, encoding: 'utf8' })

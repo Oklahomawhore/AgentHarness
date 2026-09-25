@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
       - name: Public distribution tests
         run: node --test scripts/agentharness-public.test.mjs scripts/agentharness-release.test.mjs
       - name: Release identity
@@ -88,7 +90,7 @@ jobs:
         if: matrix.target == 'linux-x64'
         run: |
           pnpm run lint:contracts-ready
-          pnpm exec vitest run scripts/agentharness-portable-release.spec.ts scripts/agentharness-pack-portable.spec.ts scripts/translation-pairing.spec.ts packages/bundle/base/tests/base.spec.ts packages/mcp/mcp/tests/mcp.spec.ts packages/mcp/mcp-client/tests/apply.spec.ts
+          pnpm exec vitest run scripts/agentharness-cluster.spec.ts scripts/agentharness-portable-release.spec.ts scripts/agentharness-pack-portable.spec.ts scripts/translation-pairing.spec.ts packages/bundle/base/tests/base.spec.ts packages/mcp/mcp/tests/mcp.spec.ts packages/mcp/mcp-client/tests/apply.spec.ts
           pnpm run doc-sync
       - uses: actions/upload-artifact@v4
         with:

@@ -1,7 +1,7 @@
 /** Persist and inspect the shared secret that identifies one AgentHarness LAN cluster. */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -38,46 +38,46 @@ export function describeClusterSecret(value) {
   return Object.freeze({ clusterId: `agentharness-${digest.slice(0, 12)}`, fingerprint: `sha256:${digest.slice(0, 16)}` })
 }
 
-function decodeYamlScalar(value) {
-  const source = value.trim()
-  if (source.startsWith('"')) {
-    try {
-      const decoded = JSON.parse(source)
-      return typeof decoded === 'string' ? decoded : undefined
-    } catch {
-      return undefined
+/** Parse both released credential layouts without discarding comments or unrelated records. */
+async function parseCredentialDocument(text, filename) {
+  // Release staging only uses secret validation and must run before dependency installation.
+  const { isMap, isScalar, parseDocument } = await import('yaml')
+  const document = parseDocument(text ?? '', { prettyErrors: false, uniqueKeys: true })
+  if (document.errors.length > 0) {
+    throw new Error(`cannot read credentials document at ${filename}: ${document.errors.map(error => error.code).join(', ')}`)
+  }
+  if (document.contents === null) {
+    document.contents = document.createNode({ version: 1, refs: {} })
+    return document
+  }
+  if (!isMap(document.contents)) throw new Error(`credentials document at ${filename} must be a mapping`)
+  if (!document.has('version')) {
+    for (const pair of document.contents.items) {
+      if (!isScalar(pair.key) || typeof pair.key.value !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(pair.key.value)
+        || !isScalar(pair.value) || typeof pair.value.value !== 'string' || pair.value.value === '') {
+        throw new Error(`credentials document at ${filename} must contain version: 1 and credentials under refs`)
+      }
+    }
+    const refs = document.contents
+    document.contents = document.createNode({ version: 1 })
+    document.set('refs', refs)
+  }
+  if (document.get('version') !== 1) throw new Error(`credentials document at ${filename} must declare version: 1`)
+  for (const pair of document.contents.items) {
+    const key = isScalar(pair.key) ? pair.key.value : pair.key
+    if (!['version', 'refs', 'records'].includes(key)) {
+      throw new Error(`credentials document at ${filename} contains an unsupported top-level key; keep credentials only under refs, including ${MESH_SECRET_REF}`)
     }
   }
-  if (source.startsWith("'") && source.endsWith("'")) return source.slice(1, -1).replaceAll("''", "'")
-  if (source === '' || source === 'null' || source === '~' || /\s+#/u.test(source)) return undefined
-  return source
-}
-
-function parseStoredSecret(text, filename) {
-  const trimmed = text.trim()
-  if (trimmed === '') return undefined
-  if (trimmed.startsWith('{')) {
-    let document
-    try {
-      document = JSON.parse(trimmed)
-    } catch {
-      throw new Error(`cannot update malformed credentials document at ${filename}`)
+  for (const name of ['refs', 'records']) {
+    const section = document.get(name, true)
+    if (section !== undefined && !(isScalar(section) && section.value === null) && !isMap(section)) {
+      throw new Error(`credentials document at ${filename}: ${name} must be a mapping`)
     }
-    if (document === null || typeof document !== 'object' || Array.isArray(document)) {
-      throw new Error(`credentials document at ${filename} must be a mapping`)
-    }
-    const value = document[MESH_SECRET_REF]
-    if (value === undefined) return undefined
-    if (typeof value !== 'string') throw new Error(`credential ${MESH_SECRET_REF} at ${filename} must be a string`)
-    return validateClusterSecret(value)
   }
-  const pattern = new RegExp(`^${MESH_SECRET_REF}\\s*:\\s*(.*)$`, 'u')
-  const matches = text.split(/\r?\n/u).map(line => pattern.exec(line)).filter(match => match !== null)
-  if (matches.length > 1) throw new Error(`credentials document at ${filename} contains duplicate ${MESH_SECRET_REF} keys`)
-  if (matches.length === 0) return undefined
-  const value = decodeYamlScalar(matches[0][1])
-  if (value === undefined) throw new Error(`credential ${MESH_SECRET_REF} at ${filename} must be a one-line string`)
-  return validateClusterSecret(value)
+  const secret = document.getIn(['refs', MESH_SECRET_REF])
+  if (secret !== undefined) validateClusterSecret(secret)
+  return document
 }
 
 async function readCredentialFile(environment) {
@@ -88,54 +88,39 @@ async function readCredentialFile(environment) {
       throw new Error(`credentials document at ${filename} must be owner-only; run chmod 600 before retrying`)
     }
     const text = await readFile(filename, 'utf8')
-    return { filename, text, secret: parseStoredSecret(text, filename) }
+    const document = await parseCredentialDocument(text, filename)
+    return { document, secret: document.getIn(['refs', MESH_SECRET_REF]) }
   } catch (error) {
-    if (error?.code === 'ENOENT') return { filename, text: undefined, secret: undefined }
+    if (error?.code === 'ENOENT') return { document: await parseCredentialDocument(undefined, filename), secret: undefined }
     throw error
   }
 }
 
-function renderCredentialDocument(text, secret, filename) {
-  if (text === undefined || text.trim() === '') return `${MESH_SECRET_REF}: ${JSON.stringify(secret)}\n`
-  const trimmed = text.trim()
-  if (trimmed.startsWith('{')) {
-    let document
+/** Serialize cluster decisions with the provider's other credential writers. */
+async function updateStoredSecret(environment, select) {
+  // The npm bootstrap only reads credentials; writes run inside the built runtime.
+  const { withFileLock, writeFileAtomic } = await import('@deepseek-ai/dsh-atomic-write')
+  const { parseCredentialsDocument } = await import('@deepseek-ai/dsh-credentials-local')
+  const { isMap } = await import('yaml')
+  const filename = join(harnessHome(environment), '.credentials.yaml')
+  await mkdir(dirname(filename), { recursive: true, mode: 0o700 })
+  return withFileLock(filename, async () => {
+    const stored = await readCredentialFile(environment)
+    const secret = select(stored.secret)
+    if (stored.secret !== secret) {
+      if (!isMap(stored.document.get('refs', true))) stored.document.set('refs', stored.document.createNode({}))
+      stored.document.setIn(['refs', MESH_SECRET_REF], secret)
+    }
+    const text = stored.document.toString()
     try {
-      document = JSON.parse(trimmed)
+      parseCredentialsDocument(text, filename)
     } catch {
-      throw new Error(`cannot update malformed credentials document at ${filename}`)
+      // Provider validation can quote invalid tag values; only the file location is safe here.
+      throw new Error(`credentials document at ${filename} contains invalid references or records; repair these entries before changing clusters`)
     }
-    if (document === null || typeof document !== 'object' || Array.isArray(document)) {
-      throw new Error(`credentials document at ${filename} must be a mapping`)
-    }
-    return `${JSON.stringify({ ...document, [MESH_SECRET_REF]: secret }, null, 2)}\n`
-  }
-  const lines = text.replace(/\r\n/gu, '\n').split('\n')
-  const pattern = new RegExp(`^${MESH_SECRET_REF}\\s*:`, 'u')
-  const indexes = lines.flatMap((line, index) => pattern.test(line) ? [index] : [])
-  if (indexes.length > 1) throw new Error(`credentials document at ${filename} contains duplicate ${MESH_SECRET_REF} keys`)
-  const rendered = `${MESH_SECRET_REF}: ${JSON.stringify(secret)}`
-  if (indexes.length === 1) lines[indexes[0]] = rendered
-  else {
-    while (lines.at(-1) === '') lines.pop()
-    lines.push(rendered)
-  }
-  return `${lines.join('\n')}\n`
-}
-
-async function writeStoredSecret(environment, secret) {
-  const stored = await readCredentialFile(environment)
-  const text = renderCredentialDocument(stored.text, secret, stored.filename)
-  await mkdir(dirname(stored.filename), { recursive: true, mode: 0o700 })
-  const temporary = `${stored.filename}.${String(process.pid)}-${randomBytes(4).toString('hex')}.next`
-  try {
-    await writeFile(temporary, text, { encoding: 'utf8', mode: 0o600 })
-    await rename(temporary, stored.filename)
-    await chmod(stored.filename, 0o600)
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => {})
-    throw error
-  }
+    if (stored.secret !== secret) await writeFileAtomic(filename, text, { mode: 0o600, dirMode: 0o700 })
+    return { secret, changed: stored.secret !== secret }
+  }, { waitMs: 30_000 })
 }
 
 /** Read the effective cluster without exposing its secret. */
@@ -154,12 +139,11 @@ export async function readClusterCredential(environment = process.env) {
 export async function ensureClusterCredential(environment = process.env) {
   const current = await readClusterCredential(environment)
   if (current !== undefined) return current
-  const secret = randomBytes(32).toString('base64url')
-  await writeStoredSecret(environment, secret)
+  const { secret } = await updateStoredSecret(environment, stored => stored ?? randomBytes(32).toString('base64url'))
   return Object.freeze({ secret, source: 'credentials-file', ...describeClusterSecret(secret) })
 }
 
-/** Join one cluster, refusing an accidental cluster replacement. */
+/** Join one cluster with a valid managed document, refusing an accidental replacement. */
 export async function joinCluster(secretInput, options = {}) {
   const environment = options.environment ?? process.env
   const secret = validateClusterSecret(secretInput)
@@ -169,11 +153,12 @@ export async function joinCluster(secretInput, options = {}) {
     if (active !== secret) throw new Error(`${MESH_SECRET_REF} from the launching environment shadows the managed credential; unset it before changing clusters`)
     return Object.freeze({ changed: false, source: 'environment', ...describeClusterSecret(active) })
   }
-  const stored = await readCredentialFile(environment)
-  if (stored.secret !== undefined && stored.secret !== secret && options.replace !== true) {
-    const current = describeClusterSecret(stored.secret)
-    throw new Error(`refusing to replace cluster ${current.clusterId} (${current.fingerprint}); retry with --replace only if the switch is intentional`)
-  }
-  if (stored.secret !== secret) await writeStoredSecret(environment, secret)
-  return Object.freeze({ changed: stored.secret !== secret, source: 'credentials-file', ...describeClusterSecret(secret) })
+  const result = await updateStoredSecret(environment, stored => {
+    if (stored !== undefined && stored !== secret && options.replace !== true) {
+      const current = describeClusterSecret(stored)
+      throw new Error(`refusing to replace cluster ${current.clusterId} (${current.fingerprint}); retry with --replace only if the switch is intentional`)
+    }
+    return secret
+  })
+  return Object.freeze({ changed: result.changed, source: 'credentials-file', ...describeClusterSecret(secret) })
 }
