@@ -1,11 +1,11 @@
 ---
 name: dsh-merging-stacked-prs
-description: Use when landing a stack of dependent GitHub PRs (A ← B ← C, where each bases on the one below) onto master, merging a PR whose base is another open PR's branch, or whenever a request mentions "stacked PRs", "PR stack", "dependent PRs", or merging several related PRs in sequence. Requires every same-repository dependency chain to use GitHub's official stacked-PR feature before landing so GitHub owns stack-wide rules, CI, ordering, retargeting, and merge state.
+description: Use when landing a stack of dependent GitHub PRs (A ← B ← C, where each bases on the one below) onto main, merging a PR whose base is another open PR's branch, or whenever a request mentions "stacked PRs", "PR stack", "dependent PRs", or merging several related PRs in sequence. Requires every same-repository dependency chain to use GitHub's official stacked-PR feature before landing so GitHub owns stack-wide rules, CI, ordering, retargeting, and merge state.
 ---
 
 # Landing an official GitHub PR stack
 
-Land dependent PRs through GitHub's native stack object and `gh stack merge`. Do not reproduce stack semantics by merging and retargeting individual PRs with `gh pr merge` and `gh pr edit`. The root [AGENTS.md](../../../AGENTS.md) owns the allowed merge-forward and rebase histories; the [stack review guide](../../../docs/cookbook/responding-to-pr-review-on-a-stack.md) owns review-fix propagation.
+Land dependent PRs through GitHub's native stack object and `gh stack merge`. Do not reproduce stack semantics by merging and retargeting individual PRs with `gh pr merge` and `gh pr edit`. The [branch workflow](../../../docs/development.md#agentharness-branch-workflow) owns the allowed merge-forward and rebase histories; the [stack review guide](../../../docs/cookbook/responding-to-pr-review-on-a-stack.md) owns review-fix propagation.
 
 ## Require native stack support
 
@@ -45,7 +45,7 @@ query($owner: String!, $name: String!, $number: Int!) {
 }'
 ```
 
-Establish the expected bottom-to-top order from the live PR bases: the bottom targets the trunk, and each higher PR targets the head branch immediately below it.
+Establish the expected bottom-to-top order from the live PR bases: the bottom targets `main`, and each higher PR targets the head branch immediately below it. Use `main` for `<trunk>` in the commands below.
 
 ## Link missing stack members
 

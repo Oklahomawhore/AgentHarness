@@ -16,7 +16,9 @@ Keep each pull request focused. Describe the problem, the changed behavior and t
 
 ## Review and release
 
-Create your branch from `develop` and target `develop` in its pull request; the [AgentHarness branch workflow](docs/development.md#agentharness-branch-workflow) covers release branches and the controlled merge into `main`. Include reproduction or verification instructions and call out compatibility changes. A merged pull request does not publish a release; the [release guide](docs/public-release.md) covers the version tag, portable artifacts, and npm publication.
+`main` is the only long-lived development branch. Create a short-lived topic branch from current `main` and target `main` in its pull request, including urgent fixes and documentation changes. The [AgentHarness branch workflow](docs/development.md#agentharness-branch-workflow) covers review, dependent changes, and release selection. Include reproduction or verification instructions and call out compatibility changes; merge only after review and relevant checks pass, then delete the merged topic branch.
+
+Merging a pull request does not publish a release. Maintainers select a verified `main` commit and push a new stable version tag; the [release guide](docs/public-release.md) covers portable artifacts and npm publication. `main` can contain work for the next version; published tags and artifacts identify what users install.
 
 ## Attribution
 

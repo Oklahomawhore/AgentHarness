@@ -79,7 +79,7 @@ AgentHarness 是由初创公司算法工程师 **Wangshu Zhu** 独立维护的�
 <a id="run-from-source"></a>
 ## 参与和开发
 
-从源码运行见[开发指南](docs/development.zh.md)，分支与 PR（Pull Request）流程见[贡献指南](CONTRIBUTING.zh.md)。欢迎提供可复现的上下文交接示例、安装问题报告，以及文档改进。在 [Issue](https://github.com/Oklahomawhore/AgentHarness/issues) 和 [PR](https://github.com/Oklahomawhore/AgentHarness/pulls) 中请移除密钥及私人数据。Agent 应遵守 [AGENTS.md](AGENTS.md)。
+从源码运行见[开发指南](docs/development.zh.md)。短期主题分支通过 PR（Pull Request）合入唯一开发主线 `main`；发布时为经过验证的提交打版本 tag。[贡献指南](CONTRIBUTING.zh.md)说明具体流程。欢迎提供可复现的上下文交接示例、安装问题报告，以及文档改进。在 [Issue](https://github.com/Oklahomawhore/AgentHarness/issues) 和 [PR](https://github.com/Oklahomawhore/AgentHarness/pulls) 中请移除密钥及私人数据。Agent 应遵守 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
 

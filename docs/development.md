@@ -53,19 +53,24 @@ Setup is complete when `pnpm run typecheck` exits successfully.
 
 ### AgentHarness branch workflow
 
-`main` is the controlled release line, and `develop` collects reviewed changes for the next release. Contributors create `feature/<topic>`, `fix/<topic>`, or `docs/<topic>` branches from `develop` and target `develop` in their pull requests, even though GitHub shows `main` as the repository default. Maintainers review and merge those pull requests after the relevant local checks; merging them does not publish a release. The existing upstream CI workflows keep their own triggers, and AgentHarness does not add release-matrix CI for these branches or pull requests.
+`main` is the default branch and the only long-lived development line. It contains reviewed work for the next version; published tags and artifacts identify released versions. Contributors create short-lived `feature/<topic>`, `fix/<topic>`, or `docs/<topic>` branches from current `origin/main`; agents use `codex/<topic>` unless another name is requested. Ordinary pull requests target `main`. The workflow has no `develop` integration branch, dated release-candidate branches, or release back-merges.
 
-A release owner may cut one `release/YYYY-MM-DD` branch from `develop` on a day chosen for publication; the daily cadence is optional rather than a scheduled job. The branch freezes feature scope. Stabilization fixes target that release branch, while unrelated work continues on `develop`. For a second cut on the same day, append `-2`; for an urgent fix to the published line, cut the release branch from `main` and follow the same review and tag path. Avoid overlapping release candidates.
+Keep each pull request independently reviewable and merge only after review and the [relevant local checks](../AGENTS.md#run-relevant-checks-locally) pass. Keep unfinished work on its topic branch, or merge an independently usable increment; `main` must remain usable. Contributors working concurrently use separate topic branches and worktrees. Dependent pull requests may temporarily target their parent topic branch under the [stack workflow](cookbook/responding-to-pr-review-on-a-stack.md), with the bottom pull request targeting `main`; they do not introduce another long-lived integration branch. Delete merged topic branches after dependent work has been preserved.
 
-After review and relevant checks, merge the release branch into `main` with a merge commit through a pull request. Copy that exact merge commit SHA, choose a new stable semantic version, then create and push an annotated tag on that commit (the version shown here is an example):
+Split independent changes and fix the introducing PR before propagating a correction. Standalone and stacked topic branches may merge-forward or rebase. Rewritten pushes use `--force-with-lease` and abort on remote movement; raw `--force` is forbidden. Preserve an in-progress merge-forward checkpoint before taking a newer base ([history policy](../.agents/notes/implemented/process/2026-08-02-native-github-stacks-and-optional-rebases.md)). Never force-push `main`.
+
+A release owner selects an exact reviewed commit reachable from `origin/main`, verifies that candidate, and chooses an unused stable semantic version. The candidate is fixed by its SHA even when `main` advances. New stabilization or urgent fixes follow the same topic-branch PR path into `main`; select and verify a new candidate if they must be included. Create and push an annotated tag on the verified commit (the version shown here is an example):
 
 ```sh
 git fetch origin main --tags
-git tag -a v1.2.3 <release-merge-commit-sha> -m "AgentHarness v1.2.3"
+git merge-base --is-ancestor <verified-main-commit-sha> origin/main
+git tag -a v1.2.3 <verified-main-commit-sha> -m "AgentHarness v1.2.3"
 git push origin v1.2.3
 ```
 
-The tag alone starts the [AgentHarness release workflow](../.github/workflows/agentharness-release.yml); `main` merges, documentation changes, `develop` updates, and release-branch pushes do not. Never move or reuse a published tag. After the Release succeeds, merge `main` back into `develop` through a pull request so stabilization fixes reach the next cycle, then delete the release branch. The [release guide](public-release.md) owns artifact and npm publication details.
+The ancestry command must succeed before tagging. The tag push starts a new release in the [AgentHarness release workflow](../.github/workflows/agentharness-release.yml); branch pushes and pull requests do not. Never move or reuse a published tag. The workflow retains its manual repair path for existing Release assets. The [release guide](public-release.md) owns artifact and npm publication details. Existing upstream CI workflows retain their configured triggers; this branch policy adds no release-matrix CI for branch pushes or pull requests.
+
+AgentHarness currently maintains one development line. Supporting an older version independently would require a separate maintenance policy and a release-guard change: the current guard rejects commits outside `main`. The [single-main decision](../.agents/notes/implemented/process/2026-09-26-agentharness-single-main-development.md) records this scope and its trade-offs.
 
 ### TypeScript project layout
 
