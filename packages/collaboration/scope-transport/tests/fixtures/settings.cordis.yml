@@ -1,0 +1,15 @@
+- id: credentials
+  name: cordis:scope-test-credentials
+  config:
+    path: !!js ctx.get('scopeNetworkFixture').credentialsPath
+    dshHome: !!js ctx.get('scopeNetworkFixture').directory
+    watch: false
+- id: settings
+  name: cordis:scope-test-settings
+  disabled: !!js "!ctx.get('scopeNetworkFixture').withSettings"
+  config:
+    path: !!js ctx.get('scopeNetworkFixture').settingsPath
+    watch: false
+- id: transport
+  name: cordis:scope-test-transport
+  config: !!js ctx.get('scopeNetworkFixture').transport

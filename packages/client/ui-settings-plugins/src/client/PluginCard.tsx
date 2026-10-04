@@ -35,6 +35,8 @@ export interface PluginCardProps {
   onSave: () => void
   /** Drop every staged edit. */
   onDiscard: () => void
+  /** Localized confirmation that remains visible after a successful save collapses the card. */
+  savedLabel?: string
   /** The plugin's controls. */
   children: ReactNode
 }
@@ -55,13 +57,13 @@ export function PluginCard(props: PluginCardProps) {
       saveStarted.current = true
       return
     }
-    if (!saveStarted.current) return
+    if (!saveStarted.current && props.savedLabel === undefined) return
     saveStarted.current = false
     if (!state.dirty && !state.failed) setOpen(false)
-  }, [state.dirty, state.failed, state.saving])
+  }, [state.dirty, state.failed, state.saving, props.savedLabel])
   if (!state.available) return null
   const title = props.t(props.titleKey)
-  const blocked = !state.dirty || state.invalid || state.saving
+  const blocked = !state.writable || !state.dirty || state.invalid || state.saving
   return (
     <li className={clsx(css.card, open && css.cardOpen)}>
       <button
@@ -78,6 +80,7 @@ export function PluginCard(props: PluginCardProps) {
         {state.dirty ? <Tag tone="neutral" className={css.pending}>{props.t('unsaved')}</Tag> : null}
         <IconChevronDownOutline14 className={clsx(css.chevron, open && css.chevronOpen)} />
       </button>
+      {props.savedLabel !== undefined ? <p role="status" className={css.saved}>{props.savedLabel}</p> : null}
       {open
         ? (
           <div className={css.body}>

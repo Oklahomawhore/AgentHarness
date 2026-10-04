@@ -20,6 +20,8 @@ Every request has a fresh correlation identity. The receiver rejects mismatched 
 
 An unavailable owner means authorization is unknown. The receiver returns no cached projection in this state. Revocation and expiry are separate terminal outcomes. The owner decision linearizes after durable authorization checks; bytes already sent cannot be recalled. Consumer framing, logged model input, and the external host's actual model admission remain consumer responsibilities.
 
+Transport listener selection is independent of application permission. The [Web composition](../../../../packages/bundle/web-app/README.md#scope-collaboration-network) uses settings-backed listeners sampled once per provider startup; saving a new value changes neither active sockets nor grants. Invitation controls accept only the Host’s currently published addresses, which identify connection targets without proving remote reachability. Configuration precedence and recovery belong to the [transport README](../../../../packages/collaboration/scope-transport/README.md#persistent-listener-settings).
+
 ## Alternatives considered
 
 **Reuse trusted Mesh replication.** Shared cluster credentials and global replication disclose more than the invited Task. The independent read protocol carries only authorized projection text and coverage, while observed-write intervals remain a separate authorization system.
@@ -29,6 +31,8 @@ An unavailable owner means authorization is unknown. The receiver returns no cac
 **Authorize cached context while offline.** An offline lease would delay revocation and require a separate expiry and clock policy. Rechecking on each request gives a smaller promise: offline context is unavailable, not implicitly current or revoked.
 
 **Wait for a revision that stops changing.** Requiring the Task revision to remain unchanged throughout computation can starve delivery during ongoing work. Explicit captured revisions preserve attribution; authorization and provider identity are still checked at adoption.
+
+**Rewrite the live Web profile to save a listener.** Web profile changes can replace the running provider and dispose dependent consumers. A restart-applied settings section separates a durable preference from that lifecycle transition.
 
 ## Consequences
 

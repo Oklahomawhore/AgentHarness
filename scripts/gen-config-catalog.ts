@@ -38,7 +38,10 @@ type Kind = 'config' | 'no-config' | 'seam' | 'library'
 /** Additional public plugin entries whose configuration evolves independently of the package root. */
 const PLUGIN_SUBPATHS: Readonly<Record<string, readonly { subpath: string; source: string }[]>> = {
   '@deepseek-ai/dsh-claude-scope': [{ subpath: '/command', source: 'src/command.ts' }],
-  '@deepseek-ai/dsh-scope-transport': [{ subpath: '/libp2p', source: 'src/libp2p.ts' }],
+  '@deepseek-ai/dsh-scope-transport': [
+    { subpath: '/libp2p', source: 'src/libp2p.ts' },
+    { subpath: '/libp2p-settings', source: 'src/libp2p-settings.ts' },
+  ],
   '@deepseek-ai/dsh-development-task-context': [
     { subpath: '/facts', source: 'src/facts.ts' },
     { subpath: '/semantic', source: 'src/semantic.ts' },

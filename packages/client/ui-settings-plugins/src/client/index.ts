@@ -26,6 +26,8 @@ import { ConfigurablePluginsTab } from './ConfigurablePluginsTab.tsx'
 import { PluginsSettingsSection } from './PluginsSettingsSection.tsx'
 import type { PluginsSettingsSectionInjected, PluginsSettingsTabEntry } from './PluginsSettingsSection.tsx'
 import { SubagentModelSelectionCard } from './SubagentModelSelectionCard.tsx'
+import { ScopeNetworkCard } from './ScopeNetworkCard.tsx'
+import { SCOPE_NETWORK_NS, ScopeNetworkCardController } from './scope-network-card-controller.ts'
 import { WebSearchCard } from './WebSearchCard.tsx'
 import { AGENT_LOOP_NS, AgentLoopCardController } from './agent-loop-card-controller.ts'
 import { SHELL_NS, BashCardController } from './bash-card-controller.ts'
@@ -65,6 +67,9 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-plugins: section dictionaries')
 
+  const scopeNetwork = new ScopeNetworkCardController(ctx.settingsScope.bind({ namespace: SCOPE_NETWORK_NS }))
+  ctx.effect(() => () => { scopeNetwork.dispose() }, 'ui-settings-plugins: collaboration network drafts')
+  ctx.on('connection/reset', () => { scopeNetwork.resetConnection() })
   const bash = new BashCardController(ctx.settingsScope.bind({ namespace: SHELL_NS }))
   const agentLoop = new AgentLoopCardController(ctx.settingsScope.bind({ namespace: AGENT_LOOP_NS }))
   const webSearch = new WebSearchCardController(
@@ -189,5 +194,11 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: () => webSearch.inject(),
     }, WebSearchCard)
+    yield ctx.slots.register({
+      name: 'settings.plugin.item',
+      key: SCOPE_NETWORK_NS,
+      locale: NS,
+      inject: () => scopeNetwork.inject(),
+    }, ScopeNetworkCard)
   })
 }

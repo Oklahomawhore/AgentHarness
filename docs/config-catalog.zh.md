@@ -2435,6 +2435,36 @@ export interface Config {
 
 来源： [`packages/collaboration/scope-transport/src/libp2p.ts:20`](../packages/collaboration/scope-transport/src/libp2p.ts)
 
+<a id="deepseek-aidsh-scope-transportlibp2p-settings"></a>
+
+## `@deepseek-ai/dsh-scope-transport/libp2p-settings`
+
+需要： `credentials` · `settings`
+
+```ts config-catalog
+/** Explicit listener, concurrency, byte, and time budgets for one device transport. */
+export interface Config {
+  /** Direct ip4/ip6 TCP listeners, without a peer suffix; port zero delegates allocation to the OS. */
+  readonly listenAddresses: string[]
+  /** Maximum complete request envelope, including framing, in UTF-8 bytes. */
+  readonly maxRequestBytes: number
+  /** Maximum complete response envelope, including framing, in UTF-8 bytes. */
+  readonly maxResponseBytes: number
+  /** Maximum admitted inbound requests across all peers and protocols. */
+  readonly maxInboundRequests: number
+  /** Maximum concurrent outbound requests, including dialing. */
+  readonly maxOutboundRequests: number
+  /** Maximum established connections before the library prunes excess connections. */
+  readonly maxConnections: number
+  /** Deadline covering each inbound handler or complete outbound operation. */
+  readonly requestTimeoutMs: number
+  /** Deadline for TCP/Noise establishment and library connection shutdown. */
+  readonly connectionTimeoutMs: number
+}
+```
+
+来源： [`packages/collaboration/scope-transport/src/libp2p.ts:20`](../packages/collaboration/scope-transport/src/libp2p.ts)
+
 <a id="deepseek-aidsh-sdk-app"></a>
 
 ## `@deepseek-ai/dsh-sdk-app`

@@ -10,6 +10,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeScopeState } from './claude-scopes.ts'
 import css from './ClaudeScopePanel.module.css'
+import { ScopeOwnerAddress, resolveOwnerAddress } from './ScopeOwnerAddress.tsx'
 
 /** Local authenticated management actions; no peer may call these methods. */
 export interface ScopeAccessActions {
@@ -44,7 +45,7 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [recipient, setRecipient] = useState('')
-  const [address, setAddress] = useState('')
+  const [address, setAddress] = useState<string>()
   const [responsibility, setResponsibility] = useState('')
   const [hours, setHours] = useState('24')
   const [created, setCreated] = useState<ScopeInvitation>()
@@ -58,7 +59,7 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
       const value = await readScopeAccess()
       if (!eligible()) return
       setData(value)
-      if (initializeAddress) setAddress(value.identity.addresses[0] ?? '')
+      if (initializeAddress) setAddress(undefined)
     } catch { if (eligible()) setInventoryError(true) }
     finally { if (eligible()) setLoading(false) }
   }, [readScopeAccess])
@@ -81,6 +82,7 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
     } catch { if (current === generation.current) setError(true) }
     finally { if (current === generation.current) setBusy(false) }
   }
+  const currentAddress = resolveOwnerAddress(data?.identity.addresses ?? [], address)
   const pending = busy || loading
   const chosen = sessions.sessions.find(item => item.sessionKey === sessionKey)
   const selectable = chosen !== undefined && !chosen.ended && chosen.taskId === undefined
@@ -99,24 +101,23 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
         const current = generation.current
         void act(async () => {
           const value = await inviteScope({ taskId, recipientPeerId: recipient.trim() as ScopePeerId,
-            ownerAddress: address.trim(), responsibility: responsibility.trim(), expiresAt: Date.now() + Number(hours) * 3600000 })
+            ownerAddress: currentAddress, responsibility: responsibility.trim(), expiresAt: Date.now() + Number(hours) * 3600000 })
           if (selection === taskGeneration.current && current === generation.current) setCreated(value)
         })
       }}>
         <label className={css.field} htmlFor={`${id}-peer`}>{t('access.recipient')}
           <Input id={`${id}-peer`} required value={recipient} disabled={pending} onChange={(event) => { setRecipient(event.target.value) }} />
         </label>
-        <label className={css.field} htmlFor={`${id}-address`}>{t('access.address')}
-          <Input id={`${id}-address`} required value={address} disabled={pending} onChange={(event) => { setAddress(event.target.value) }} />
-        </label>
-        <p className={css.hint}>{t('access.addressHint')}</p>
+        <ScopeOwnerAddress id={`${id}-address`} addresses={data.identity.addresses} value={currentAddress}
+          disabled={pending} onChange={setAddress} t={t} />
         <label className={css.field} htmlFor={`${id}-role`}>{t('claude.responsibility')}
           <Input id={`${id}-role`} required value={responsibility} disabled={pending} onChange={(event) => { setResponsibility(event.target.value) }} />
         </label>
+        <p className={css.hint}>{t('access.responsibilityHint')}</p>
         <label className={css.field} htmlFor={`${id}-hours`}>{t('access.hours')}
           <Input id={`${id}-hours`} required type="number" min="1" value={hours} disabled={pending} onChange={(event) => { setHours(event.target.value) }} />
         </label>
-        <Button type="submit" disabled={pending || !recipient.trim() || !address.trim() || !responsibility.trim()}>{t('access.invite')}</Button>
+        <Button type="submit" disabled={pending || !recipient.trim() || !currentAddress || !responsibility.trim()}>{t('access.invite')}</Button>
       </form>}
       {created !== undefined && created.taskId === taskId && <label className={css.field} htmlFor={`${id}-created`}>{t('access.created')}
         <textarea id={`${id}-created`} readOnly rows={4} value={JSON.stringify(created)} />

@@ -241,7 +241,7 @@
 
     # Independent read invitations expose bounded projections, without Mesh replication.
     - id: scope-transport-libp2p
-      name: '@deepseek-ai/dsh-scope-transport/libp2p'
+      name: '@deepseek-ai/dsh-scope-transport/libp2p-settings'
       config:
         listenAddresses: !!js "process.env.AGENTHARNESS_SCOPE_LISTEN == null ? ['/ip4/127.0.0.1/tcp/0'] : JSON.parse(process.env.AGENTHARNESS_SCOPE_LISTEN)"
         maxRequestBytes: 16384

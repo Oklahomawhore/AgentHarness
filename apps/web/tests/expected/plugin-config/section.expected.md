@@ -40,3 +40,7 @@
         - 'button "展开设置: 网页搜索"':
           - text: 网页搜索 DeepSeek 搜索提供方。
           - img
+      - listitem:
+        - 'button "展开设置: 协作网络"':
+          - text: 协作网络 选择其他 AgentHarness 实例在 Host 重启后可连接的范围。
+          - img

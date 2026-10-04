@@ -139,3 +139,20 @@ it.each(['receive', 'stop'] as const)('refreshes sessions after %s even while in
   expect(readScopeAccess).toHaveBeenCalledTimes(3)
   expect(mutation).toHaveBeenCalledOnce()
 })
+
+it('requires a current published route for read invitations and invalidates a route lost on refresh', async () => {
+  const network = '/ip4/192.0.2.10/tcp/43120/p2p/owner-peer'
+  const readScopeAccess = vi.fn<ScopeAccessPanelProps['readScopeAccess']>()
+    .mockResolvedValueOnce({ ...inventory, identity: { ...inventory.identity, addresses: [invitation.ownerAddress, network] } })
+    .mockResolvedValue({ ...inventory, identity: { ...inventory.identity, addresses: [invitation.ownerAddress] } })
+  const { props } = await mount({ taskId: invitation.taskId, readScopeAccess })
+  inviteSelectedTask()
+  expect(props.inviteScope).not.toHaveBeenCalled()
+  expect(screen.getByText(zh['access.responsibilityHint'])).toBeTruthy()
+  fireEvent.change(screen.getByLabelText(zh['access.address']), { target: { value: network } })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.invite'] }))
+  await waitFor(() => { expect(readScopeAccess).toHaveBeenCalledTimes(2) })
+  expect(vi.mocked(props.inviteScope).mock.calls[0]?.[0].ownerAddress).toBe(network)
+  await waitFor(() => { expect(screen.getByLabelText<HTMLSelectElement>(zh['access.address']).value).toBe('') })
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.invite'] }).disabled).toBe(true)
+})

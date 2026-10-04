@@ -63,6 +63,16 @@ Listeners accept only explicit IPv4/IPv6 TCP multiaddrs. Port zero lets the OS a
 
 The byte limits include the complete UTF-8 JSON envelope. They must accommodate the minimum request or fixed failure response. Concurrent requests are bounded across all protocols and peers; `maxConnections` configures the library's connection-pruning threshold and pending inbound connection limit. `requestTimeoutMs` covers a complete outbound operation or admitted inbound handler. `connectionTimeoutMs` bounds connection establishment, protocol negotiation, and library connection shutdown. Both durations must fit Node's timer range.
 
+<a id="persistent-listener-settings"></a>
+
+### Persistent listener settings
+
+Use `@deepseek-ai/dsh-scope-transport/libp2p-settings` in place of `/libp2p` when users configure listeners through a [settings provider](../../settings/settings/README.md). It requires both settings and credentials, accepts the same Config, and registers `scope-network` with `{ listenAddresses: string[] }`. The composed listeners form the base; durable user values override them. Settings reports `applies: restart`: saving changes neither the running sockets nor PeerId. The next provider startup samples the resolved listeners once, with no live watcher. Unloading removes the settings registration and drains the inherited transport.
+
+Both base values and user writes must contain valid, distinct direct TCP listeners. IPv4 loopback (`127.0.0.0/8`) and IPv6 loopback (`::1`) may use port zero; every other listener requires a fixed nonzero port. `/libp2p` retains port-zero support for any valid listener. Invalid saved settings reject startup without replacement or fallback. A valid saved port can still be occupied or unavailable at startup; correct the settings document or release the conflicting listener before restarting.
+
+Listener changes preserve the credential-backed PeerId. They do not update copied invitations, grant application permissions, open a firewall, or prove reachability from another device. Share an address returned by `identity()` after successful startup, including its actual port and peer suffix; wildcard listeners can advertise several interfaces.
+
 <a id="identity-and-requests"></a>
 ## Identity and requests
 
@@ -88,6 +98,7 @@ The default entry declares `ctx.scopeTransport`; `/libp2p` implements it with TC
 |---|---|
 | [index.ts](src/index.ts), [types.ts](src/types.ts) | Provider-neutral service and authenticated request types. |
 | [libp2p.ts](src/libp2p.ts) | Direct connection, stream admission, cancellation, and teardown. |
+| [libp2p-settings.ts](src/libp2p-settings.ts), [address.ts](src/address.ts) | Restart-applied listener settings and shared direct-address validation. |
 | [identity.ts](src/identity.ts) | Atomic credential initialization and stored key integrity. |
 | [wire.ts](src/wire.ts) | Complete JSON envelopes, UTF-8 validation, and fixed errors. |
 

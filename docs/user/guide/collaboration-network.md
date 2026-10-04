@@ -1,0 +1,35 @@
+# Connect collaboration across devices
+
+English | [中文](collaboration-network.zh.md)
+
+Use this guide when two people run independent AgentHarness Hosts and want to collaborate on one owner's Task. Each person keeps their own Host and browser session. The owner must be directly reachable by an IP address and TCP port; automatic internet discovery, NAT traversal, and relay service are not available.
+
+## 1. Configure the owner's listener
+
+1. Open the owner's local browser page and choose **Settings → Plugins → Collaboration network**. A remote browser cannot save this Host setting.
+2. Select the option for other devices and enter an available TCP port from 1 to 65535. This enables listening on all IPv4 interfaces. Keep **Only the device running AgentHarness** when both participants run on this computer.
+3. Save. The confirmation means the preference is stored; the current listener stays unchanged.
+4. Stop and start the Host with the same Harness home. For the installed service, run `agentharness stop` followed by `agentharness start`. Return to the collaboration center and refresh its addresses.
+
+The browser's own port and `--host` option configure a separate listener. Sharing the browser's management URL is not how an independent Agent joins a Task. The collaboration listener creates no read grant or file-sharing permission by itself.
+
+## 2. Choose an address and invite
+
+1. Select the owner's independent Task. Open its independent-device collaboration controls and the file-contribution permissions.
+2. In **Local address for this invitation**, choose the address the other device can reach. Only current Host-published addresses are selectable. A loopback address works only on this computer; an interface address is a candidate, not confirmation of reachability. With several interfaces or a VPN, choose the route appropriate to the other device.
+3. Generate an entry for one Session to join. Give the entry to the other person. They use a running ordinary native Session in a project workspace with no existing local Task or remote reading connection, open **Collaboration**, expand file sharing, paste and verify the entry, confirm Task reading and file collection separately, choose existing directories and write/edit operations, set limits, and submit the application. Configure a usable model before model-driven file work; sending a model request is not an admission protocol requirement.
+4. Review the applicant and limits on the owner's page, set their responsibility, and approve. Background admission connects passive reading and permitted file observations. Starting automatic work needs separate explicit permission.
+
+To participate from the owner's own Agent, select this local Task in that native Session and separately permit its file sharing. Creating the Task alone does not connect the owner's Agent or share its files.
+
+Responsibility guides context selection. It does not hide other shared material in that Task. Use a separate unshared Task for private work. Each permission and delivery state has its own status; approval alone does not prove that an Agent has used the context.
+
+## 3. Recover a connection
+
+If the other Host cannot connect, check the selected IP, TCP port, firewall, and route. A saved setting, a listed address, and a successful connection from the same computer do not prove that a second computer can reach it. No relay fallback is attempted.
+
+If the address changes, refresh the owner controls and explicitly choose a current address for new invitations or available recovery actions. A removed selection cannot create a new invitation. Existing participants do not migrate automatically. The native file-contribution panel has no address-replacement control for an existing capture; recovering an entry on the owner does not update that source. If the old route is unavailable, withdrawal can remain pending until it is reachable again.
+
+If restart fails because the selected port is occupied, stop the Host and change only `scope-network.listenAddresses` in its `settings.yaml` to an available fixed IP/TCP listener, or `/ip4/127.0.0.1/tcp/0` for local-only use, then start again. Preserve the other settings. User settings override composition values, including `AGENTHARNESS_SCOPE_LISTEN`; changing that environment variable does not override a saved preference. Custom IPv6 and multi-address values remain visible in the card and are preserved until explicitly replaced with one of its supported modes.
+
+[Scope transport](../../../packages/collaboration/scope-transport/README.md) defines listener validation and network limitations. [Use AgentHarness](index.md) covers local startup and the separate trusted-cluster option.

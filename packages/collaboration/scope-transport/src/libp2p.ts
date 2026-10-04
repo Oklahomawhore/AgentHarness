@@ -6,10 +6,10 @@ import { createLibp2p, type Libp2p } from 'libp2p'
 import { tcp } from '@libp2p/tcp'
 import { noise } from '@libp2p/noise'
 import { yamux } from '@libp2p/yamux'
-import { peerIdFromString } from '@libp2p/peer-id'
-import { multiaddr, type Multiaddr } from '@multiformats/multiaddr'
+import type { Multiaddr } from '@multiformats/multiaddr'
 import ScopeTransport, { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import { identityKey, loadIdentity } from './identity.ts'
+import { directAddress } from './address.ts'
 import type { ScopePeerId, ScopeTransportHandler, ScopeTransportIdentity, ScopeTransportLimits, ScopeTransportTarget } from './types.ts'
 import {
   encode, failureEnvelope, minimumRequestBytes, minimumResponseBytes,
@@ -42,25 +42,6 @@ interface Registration {
 }
 
 type Connection = ReturnType<Libp2p['getConnections']>[number]
-
-function directAddress(value: string, peerId?: ScopePeerId): Multiaddr {
-  try {
-    const address = multiaddr(value)
-    const parts = address.getComponents()
-    const host = parts[0]
-    const port = parts[1]
-    if ((host?.name !== 'ip4' && host?.name !== 'ip6') || port?.name !== 'tcp') throw new Error()
-    if (peerId === undefined) {
-      if (parts.length !== 2) throw new Error()
-    } else {
-      if (parts.length !== 3 || parts[2]?.name !== 'p2p' || parts[2].value !== peerId || port.value === '0') throw new Error()
-      if (peerIdFromString(peerId).toString() !== peerId) throw new Error()
-    }
-    return address
-  } catch {
-    throw new ScopeTransportError('scope-transport/invalid-target')
-  }
-}
 
 function positive(value: number, name: string, minimum = 1, maximum = Number.MAX_SAFE_INTEGER): number {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TypeError(`scope-transport: invalid ${name}`)

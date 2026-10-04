@@ -6,6 +6,7 @@
     { "path": "../../../vendor/cordis" },
     { "path": "../../../vendor/schemastery" },
     { "path": "../../credentials/credentials" },
+    { "path": "../../settings/settings" },
     { "path": "../../util/brand" },
     { "path": "../../util/values" }
   ]

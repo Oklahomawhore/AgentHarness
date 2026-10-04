@@ -129,6 +129,7 @@
       "@deepseek-ai/dsh-claude-scope/types": ["./packages/collaboration/claude-scope/src/types.ts"],
       "@deepseek-ai/dsh-scope-transport/types": ["./packages/collaboration/scope-transport/src/types.ts"],
       "@deepseek-ai/dsh-scope-transport/libp2p": ["./packages/collaboration/scope-transport/src/libp2p.ts"],
+      "@deepseek-ai/dsh-scope-transport/libp2p-settings": ["./packages/collaboration/scope-transport/src/libp2p-settings.ts"],
       "@deepseek-ai/dsh-scope-access/contribution": ["./packages/collaboration/scope-access/src/contribution-client.ts"],
       "@deepseek-ai/dsh-scope-agent-contribution": ["./packages/collaboration/scope-agent-contribution/src"],
       "@deepseek-ai/dsh-scope-agent-contribution/types": ["./packages/collaboration/scope-agent-contribution/src/types.ts"],

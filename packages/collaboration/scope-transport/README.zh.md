@@ -63,6 +63,16 @@ kind: "package-reference"
 
 字节限制包含完整 UTF-8 JSON 信封，必须容纳最小请求或固定失败响应。并发请求上限覆盖所有协议和对端；`maxConnections` 配置库的连接裁剪阈值和待完成入站连接上限。`requestTimeoutMs` 覆盖完整出站操作或已准入的入站处理器。`connectionTimeoutMs` 限制连接建立、协议协商和库的连接关闭时间。两个时长均须处于 Node 定时器的取值范围。
 
+<a id="persistent-listener-settings"></a>
+
+### 持久监听设置
+
+用户通过 [settings provider](../../settings/settings/README.zh.md) 配置监听地址时，使用 `@deepseek-ai/dsh-scope-transport/libp2p-settings` 替代 `/libp2p`。它同时要求 settings 和 credentials，接受相同的 Config，并以 `{ listenAddresses: string[] }` 注册 `scope-network`。组合监听地址构成基础值，持久用户值覆盖它们。Settings 标明 `applies: restart`：保存不会改变当前 socket 或 PeerId。提供方下次启动时只读取一次解析后的监听地址，不注册实时 watcher。卸载会移除设置注册，并等待继承的传输操作结束。
+
+基础值和用户写入都必须包含有效、不重复的直连 TCP 监听地址。IPv4 回环地址（`127.0.0.0/8`）和 IPv6 回环地址（`::1`）可使用端口零；其他监听地址必须使用固定非零端口。`/libp2p` 对任意有效监听地址仍支持端口零。已保存的无效设置会拒绝启动，不会被替换，也不会回退。合法的已保存端口在启动时仍可能被占用或不可用；重启前须修正设置文档或释放冲突的监听端口。
+
+修改监听地址保留凭据支持的 PeerId，不会更新已复制的邀请、授予应用权限、开放防火墙或证明另一台设备可达。请在成功启动后分享 `identity()` 返回的地址，包含实际端口和 peer 后缀；通配监听可能公布多个接口。
+
 <a id="identity-and-requests"></a>
 ## 身份和请求
 
@@ -88,6 +98,7 @@ kind: "package-reference"
 |---|---|
 | [index.ts](src/index.ts)、[types.ts](src/types.ts) | 与提供方无关的服务及认证请求类型。 |
 | [libp2p.ts](src/libp2p.ts) | 直连、流准入、取消和清理。 |
+| [libp2p-settings.ts](src/libp2p-settings.ts)、[address.ts](src/address.ts) | 重启应用的监听设置及共用直连地址校验。 |
 | [identity.ts](src/identity.ts) | 原子凭据初始化及存储私钥的完整性。 |
 | [wire.ts](src/wire.ts) | 完整 JSON 信封、UTF-8 校验和固定错误。 |
 

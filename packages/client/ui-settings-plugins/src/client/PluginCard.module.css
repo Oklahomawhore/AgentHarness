@@ -148,3 +148,8 @@
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
+
+.saved {
+  composes: readOnly;
+  margin: 0 16px 12px;
+}

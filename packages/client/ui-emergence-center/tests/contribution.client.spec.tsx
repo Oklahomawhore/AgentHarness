@@ -362,6 +362,28 @@ describe('owner online contribution applications', () => {
 
 
 describe('owner joint application decisions', () => {
+  it('requires choosing a published route and blocks an explicit choice removed by a refreshed identity', () => {
+    const network = '/ip4/192.0.2.10/tcp/43120/p2p/owner-peer'
+    const actions = ownerActions()
+    const value = { ...owned, identity: { ...owned.identity, addresses: [invitation.ownerAddress, network] } }
+    const view = render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    paste(zh['contribution.application.entryHours'], '1')
+    const create = () => screen.getByRole<HTMLButtonElement>('button', { name: zh['contribution.join.create'] })
+    expect(create().disabled).toBe(true)
+    expect(screen.getByText(zh['access.addressSetupHint'])).toBeTruthy()
+    paste(zh['access.address'], network)
+    fireEvent.click(create())
+    expect(vi.mocked(actions.createContributionEntry).mock.calls[0]?.[0].ownerAddress).toBe(network)
+    view.rerender(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false,
+      value: { ...value, identity: { ...owned.identity, addresses: [invitation.ownerAddress] } } }} {...actions} t={t} />)
+    expect(screen.getByLabelText<HTMLSelectElement>(zh['access.address']).value).toBe('')
+    expect(create().disabled).toBe(true)
+    paste(zh['access.address'], invitation.ownerAddress)
+    expect(screen.getByText(zh['access.addressLocalHint'])).toBeTruthy()
+    expect(create().disabled).toBe(false)
+  })
+
   it('creates one tool-work joint entry while keeping contribution-only as an explicit alternative', () => {
     const actions = ownerActions()
     render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)

@@ -8,6 +8,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
 import { contributionErrorKey, ContributionGrantSummary, ContributionTransferText, ContributionSourceSummary } from './contribution-ui.tsx'
 import css from './ClaudeScopePanel.module.css'
+import { ScopeOwnerAddress, resolveOwnerAddress } from './ScopeOwnerAddress.tsx'
 import { OwnerContributionApplications, type OwnerApplicationActions } from './OwnerContributionApplications.tsx'
 
 /** Owner-local inventory with the currently advertised addresses. */
@@ -43,7 +44,7 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
   const [proposal, setProposal] = useState<ScopeContributionProposal>()
   const [invalid, setInvalid] = useState(false)
   const [previewing, setPreviewing] = useState(false)
-  const [address, setAddress] = useState('')
+  const [address, setAddress] = useState<string>()
   const [hours, setHours] = useState('')
   const [samples, setSamples] = useState('')
   const [bytes, setBytes] = useState('')
@@ -52,7 +53,8 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
     if (taskId !== undefined) readOwnedContributions(taskId)
     return () => { generation.current += 1 }
   }, [taskId, readOwnedContributions])
-  const currentAddress = address || entry?.value?.identity.addresses[0] || ''
+  const addresses = entry?.value?.identity.addresses ?? []
+  const currentAddress = resolveOwnerAddress(addresses, address)
   const pending = entry?.pending === true || entry?.status !== 'ready' || previewing
   const grant = approval?.invitation.grant
   const permissionValid = [hours, samples, bytes].every(value => Number.isSafeInteger(Number(value)) && Number(value) > 0)
@@ -79,8 +81,8 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
       <Button size="sm" variant="ghost" disabled={entry?.pending} onClick={() => { setApproval(undefined); readOwnedContributions(taskId) }}>{t('contribution.refreshOwner')}</Button>
       {entry?.status === 'loading' && <p role="status" className={css.hint}>{t('contribution.loading')}</p>}
       {entry?.status === 'error' && <p role="alert" className={css.error}>{t('contribution.loadFailed')}</p>}
-      <label className={css.field} htmlFor={`${id}-address`}>{t('access.address')}<Input id={`${id}-address`} value={currentAddress} disabled={pending} onChange={(event) => { setAddress(event.target.value) }} /></label>
-      <p className={css.hint}>{t('access.addressHint')}</p>
+      <ScopeOwnerAddress id={`${id}-address`} addresses={addresses} value={currentAddress}
+        disabled={pending} onChange={setAddress} t={t} />
       <OwnerContributionApplications taskId={taskId} applications={entry?.value?.applications}
         ownerAddress={currentAddress} pending={pending}
         createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}

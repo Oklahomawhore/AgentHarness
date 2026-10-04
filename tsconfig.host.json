@@ -20,6 +20,7 @@
     "apps/web/tests/native-owner-contribution.e2e.ts",
     "apps/web/tests/contribution-scope.e2e.ts",
     "apps/web/tests/online-contribution-scope.e2e.ts",
+    "apps/web/tests/scope-network-settings.e2e.ts",
     "apps/web/tests/contribution-scope-support.ts",
     "apps/web/tests/agentharness-first-run.e2e.ts",
     "apps/web/tests/scaffold-hermetic.e2e.ts",

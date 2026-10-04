@@ -25,7 +25,7 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用本包
 
-组合包挂载[独立 scope 访问](../../collaboration/scope-access/README.zh.md)及其 [libp2p 传输](../../collaboration/scope-transport/README.zh.md)。默认 TCP 仅监听回环地址。`AGENTHARNESS_SCOPE_LISTEN` 接受显式 IP/TCP 监听地址的 JSON 数组，用于设备直连；公布的地址与邀请包含持久公开 peer 身份。默认后端文本预算为 6000 字节，位于 Claude 完整输出的 8000 字节预算内。启动不会创建授权。 在线贡献申请的保留容量、请求字节、入口期限与后台查询间隔均为显式组合配置；启动 Web 不会创建申请或来源许可。
+组合包挂载[独立 scope 访问](../../collaboration/scope-access/README.zh.md)及其[支持持久设置的 libp2p 传输](../../collaboration/scope-transport/README.zh.md#persistent-listener-settings)。Scope TCP 默认仅监听回环地址；邀请包含持久公开 peer 身份。默认后端文本预算为 6000 字节，位于 Claude 完整输出的 8000 字节预算内。启动不会创建授权。 在线贡献申请的保留容量、请求字节、入口期限与后台查询间隔均为显式组合配置；启动 Web 不会创建申请或来源许可。
 
 组合还挂载[原生 scope 接收](../../collaboration/scope-agent-context/README.zh.md)的认证管理方法。服务启动不创建会话绑定或自动工作许可；每个 Agent 必须单独绑定邀请，并显式选择被动接收或有额度的自动执行。
 
@@ -52,6 +52,15 @@ dsh --profile web --no-open --port 8080
 | `trustedHosts` | `[]` | 允许从网络访问 GUI 的额外主机 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-web-app)是每个受支持字段及其 JSDoc 的穷尽式真源。
+
+<a id="scope-collaboration-network"></a>
+### Scope 协作网络
+
+在运行设备的本机页面打开“设置 → 插件 → 插件配置 → 协作网络”。仅本机选项将 scope 连接限制在该设备。若要允许其他设备直连，须明确选择该模式并填写固定的非零 TCP 端口。该模式监听所有 IPv4 接口；对方仍需能经局域网或 VPN 路由及防火墙访问。保存后手动重启 Host，再刷新协作面板。刷新浏览器不会应用监听变更。邀请控件仅允许选择重启后的 Host 实际公布的地址。
+
+`scope-network.listenAddresses` 用户设置覆盖组合配置，包括 `AGENTHARNESS_SCOPE_LISTEN` 提供的 JSON 监听数组。使用此 provider 且共用 Harness home 的 profile 共用该设置。保存会修改设置文档，但保持当前 socket 和权限不变。要重新继承组合值，可从设置文档中移除此命名空间的用户覆盖后重启。自定义监听列表保持不变，除非用户明确替换。受设置管理的 provider 要求每个非回环监听使用非零端口；回环可以使用系统分配的端口。
+
+这些控件配置 scope TCP/Noise，与 Web 的 `--host`、`--port`、`--trusted-host` 相互独立。它们不会开放 Web 管理页面、授予 Task 访问权或提供 NAT 穿透。校验与启动失败规则见[传输设置](../../collaboration/scope-transport/README.zh.md#persistent-listener-settings)。
 
 <a id="lan-access-and-trusted-hosts"></a>
 
@@ -151,6 +160,7 @@ URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发�
 
 - **前端必须已构建**——源码 checkout 需要先运行 `pnpm run build`；dist 缺失时启动会以构建提示停止，且没有从源码直接服务的回退路径。
 - **LAN 地址只在启动时采样一次**——启动后的网卡变化不会重新公告；打印的 LAN URL 始终与采样结果一致。
+- **Scope 设置不证明网络连通**——已保存端口可能在重启时被占用或不可用，无效设置会拒绝启动且不回退。应修正设置文档或释放冲突的监听后重启；另一台设备的可达性仍需验证。
 - **只能观察到交接的启动**——GUI 只报告浏览器被请求打开，而不是它确实打开了；之后的浏览器退出永远不会上报，打印的 URL 是你的手动回退路径。
 - **SSH 会话保留 URL 但跳过浏览器交接**——打印的 URL 指向远端宿主机 loopback 端点；SSH 客户端或编辑器必须暴露并打开本地转发地址。
 - **`BROWSER` 覆盖只能来自环境**——被发现的 `.env` 不能设置 `BROWSER`；只有继承值能为自动交接选择可执行文件。
