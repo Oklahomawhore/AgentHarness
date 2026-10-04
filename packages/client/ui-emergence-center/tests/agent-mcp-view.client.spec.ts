@@ -110,6 +110,16 @@ describe('agentMcpView', () => {
     })
   })
 
+  it('shows platform unavailability without suggesting manual setup or rendering Host diagnostics', () => {
+    const unavailable = view({ client: client({ state: 'unsupported', detail: 'secret-bearing diagnostics' }) })
+    expect(unavailable).toMatchObject({
+      phase: 'unsupported', status: { key: 'agent.status.unsupported' }, next: { key: 'agent.next.unsupported', params: {} },
+    })
+    expect(unavailable.action).toBeUndefined()
+    expect(JSON.stringify(unavailable)).not.toContain('secret-bearing')
+    expect(JSON.stringify(unavailable)).not.toContain('mcp-guide')
+  })
+
   it('protects same-name conflicts, points to the safe path or Codex guide, and excludes raw detail', () => {
     const pathView = view({
       client: client({

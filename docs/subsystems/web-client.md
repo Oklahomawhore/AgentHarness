@@ -31,6 +31,70 @@ The Connection owns request correlation, the `/api` carrier, trust checks, exact
 
 The internal `$events` logical stream is the Connection generation source. Its opening `ready` frame carries the Host home used for path display and establishes the generation after Host listeners are attached, before any controller begins a baseline read. `ctx.remote.$on()` delivers allowlisted ordinary events to the root Client Context and scoped waterfall events to the resolved Session Context; a waterfall listener returns a result, calls `next()`, or rejects.
 
+## Local Connection access
+
+The Host-only `@deepseek-ai/dsh-client-connection/local-access` entry exposes private descriptor publication and token-to-cookie authentication for explicitly installed same-user clients. The returned authority is the normal Connection capability, not a Task grant. The [Connection README](../../packages/client/connection/README.md#browser-authentication-and-request-trust) defines platform support, file ownership, cancellation, and cleanup.
+
+Source: [`packages/client/connection/src/local-access.ts`](../../packages/client/connection/src/local-access.ts)
+
+```ts type-equiv
+/** Host-owned location of a private local Connection capability. */
+interface LocalConnectionDescriptorConfig {
+  /** Absolute path in an owner-only directory; one live publisher holds its kernel lease. */
+  readonly descriptorPath: string
+}
+```
+
+```ts type-equiv
+/** Complete-file limit for a local capability read. */
+interface LocalConnectionAuthenticationConfig extends LocalConnectionDescriptorConfig {
+  /** Maximum complete serialized descriptor size in UTF-8 bytes. */
+  readonly maxDescriptorBytes: number
+}
+```
+
+```ts type-equiv
+/** Versioned capability file; launchUrl is secret and must not enter diagnostics. */
+interface LocalConnectionDescriptor {
+  /** Private descriptor format version. */
+  readonly version: 1
+  /** Publisher generation; a successor Host replaces it. */
+  readonly generation: string
+  /** Loopback root URL containing this Host's launch token. */
+  readonly launchUrl: string
+}
+```
+
+```ts type-equiv
+/** Authenticated local authority; cookie is secret and belongs only in request headers. */
+interface LocalConnectionAccess {
+  /** Exact loopback origin accepted during the root exchange. */
+  readonly origin: string
+  /** One Connection browser-session cookie for this origin. */
+  readonly cookie: string
+  /** Publisher generation observed in the private descriptor. */
+  readonly generation: string
+}
+```
+
+```ts type-equiv
+/** Safe diagnostic categories; values never include paths, tokens, or cookies. */
+type LocalConnectionAccessFailureCode =
+  | 'descriptor-unavailable' | 'descriptor-invalid' | 'descriptor-too-large'
+  | 'authentication-failed' | 'transport-failed' | 'platform-unsupported'
+```
+
+```ts public-api
+/** A local capability or authentication failure with a credential-free message. */
+declare class LocalConnectionAccessError extends Error {
+  /**
+   * Construct one safe diagnostic.
+   * @param code - public failure category without credential material.
+   */
+  constructor(readonly code: LocalConnectionAccessFailureCode);
+}
+```
+
 ## Client models
 
 Each API controller package owns a paired Host and Client face. The Host side owns authoritative mutation and stream production. The Client side owns an identity-stable, React-free model over the same generated wire types and exposes observable snapshots plus commands. UI packages consume these Client services and do not reproduce transport state in component stores.

@@ -1,0 +1,56 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- insert:
+    - id: scope-live-room
+      name: '@deepseek-ai/dsh-development-room'
+      config:
+        nodeId: snapshot-receiver
+        presenceTtlMs: 10000
+        maxParticipants: 16
+        maxRooms: 32
+        maxTextBytes: 2048
+    - id: scope-live-task
+      name: '@deepseek-ai/dsh-development-task'
+      config:
+        maxTasks: 32
+        maxEventsPerTask: 64
+        maxMergeParents: 8
+        maxContextBlockBytes: 65536
+        maxLineageTasks: 64
+        maxTextBytes: 2048
+        roomRetryIntervalMs: 10000
+    - id: scope-live-text
+      name: '@deepseek-ai/dsh-development-task-context/text'
+    - id: scope-live-transport
+      name: './transport-fixture.mjs'
+    - id: scope-live-access
+      name: '@deepseek-ai/dsh-scope-access'
+      config:
+        maxGrants: 4
+        maxSubscriptions: 4
+        maxProjections: 16
+        maxContextBytes: 6000
+        maxResponseBytes: 16384
+        requestTimeoutMs: 30000
+        maxInvitationLifetimeMs: 60000
+        maxConcurrentReads: 2
+        waitTimeoutMs: 20000
+        maxConcurrentWaits: 1
+        maxConcurrentContributions: 1
+        maxContributionRequestBytes: 16384
+        maxContributionApplications: 16
+        maxApplicationRequestBytes: 16384
+        maxApplicationLifetimeMs: 86400000
+    - id: scope-live-consumer
+      name: '@deepseek-ai/dsh-scope-agent-context'
+      config:
+        maxContextBytes: 8000
+        coalesceMs: 1
+        retryDelayMs: 30000
+    - id: scope-live-assertions
+      name: './live-fixture.mjs'

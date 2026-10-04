@@ -23,7 +23,11 @@
       "default": "./lib/client.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./local-access": {
+      "types": "./lib/types/local-access.d.ts",
+      "default": "./lib/local-access.js"
+    }
   },
   "dsh": {
     "client": {
@@ -35,11 +39,13 @@
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/dsh-credentials": "workspace:^",
+    "@deepseek-ai/node-addon-system": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
     "zod": "^4.4.3"
   },
   "files": [
     "lib/index.js",
+    "lib/local-access.js",
     "lib/client.js",
     "lib/types/**/*.d.ts"
   ],
@@ -51,6 +57,7 @@
     "@deepseek-ai/dsh-api-session-controller": "workspace:^",
     "@deepseek-ai/dsh-attachment": "workspace:^",
     "@deepseek-ai/dsh-brand": "workspace:^",
+    "@deepseek-ai/dsh-cmdline": "workspace:^",
     "@deepseek-ai/dsh-commands": "workspace:^",
     "@deepseek-ai/dsh-host-directory-picker": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",

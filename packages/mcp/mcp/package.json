@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-mcp",
   "description": "Transport-independent MCP server registry for trusted Host Consumers",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
   },

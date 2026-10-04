@@ -1,0 +1,38 @@
+.root { min-width: 0; }
+.trigger { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 3px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.trigger:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.trigger svg { flex: none; }
+.triggerState { max-width: 110px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.panel { position: fixed; z-index: 100; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; width: 440px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 18px; overflow: auto; border: 0; border-radius: 18px; background: var(--dsw-specific-menu); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent); font-size: 13px; line-height: 19px; --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2); --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2); }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading h2 { margin: 0; font-size: 16px; line-height: 22px; }
+.state, .budget, .hint, .notice, .goal, .confirm { margin: 0; overflow-wrap: anywhere; }
+.state { font-weight: 600; }
+.budget { font-variant-numeric: tabular-nums; }
+.hint { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
+.notice, .confirm { padding: 10px; border-radius: 8px; background: var(--dsw-alias-interactive-bg-hover); }
+.form, .field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.form { gap: 14px; padding-top: 4px; }
+.field { font-size: 12px; line-height: 18px; }
+.field textarea { box-sizing: border-box; width: 100%; min-height: 70px; padding: 9px 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; resize: vertical; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); caret-color: var(--dsw-alias-label-primary); font: inherit; }
+.field select { box-sizing: border-box; width: 100%; min-height: 36px; padding: 8px 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; }
+.field select:focus-visible, .field textarea:focus-visible, .modes input:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.field textarea::selection { background: var(--dsw-alias-interactive-bg-hover); }
+.numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.numbers > :first-child { grid-column: 1 / -1; }
+.modes { display: flex; min-width: 0; flex-direction: column; gap: 8px; margin: 0; padding: 0; border: 0; }
+.modes legend { margin-bottom: 8px; font-weight: 600; }
+.modes label { display: flex; align-items: center; gap: 7px; min-height: 30px; }
+.modes input { margin: 0; accent-color: var(--dsw-alias-label-primary); }
+.details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 12px; line-height: 18px; }
+.details dt { color: var(--dsw-alias-label-secondary); }
+.details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.actions, .footer { display: flex; flex-wrap: wrap; gap: 8px; }
+.footer { justify-content: space-between; padding-top: 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); }
+@media (max-width: 440px) { .triggerState { display: none; } .panel { padding: 16px; } }
+.sharing { padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l3); }
+.sharing > summary { padding: 4px 0; cursor: pointer; font-weight: 600; }
+.sharing > summary:focus-visible, .consent input:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 18px; }
+.consent input { flex: none; margin: 3px 0 0; accent-color: var(--dsw-alias-label-primary); }

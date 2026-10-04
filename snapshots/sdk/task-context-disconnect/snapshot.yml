@@ -1,0 +1,10 @@
+version: 1
+scenario: task-context-disconnect
+profile: sdk
+composition: sdk-task-context-disconnect
+recording: authored
+header:
+  class: task-context-disconnect
+  pin: true
+replay:
+  override: true

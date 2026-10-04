@@ -8,6 +8,7 @@
     { "path": "../../../vendor/schemastery" },
     { "path": "../../util/brand" },
     { "path": "../development-room" },
+    { "path": "../scope-transport" },
     { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../typert/protocol" }
   ]

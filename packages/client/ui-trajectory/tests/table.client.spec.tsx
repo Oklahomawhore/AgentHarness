@@ -2,7 +2,7 @@
 /** Trajectory ledger selection, details, status, and fold behavior. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import type { RenderMessageImages } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { TrajectoryTable as LocalizedTrajectoryTable } from '../src/client/TrajectoryTable.tsx'
@@ -124,6 +124,28 @@ const FOLD_PROPS = {
 }
 
 describe('TrajectoryTable', () => {
+
+  it.each([
+    { kind: 'scope-agent-context', version: 1, form: 'snapshot', bindingId: 'binding-1', subscriptionId: 'subscription-1' },
+    { kind: 'scope-agent-pulse', version: 1, bindingId: 'binding-1', activationId: 'activation-1' },
+    { kind: 'scope-agent-context', version: 1, form: 'withdrawn', reason: 'revoked' },
+  ])('shows native scope metadata in the Source inspector: $kind $form', (source) => {
+    const turns: readonly TrajectoryTurnModel[] = [{
+      turn: 1,
+      groups: [{
+        title: 'Message',
+        cells: [{ index: 1, kind: 'context', text: 'scope record', inputDetail: 'scope record', messageSource: source, timeSeconds: null }],
+      }],
+    }]
+    render(<TrajectoryTable turns={turns} {...FOLD_PROPS} />)
+    fireEvent.click(screen.getByRole('row', { name: /scope record/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Source' }))
+    const tree = within(screen.getByRole('tabpanel')).getByRole('tree')
+    for (const [key, value] of Object.entries(source)) {
+      expect(tree.textContent).toContain(key)
+      expect(tree.textContent).toContain(String(value))
+    }
+  })
   it('shows known standalone prompt text without a fabricated tool catalog or request options', () => {
     const turns = deriveTrajectoryLayout({
       nodes: [], partial: null, runningCalls: [],

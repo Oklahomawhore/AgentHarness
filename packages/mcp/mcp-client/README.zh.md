@@ -141,6 +141,8 @@ MCP 服务提供者与模型工具桥接：连接外部 [Model Context Protocol]
 
 ## 已知限制与暂缓事项
 
+本包不发布运行时 invariant companion，因为连接 supervisor 持有当前客户端和注册 disposer，不维护独立的状态投影。断线期间直接 MCP 路由与模型工具的生命周期有意不同，因此两者是否存在不构成相等性 invariant。
+
 - **只桥接 MCP 的工具能力**：资源和提示词没有 harness 消费接口，暂缓实现。
 - **启动超时继承自 MCP SDK**：DSH 尚未公开连接／发现超时。每次 initialize 请求或分页 `tools/list` 请求都使用 SDK 默认的 60 秒，因此在初始同步完成期间，无响应的 server 或 cursor chain 可能同时延迟激活与 teardown。
 - **重连在传输关闭时触发**：崩溃的 stdio 子进程会触发重连；Streamable HTTP 失败通过每次请求以及 SDK 传输自身的 SSE（Server-Sent Events）流恢复机制暴露，因此不可达的 HTTP 服务器会按调用重试，而非由 supervisor 重新 spawn。

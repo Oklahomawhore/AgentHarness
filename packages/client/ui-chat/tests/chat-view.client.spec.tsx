@@ -12,7 +12,7 @@ import type {
   TranscriptViewMode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
-  SessionListState, SessionSnapshot,
+  SessionListState, SessionSnapshot, SessionLiveEventEntry,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
   ConversationLocationDataStore, ConversationTurnDataMap,
@@ -23,7 +23,7 @@ import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import { EMPTY_CONVERSATION_SNAPSHOT } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { ConversationNodeAssembler, EMPTY_CONVERSATION_SNAPSHOT } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { createChatStore } from '../src/client/stores.ts'
 import { ChatView } from '../src/client/chat/ChatView.tsx'
@@ -40,7 +40,9 @@ import { TurnTailNodeView } from '../src/client/chat/TurnTailNodeView.tsx'
 import { TurnProcessNodeView } from '../src/client/chat/TurnProcessNodeView.tsx'
 import { SystemPromptNodeView } from '../src/client/chat/SystemPromptRow.tsx'
 import { formatRunDuration } from '../src/client/chat/message-chrome.ts'
-import { ChatSnapshotBuilder } from '../src/client/conversation-nodes/chat-snapshot-builder.ts'
+import { ChatSnapshotBuilder, chatViewDefinition } from '../src/client/conversation-nodes/chat-snapshot-builder.ts'
+import { messageDefinition } from '../src/client/conversation-nodes/message.ts'
+import { turnTailDefinition } from '../src/client/conversation-nodes/turn-tail.ts'
 import type { TurnProcessSpec } from '../src/client/contract/turn-process.ts'
 import { chatSnapshotFixture } from './chat-snapshot-fixture.client.ts'
 
@@ -495,6 +497,45 @@ function installScrollMetrics(element: HTMLElement, initialHeight: number, clien
 }
 
 describe('Chat node rendering', () => {
+
+  it.each(['normal', 'compact'] as const)('renders no message bubble for a scope-only turn (%s)', (mode) => {
+    const assembler = new ConversationNodeAssembler(
+      { entries: () => [messageDefinition, turnTailDefinition], fallbackEntry: () => undefined },
+      { entries: () => [chatViewDefinition] },
+    )
+    const events = [
+      { type: 'turn/start', data: { turn: 1 } },
+      {
+        type: 'user/message', surfaceOp: 'append',
+        data: {
+          id: 'pulse', role: 'user', content: [{ type: 'text', text: 'authorized automatic goal' }],
+          source: { kind: 'scope-agent-pulse', version: 1, bindingId: 'binding', activationId: 'activation' },
+        },
+      },
+      ...['snapshot', 'withdrawn', 'retired', 'disconnected'].map(form => ({
+        type: 'user/message', surfaceOp: 'append', data: {
+          id: `task-${form}`, role: 'user', content: [{ type: 'text', text: `background Task ${form}` }],
+          source: { kind: 'development-task-context', version: form === 'snapshot' || form === 'withdrawn' ? 3 : 1, form },
+        },
+      })),
+      { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+    ].map((event, index) => ({
+      type: 'event', event: { ...event, seq: index + 1, time: 1_700_000_000_000 + index },
+    })) as unknown as SessionLiveEventEntry[]
+    assembler.replaceWindow(events, false)
+    assembler.activateTarget('chat')
+    const projected = assembler.get('chat')
+    if (projected === undefined) throw new Error('fixture did not project Chat')
+    const h = makeHarness({}, {}, projected)
+    h.setTranscriptView(mode)
+    const { container } = render(<h.ChatView {...h.props} />)
+    expect(screen.queryByText('authorized automatic goal')).toBeNull()
+    expect(screen.queryByText(/background Task/)).toBeNull()
+    expect(container.querySelector('[data-chat-flow-kind="user"]')).toBeNull()
+    expect(container.querySelector('[data-chat-flow-kind="steering"]')).toBeNull()
+    expect(container.querySelector('[data-chat-flow-kind="context"]')).toBeNull()
+    expect(container.querySelector('[data-chat-flow-kind="turn-tail"]')?.textContent ?? '').toBe('')
+  })
 
   it('threads the injected file-mention vocabulary into the closing prose only', () => {
     const wrote = (seq: number, callId: string): ToolResultNode => ({

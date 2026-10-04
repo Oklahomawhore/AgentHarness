@@ -25,6 +25,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { EmergenceProfile } from './profile.ts'
 import type { EmergenceCenterPanelFace } from './slots.ts'
 import { agentMcpView } from './agent-mcp-view.ts'
+import { ClaudeScopePanel } from './ClaudeScopePanel.tsx'
+import { OwnerContributionPanel } from './OwnerContributionPanel.tsx'
+import { ScopeAccessPanel } from './ScopeAccessPanel.tsx'
+import { ObservedScopePanel } from './ObservedScopePanel.tsx'
 import css from './EmergenceCenterPanel.module.css'
 
 /** Full panel props composed through the sidebar footer-action slot. */
@@ -37,6 +41,7 @@ type CreateKind = 'root' | 'fork' | 'merge'
 type PendingAction = 'profile' | 'create' | 'context' | 'agent'
 
 const TASK_RUNTIME_KEYS = { ready: 'runtime.ready', degraded: 'runtime.degraded' } as const
+const TASK_ORIGIN_KEYS = { root: 'detail.origin.root', fork: 'detail.origin.fork', merge: 'detail.origin.merge' } as const
 
 const TASK_ERROR_KEYS = {
   TASK_NOT_FOUND: 'error.taskNotFound',
@@ -62,19 +67,21 @@ function parentIds(task: DevelopmentTaskSnapshot): readonly DevelopmentTaskId[] 
   return task.origin.parents.map(parent => parent.taskId)
 }
 
-function originLabel(task: DevelopmentTaskSnapshot): 'Root' | 'Fork' | 'Merge' {
-  if (task.origin.kind === 'root') return 'Root'
-  return task.origin.kind === 'fork' ? 'Fork' : 'Merge'
-}
-
 interface TaskGraphPresentation {
   readonly creator: string
   readonly runtime: string
 }
 
-/** Build one deterministic left-to-right Task graph. */
+/**
+ * Build one deterministic left-to-right Task graph.
+ * @param tasks - current Task snapshots.
+ * @param t - active UI dictionary translator.
+ * @param present - localized creator and runtime labels.
+ * @returns Task nodes and immutable parent edges.
+ */
 export function taskGraph(
   tasks: readonly DevelopmentTaskSnapshot[],
+  t: EmergenceCenterPanelProps['t'],
   present: (task: DevelopmentTaskSnapshot) => TaskGraphPresentation = task => ({
     creator: task.createdBy,
     runtime: task.runtime,
@@ -104,7 +111,7 @@ export function taskGraph(
       selectable: true,
       data: {
         label: <div className={css.node} data-origin={task.origin.kind}>
-          <span>{originLabel(task)} · r{task.revision}</span>
+          <span>{t(TASK_ORIGIN_KEYS[task.origin.kind])} · {t('detail.revision', { revision: task.revision })}</span>
           <strong>{task.objective}</strong>
           <small>{presentation.creator} · {presentation.runtime}</small>
         </div>,
@@ -121,18 +128,40 @@ export function EmergenceCenterPanel({
   useParticipants,
   useTasks,
   useMcpClients,
+  useClaudeScopes,
+  useSourceContributions, useOwnerContributions,
+  useObservedScopes,
   initialProfile,
   setProfile,
   focusTask,
   createTask,
   publishContext,
   setupClient,
+  setupClaudeHooks,
+  checkClaudeHooks,
+  removeClaudeHooks,
+  joinClaudeScope,
+  leaveClaudeScope,
+  refreshClaudeScopes,
+  approveObservedScope,
+  endObservedScope,
+  refreshObservedScopes,
+  readScopeAccess, inviteScope, revokeScope, receiveClaudeScope, stopClaudeReceive,
+  readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
+  readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
+  createContributionEntry, recoverContributionEntry, approveContributionApplication, rejectContributionApplication,
   refresh,
   t,
 }: EmergenceCenterPanelProps) {
   const participants = useParticipants(value => value)
   const taskState = useTasks(value => value)
   const mcpClients = useMcpClients(value => value)
+  const claudeScopes = useClaudeScopes(value => value)
+  const sourceContributions = useSourceContributions(value => value)
+  const ownerContributions = useOwnerContributions(value => value)
+  const emptyContext = claudeScopes.sessions.some(session => session.receiveSubscriptionId !== undefined)
+    ? t('panel.receivingContext') : t('panel.emptyContext')
+  const observedScopes = useObservedScopes(value => value)
   const [open, setOpen] = useState(() => window.location.hash === '#agentharness=collaboration')
   const [selectedTaskId, setSelectedTaskId] = useState<DevelopmentTaskId>()
   const [filter, setFilter] = useState<TaskFilter>('mine')
@@ -160,7 +189,7 @@ export function EmergenceCenterPanel({
 
   useEffect(() => {
     if (selectedTaskId !== undefined) void focusTask(selectedTaskId).catch(() => {})
-  }, [focusTask, selectedTaskId])
+  }, [focusTask, selectedTaskId, participants.nodeId])
 
   const participantMap = useMemo(
     () => new Map(participants.participants.map(participant => [participant.id, participant])),
@@ -176,7 +205,7 @@ export function EmergenceCenterPanel({
     if (!text.includes(query.trim().toLowerCase())) return false
     return filter === 'all' || task.createdBy === participantId
   }), [filter, participantId, query, taskState.tasks])
-  const graph = useMemo(() => taskGraph(taskState.graphTasks, task => ({
+  const graph = useMemo(() => taskGraph(taskState.graphTasks, t, task => ({
     creator: participantName(task.createdBy),
     runtime: t(TASK_RUNTIME_KEYS[task.runtime]),
   })), [participantMap, t, taskState.graphTasks])
@@ -343,7 +372,7 @@ export function EmergenceCenterPanel({
               onChange={() => { setMergeParents(current => current.includes(task.id)
                 ? current.filter(id => id !== task.id) : [...current, task.id]) }}
             />
-            {task.objective} · r{task.revision}
+            {task.objective} · {t('detail.revision', { revision: task.revision })}
           </label>)}
         </fieldset>}
         {createKind !== 'root' && <fieldset>
@@ -397,11 +426,11 @@ export function EmergenceCenterPanel({
             {filteredTasks.map(task => <button
               type="button" key={task.id} data-active={task.id === selectedTask?.id || undefined} onClick={() => { setSelectedTaskId(task.id) }}
             >
-              <span>{originLabel(task)}<i>{t('detail.revision', { revision: task.revision })}</i></span>
+              <span>{t(TASK_ORIGIN_KEYS[task.origin.kind])}<i>{t('detail.revision', { revision: task.revision })}</i></span>
               <strong>{task.objective}</strong>
               <small>{participantName(task.createdBy)}</small>
             </button>)}
-            {filteredTasks.length === 0 && <p>{t('panel.emptyContext')}</p>}
+            {filteredTasks.length === 0 && <p>{emptyContext}</p>}
           </div>
         </aside>
         <main className={css.graph} aria-label={t('graph.aria')}>
@@ -433,10 +462,30 @@ export function EmergenceCenterPanel({
           </p>}
         </main>
         <aside className={css.detail}>
-          {selectedTask === undefined ? <div className={css.center}>{t('panel.emptyContext')}</div> : <>
+          <ClaudeScopePanel state={claudeScopes} {...(selectedTask === undefined ? {} : { taskId: selectedTask.id })}
+            localTask={selectedTask?.ownerNodeId === participants.nodeId} setup={setupClaudeHooks}
+            check={checkClaudeHooks} remove={removeClaudeHooks}
+            join={joinClaudeScope} leave={leaveClaudeScope} refresh={refreshClaudeScopes}
+            contributions={sourceContributions} readContribution={readContribution}
+            requestContribution={requestContribution} prepareContribution={prepareContribution}
+            activateContribution={activateContribution} stopContribution={stopContribution}
+            previewContributionText={previewContributionText} t={t} />
+          <OwnerContributionPanel key={selectedTask?.id ?? ''}
+            taskId={selectedTask !== undefined && selectedTask.ownerNodeId === participants.nodeId && selectedTask.origin.kind === 'root' ? selectedTask.id : undefined}
+            entry={selectedTask === undefined ? undefined : ownerContributions[selectedTask.id]}
+            readOwnedContributions={readOwnedContributions} moreOwnedContributions={moreOwnedContributions}
+            createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}
+            approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
+            approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
+            previewContributionText={previewContributionText} t={t} />
+          <ScopeAccessPanel sessions={claudeScopes} refreshSessions={refreshClaudeScopes}
+            {...(selectedTask?.ownerNodeId === participants.nodeId && selectedTask?.origin.kind === 'root' ? { taskId: selectedTask.id } : {})}
+            readScopeAccess={readScopeAccess} inviteScope={inviteScope} revokeScope={revokeScope}
+            receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive} t={t} />
+          {selectedTask === undefined ? <div className={css.center}>{emptyContext}</div> : <>
             <header className={css.taskHeader}>
               <div>
-                <span>{originLabel(selectedTask)} · {t('detail.revision', { revision: selectedTask.revision })}</span>
+                <span>{t(TASK_ORIGIN_KEYS[selectedTask.origin.kind])} · {t('detail.revision', { revision: selectedTask.revision })}</span>
                 <h1>{selectedTask.objective}</h1>
               </div>
               <b data-runtime={selectedTask.runtime}>{t(TASK_RUNTIME_KEYS[selectedTask.runtime])}</b>
@@ -447,6 +496,10 @@ export function EmergenceCenterPanel({
                   <div><h2>{t('agents.connectTitle')}</h2><p>{t('agents.sessionHint')}</p></div>
                   <code>{selectedTask.id}</code>
                 </header>
+                {selectedTask.ownerNodeId === participants.nodeId && <ObservedScopePanel
+                  key={`observed-${selectedTask.id}`} taskId={selectedTask.id} state={observedScopes}
+                  approve={approveObservedScope} end={endObservedScope} refresh={refreshObservedScopes} t={t} />}
+                <h3>{t('agents.mcpTitle')}</h3>
                 <div className={css.agentGrid}>
                   {agentViews.map(({ client, assignments, view }) => <article className={css.agentCard} key={client.id}>
                     <header><strong>{client.label}</strong><span>{t(`client.state.${client.state}`)}</span></header>
@@ -461,7 +514,7 @@ export function EmergenceCenterPanel({
                     </div>
                     {assignments.length > 0 && <ul className={css.sessionBindings}>
                       {assignments.map(binding => <li key={binding.bindingId}>
-                        {binding.sessionLabel ?? t('agents.unnamedSession')} · r{binding.acknowledgedRevision ?? 0}
+                        {binding.sessionLabel ?? t('agents.unnamedSession')} · {t('detail.revision', { revision: binding.acknowledgedRevision ?? 0 })}
                       </li>)}
                     </ul>}
                     {view.action === 'setup' && <button
@@ -477,7 +530,9 @@ export function EmergenceCenterPanel({
                 {selectedTask.inheritedContextBlockId !== undefined && <p className={css.inheritedHint}>{t('context.inheritedReady')}</p>}
                 <div className={css.publications}>
                   {selectedTask.context.map(item => <article key={item.id}>
-                    <p>{item.text}</p><small>{participantName(item.publishedBy)}</small>
+                    <p>{item.text}</p><small>{item.peerContribution === undefined
+                      ? participantName(item.publishedBy)
+                      : t('context.independentSource', { peerId: item.peerContribution.grant.contributorPeerId })}</small>
                   </article>)}
                 </div>
                 <textarea value={contextText} onChange={(event) => { setContextText(event.target.value) }} placeholder={t('context.placeholder')} />

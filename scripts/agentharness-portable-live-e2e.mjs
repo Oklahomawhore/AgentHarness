@@ -1,8 +1,7 @@
-#!/usr/bin/env node
 /** Exercise a running portable AgentHarness through its shipped stdio MCP bridge. */
 
 import assert from 'node:assert/strict'
-import { realpath } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -12,7 +11,12 @@ function option(name, fallback) {
 }
 
 const portableRoot = resolve(option('--root', '.'))
-const url = option('--url', 'http://127.0.0.1:3080')
+const configurationPath = option('--config')
+if (configurationPath === undefined) throw new Error('--config must name a generated temporary MCP client configuration')
+const configuration = JSON.parse(await readFile(configurationPath, 'utf8'))
+const entry = configuration.mcpServers?.agentharness
+if (typeof entry?.command !== 'string' || !Array.isArray(entry.args) || !entry.args.every(value => typeof value === 'string')
+  || typeof entry.env?.DSH_HOME !== 'string') throw new Error('generated MCP entry is invalid')
 const expectExisting = process.argv.includes('--expect-existing')
 const sdkRoot = await realpath(join(
   portableRoot, 'node_modules', '.pnpm', 'node_modules', '@modelcontextprotocol', 'sdk',
@@ -20,18 +24,25 @@ const sdkRoot = await realpath(join(
 const { Client } = await import(pathToFileURL(join(sdkRoot, 'dist', 'esm', 'client', 'index.js')).href)
 const { StdioClientTransport } = await import(pathToFileURL(join(sdkRoot, 'dist', 'esm', 'client', 'stdio.js')).href)
 
-async function connect(participantId, displayName) {
-  const client = new Client({ name: `agentharness-portable-e2e-${participantId}`, version: '1.0.0' })
+async function connect() {
+  const client = new Client({ name: 'agentharness-portable-e2e', version: '1.0.0' })
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [
-      join(portableRoot, 'mcp.mjs'), '--url', url,
-      '--participant-id', participantId, '--display-name', displayName,
-    ],
+    command: entry.command,
+    args: entry.args,
+    env: {
+      ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
+      ...(process.env.HOME === undefined ? {} : { HOME: process.env.HOME }),
+      ...entry.env,
+    },
     stderr: 'pipe',
   })
-  await client.connect(transport)
-  return client
+  try {
+    await client.connect(transport)
+    return client
+  } catch (error) {
+    await client.close()
+    throw error
+  }
 }
 
 async function call(client, name, args) {
@@ -44,7 +55,7 @@ async function call(client, name, args) {
     ?? response.structuredContent
 }
 
-const codex = await connect('codex-agent', 'Codex Agent')
+const codex = await connect()
 try {
   const tools = await codex.listTools()
   assert.equal(tools.tools.length, 9)

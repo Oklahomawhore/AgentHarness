@@ -1,0 +1,20 @@
+- group:
+  - text: 独立设备协作
+  - paragraph: 将一个 Task 的上下文授权给另一台设备，并选择接收它的会话。
+  - text: 本机设备身份
+  - textbox "本机设备身份": {{recipientPeerId}}
+  - paragraph: 将这段公开身份交给邀请人。它不包含密钥或会话内容。
+  - paragraph: 选择本机创建的独立 Task 后可发出邀请。接收邀请不需要本地 Task 副本。
+  - text: 粘贴收到的邀请
+  - textbox "粘贴收到的邀请"
+  - text: 选择一个会话
+  - combobox "选择一个会话":
+    - option "请选择一个会话"
+    - option "browser-independent-receiver" [selected]
+    - option "browser-independent-other"
+  - paragraph: 只接收上下文，不授权采集工具或读取项目文件。连接后在下一次支持的 Hook 处自动更新；空闲会话不会被唤醒。
+  - button "连接所选会话" [disabled]
+  - code: browser-independent-receiver
+  - text: 最近一次上下文已准备
+  - code: {{taskId}}
+  - button "停止接收"

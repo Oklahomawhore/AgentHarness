@@ -38,8 +38,8 @@ export interface AgentOptions {
 export interface CancelOptions {
   /**
    * Preserve queued and steering inbox items instead of discarding them. The
-   * active turn is still aborted, but un-started and pending work survives for a
-   * later turn and no canceled inbox splice is logged.
+   * active activity and its earlier wake requests are still cancelled. Pending
+   * work waits for a new waking send, and no canceled inbox splice is logged.
    */
   keepInbox?: boolean | undefined
 }
@@ -175,8 +175,12 @@ declare module './types.ts' {
 
     /**
    * Clear queued and steering work — unless `keepInbox` — and abort the active
-   * turn or between-turn task. The first cause wins for that activity. With no
-   * active activity, cancellation is a no-op and does not arm later work.
+   * turn or between-turn task, cancelling its earlier wake requests even when
+   * the inbox is retained. A later waking send may restart pending work.
+   * The first cause wins for that activity. Idle cancellation also suppresses
+   * a send stopped during inbox insertion, without affecting later sends.
+   * Every call emits `agent/cancel-requested` after applying local cancellation,
+   * including idle calls and repeated calls whose signal retains its first cause.
    * @param cause - the stable caller intent carried by the active operation signal.
    * @param options - cancellation options; `keepInbox` preserves pending work.
    */
@@ -205,8 +209,8 @@ declare module './types.ts' {
    * Route identified input to an inbox boundary and optionally wake the driver.
    * Waking input submitted after active cancellation is queued for the next
    * turn and runs when the aborted activity converges to idle; a `disposed`
-   * cancel leaves it parked. A wake submitted while already idle always opens
-   * its turn boundary, even when its message is cleared before the driver
+   * cancel leaves it parked. Unless cancelled during inbox insertion, an idle
+   * wake opens its turn boundary even when its message is cleared before the driver
    * claims ([cancel-convergence wake latch](../../../../.agents/notes/implemented/bug-fix/2026-08-07-cancel-convergence-wake-latch.md)).
    * @param message - identified content and the source that supplied it.
    * @param target - the preferred next-turn or next-step inbox boundary.
@@ -275,6 +279,16 @@ declare module '@deepseek-ai/cordis' {
      * @mode emit
      */
     'agent/status'(this: Scoped<Agent>, payload: { agent: Agent; status: AgentStatus }): void
+    /**
+     * One cancellation call has cleared its applicable queued work and earlier
+     * wakes, and aborted any active activity. Repeated calls still notify even
+     * when the activity signal retains its first cause; idle calls also notify.
+     * @param payload.agent - the exact Agent whose cancellation was requested.
+     * @param payload.cause - this call's intent, which may differ from the signal's first cause.
+     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+     * @mode emit
+     */
+    'agent/cancel-requested'(this: Scoped<Agent>, payload: { agent: Agent; cause: AgentCancelCause }): void
     /**
      * One message entered the live inbox.
      * @param payload.agent - the agent whose inbox changed.

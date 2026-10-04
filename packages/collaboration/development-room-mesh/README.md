@@ -30,6 +30,8 @@ None.
 - Presence is lease state rather than durable Room history.
 - The package does not expose user-facing Room tools or UI.
 
+No invariant companion is published because this consumer reads Room heads and presence from the Room service, which validates incoming replica ownership.
+
 ### Dev Note
 
 Use this package’s source, tests, and architecture documentation as the maintainer reference.

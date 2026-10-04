@@ -1,0 +1,11 @@
+version: 1
+scenario: scope-owner-participation
+profile: sdk
+composition: sdk-scope-owner-participation
+recording: authored
+header:
+  class: scope-owner-participation
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

@@ -58,6 +58,10 @@ Repository contributors can select either development route; both execute the no
 
 `python/sdk/tests/manual_sdk_agent_smoke.py` uses the internal `_launch_args` test adapter to exercise the unbuilt TypeScript CLI under tsx. Arbitrary argv replacement is intentionally absent from the public SDK.
 
+For a keyless native scope replay, run `scripts/smoke-python-runtime.py` with `--scenario sdk-scope-context --exe apps/cli/lib/bin.js` after building the checkout and installing the Python SDK. This explicit local scenario is separate from `all`: it requires repository fixture helpers and Node on `PATH`. It launches the built `dsh --profile sdk` through the public Python SDK, compares its complete normalized Session with the [TypeScript recording](../snapshots/sdk/scope-context-live/session.v3.jsonl), and checks the Python result and Session under [the Python runtime fixture](../scripts/snapshots/python-sdk-single-exe/scope-context-live/). The scope owner and model replies are controlled fixtures; the run proves automatic-turn delivery, current-context replacement, withdrawal, and retained activation budget, but does not prove real-model behavior or packaged-wheel installation. Use `--update-snapshots` only when reviewing this scenario's new expected output.
+
+With the same prerequisites, use `--scenario sdk-task-context-peer-facts --exe apps/cli/lib/bin.js` to check valid, corrected, invalid, and revoked peer contributions through the Python SDK against the [recorded Task context](../snapshots/sdk/task-context-peer-facts/session.v3.jsonl) and [Python expected output](../scripts/snapshots/python-sdk-single-exe/task-context-peer-facts/). This explicit local scenario is also separate from `all`; its direct Host API fixture verifies context adoption, not network authentication, file capture, or real-model behavior.
+
 ## Build distributions
 
 The root `package.json` version is authoritative for both Python distributions. The staging script injects that version into both wheels and pins the SDK to the same `deepseek-harness-runtime-bin` version.

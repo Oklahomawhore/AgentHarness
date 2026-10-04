@@ -1,0 +1,16 @@
+/* Network preference details use the existing settings field layout. */
+.content {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  min-width: 0;
+}
+
+.addresses {
+  composes: input from './fields.module.css';
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 84px;
+  padding: 8px 12px;
+  resize: vertical;
+}

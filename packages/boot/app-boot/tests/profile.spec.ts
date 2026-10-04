@@ -220,6 +220,10 @@ describe('loadProfile', () => {
       bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
       patchReload: 'startup',
     })
+    expect(PROFILE_TEMPLATES.mcp).toEqual({
+      bundles: ['@deepseek-ai/dsh-agentharness-bridge'],
+      patchReload: 'startup',
+    })
     expect(PROFILE_TEMPLATES['sdk-minimal']).toEqual({
       bundles: ['@deepseek-ai/dsh-sdk-minimal'],
       patchReload: 'startup',

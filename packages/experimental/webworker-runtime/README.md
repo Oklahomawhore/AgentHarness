@@ -9,7 +9,9 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The browser worker host: the whole harness plugin tree runs inside one dedicated Web Worker, for preview deployments and packaging regressions ([experimental group](../README.md)). The worker inflates a packed VFS image off its download and mounts it in memory, loads its modules through a CommonJS wrapper loader, and serves the page over a postMessage tunnel that speaks plain HTTP. Use it when a preview must run the packaged harness without a Node host.
+Run the packaged harness in a dedicated browser Web Worker for preview deployments and packaging regressions ([experimental group](../README.md)). The Worker downloads a packed VFS image into memory, loads its modules, and serves the page over an HTTP postMessage tunnel.
+
+The preview excludes the collaboration management page, external Claude hooks, and Node-only scope and Mesh services. Task storage uses the volatile VFS; replacing the Worker loses that data.
 
 ## Table of Contents
 
@@ -49,7 +51,12 @@ None; this package neither assembles nor sends a provider request.
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- **The collaboration management page is unavailable**: boot disables `ui-emergence-center` together with its Node-only MCP, Claude hook, and scope services. The page does not call absent management APIs; ordinary Worker sessions remain available.
+- **Task storage uses the volatile VFS**: boot disables `storage-sqlite` and changes an existing `storage-domain` route for `development_tasks` from `sqlite` to the existing JSON backend. It preserves other settings and routes, including an explicitly selected different backend; custom SQLite routes remain unsupported. This Worker-only choice provides no persistence across Worker replacement; the Node Web profile retains SQLite.
+- **Local MCP client configuration is unavailable**: boot disables `mcp-client-setup`. The Worker has no native Node executable or external client configuration files; it does not supply a placeholder executable path.
+- **Local Claude hooks are unavailable in the browser preview**: boot disables the `claude-scope` entry. Project hooks require a local Node launcher and OS file locks; they cannot connect an external Claude process to the in-memory Worker.
 - **The worker composition writes plaintext session logs** (`compression: 'none'` boot patch): it carries no Zstandard codec, so exported logs are `.jsonl`, never `.jsonl.zstd`.
+- **UDP and LAN discovery are unavailable**: `node:dgram.createSocket` reports the unsupported API and throws before acquiring a resource. The default Mesh rows are disabled before the plugin tree mounts; importing a dormant module does not grant UDP capability.
 - **`node:dns/promises`, `node:vm`, `node:net`, `node:sqlite`, `node:worker_threads` are structural stubs**: every call reports its refusal on the console and throws. Rows needing native DNS, a real process, or realm isolation cannot run here.
 - **Filesystem watchers observe only the mounted VFS**: image seeding is silent and the VFS has no symlinks or external writers. `persistent`, `ref()`, and `unref()` preserve the Node API but cannot control a dedicated Worker's lifetime because browsers expose no ref-counted event loop.
 - **Worker confinement is a VFS boundary, not kernel Landlock**: `read-only` and `workspace-write` run the unchanged `@deepseek-ai/node-addon-system/landlock-run` JavaScript and launcher argv, but the process layer implements the logical `landlock-run` executable and enforces its grants on every shell filesystem request. `full` therefore covers the Worker command table and mounted VFS only; it does not claim arbitrary native-process execution or Linux kernel isolation.

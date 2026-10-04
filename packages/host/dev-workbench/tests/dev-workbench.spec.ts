@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createServer, type Server } from 'node:http'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import DevWorkbenchService from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import type { DevWorkbenchEntryId } from '../src/types.ts'
@@ -97,18 +97,53 @@ describe('DevWorkbenchService', () => {
   })
 
   it('single-flights repeated starts and waits for process-tree stop', async () => {
-    const { service } = await bench(['-e', 'setInterval(() => {}, 1000)'])
-    const [first, second] = await Promise.all([
-      service.start(id('fixture')),
-      service.start(id('fixture')),
-    ])
-    expect(first.pid).toBeGreaterThan(0)
-    expect(second.pid).toBe(first.pid)
+    const { ctx, service } = await bench(['-e', 'setInterval(() => {}, 1000)'])
+    const subprocess = ctx.subprocess
+    const spawn = subprocess.spawn.bind(subprocess)
+    const exitObserved = Promise.withResolvers<undefined>()
+    const releaseExit = Promise.withResolvers<undefined>()
+    const spawned = vi.spyOn(subprocess, 'spawn').mockImplementation((spec) => {
+      const handle = spawn(spec)
+      return {
+        ...handle,
+        async waitForExit(signal) {
+          const empty = await handle.waitForExit(signal)
+          exitObserved.resolve(undefined)
+          await releaseExit.promise
+          return empty
+        },
+      }
+    })
+    try {
+      const [first, second] = await Promise.all([
+        service.start(id('fixture')),
+        service.start(id('fixture')),
+      ])
+      expect(spawned).toHaveBeenCalledTimes(1)
+      expect(first.phase).toBe('running')
+      expect(second).toEqual(first)
 
-    const stopped = await service.stop(id('fixture'))
-    expect(stopped.phase).toBe('stopped')
-    expect(stopped.pid).toBeUndefined()
-    expect(await service.stop(id('fixture'))).toMatchObject({ phase: 'stopped' })
+      let returned = false
+      const stopping = service.stop(id('fixture')).then((snapshot) => {
+        returned = true
+        return snapshot
+      })
+      expect(await Promise.race([
+        exitObserved.promise.then(() => 'range-exit-observed'),
+        stopping.then(() => 'stop-returned'),
+      ])).toBe('range-exit-observed')
+      expect(returned).toBe(false)
+      releaseExit.resolve(undefined)
+      const stopped = await stopping
+      expect(stopped.phase).toBe('stopped')
+      expect(stopped.outcome).toBeDefined()
+      expect(stopped.pid).toBeUndefined()
+      expect(await service.stop(id('fixture'))).toMatchObject({ phase: 'stopped' })
+      expect(spawned).toHaveBeenCalledTimes(1)
+    } finally {
+      releaseExit.resolve(undefined)
+      spawned.mockRestore()
+    }
   })
 
   it('reports HTTP readiness independently from a live process', async () => {

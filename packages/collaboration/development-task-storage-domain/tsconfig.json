@@ -8,7 +8,6 @@
     { "path": "../development-room" },
     { "path": "../development-room-storage-domain" },
     { "path": "../development-task" },
-    { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../storage/storage-domain" }
   ]
 }

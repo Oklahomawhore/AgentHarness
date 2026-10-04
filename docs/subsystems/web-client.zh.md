@@ -31,6 +31,70 @@ Connection 拥有 request correlation、`/api` carrier、trust check、精确 Fe
 
 内部 `$events` logical stream 是 Connection generation source。它的 opening `ready` frame 携带用于路径显示的 Host home，并在 Host listener 已挂载、任何 controller 开始 baseline read 之前建立 generation。`ctx.remote.$on()` 把 allowlist 内的普通 event 交付给 root Client Context，并把 scoped waterfall event 交付给已解析的 Session Context；waterfall listener 可以返回结果、调用 `next()` 或拒绝。
 
+## 本地 Connection 访问
+
+仅 Host 使用的 `@deepseek-ai/dsh-client-connection/local-access` 入口向明确安装的同用户客户端提供私有描述符发布及令牌换 cookie 认证。返回的权限是常规 Connection 能力，不是 Task 授权。[Connection README](../../packages/client/connection/README.zh.md#browser-authentication-and-request-trust)定义平台支持、文件所有权、取消和清理规则。
+
+来源：[`packages/client/connection/src/local-access.ts`](../../packages/client/connection/src/local-access.ts)
+
+```ts type-equiv
+/** Host-owned location of a private local Connection capability. */
+interface LocalConnectionDescriptorConfig {
+  /** Absolute path in an owner-only directory; one live publisher holds its kernel lease. */
+  readonly descriptorPath: string
+}
+```
+
+```ts type-equiv
+/** Complete-file limit for a local capability read. */
+interface LocalConnectionAuthenticationConfig extends LocalConnectionDescriptorConfig {
+  /** Maximum complete serialized descriptor size in UTF-8 bytes. */
+  readonly maxDescriptorBytes: number
+}
+```
+
+```ts type-equiv
+/** Versioned capability file; launchUrl is secret and must not enter diagnostics. */
+interface LocalConnectionDescriptor {
+  /** Private descriptor format version. */
+  readonly version: 1
+  /** Publisher generation; a successor Host replaces it. */
+  readonly generation: string
+  /** Loopback root URL containing this Host's launch token. */
+  readonly launchUrl: string
+}
+```
+
+```ts type-equiv
+/** Authenticated local authority; cookie is secret and belongs only in request headers. */
+interface LocalConnectionAccess {
+  /** Exact loopback origin accepted during the root exchange. */
+  readonly origin: string
+  /** One Connection browser-session cookie for this origin. */
+  readonly cookie: string
+  /** Publisher generation observed in the private descriptor. */
+  readonly generation: string
+}
+```
+
+```ts type-equiv
+/** Safe diagnostic categories; values never include paths, tokens, or cookies. */
+type LocalConnectionAccessFailureCode =
+  | 'descriptor-unavailable' | 'descriptor-invalid' | 'descriptor-too-large'
+  | 'authentication-failed' | 'transport-failed' | 'platform-unsupported'
+```
+
+```ts public-api
+/** A local capability or authentication failure with a credential-free message. */
+declare class LocalConnectionAccessError extends Error {
+  /**
+   * Construct one safe diagnostic.
+   * @param code - public failure category without credential material.
+   */
+  constructor(readonly code: LocalConnectionAccessFailureCode);
+}
+```
+
 ## Client models
 
 每个 API controller 包都拥有配对的 Host face 与 Client face。Host 侧拥有权威 mutation 与 stream 生产；Client 侧基于相同的生成 wire type 维护 identity 稳定、与 React 无关的 model，并公开 observable snapshot 与 command。UI 包消费这些 Client service，不在 component store 中复制 transport state。

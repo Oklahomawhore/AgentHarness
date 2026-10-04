@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-development-task-mesh",
   "description": "Task event, context, assignment, and owner-command consumer for the generic Mesh",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
@@ -13,24 +13,21 @@
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
     "./src/*": "./src/*", "./package.json": "./package.json"
   },
-  "files": ["lib/index.js", "lib/invariant.js", "lib/types/**/*.d.ts"],
+  "files": ["lib/index.js", "lib/types/**/*.d.ts"],
   "license": "MIT",
   "dependencies": { "zod": "^4.4.3" },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-development-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
-    "@deepseek-ai/dsh-development-task": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-development-task": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-development-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
-    "@deepseek-ai/dsh-development-task": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-development-task": "workspace:^"
   }
 }

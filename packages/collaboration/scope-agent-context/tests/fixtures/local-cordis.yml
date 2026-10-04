@@ -1,0 +1,28 @@
+- name: 'fixture:scope-access'
+- name: '@deepseek-ai/dsh-development-room'
+  config:
+    nodeId: 'local-owner'
+    presenceTtlMs: 60000
+    maxParticipants: 20
+    maxRooms: 20
+    maxTextBytes: 4096
+- name: '@deepseek-ai/dsh-development-task'
+  config:
+    maxTasks: 20
+    maxEventsPerTask: 100
+    maxMergeParents: 4
+    maxContextBlockBytes: 30000
+    maxLineageTasks: 20
+    maxTextBytes: 6000
+    roomRetryIntervalMs: 60000
+- name: '@deepseek-ai/dsh-development-task-context/text'
+- id: local-injector
+  name: '@deepseek-ai/dsh-development-task-context'
+  disabled: false
+  config:
+    maxContextBytesPerStep: 8000
+- name: '@deepseek-ai/dsh-scope-agent-context'
+  config:
+    maxContextBytes: 8000
+    coalesceMs: 10
+    retryDelayMs: 1000

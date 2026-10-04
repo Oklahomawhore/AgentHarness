@@ -10,13 +10,15 @@ Status: implemented
 
 ## 决定
 
-**AgentHarness 使用混合本地产品边界。**Web UI 与 MCP bridge 位于每位同事的机器上，靠近其仓库与工具。面向同事的正式入口是无源码便携 artifact，其中包含 Node runtime、构建后的完整应用 closure、launcher 和 `mcp.mjs`；无需 Git、pnpm、编译器或源码 checkout。
+**AgentHarness 使用混合本地产品边界。**Web UI 与 MCP bridge 位于每位同事的机器上，靠近其仓库与工具。面向同事的正式入口是无源码便携 artifact，其中包含 Node runtime、构建后的完整应用 closure、launcher 和 `dsh --profile mcp`；无需 Git、pnpm、编译器或源码 checkout。
 
 **局域网安装使用 release owner 提供的一条命令。**Release owner 暂存 archive 和安装脚本，从局域网地址提供服务，并分发 `curl <address>/install.sh | sh`。脚本会警告局域网 HTTP 既没有服务器认证，也没有保密性；它安装到 Harness home，在首次启动前配置 cluster credential，启动服务，并打印状态和 MCP setup 指南。升级保留匹配的 cluster credential；指纹不同时，除非 operator 明确 replace，否则拒绝切换。
 
-**MCP 注册是 fail-safe 自动化，并保留手动 fallback。**安装过程和 `agentharness mcp-setup` 分别检测支持的客户端。公开 JSON 配置使用 owner-only 原子写入并保留无关 server；官方 client command 在其拥有注册约定时负责写入。无效 JSON、不同的同名 `agentharness` entry、symbolic-link target、command failure，以及没有稳定 unattended 机制的 client 都是明确 outcome。Status 区分 detected、configured、conflict、manual、absent 和 failed client，且不打印 secret。
+**MCP 注册是 fail-safe 自动化，并保留手动 fallback。**安装过程和 `agentharness mcp-setup` 分别检测支持的客户端。公开 JSON 配置使用 owner-only 原子写入并保留无关 server；官方 client command 在其拥有注册约定时负责写入。无效 JSON、不同的同名 `agentharness` entry、symbolic-link target、command failure，以及没有稳定 unattended 机制的 client 都是明确 outcome。Status 区分 detected、configured、conflict、manual、absent、unsupported 和 failed client，且不打印 secret；具体结果由[客户端配置](../../../../packages/host/mcp-client-setup/README.zh.md)定义。
 
-**现有 coding Agent 通过一个 loopback STDIO MCP server 接入。**Cursor、Codex、Claude Code 和兼容客户端继续拥有编辑器、模型、chat loop 与仓库权限。Bridge 只接受 loopback Harness URL，也不宣称审计绕过 MCP 的操作。Task-first tool catalog、assignment、context acknowledgement、涌现协作中心 UI 和认证多节点协议由后续的 [Task 谱系决策](2026-08-27-emergence-center-task-lineage.zh.md)负责；该决策取代内部 alpha 的 Room/Mission 产品语义。
+**现有 coding Agent 通过一个本地 STDIO MCP server 接入。**Cursor、Codex、Claude Code 和兼容客户端继续拥有编辑器、模型、chat loop 与仓库权限。在 macOS 和 Linux 上，bridge 使用私有本地描述文件，通过既有 Connection token-to-cookie 交换完成认证。它获得普通同用户 Host 权限，不是跨 owner 的 Task 许可；Windows 不支持配置及描述文件访问，普通 Web 应用仍可使用。[Connection](../../../../packages/client/connection/README.zh.md)负责认证及描述文件生命周期细节。
+
+**MCP 暴露已存储的 Task 上下文，不是当前接收者投影。**保留的上下文可能包含已更正、过期或撤回的 publication；这条检查路径不运行接收者摘要或当前 peer 授权检查。Acknowledgement 记录返回的 revision，不证明模型已采用。Bridge 不观察绕过 MCP 的操作；[bridge README](../../../../packages/mcp/agentharness-bridge/README.zh.md)负责模型可见语义及限制。Task-first tool catalog、assignment、涌现协作中心 UI 和认证多节点协议仍由 [Task 谱系决策](2026-08-27-emergence-center-task-lineage.zh.md)负责；该决策取代内部 alpha 的 Room/Mission 产品语义。
 
 ## 曾考虑的替代方案
 

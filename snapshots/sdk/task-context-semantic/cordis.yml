@@ -1,0 +1,55 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- insert:
+    - id: task-context-semantic-room
+      name: '@deepseek-ai/dsh-development-room'
+      config:
+        nodeId: snapshot-semantic-owner
+        presenceTtlMs: 10000
+        maxParticipants: 16
+        maxRooms: 32
+        maxTextBytes: 4096
+    - id: task-context-semantic-task
+      name: '@deepseek-ai/dsh-development-task'
+      config:
+        maxTasks: 32
+        maxEventsPerTask: 64
+        maxMergeParents: 8
+        maxContextBlockBytes: 65536
+        maxLineageTasks: 64
+        maxTextBytes: 4096
+        roomRetryIntervalMs: 10000
+    - id: task-context-semantic-context
+      name: '@deepseek-ai/dsh-development-task-context'
+      config:
+        maxContextBytesPerStep: 65536
+    - id: task-context-semantic-audit
+      name: cordis:group
+      group: true
+      isolate:
+        sessionPersistence: true
+      config:
+        - id: task-context-semantic-audit-persistence
+          name: '@deepseek-ai/dsh-session-persistence-jsonl'
+          config:
+            root: !!js dshHomePath('semantic-audit')
+            compression: none
+        - id: task-context-semantic-provider
+          name: '@deepseek-ai/dsh-development-task-context/semantic'
+          config:
+            auditSessionId: task-context-semantic-audit
+            provider: semantic-snapshot
+            model: controlled-summary
+            maxInputBytes: 32768
+            maxOutputTokens: 1024
+            maxOutputBytes: 16384
+            timeoutMs: 10000
+            maxConcurrentCalls: 2
+            maxCalls: 8
+        - id: task-context-semantic-fixture
+          name: './semantic-fixture.mjs'

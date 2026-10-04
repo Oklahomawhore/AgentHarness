@@ -4,5 +4,8 @@ import { inject } from '../src/client/index.ts'
 describe('Emergence Center client entry', () => {
   it('declares every Remote namespace read by the assembled plugin', () => {
     expect(inject).toContain('remote.developmentTaskAssignments')
+    expect(inject).toContain('remote.claudeScope')
+    expect(inject).toContain('remote.scopeAccess')
+    expect(inject).toContain('remote.scopeAgentContributions')
   })
 })

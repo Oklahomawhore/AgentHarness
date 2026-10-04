@@ -54,6 +54,8 @@ None; task state and output never enter a model request through this package.
 
 ## Known Limitations and Deferred Work
 
+No runtime invariant companion is published because list responses are derived from the service’s current entry records and owned subprocess handles; the package keeps no independent copy of that view.
+
 - **HTTP status only** — readiness supports unauthenticated HTTP(S) GET status matching; it rejects embedded URL credentials and does not inspect response bodies, headers, WebSockets, or application-specific health payloads.
 - **Non-interactive processes** — stdin is ignored and the service retains output tails only. Interactive development commands use the existing terminal packages.
 - **Memory tails only** — output beyond `maxOutputBytes` is marked lossy and is not configured to spill to disk.

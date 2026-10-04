@@ -32,6 +32,8 @@ None.
 - One runtime has one Mesh provider and no channel-version negotiation.
 - Transport confidentiality is a provider concern.
 
+No invariant companion is published because channel lookup and listing use one registry that rejects duplicate ownership.
+
 ### Dev Note
 
 Use this package’s source, tests, and architecture documentation as the maintainer reference.

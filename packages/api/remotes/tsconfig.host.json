@@ -79,6 +79,15 @@
     },
     {
       "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../collaboration/claude-scope"
+    },
+    {
+      "path": "../../collaboration/scope-access"
+    },
+    {
+      "path": "../../collaboration/scope-agent-contribution"
     }
   ]
 }

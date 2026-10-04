@@ -1,9 +1,14 @@
 /** Client-safe Task lineage, shared-context, and session-binding contracts. */
 
-import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentRoomId } from '@deepseek-ai/dsh-development-room'
+// Retain Cordis loading before Events augmentation in emitted declarations;
+// an empty type import is erased and can lose augmentation through its re-exports.
+export type {} from '@deepseek-ai/cordis'
 
-export type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentRoomId } from '@deepseek-ai/dsh-development-room'
+import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
+import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentRoomId } from '@deepseek-ai/dsh-development-room/types'
+
+export type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentRoomId } from '@deepseek-ai/dsh-development-room/types'
 
 /** Stable identity of one shared-context Task. */
 export type DevelopmentTaskId = Branded<'DevelopmentTaskId'>
@@ -14,14 +19,409 @@ export type DevelopmentTaskContextBlockId = Branded<'DevelopmentTaskContextBlock
 /** Opaque identity that scopes one Agent session's selected Task. */
 export type DevelopmentTaskBindingId = Branded<'DevelopmentTaskBindingId'>
 
-/** One explicit context publication eligible for later Task inheritance. */
-export interface DevelopmentTaskContextPublication {
+/** Lowercase SHA-256 digest of a caller's observation identity, including its binding interval. */
+export type DevelopmentTaskObservedSourceId = Branded<'DevelopmentTaskObservedSourceId'>
+
+/** Task-scoped identity of one explicitly configured artifact and operation. */
+export type DevelopmentTaskArtifactId = Branded<'DevelopmentTaskArtifactId'>
+
+/** Identity of one artifact collection authorization interval. */
+export type DevelopmentTaskArtifactGrantId = Branded<'DevelopmentTaskArtifactGrantId'>
+
+/** Complete supported fields extracted from one OpenAPI operation. */
+export interface DevelopmentTaskOpenApiFacts {
+  readonly operationId?: string
+  readonly requestBodyRequired: boolean
+  readonly requiredRequestFields: readonly string[]
+  readonly responseStatuses: readonly string[]
+  readonly deprecated: boolean
+}
+
+/** Reader-owned identity and order of a complete artifact sampling attempt. */
+export interface DevelopmentTaskOpenApiObservationIdentity {
+  readonly kind: 'openapi-artifact'
+  readonly version: 1
+  readonly artifactId: DevelopmentTaskArtifactId
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskArtifactGrantId
+  /** Monotonic within one observer, artifact, and grant; gaps are allowed. */
+  readonly sequence: number
+  readonly operation: {
+    readonly method: 'get' | 'put' | 'post' | 'delete' | 'options' | 'head' | 'patch' | 'trace'
+    readonly path: string
+  }
+}
+
+/** Complete sampling result; absence of verified facts never asserts their negation. */
+export type DevelopmentTaskOpenApiObservationResult =
+  | { readonly state: 'valid'; readonly sha256: string; readonly facts: DevelopmentTaskOpenApiFacts }
+  | { readonly state: 'invalid'; readonly sha256: string; readonly reason: 'invalid-json' | 'unsupported-document' | 'unsupported-operation' | 'operation-missing' }
+  | { readonly state: 'unavailable'; readonly reason: 'missing-file' | 'not-readable' | 'changed-during-read' | 'too-large' }
+  | { readonly state: 'revoked'; readonly reason: 'grant-ended' }
+
+/** Host reader's observation before Task admission stamps its binding and author. */
+export type DevelopmentTaskOpenApiObservationInput = DevelopmentTaskOpenApiObservationIdentity & DevelopmentTaskOpenApiObservationResult
+
+/** Durable artifact observation stamped only by the Host Task admission methods. */
+export type DevelopmentTaskOpenApiObservation = DevelopmentTaskOpenApiObservationInput & {
+  readonly observerNodeId: DevelopmentNodeId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly binding: {
+    readonly id: DevelopmentTaskBindingId
+    readonly epoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+  }
+}
+
+/** Identity of one independently authorized peer contribution. */
+export type DevelopmentTaskContributionGrantId = Branded<'DevelopmentTaskContributionGrantId'>
+/** Immutable generation of an owner-issued contribution grant. */
+export type DevelopmentTaskContributionGeneration = Branded<'DevelopmentTaskContributionGeneration'>
+/** Sender-owned identity of one local capture binding. */
+export type DevelopmentTaskCaptureId = Branded<'DevelopmentTaskCaptureId'>
+/** Sender-owned generation that cannot be reused after local capture ends. */
+export type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneration'>
+
+/** One logical OpenAPI source; existing records retain their untagged representation. */
+export interface DevelopmentTaskOpenApiContributionSource {
+  readonly kind?: never
+  readonly name: string
+  readonly method: 'post' | 'put' | 'patch'
+  readonly path: string
+}
+
+/** Tools approved for observations from a locally permitted collection of files. */
+export interface DevelopmentTaskToolObservationSource {
+  readonly kind: 'tool-observations'
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+}
+
+/** Immutable source permission without local filesystem roots or session identifiers. */
+export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource
+
+/** Bounded tool report; omitted text is explicit and never establishes current file contents. */
+export type DevelopmentTaskToolObservationResult = {
+  readonly kind: 'tool-observation'
+  readonly version: 1
+  readonly reportedStatus: 'success' | 'failure'
+  readonly omissions: readonly ('content' | 'oldString' | 'newString' | 'error')[]
+} & (
+  | {
+    readonly tool: 'Write'
+    readonly fields: { readonly rootIndex: number; readonly path: string; readonly content?: string; readonly error?: string }
+  }
+  | {
+    readonly tool: 'Edit'
+    readonly fields: {
+      readonly rootIndex: number
+      readonly path: string
+      readonly oldString?: string
+      readonly newString?: string
+      readonly replaceAll: boolean
+      readonly error?: string
+    }
+  }
+)
+
+/** Identity of one owner-local capture interval; it is never a transport peer identity. */
+export type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContributionId'>
+
+/** Explicit local tool permission tied to one actual Agent assignment interval. */
+export interface DevelopmentTaskLocalContributionGrant {
+  readonly version: 1
+  readonly taskId: DevelopmentTaskId
+  readonly participantId: DevelopmentParticipantId
+  readonly bindingId: DevelopmentTaskBindingId
+  readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+  readonly captureId: DevelopmentTaskCaptureId
+  readonly captureGeneration: DevelopmentTaskCaptureGeneration
+  readonly source: DevelopmentTaskToolObservationSource
+  readonly expiresAt: number
+  readonly maxSamples: number
+  readonly maxSampleBytes: number
+}
+
+/** Original owner event for a local capture, including its exact assignment and capture identity. */
+export interface DevelopmentTaskLocalContributionReceipt {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerNodeId: DevelopmentNodeId
+  readonly intervalId: DevelopmentTaskLocalContributionId
+  readonly participantId: DevelopmentParticipantId
+  readonly bindingId: DevelopmentTaskBindingId
+  readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+  readonly captureId: DevelopmentTaskCaptureId
+  readonly captureGeneration: DevelopmentTaskCaptureGeneration
+  readonly revision: number
+  readonly event: {
+    readonly nodeId: DevelopmentNodeId
+    readonly seq: number
+    readonly kind: 'local-contribution-opened' | 'context-published' | 'local-contribution-ended'
+  }
+}
+
+/** Local authority reconstructed from durable Task events; terminal intervals never reopen. */
+export type DevelopmentTaskLocalContribution = { readonly grant: DevelopmentTaskLocalContributionGrant } & (
+  | { readonly state: 'active'; readonly openReceipt: DevelopmentTaskLocalContributionReceipt }
+  | { readonly state: 'ended'
+    readonly reason: DevelopmentTaskContributionEndReason
+    readonly openReceipt?: DevelopmentTaskLocalContributionReceipt
+    readonly endReceipt: DevelopmentTaskLocalContributionReceipt }
+)
+
+/** Exact locally retained report; Task generates attribution and publication text. */
+export interface DevelopmentTaskLocalContributionRequest {
+  readonly grant: DevelopmentTaskLocalContributionGrant
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+  readonly result: DevelopmentTaskToolObservationResult
+}
+
+/** Irreversible local capture withdrawal using its original permission. */
+export interface DevelopmentTaskEndLocalContributionRequest {
+  readonly grant: DevelopmentTaskLocalContributionGrant
+  readonly reason: 'left' | 'revoked'
+}
+
+/** Original local sample commit, correlated with every retained payload field. */
+export interface DevelopmentTaskLocalContributionAdmissionReceipt extends DevelopmentTaskLocalContributionReceipt {
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+  readonly payloadDigest: string
+  readonly publicationId: string
+}
+
+/** Exact local admission result without unrelated Task history. */
+export interface DevelopmentTaskLocalContributionResult {
+  readonly outcome: 'published' | 'reused'
+  readonly publication: DevelopmentTaskContextPublication
+  readonly receipt: DevelopmentTaskLocalContributionAdmissionReceipt
+}
+
+/** Owner-stamped local permission; terminal notices contain no previous report body. */
+export interface DevelopmentTaskLocalContributionMetadata {
+  readonly version: 1
+  readonly grant: DevelopmentTaskLocalContributionGrant
+  readonly ended?: DevelopmentTaskContributionEndReason
+}
+
+/** Ordered local tool evidence; source Session execution remains the original execution authority. */
+export type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+}
+
+/** Owner authorization for one peer, capture generation, and exact source permission. */
+export interface DevelopmentTaskPeerContributionGrant {
+  readonly version: 1
+  readonly taskId: DevelopmentTaskId
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly generation: DevelopmentTaskContributionGeneration
+  readonly ownerPeerId: ScopePeerId
+  readonly contributorPeerId: ScopePeerId
+  readonly captureId: DevelopmentTaskCaptureId
+  readonly captureGeneration: DevelopmentTaskCaptureGeneration
+  readonly source: DevelopmentTaskContributionSource
+  readonly expiresAt: number
+  readonly maxSamples: number
+  readonly maxSampleBytes: number
+}
+
+/** Original owner commit; transport peer identity differs from the Task event's node identity. */
+export interface DevelopmentTaskPeerContributionReceipt {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerPeerId: ScopePeerId
+  readonly contributorPeerId: ScopePeerId
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly generation: DevelopmentTaskContributionGeneration
+  readonly captureId: DevelopmentTaskCaptureId
+  readonly captureGeneration: DevelopmentTaskCaptureGeneration
+  readonly revision: number
+  readonly event: {
+    readonly nodeId: DevelopmentNodeId
+    readonly seq: number
+    readonly kind: 'peer-contribution-opened' | 'context-published' | 'peer-contribution-ended'
+  }
+}
+
+/** Permanent reason why this grant no longer provides current evidence. */
+export type DevelopmentTaskContributionEndReason = 'left' | 'revoked' | 'expired'
+
+/** Authority reconstructed from Task events; ended grants never reopen. */
+export type DevelopmentTaskPeerContribution = { readonly grant: DevelopmentTaskPeerContributionGrant } & (
+  | { readonly state: 'active'; readonly openReceipt: DevelopmentTaskPeerContributionReceipt }
+  | {
+    readonly state: 'ended'
+    readonly reason: DevelopmentTaskContributionEndReason
+    readonly openReceipt?: DevelopmentTaskPeerContributionReceipt
+    readonly endReceipt: DevelopmentTaskPeerContributionReceipt
+  }
+)
+
+/** Exact outbox sample; the owner supplies source attribution and canonical publication text. */
+export interface DevelopmentTaskPeerContributionRequest {
+  readonly grant: DevelopmentTaskPeerContributionGrant
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskToolObservationResult
+}
+
+/** Source and owner can end a known grant; only the owner may revoke it. */
+export interface DevelopmentTaskEndPeerContributionRequest {
+  readonly grant: DevelopmentTaskPeerContributionGrant
+  readonly reason: 'left' | 'revoked'
+}
+
+/** OpenAPI evidence attributed to an independent peer instead of a Room participant. */
+export type DevelopmentTaskPeerOpenApiObservation = Omit<DevelopmentTaskOpenApiObservationIdentity, 'grantId'> &
+  DevelopmentTaskOpenApiObservationResult & {
+    readonly grantId: DevelopmentTaskContributionGrantId
+    readonly observerPeerId: ScopePeerId
+    readonly sourceId: DevelopmentTaskObservedSourceId
+    readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+  }
+
+/** Owner-attributed ordered tool event, distinct from a replaceable OpenAPI artifact sample. */
+export type DevelopmentTaskPeerToolObservation = DevelopmentTaskToolObservationResult & {
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly sequence: number
+  readonly observerPeerId: ScopePeerId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+}
+
+/** Owner-stamped peer provenance; ended appears only on the canonical terminal notice. */
+export interface DevelopmentTaskPeerContributionMetadata {
+  readonly version: 1
+  readonly grant: DevelopmentTaskPeerContributionGrant
+  readonly ended?: DevelopmentTaskContributionEndReason
+}
+
+/** One explicit or admitted context publication eligible for later Task inheritance. */
+export type DevelopmentTaskContextPublication = {
   readonly id: string
   readonly text: string
   readonly uri?: string
-  readonly publishedBy: DevelopmentParticipantId
   readonly publishedAt: number
+} & (
+  | {
+    readonly publishedBy: DevelopmentParticipantId
+    readonly observation?: DevelopmentTaskOpenApiObservation
+    readonly observedIntervalId?: DevelopmentTaskObservedIntervalId
+    readonly observedIntervalEnded?: true
+    readonly peerContribution?: never
+    readonly peerObservation?: never
+    readonly peerToolObservation?: never
+    readonly localContribution?: never
+    readonly localToolObservation?: never
+  }
+  | {
+    readonly publishedBy?: never
+    readonly observation?: never
+    readonly observedIntervalId?: never
+    readonly observedIntervalEnded?: never
+    readonly peerContribution: DevelopmentTaskPeerContributionMetadata
+    readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation
+    readonly peerToolObservation?: DevelopmentTaskPeerToolObservation
+    readonly localContribution?: never
+    readonly localToolObservation?: never
+  }
+  | {
+    readonly publishedBy: DevelopmentParticipantId
+    readonly observation?: never
+    readonly observedIntervalId?: never
+    readonly observedIntervalEnded?: never
+    readonly peerContribution?: never
+    readonly peerObservation?: never
+    readonly peerToolObservation?: never
+    readonly localContribution: DevelopmentTaskLocalContributionMetadata
+    readonly localToolObservation?: DevelopmentTaskLocalToolObservation
+  }
+)
+
+/** Receipt for one original sample commit, including its complete payload identity. */
+export interface DevelopmentTaskPeerContributionAdmissionReceipt extends DevelopmentTaskPeerContributionReceipt {
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+  readonly payloadDigest: string
+  readonly publicationId: string
 }
+
+/** Bounded admission response derived from the original publication event. */
+export interface DevelopmentTaskPeerContributionResult {
+  readonly outcome: 'published' | 'reused'
+  readonly publication: DevelopmentTaskContextPublication
+  readonly receipt: DevelopmentTaskPeerContributionAdmissionReceipt
+}
+
+/** Deterministic identity of one remotely owned Agent binding approved by a Task owner. */
+export type DevelopmentTaskObservedIntervalId = Branded<'DevelopmentTaskObservedIntervalId'>
+
+/** Exact source identity to approve or permanently end; no file-read permission is implied. */
+export interface DevelopmentTaskObservedIntervalIdentity {
+  readonly taskId: DevelopmentTaskId
+  readonly sourceNodeId: DevelopmentNodeId
+  readonly participantId: DevelopmentParticipantId
+  readonly bindingId: DevelopmentTaskBindingId
+  readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+}
+
+/** Local Task-owner approval of the named remote binding interval. */
+export type DevelopmentTaskApproveObservedIntervalRequest = DevelopmentTaskObservedIntervalIdentity
+
+/** Source or owner withdrawal, including before an approval has arrived. */
+export type DevelopmentTaskEndObservedIntervalRequest = DevelopmentTaskObservedIntervalIdentity
+
+/** Replicated remote Agent binding available for explicit owner approval, not proof of a Claude request. */
+export interface DevelopmentTaskObservedCandidate extends DevelopmentTaskObservedIntervalIdentity {
+  readonly sessionLabel?: string
+}
+
+/** Receipt derived from the original committed owner event, never the latest Task revision. */
+export interface DevelopmentTaskObservedReceipt {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerNodeId: DevelopmentNodeId
+  readonly intervalId: DevelopmentTaskObservedIntervalId
+  readonly revision: number
+  readonly event: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+}
+
+/** Owner authority for one source interval; an ended interval can never be approved again. */
+export type DevelopmentTaskObservedInterval = DevelopmentTaskObservedIntervalIdentity & {
+  readonly id: DevelopmentTaskObservedIntervalId
+} & (
+  | { readonly state: 'active'; readonly approvalReceipt: DevelopmentTaskObservedReceipt }
+  | { readonly state: 'ended'; readonly approvalReceipt?: DevelopmentTaskObservedReceipt; readonly endReceipt: DevelopmentTaskObservedReceipt }
+)
+
+/** Remote observation requiring the named owner-approved interval and the exact local binding identity. */
+export interface DevelopmentTaskAdmitRemoteObservedContextRequest extends DevelopmentTaskAdmitObservedContextRequest {
+  readonly intervalId: DevelopmentTaskObservedIntervalId
+}
+
+/** Exact remote publication and its original durable admission receipt. */
+export interface DevelopmentTaskAdmitRemoteObservedContextResult {
+  readonly outcome: 'published' | 'reused'
+  readonly publication: DevelopmentTaskContextPublication
+  readonly receipt: DevelopmentTaskObservedReceipt & {
+    readonly sourceId: DevelopmentTaskObservedSourceId
+    readonly publicationId: string
+  }
+}
+
+/** Task-specific mutations and reads routed over the trusted Mesh to the authoritative owner. */
+export type DevelopmentTaskOwnerCommand =
+  | { readonly method: 'publishContext'; readonly request: DevelopmentTaskPublishContextRequest }
+  | { readonly method: 'observedIntervals'; readonly request: DevelopmentTaskGetRequest }
+  | { readonly method: 'admitObservedRemote'; readonly request: DevelopmentTaskAdmitRemoteObservedContextRequest }
+  | { readonly method: 'endObservedInterval'; readonly request: DevelopmentTaskEndObservedIntervalRequest }
+
+/** Return value selected by a Task owner command's discriminant. */
+export type DevelopmentTaskOwnerCommandResult<C extends DevelopmentTaskOwnerCommand> =
+  C extends { readonly method: 'publishContext' } ? DevelopmentTaskSnapshot
+    : C extends { readonly method: 'observedIntervals' } ? readonly DevelopmentTaskObservedInterval[]
+      : C extends { readonly method: 'admitObservedRemote' } ? DevelopmentTaskAdmitRemoteObservedContextResult
+        : DevelopmentTaskObservedReceipt
 
 /** Immutable reference to one parent Task revision. */
 export interface DevelopmentTaskParentRef {
@@ -61,6 +461,12 @@ export type DevelopmentTaskLogChange =
     readonly inheritedContextBlockId?: DevelopmentTaskContextBlockId
   }
   | { readonly kind: 'context-published'; readonly publication: DevelopmentTaskContextPublication }
+  | { readonly kind: 'observed-interval-opened'; readonly interval: DevelopmentTaskObservedIntervalIdentity }
+  | { readonly kind: 'observed-interval-ended'; readonly interval: DevelopmentTaskObservedIntervalIdentity }
+  | { readonly kind: 'local-contribution-opened'; readonly grant: DevelopmentTaskLocalContributionGrant }
+  | { readonly kind: 'local-contribution-ended'; readonly grant: DevelopmentTaskLocalContributionGrant; readonly reason: DevelopmentTaskContributionEndReason }
+  | { readonly kind: 'peer-contribution-opened'; readonly grant: DevelopmentTaskPeerContributionGrant }
+  | { readonly kind: 'peer-contribution-ended'; readonly grant: DevelopmentTaskPeerContributionGrant; readonly reason: DevelopmentTaskContributionEndReason }
 
 /** One durable Task event; `seq` is monotonic per authoring node. */
 export interface DevelopmentTaskLogEntry {
@@ -138,6 +544,32 @@ export interface DevelopmentTaskPublishContextRequest {
   readonly uri?: string
 }
 
+/** Admit one authorized observation while its original local Agent binding remains current. */
+export interface DevelopmentTaskAdmitObservedContextRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly participantId: DevelopmentParticipantId
+  readonly bindingId: DevelopmentTaskBindingId
+  /** The task-bound event captured when the observed operation started. */
+  readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  /** Caller-filtered observation; the shared publication rules trim and bound this text. */
+  readonly text: string
+  /** Optional reader evidence; normal admission never accepts grant revocation. */
+  readonly observation?: DevelopmentTaskOpenApiObservationIdentity & Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }>
+}
+
+/** End previously admitted artifact evidence, including after its binding was cleared. */
+export interface DevelopmentTaskRevokeObservedArtifactRequest extends Omit<DevelopmentTaskAdmitObservedContextRequest, 'observation'> {
+  readonly observation: DevelopmentTaskOpenApiObservationIdentity & { readonly state: 'revoked'; readonly reason: 'grant-ended' }
+}
+
+/** Current Task and original publication; reuse appends no event and preserves publication time. */
+export interface DevelopmentTaskAdmitObservedContextResult {
+  readonly outcome: 'published' | 'reused'
+  readonly task: DevelopmentTaskSnapshot
+  readonly publication: DevelopmentTaskContextPublication
+}
+
 /** Current Task binding for exactly one Agent session. */
 export interface DevelopmentTaskAssignment {
   readonly bindingId: DevelopmentTaskBindingId
@@ -174,6 +606,8 @@ export interface DevelopmentTaskCheckoutRequest {
 export interface DevelopmentTaskClearRequest {
   readonly bindingId: DevelopmentTaskBindingId
   readonly participantId: DevelopmentParticipantId
+  /** Reject a stale leave command after any new checkout on this binding. */
+  readonly expectedBindingEpoch?: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
 }
 
 /** Acknowledge that one Agent session received a Task revision. */
@@ -182,6 +616,8 @@ export interface DevelopmentTaskAcknowledgeRequest {
   readonly participantId: DevelopmentParticipantId
   readonly taskId: DevelopmentTaskId
   readonly revision: number
+  /** Reject adoption from an abandoned binding interval, including Task A → B → A. */
+  readonly expectedBindingEpoch?: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
 }
 
 /** Bounded model-facing view of one Task and its inherited sources. */
@@ -241,13 +677,13 @@ declare module '@deepseek-ai/cordis' {
     ): void
     /**
      * One committed binding event changed an Agent session's selected Task.
-     * @param assignment - current binding, or undefined after clear.
+     * @param assignment - current binding, or null after clear for lossless JSON forwarding.
      * @param entry - exact event that produced the binding state.
      * @param origin - local, replica, or restored source.
      * @mode emit
      */
     'development-task/assignment-changed'(
-      assignment: DevelopmentTaskAssignment | undefined,
+      assignment: DevelopmentTaskAssignment | null,
       entry: DevelopmentTaskAssignmentLogEntry,
       origin: DevelopmentTaskEventOrigin,
     ): void

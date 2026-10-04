@@ -1,0 +1,11 @@
+version: 1
+scenario: scope-native-contribution
+profile: sdk
+composition: sdk-scope-native-contribution
+recording: authored
+header:
+  class: scope-native-contribution
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

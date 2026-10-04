@@ -3,6 +3,8 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, lstat, mkdir, readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { homedir, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -10,6 +12,7 @@ import { Context } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { publishLocalConnectionDescriptor } from '@deepseek-ai/dsh-client-connection/local-access'
 import type {
   McpClientId,
   McpClientSetupRequest,
@@ -26,16 +29,13 @@ const CLIENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/
 const COMMAND_TIMEOUT_MS = 10_000
 
 /** Runtime facts shared by the installed command and Host Remote service. */
-export interface McpClientSetupOptions {
+export interface McpClientSetupOptions extends Config {
   readonly home?: string
   readonly path?: string
   /** Environment forwarded unchanged to supported client CLIs. */
   readonly environment?: NodeJS.ProcessEnv
   readonly platform?: NodeJS.Platform
   readonly username?: string
-  readonly nodePath: string
-  readonly mcpPath: string
-  readonly url: string
   readonly applicationRoots?: readonly string[]
   readonly executableOverrides?: Partial<Record<McpClientId, string>>
 }
@@ -44,21 +44,24 @@ export interface McpClientSetupOptions {
 export interface Config {
   /** Absolute Node.js executable used by generated STDIO entries. */
   readonly nodePath: string
-  /** Absolute packaged AgentHarness MCP bridge entry point. */
-  readonly mcpPath: string
-  /** Loopback AgentHarness HTTP base URL. */
-  readonly url: string
+  /** Absolute installed dsh CLI entry, or the source CLI used by this deployment. */
+  readonly dshPath: string
+  /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
+  readonly nodeArgs: string[]
+  /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
+  readonly sourceTsconfigPath?: string
+  /** Absolute private local Connection descriptor published by this Host. */
+  readonly descriptorPath: string
+  /** Absolute Harness home supplied explicitly to every configured MCP process. */
+  readonly harnessHome: string
 }
 
-interface ResolvedOptions {
+interface ResolvedOptions extends Config {
   readonly home: string
   readonly path: string
   readonly environment: NodeJS.ProcessEnv
   readonly platform: NodeJS.Platform
   readonly username: string
-  readonly nodePath: string
-  readonly mcpPath: string
-  readonly url: string
   readonly applicationRoots: readonly string[]
   readonly executableOverrides: Partial<Record<McpClientId, string>>
 }
@@ -80,6 +83,7 @@ interface McpEntry {
   readonly command: string
   readonly args: readonly string[]
   readonly type?: 'stdio'
+  readonly env: Readonly<Record<string, string>>
 }
 
 interface InspectedClient {
@@ -98,12 +102,15 @@ const CLIENTS: readonly ClientDefinition[] = [
   {
     id: 'codex', label: 'Codex', mechanism: 'cli', executable: 'codex',
     executableCandidates: ['ChatGPT.app/Contents/Resources/codex'], applications: ['ChatGPT.app'],
-    addArguments: entry => ['mcp', 'add', SERVER_NAME, '--', entry.command, ...entry.args],
+    addArguments: entry => ['mcp', 'add', SERVER_NAME, ...entryEnvironment(entry), '--', entry.command, ...entry.args],
   },
   {
     id: 'claude-code', label: 'Claude Code', mechanism: 'cli', executable: 'claude',
     applications: [], configPaths: ['.claude.json'],
-    addArguments: entry => ['mcp', 'add', '--scope', 'user', SERVER_NAME, '--', entry.command, ...entry.args],
+    addArguments: entry => [
+      'mcp', 'add', ...entryEnvironment(entry), '--transport', 'stdio', '--scope', 'user',
+      SERVER_NAME, '--', entry.command, ...entry.args,
+    ],
   },
   {
     id: 'workbuddy', label: 'WorkBuddy', mechanism: 'json', executable: 'workbuddy',
@@ -127,13 +134,22 @@ const CLIENTS: readonly ClientDefinition[] = [
 ]
 
 function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
-  if (!isAbsolute(options.nodePath) || !isAbsolute(options.mcpPath)) {
-    throw new TypeError('mcp-client-setup: nodePath and mcpPath must be absolute')
+  if (![options.nodePath, options.dshPath, options.descriptorPath, options.harnessHome].every(isAbsolute)) {
+    throw new TypeError('mcp-client-setup: launcher, descriptor, and Harness home paths must be absolute')
   }
-  const url = new URL(options.url)
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
-    throw new TypeError('mcp-client-setup: url must use HTTP(S) on loopback')
+  if (options.sourceTsconfigPath !== undefined && !isAbsolute(options.sourceTsconfigPath)) {
+    throw new TypeError('mcp-client-setup: sourceTsconfigPath must be absolute')
   }
+  const nodeArgs = options.nodeArgs.map((argument, index) => {
+    if (argument !== '--import=tsx/esm' && !(argument === 'tsx/esm' && options.nodeArgs[index - 1] === '--import')) {
+      return argument
+    }
+    if (options.sourceTsconfigPath === undefined) {
+      throw new TypeError('mcp-client-setup: sourceTsconfigPath is required for the source tsx hook')
+    }
+    const hook = pathToFileURL(createRequire(options.sourceTsconfigPath).resolve('tsx/esm')).href
+    return argument === '--import=tsx/esm' ? `--import=${hook}` : hook
+  })
   const home = options.home ?? homedir()
   const platform = options.platform ?? process.platform
   const applicationRoots = options.applicationRoots ?? (platform === 'darwin'
@@ -146,8 +162,11 @@ function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
     environment: options.environment ?? process.env,
     username: options.username ?? userInfo().username,
     nodePath: options.nodePath,
-    mcpPath: options.mcpPath,
-    url: url.href.replace(/\/$/u, ''),
+    dshPath: options.dshPath,
+    nodeArgs,
+    ...(options.sourceTsconfigPath === undefined ? {} : { sourceTsconfigPath: options.sourceTsconfigPath }),
+    descriptorPath: options.descriptorPath,
+    harnessHome: options.harnessHome,
     applicationRoots,
     executableOverrides: options.executableOverrides ?? {},
   }
@@ -159,17 +178,33 @@ function identity(value: string): string {
   return prefixed.slice(0, 80)
 }
 
-function entryFor(definition: ClientDefinition, options: ResolvedOptions, displayName?: string): McpEntry {
+function entryEnvironment(entry: McpEntry): string[] {
+  return Object.entries(entry.env).flatMap(([key, value]) => ['--env', `${key}=${value}`])
+}
+
+function entryFor(definition: ClientDefinition, options: ResolvedOptions, requestedDisplayName?: string): {
+  entry: McpEntry
+  participantId: string
+  displayName: string
+} {
   const participantId = identity(`agentharness-${options.username}-${definition.id}`)
+  const displayName = requestedDisplayName?.trim() || `${options.username} / ${definition.label}`
   return {
-    ...definition.includeType === true ? { type: 'stdio' as const } : {},
-    command: options.nodePath,
-    args: [
-      options.mcpPath,
-      '--url', options.url,
-      '--participant-id', participantId,
-      '--display-name', displayName?.trim() || `${options.username} / ${definition.label}`,
-    ],
+    participantId,
+    displayName,
+    entry: {
+      ...definition.includeType === true ? { type: 'stdio' as const } : {},
+      command: options.nodePath,
+      args: [
+        ...options.nodeArgs, options.dshPath, '--profile', 'mcp',
+        '--connection', options.descriptorPath,
+        '--participant-id', participantId, '--display-name', displayName,
+      ],
+      env: {
+        DSH_HOME: options.harnessHome,
+        ...(options.sourceTsconfigPath === undefined ? {} : { TSX_TSCONFIG_PATH: options.sourceTsconfigPath }),
+      },
+    },
   }
 }
 
@@ -241,6 +276,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function compatibleEntry(value: unknown, expected: McpEntry): boolean {
   if (!isRecord(value) || value.command !== expected.command || !Array.isArray(value.args)) return false
   if (value.type !== undefined && value.type !== 'stdio') return false
+  const environment = value.env
+  if (!isRecord(environment) || Object.keys(environment).length !== Object.keys(expected.env).length
+    || Object.entries(expected.env).some(([key, entry]) => environment[key] !== entry)) return false
   return value.args.length === expected.args.length && value.args.every((argument, index) => argument === expected.args[index])
 }
 
@@ -299,11 +337,12 @@ async function inspectClient(
   const command = await executable(definition, options)
   const isDetected = await detected(definition, options, command)
   const path = await configPath(definition, options)
-  const entry = entryFor(definition, options, requestedDisplayName)
-  const participantId = entry.args[4] as string
-  const displayName = entry.args[6] as string
+  const { entry, participantId, displayName } = entryFor(definition, options, requestedDisplayName)
   let observation: { state: McpClientSnapshot['state']; detail?: string }
-  if (!isDetected) observation = { state: 'not-installed' }
+  if (options.platform === 'win32') observation = {
+    state: 'unsupported', detail: 'Private local MCP authentication currently supports macOS and Linux only.',
+  }
+  else if (!isDetected) observation = { state: 'not-installed' }
   else if (definition.mechanism === 'manual') observation = {
     state: 'manual',
     ...(definition.manualDetail === undefined ? {} : { detail: definition.manualDetail }),
@@ -407,6 +446,7 @@ export async function setupMcpClient(
   if (definition === undefined) throw new TypeError(`mcp-client-setup: unsupported client ${request.clientId}`)
   const resolved = resolveOptions(options)
   const before = await inspectClient(definition, resolved, request.displayName)
+  if (before.snapshot.state === 'unsupported') return { outcome: 'unsupported', client: before.snapshot }
   if (before.snapshot.state === 'configured') return { outcome: 'already-configured', client: before.snapshot }
   if (before.snapshot.state === 'not-installed') return { outcome: 'not-installed', client: before.snapshot }
   if (before.snapshot.state === 'manual') return { outcome: 'manual', client: before.snapshot }
@@ -453,10 +493,15 @@ declare module '@deepseek-ai/cordis' {
 
 /** Trusted Host Remote for detection and explicit browser-initiated setup. */
 export class McpClientSetupService extends TypertRemoteService {
+  static inject = ['connection', 'webServer']
+
   static Config: s<Config> = s.object({
     nodePath: s.string().required(),
-    mcpPath: s.string().required(),
-    url: s.string().required(),
+    dshPath: s.string().required(),
+    nodeArgs: s.array(s.string()).required(),
+    sourceTsconfigPath: s.string(),
+    descriptorPath: s.string().required(),
+    harnessHome: s.string().required(),
   })
 
   private readonly options: McpClientSetupOptions
@@ -465,6 +510,7 @@ export class McpClientSetupService extends TypertRemoteService {
     super(ctx, 'mcpClientSetup')
     resolveOptions(config)
     this.options = config
+    if (process.platform !== 'win32') publishLocalConnectionDescriptor(ctx, config, 'mcp-client-setup')
   }
 
   /**

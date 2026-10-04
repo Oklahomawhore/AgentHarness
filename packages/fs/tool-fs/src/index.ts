@@ -6,6 +6,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { FileSystem } from '@deepseek-ai/dsh-fs'
+import type { FsTarget } from '@deepseek-ai/dsh-fs'
+import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { applyReadTool, READ_LIMIT, STREAM_MIN_SIZE } from './read.ts'
@@ -14,6 +17,28 @@ import { applyEditTool } from './edit.ts'
 import { applyReadImageTool } from './read-image.ts'
 import { READ_MAX_BYTES, READ_MAX_LINE_LENGTH } from './read-render.ts'
 import { FsSandboxController } from './sandbox.ts'
+
+/** Actual filesystem-tool attempt after policy and intent checks, before provider mutation. */
+export type ToolFsMutation = {
+  readonly execution: Readonly<ToolExecution>
+  readonly filesystem: FileSystem
+  readonly target: Readonly<FsTarget>
+} & (
+  | { readonly tool: 'write'; readonly input: { readonly content: string } }
+  | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
+)
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Observe an admitted filesystem-tool attempt; this does not establish completion.
+     * Observers must contain failures and own their asynchronous work. No prior file text is included.
+     * @param mutation - actual provider, canonical target, normalized input, and registry execution identity.
+     * @mode emit
+     */
+    'tool-fs/mutation-start'(mutation: ToolFsMutation): void
+  }
+}
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-fs'

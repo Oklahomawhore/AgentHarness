@@ -26,7 +26,7 @@ async function portableFixture(): Promise<string> {
     'agentharness-node-identity.mjs',
     'node_modules/@deepseek-ai/dsh-web-frontend/dist/index.html',
     'node_modules/@deepseek-ai/dsh-web-app/package.json',
-    'node_modules/@deepseek-ai/dsh-agentharness-bridge/lib/bin.js',
+    'node_modules/@deepseek-ai/dsh-agentharness-bridge/lib/stdio.js',
   ]) {
     await mkdir(dirname(join(root, path)), { recursive: true })
     await writeFile(join(root, path), '{}')

@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-04-native-scope-route-recovery.md
+2026-10-04-native-scope-route-recovery.md: f537e5843cf93a12c5701eb357f8c7b6b54ea981
+2026-10-04-native-scope-route-recovery.zh.md: f774e4669a092c12a29c4b25d0d425c01b18e356

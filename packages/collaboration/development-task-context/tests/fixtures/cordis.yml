@@ -1,0 +1,24 @@
+- id: de1ff972
+  name: '@deepseek-ai/dsh-development-room'
+  config:
+    nodeId: node-a
+    presenceTtlMs: 10000
+    maxParticipants: 16
+    maxRooms: 32
+    maxTextBytes: 2048
+- id: c508e26c
+  name: '@deepseek-ai/dsh-development-task'
+  config:
+    maxTasks: 32
+    maxEventsPerTask: 64
+    maxMergeParents: 8
+    maxContextBlockBytes: 65536
+    maxLineageTasks: 64
+    maxTextBytes: 2048
+    roomRetryIntervalMs: 10000
+- id: 6e1384ea
+  name: '@deepseek-ai/dsh-development-task-context/text'
+- id: '88154446'
+  name: '@deepseek-ai/dsh-development-task-context'
+  config:
+    maxContextBytesPerStep: 65536

@@ -16,6 +16,10 @@ export type PluginsSettingsLocaleKey =
   | 'subagentModelSelectionLoading' | 'subagentModelSelectionLoadFailed' | 'subagentModelSelectionRetry'
   | 'subagentModelSelectionPartial' | 'subagentModelSelectionUnavailable'
   | 'subagentModelSelectionUnavailableGroup' | 'subagentModelSelectionEmpty'
+  | 'scopeNetworkTitle' | 'scopeNetworkDescription' | 'scopeNetworkMode' | 'scopeNetworkLocal'
+  | 'scopeNetworkLan' | 'scopeNetworkCustom' | 'scopeNetworkPort' | 'scopeNetworkLocalHint'
+  | 'scopeNetworkLanHint' | 'scopeNetworkInvalidPort' | 'scopeNetworkCustomHint' | 'scopeNetworkRestart'
+  | 'scopeNetworkPermission' | 'scopeNetworkRemote' | 'scopeNetworkConflict' | 'scopeNetworkSaved'
   | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'
 
 /** English copy. */
@@ -57,6 +61,22 @@ export const en: Record<PluginsSettingsLocaleKey, string> = {
   webSearchBaseUrlHint: 'Leave blank to use the provider default.',
   webSearchMaxUses: 'Max searches per request',
   webSearchMaxUsesHint: 'How many times one request may search before it must answer.',
+  scopeNetworkTitle: 'Collaboration network',
+  scopeNetworkDescription: 'Choose where other AgentHarness instances can connect after a Host restart.',
+  scopeNetworkMode: 'Collaboration connection scope',
+  scopeNetworkLocal: 'Only the device running AgentHarness',
+  scopeNetworkLan: 'Allow direct connections from other devices',
+  scopeNetworkCustom: 'Custom listeners',
+  scopeNetworkPort: 'TCP port',
+  scopeNetworkLocalHint: 'Local connections use a port assigned at startup. Other devices cannot use that address.',
+  scopeNetworkLanHint: 'Listen on all IPv4 interfaces. Choose a free port from 1 to 65535; the network and firewall must allow the other device to reach it over LAN or VPN.',
+  scopeNetworkInvalidPort: 'Enter a whole-number port from 1 to 65535. No port is selected automatically.',
+  scopeNetworkCustomHint: 'These saved addresses remain unchanged unless you explicitly select another mode and save.',
+  scopeNetworkRestart: 'After saving, manually restart the Host running AgentHarness. Use the invitation addresses actually advertised after restart.',
+  scopeNetworkPermission: 'Saving does not confirm reachability, open Web management access, or grant access to any shared Task.',
+  scopeNetworkRemote: 'Configure persistent listeners from the local page on the device running AgentHarness.',
+  scopeNetworkConflict: 'Settings or the connection changed. Discard the draft and review the current values before saving.',
+  scopeNetworkSaved: 'Settings saved; listening does not change immediately. Manually restart the Host, then refresh collaboration addresses.',
   subagentModelSelectionTitle: 'Subagent',
   subagentModelSelectionDescription: 'Control which models agents may choose for subagents.',
   subagentModelSelectionToggle: 'Allow agents to choose models for subagents',
@@ -113,6 +133,22 @@ export const zh: Record<PluginsSettingsLocaleKey, string> = {
   webSearchBaseUrlHint: '留空则使用提供方默认地址。',
   webSearchMaxUses: '单次请求最多搜索次数',
   webSearchMaxUsesHint: '一次请求在必须作答前最多可以搜索多少次。',
+  scopeNetworkTitle: '协作网络',
+  scopeNetworkDescription: '选择其他 AgentHarness 实例在 Host 重启后可连接的范围。',
+  scopeNetworkMode: '协作连接范围',
+  scopeNetworkLocal: '仅运行 AgentHarness 的设备',
+  scopeNetworkLan: '允许其他设备直接连接',
+  scopeNetworkCustom: '自定义监听',
+  scopeNetworkPort: 'TCP 端口',
+  scopeNetworkLocalHint: '仅此设备的连接使用启动时分配的端口，其他设备不能使用该地址。',
+  scopeNetworkLanHint: '监听所有 IPv4 网络接口。请填写 1–65535 中的可用端口；对方仍需能通过局域网或 VPN 及防火墙访问它。',
+  scopeNetworkInvalidPort: '请填写 1–65535 之间的整数端口，不会自动选择端口。',
+  scopeNetworkCustomHint: '这些已保存地址会保持不变，只有明确选择另一种范围并保存才会替换。',
+  scopeNetworkRestart: '保存后请手动重启运行 AgentHarness 的 Host。邀请地址以重启后服务实际公布的列表为准。',
+  scopeNetworkPermission: '保存不能证明对方可达，也不会开放 Web 管理访问或授予任何共享 Task 的权限。',
+  scopeNetworkRemote: '请在运行 AgentHarness 的设备上打开本机页面，以配置持久监听。',
+  scopeNetworkConflict: '设置或连接已变化。请放弃修改，核对当前值后再保存。',
+  scopeNetworkSaved: '设置已保存；当前监听不会立即改变。请手动重启 Host 后刷新协作地址。',
   subagentModelSelectionTitle: 'Subagent',
   subagentModelSelectionDescription: '控制 Agent 为 Subagent 选择模型的权限。',
   subagentModelSelectionToggle: '允许 Agent 为 Subagent 选择模型',

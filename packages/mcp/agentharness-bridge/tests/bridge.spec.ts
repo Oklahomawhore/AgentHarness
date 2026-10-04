@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAgentHarnessBridge, AgentHarnessRpcClient } from '../src/index.ts'
+import { connectionOptions } from './connection.ts'
 
 interface Call { endpoint: string; args: unknown }
 interface Assignment {
@@ -83,10 +84,9 @@ function rpcFetch(calls: Call[], state: State): typeof fetch {
 
 async function clientWith(calls: Call[], state: State = { assignments: [], nextBinding: 0 }): Promise<Client> {
   const server = createAgentHarnessBridge({
-    url: 'http://127.0.0.1:3080',
+    ...await connectionOptions(rpcFetch(calls, state)),
     participantId: 'codex-agent',
     displayName: 'Codex Agent',
-    fetch: rpcFetch(calls, state),
   })
   const client = new Client({ name: 'bridge-test', version: '1.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -96,7 +96,7 @@ async function clientWith(calls: Call[], state: State = { assignments: [], nextB
   return client
 }
 
-describe('AgentHarness MCP bridge', () => {
+describe.skipIf(process.platform === 'win32')('AgentHarness MCP bridge', () => {
   it('publishes only context-lineage and session-connection tools', async () => {
     const client = await clientWith([])
     expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
@@ -188,8 +188,47 @@ describe('AgentHarness MCP bridge', () => {
     expect(content.text).not.toContain('private')
   })
 
-  it('rejects non-loopback Harness URLs until authenticated remote transport exists', () => {
-    expect(() => new AgentHarnessRpcClient('http://10.0.0.8:3080')).toThrow('only loopback Harness URLs')
-    expect(() => new AgentHarnessRpcClient('file:///tmp/socket')).toThrow('must use http or https')
+  it('does not create a Task after the MCP client cancels during presence announcement', async () => {
+    const entered = Promise.withResolvers<AbortSignal>()
+    const release = Promise.withResolvers<undefined>()
+    const calls: string[] = []
+    const options = await connectionOptions(async (_input, init) => {
+      if (typeof init?.body !== 'string' || init.signal == null) throw new Error('expected cancellable RPC')
+      const body = JSON.parse(init.body) as { method: string; rpcId: string }
+      calls.push(body.method)
+      if (body.method === 'developmentRooms/announce') {
+        entered.resolve(init.signal)
+        await release.promise
+      }
+      return new Response(JSON.stringify({
+        type: 'server-response', rpcId: body.rpcId, result: { ok: true, value: {} },
+      }))
+    })
+    const server = createAgentHarnessBridge({ ...options, participantId: 'cancel-agent', displayName: 'Cancel Agent' })
+    const client = new Client({ name: 'cancel-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    closers.push(async () => {
+      release.resolve(undefined)
+      await client.close()
+      await server.close()
+    })
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+    const controller = new AbortController()
+    const pending = expect(client.callTool({
+      name: 'agentharness_task_create', arguments: { objective: 'Cancelled task', scope: 'Do not create' },
+    }, undefined, { signal: controller.signal })).rejects.toThrow('stop this request')
+    const wireSignal = await entered.promise
+    controller.abort(new Error('stop this request'))
+    await pending
+    try { expect(wireSignal.aborted).toBe(true) } finally { release.resolve(undefined) }
+    await server.close()
+    expect(calls).toEqual(['developmentRooms/announce'])
+  })
+
+  it('rejects non-loopback and non-HTTP origin pins', async () => {
+    const options = await connectionOptions(globalThis.fetch)
+    expect(() => new AgentHarnessRpcClient({ ...options, url: 'http://10.0.0.8:3080' })).toThrow('non-loopback-origin')
+    expect(() => new AgentHarnessRpcClient({ ...options, url: 'file:///tmp/socket' })).toThrow('invalid-origin')
   })
 })

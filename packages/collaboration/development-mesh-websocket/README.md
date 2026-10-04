@@ -22,6 +22,8 @@ English | [中文](README.zh.md)
 
 Configured peers and authenticated IPv4 multicast discovery can coexist. The lower node id owns dialing, reconnect uses bounded backoff, and channel heads resume missing deltas after reconnect. A reused event identity with different content marks the peer conflicted and stops accepting its data. Commands time out independently of replication.
 
+Frames rejected during serialization or the byte-limit check do not consume a connection sequence. A rejected frame does not make subsequent bounded traffic fail sequence validation. An oversized result can still return an error when that error fits the byte limit.
+
 Authentication provides node identity and message integrity, not encryption. LAN HTTP release downloads and Mesh payloads remain observable to a passive network listener.
 
 ## Model Experience
@@ -37,6 +39,8 @@ None.
 - Discovery is limited to one IPv4 multicast domain; routed networks require explicit peers.
 - Key rotation requires an explicit coordinated maintenance window.
 - TLS and individual participant authentication are not provided.
+
+No invariant companion is published because frame authentication and sequence validation run before dispatch, while peer snapshots read the provider's connection records.
 
 ### Dev Note
 

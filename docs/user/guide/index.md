@@ -39,6 +39,8 @@ In a Task's Agent section, **Configured** means the client has AgentHarness MCP 
 
 ## 4. Connect nodes
 
+For independent owners, use [cross-device collaboration](collaboration-network.md) to configure a direct listener and invite one Session without joining a trusted cluster. Owners can opt into [semantic summaries](collaboration-semantic.md) for recipient-directed context.
+
 Fresh installations have distinct collaboration credentials. To join an existing cluster, use `agentharness cluster join --secret-stdin` with a secret shared through a private channel. `agentharness cluster status` reports the cluster identity and peers. Nodes on the same IPv4 multicast domain may discover each other; explicit Mesh peers are available where multicast is unavailable. HMAC authenticates messages, but LAN transport is not encrypted, so use a trusted network.
 
 Contributors changing the source should use the [development guide](../../development.md) and [first plugin tutorial](../develop/basic/index.md). The [architecture](../../architecture.md) and [white paper](../../whitepaper.md) explain current implementation and long-term direction.

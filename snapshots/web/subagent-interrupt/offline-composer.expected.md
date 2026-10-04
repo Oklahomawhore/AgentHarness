@@ -5,6 +5,10 @@
     - 'button "Switch subagent: event-sourcing researcher"': event-sourcing researcher
   - img
   - text: Standard mode
+  - button "Collaboration":
+    - img
+    - text: Collaboration
+    - img
   - button "More actions":
     - img
   - button "Open right sidebar":

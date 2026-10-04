@@ -9,7 +9,6 @@
     { "path": "../../credentials/credentials" },
     { "path": "../development-mesh" },
     { "path": "../development-room" },
-    { "path": "../../host/webserver" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../../host/webserver" }
   ]
 }

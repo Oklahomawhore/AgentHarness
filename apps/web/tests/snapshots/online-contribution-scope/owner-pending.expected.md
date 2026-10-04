@@ -1,0 +1,30 @@
+- text: 入口用途
+- combobox "入口用途":
+  - option "邀请一个会话加入"
+  - option "仅申请文件贡献" [selected]
+- text: 贡献来源
+- combobox "贡献来源":
+  - option "授权目录内的 Write/Edit"
+  - option "单个 OpenAPI 操作" [selected]
+- text: 申请入口有效期（小时）
+- spinbutton "申请入口有效期（小时）": "1"
+- paragraph: 把入口交给一个来源用户。对方选定会话和采集目录后，申请会出现在这里；你批准前不会获得贡献权限。
+- button "生成一次申请入口"
+- status: 收到申请，等待你的批准
+- group: 将此入口交给来源用户
+- paragraph: "申请入口到期时间: {{entryExpiresLocal}}"
+- term: 来源设备
+- definition: {{contributorPeerId}}
+- term: 来源名称
+- definition: Orders
+- term: API 操作
+- definition: POST /orders
+- term: 授权到期时间
+- definition: {{permissionExpiresLocal}}
+- term: 最多样本数
+- definition: "4"
+- term: 每份样本字节上限
+- definition: "4096"
+- button "批准并让来源自动启用"
+- button "拒绝此申请入口"
+- button "用当前地址恢复入口"

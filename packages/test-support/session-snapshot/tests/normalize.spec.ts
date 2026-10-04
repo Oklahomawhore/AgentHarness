@@ -254,6 +254,19 @@ Additional instructions from: nested\AGENTS.md`,
 })
 
 describe('normalizeSessionLog', () => {
+  it('zeroes only native scope activation clocks while preserving policy and unreserved state', () => {
+    const records = [
+      { type: 'scope-agent-context/state', data: { lastActivationAt: 12345, usedBudget: 2, pendingActivation: { id: 'activation', bindingId: 'binding' }, automatic: { minIntervalMs: 500 }, binding: { invitation: { expiresAt: 67890 } } } },
+      { type: 'scope-agent-context/state', data: { lastActivationAt: null, usedBudget: 0 } },
+      { type: 'tool/result', data: { lastActivationAt: 12345, text: '12345' } },
+    ]
+    const output = normalizeSessionLog(records.map(record => JSON.stringify(record)).join('\n'), ctx)
+    expect(output.trimEnd().split('\n').map(line => JSON.parse(line) as unknown)).toEqual([
+      { ...records[0], data: { ...records[0]!.data, lastActivationAt: 0 } }, records[1], records[2],
+    ])
+    expect(normalizeSessionLog(output, ctx)).toBe(output)
+  })
+
   it('normalizes only message-feedback item clocks', () => {
     const item = { messageId: 'answer', version: 'version', createdAt: 123, updatedAt: 456, note: 'keep 123' }
     const input = ['feedback/message-put', 'tool/result'].map(type => JSON.stringify({ type, data: { item } })).join('\n')

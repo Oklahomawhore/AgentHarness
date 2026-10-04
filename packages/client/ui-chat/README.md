@@ -14,6 +14,7 @@ File-mention providers receive the viewed Session ID with the closing-turn owner
 
 ## Table of Contents
 
+- [Native scope background records](#native-scope-background-records)
 - [System prompt row](#system-prompt-row)
 - [Turn token usage](#turn-token-usage)
 - [Completed-turn footer](#completed-turn-footer)
@@ -22,6 +23,13 @@ File-mention providers receive the viewed Session ID with the closing-turn owner
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
+
+-----
+
+<a id="native-scope-background-records"></a>
+## Native scope background records
+
+Chat omits ordinary message nodes for `source.kind` values `scope-agent-context`, `scope-agent-pulse`, and `development-task-context`, including every version of snapshots, retirement, disconnection, withdrawal, and automatic scheduling inputs. User messages, Assistant results, approvals, and other injected context retain their usual presentation even when their text matches a scope record. These records remain in the Session log and [Trajectory](../ui-trajectory/README.md) with their source metadata and replacement history; hiding them changes neither model input nor recorded history.
 
 -----
 

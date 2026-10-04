@@ -1,0 +1,37 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- insert:
+    - id: task-context-facts-room
+      name: '@deepseek-ai/dsh-development-room'
+      config:
+        nodeId: snapshot-node
+        presenceTtlMs: 10000
+        maxParticipants: 16
+        maxRooms: 32
+        maxTextBytes: 2048
+    - id: task-context-facts-task
+      name: '@deepseek-ai/dsh-development-task'
+      config:
+        maxTasks: 32
+        maxEventsPerTask: 64
+        maxMergeParents: 8
+        maxContextBlockBytes: 65536
+        maxLineageTasks: 64
+        maxTextBytes: 2048
+        roomRetryIntervalMs: 10000
+    - id: task-context-facts-provider
+      name: '@deepseek-ai/dsh-development-task-context/facts'
+      config:
+        routes: []
+        unmatchedFields: [operationId, requestBodyRequired, requiredRequestFields, responseStatuses, deprecated]
+    - id: task-context-facts-context
+      name: '@deepseek-ai/dsh-development-task-context'
+      config:
+        maxContextBytesPerStep: 65536
+    - id: task-context-facts-bindings
+      name: './facts-fixture.mjs'

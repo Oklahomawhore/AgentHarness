@@ -1,0 +1,14 @@
+# Standalone authenticated MCP stdio; no base, model, or Agent loop is mounted.
+- insert:
+    - id: mcp-stdio
+      name: '@deepseek-ai/dsh-agentharness-bridge/stdio'
+      config:
+        connectionPath: !!js dshHomePath('mcp/connection.json')
+        requestTimeoutMs: 1500
+        maxDescriptorBytes: 16384
+        maxRequestBytes: 1048576
+        maxResponseBytes: 4194304
+        leaseRetryMs: 2000
+        leaseFallbackTtlMs: 15000
+        leaseMinHeartbeatMs: 500
+        leaseMaxHeartbeatMs: 30000

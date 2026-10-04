@@ -48,6 +48,7 @@ describe('scoped-dispatch invariants', () => {
       'agent/created': [{ agent }],
       'agent/disposed': [{ agent }],
       'agent/status': [{ agent, status: 'idle' }],
+      'agent/cancel-requested': [{ agent, cause: { kind: 'user' } }],
       'agent/inbox/inserted': [{ agent, message }],
       'agent/inbox/claimed': [{ agent, message, turn: 1 }],
       'agent/inbox/discarded': [{ agent, message }],

@@ -43,7 +43,13 @@ External packages installed for runtime use or distributed inside the prebuilt b
 | [`@lexical/plain-text`](https://github.com/facebook/lexical) | MIT |
 | [`@lexical/text`](https://github.com/facebook/lexical) | MIT |
 | [`@lexical/utils`](https://github.com/facebook/lexical) | MIT |
+| [`@libp2p/crypto`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
+| [`@libp2p/noise`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
+| [`@libp2p/peer-id`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
+| [`@libp2p/tcp`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
+| [`@libp2p/yamux`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk) | MIT |
+| [`@multiformats/multiaddr`](https://github.com/multiformats/js-multiaddr) | Apache-2.0 OR MIT |
 | [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) | MIT |
 | [`@octokit/webhooks`](https://github.com/octokit/webhooks.js) | MIT |
 | [`@openai/codex`](https://github.com/openai/codex) | Apache-2.0 |
@@ -78,6 +84,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
 | [`katex`](https://github.com/KaTeX/KaTeX) | MIT |
 | [`koffi`](https://github.com/Koromix/koffi) | MIT |
 | [`lexical`](https://github.com/facebook/lexical) | MIT |
+| [`libp2p`](https://github.com/libp2p/js-libp2p) | Apache-2.0 OR MIT |
 | [`mdast-util-from-markdown`](https://github.com/syntax-tree/mdast-util-from-markdown) | MIT |
 | [`mdast-util-gfm`](https://github.com/syntax-tree/mdast-util-gfm) | MIT |
 | [`mdast-util-math`](https://github.com/syntax-tree/mdast-util-math) | MIT |

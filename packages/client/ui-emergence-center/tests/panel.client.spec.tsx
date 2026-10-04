@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
@@ -13,8 +14,9 @@ import type {
   DevelopmentTaskSnapshot,
   McpClientSnapshot,
 } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerOpenApiObservation } from '@deepseek-ai/dsh-development-task/types'
 import { EmergenceCenterPanel, taskGraph, type EmergenceCenterPanelProps } from '../src/client/EmergenceCenterPanel.tsx'
-import { zh } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
 
 const flowCapture = vi.hoisted(() => ({ props: {} as Record<string, unknown> }))
 vi.mock('@xyflow/react', () => ({
@@ -107,13 +109,28 @@ function panelProps(
     displayName: 'Codex Agent',
     restartRequired: false,
   }]
-  const participantState = { participants, presenceTtlMs: 15_000, read: true }
+  const participantState = { participants, nodeId: NODE, presenceTtlMs: 15_000, read: true }
   const clientState = { clients, read: true }
+  const claudeState = { sessions: [], status: 'ready' as const }
+  const observedState = { candidates: [], intervals: [], status: 'idle' as const }
   return {
     wide: options.wide ?? true,
     useParticipants: <T,>(selector: (value: typeof participantState) => T): T => selector(participantState),
     useTasks: <T,>(selector: (value: typeof taskState) => T): T => selector(taskState),
     useMcpClients: <T,>(selector: (value: typeof clientState) => T): T => selector(clientState),
+    useClaudeScopes: <T,>(selector: (value: typeof claudeState) => T): T => selector(claudeState),
+    useSourceContributions: selector => selector({}),
+    useOwnerContributions: selector => selector({}),
+    readContribution: vi.fn(), requestContribution: vi.fn(), prepareContribution: vi.fn(),
+    activateContribution: vi.fn(), stopContribution: vi.fn(),
+    createContributionEntry: vi.fn(), recoverContributionEntry: vi.fn(),
+    approveContributionApplication: vi.fn(), rejectContributionApplication: vi.fn(),
+    previewContributionText: vi.fn(), readOwnedContributions: vi.fn(), moreOwnedContributions: vi.fn(),
+    approveContribution: vi.fn(), recoverContribution: vi.fn(), revokeContribution: vi.fn(),
+    useObservedScopes: <T,>(selector: (value: typeof observedState) => T): T => selector(observedState),
+    approveObservedScope: vi.fn(),
+    endObservedScope: vi.fn(),
+    refreshObservedScopes: vi.fn(),
     initialProfile: { id: HUMAN, displayName: 'Jet' },
     setProfile: vi.fn(async () => {}),
     focusTask: vi.fn(async () => {}),
@@ -122,6 +139,14 @@ function panelProps(
     )),
     publishContext: vi.fn(async () => tasks[0]!),
     setupClient: vi.fn(async () => ({ outcome: 'already-configured' as const, client: clients[0]! })),
+    setupClaudeHooks: vi.fn(),
+    checkClaudeHooks: vi.fn(),
+    removeClaudeHooks: vi.fn(),
+    joinClaudeScope: vi.fn(),
+    leaveClaudeScope: vi.fn(),
+    refreshClaudeScopes: vi.fn(),
+    readScopeAccess: vi.fn(async () => ({ identity: { peerId: 'test-peer' as import('@deepseek-ai/dsh-api-remotes/client').ScopePeerId, addresses: [] }, access: { grants: [], subscriptions: [] } })),
+    inviteScope: vi.fn(), revokeScope: vi.fn(), receiveClaudeScope: vi.fn(), stopClaudeReceive: vi.fn(),
     refresh: vi.fn(),
     t: makeTranslate(zh),
   } as EmergenceCenterPanelProps
@@ -143,8 +168,11 @@ describe('EmergenceCenterPanel', () => {
       window.history.replaceState(null, '', previous)
     }
   })
-  it('lays out Root → two Forks → Merge as immutable graph edges', () => {
-    const graph = taskGraph(lineage())
+  it.each([
+    { locale: 'zh', dictionary: zh, labels: ['独立 · 修订 r1', '分支 · 修订 r1', '分支 · 修订 r1', '合并 · 修订 r1'] },
+    { locale: 'en', dictionary: en, labels: ['Root · Revision r1', 'Fork · Revision r1', 'Fork · Revision r1', 'Merge · Revision r1'] },
+  ])('renders $locale origin and revision labels while retaining immutable graph edges', ({ dictionary, labels }) => {
+    const graph = taskGraph(lineage(), makeTranslate(dictionary))
     expect(graph.nodes).toHaveLength(4)
     expect(graph.edges.map(edge => [edge.source, edge.target])).toEqual([
       [ROOT, FORK_ONE],
@@ -152,6 +180,17 @@ describe('EmergenceCenterPanel', () => {
       [FORK_ONE, MERGE],
       [FORK_TWO, MERGE],
     ])
+    graph.nodes.forEach((node, index) => {
+      const label = node.data.label
+      if (!isValidElement(label)) throw new Error('Task graph node has no rendered label')
+      const { container } = render(label)
+      expect(container.querySelector('span')?.textContent).toBe(labels[index])
+    })
+    const props = { ...panelProps(), t: makeTranslate(dictionary) }
+    render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: dictionary['trigger.aria'] }))
+    expect(document.querySelector('[data-emergence-center] header h1')?.previousElementSibling?.textContent).toBe(labels[0])
+    expect(screen.getByRole('button', { name: new RegExp(`^${dictionary['detail.origin.root']}.*r1.*Root`) })).toBeTruthy()
   })
 
   it('keeps one clear creation entry and prevents the graph from fitting to a tiny zoom', () => {
@@ -192,7 +231,7 @@ describe('EmergenceCenterPanel', () => {
     openPanel(props)
     fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
     fireEvent.click(screen.getByRole('button', { name: zh['create.merge'] }))
-    fireEvent.click(screen.getByLabelText('Fork one · r1'))
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
     fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Merged context' } })
     fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Combined findings' } })
     fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
@@ -233,10 +272,18 @@ describe('EmergenceCenterPanel', () => {
     openPanel(panelProps())
     const hub = screen.getByRole('region', { name: zh['agents.connectTitle'] })
     expect(within(hub).getByRole('heading', { name: zh['agents.connectTitle'] })).toBeTruthy()
-    expect(within(hub).getByText(content => content.includes('目标 Codex/Cursor/Claude Session'))).toBeTruthy()
+    expect(screen.getByRole('region', { name: zh['claude.title'] })).toBeTruthy()
+    expect(within(hub).getByText(zh['agents.sessionHint'])).toBeTruthy()
     expect(within(hub).getAllByText(content => content.includes('agentharness_task_connect')).length).toBeGreaterThan(0)
     expect(screen.queryByRole('tab')).toBeNull()
     expect(screen.queryByText('分配到当前选中任务')).toBeNull()
+  })
+
+  it('opens project configuration without any local Task', () => {
+    openPanel(panelProps([]))
+    expect(screen.getByRole('region', { name: zh['claude.title'] })).toBeTruthy()
+    expect(screen.getByLabelText(zh['claude.projectPath'])).toBeTruthy()
+    expect(screen.queryByRole('button', { name: zh['claude.join'] })).toBeNull()
   })
 
   it('renders independent connected session bindings and their acknowledgement state', () => {
@@ -252,7 +299,7 @@ describe('EmergenceCenterPanel', () => {
     ]
     openPanel(panelProps(lineage(), { assignments }))
     const hub = screen.getByRole('region', { name: zh['agents.connectTitle'] })
-    expect(within(hub).getByText(content => content.includes('Codex / bugfix'))).toBeTruthy()
+    expect(within(hub).getByText('Codex / bugfix · 修订 r1', { exact: true })).toBeTruthy()
     expect(within(hub).queryByText(content => content.includes('Codex / unrelated'))).toBeNull()
     expect(within(hub).getByText(content => content.includes('已确认修订 r1'))).toBeTruthy()
   })
@@ -269,6 +316,46 @@ describe('EmergenceCenterPanel', () => {
         text: 'A reusable decision',
       })
     })
+  })
+
+  it('identifies independent peer samples and terminal notices without a participant publisher', () => {
+    const grant = {
+      version: 1, taskId: ROOT,
+      grantId: 'peer-grant' as DevelopmentTaskPeerContributionGrant['grantId'],
+      generation: 'peer-generation' as DevelopmentTaskPeerContributionGrant['generation'],
+      ownerPeerId: 'owner-peer' as DevelopmentTaskPeerContributionGrant['ownerPeerId'],
+      contributorPeerId: 'backend-peer' as DevelopmentTaskPeerContributionGrant['contributorPeerId'],
+      captureId: 'capture' as DevelopmentTaskPeerContributionGrant['captureId'],
+      captureGeneration: 'capture-generation' as DevelopmentTaskPeerContributionGrant['captureGeneration'],
+      source: { name: 'orders-api', method: 'post', path: '/orders' },
+      expiresAt: 60000, maxSamples: 8, maxSampleBytes: 4096,
+    } satisfies DevelopmentTaskPeerContributionGrant
+    const observation: DevelopmentTaskPeerOpenApiObservation = {
+      kind: 'openapi-artifact', version: 1,
+      artifactId: 'orders-artifact' as DevelopmentTaskPeerOpenApiObservation['artifactId'],
+      sourceName: grant.source.name, grantId: grant.grantId, sequence: 1,
+      operation: { method: grant.source.method, path: grant.source.path },
+      observerPeerId: grant.contributorPeerId,
+      sourceId: 'a'.repeat(64) as DevelopmentTaskPeerOpenApiObservation['sourceId'],
+      capture: { id: grant.captureId, generation: grant.captureGeneration },
+      state: 'valid', sha256: 'b'.repeat(64),
+      facts: { requestBodyRequired: true, requiredRequestFields: ['name'], responseStatuses: ['200'], deprecated: false },
+    }
+    openPanel(panelProps([task(ROOT, 'Root', { kind: 'root' }, [
+      { id: 'ordinary', text: 'Participant decision', publishedBy: AGENT, publishedAt: 1 },
+      { id: 'peer-sample', text: 'Sampled API declaration', publishedAt: 2,
+        peerContribution: { version: 1, grant }, peerObservation: observation },
+      { id: 'peer-ended', text: 'Contribution authorization ended', publishedAt: 3,
+        peerContribution: { version: 1, grant, ended: 'revoked' } },
+    ])]))
+    const publication = (text: string): HTMLElement => {
+      const article = screen.getByText(text).closest('article')
+      if (article === null) throw new Error('publication article was not rendered')
+      return article
+    }
+    expect(within(publication('Participant decision')).getByText('Codex Agent')).toBeTruthy()
+    expect(within(publication('Sampled API declaration')).getByText('独立来源：backend-peer')).toBeTruthy()
+    expect(within(publication('Contribution authorization ended')).getByText('独立来源：backend-peer')).toBeTruthy()
   })
 
   it('caps 100 owned Tasks at 99+ inside the narrow action', () => {

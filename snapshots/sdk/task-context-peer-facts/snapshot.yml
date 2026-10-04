@@ -1,0 +1,11 @@
+version: 1
+scenario: task-context-peer-facts
+profile: sdk
+composition: sdk-task-context-peer-facts
+recording: authored
+header:
+  class: task-context-peer-facts
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

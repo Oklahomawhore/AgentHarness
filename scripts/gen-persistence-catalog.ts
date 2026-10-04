@@ -38,6 +38,10 @@ type EventEnvelopeTypeName = typeof EVENT_ENVELOPE_TYPE_NAMES[number]
 
 /** Documentation target, relative to `docs/`, for linked payload types. */
 const LINK_MAP: Record<string, string> = {
+  ScopeAgentBindingStatus: 'subsystems/development-room.md',
+  ScopeAgentRouteEvent: 'subsystems/development-room.md',
+  ScopeAgentEvaluation: 'subsystems/development-room.md',
+  ScopeAgentRequestEvidence: 'subsystems/development-room.md',
   ToolCallId: 'subsystems/core.md',
   ContentBlock: 'subsystems/core.md',
   MessageSource: 'subsystems/core.md',

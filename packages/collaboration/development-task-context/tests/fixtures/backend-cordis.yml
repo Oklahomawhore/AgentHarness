@@ -1,0 +1,20 @@
+- name: '@deepseek-ai/dsh-development-room'
+  config:
+    nodeId: backend-node
+    presenceTtlMs: 10000
+    maxParticipants: 16
+    maxRooms: 32
+    maxTextBytes: 4096
+- name: '@deepseek-ai/dsh-development-task'
+  config:
+    maxTasks: 32
+    maxEventsPerTask: 64
+    maxMergeParents: 8
+    maxContextBlockBytes: 65536
+    maxLineageTasks: 64
+    maxTextBytes: 4096
+    roomRetryIntervalMs: 10000
+- name: fixture:context-backend
+- name: '@deepseek-ai/dsh-development-task-context'
+  config:
+    maxContextBytesPerStep: 65536

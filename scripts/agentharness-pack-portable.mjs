@@ -25,7 +25,7 @@ const REQUIRED_ASSETS = [
     ],
   },
   { label: 'Web bundle', paths: ['node_modules/@deepseek-ai/dsh-web-app/package.json'] },
-  { label: 'AgentHarness MCP bridge', paths: ['node_modules/@deepseek-ai/dsh-agentharness-bridge/lib/bin.js'] },
+  { label: 'AgentHarness MCP bridge', paths: ['node_modules/@deepseek-ai/dsh-agentharness-bridge/lib/stdio.js'] },
 ]
 /** @type {Readonly<Record<string, readonly string[]>>} */
 const TARGET_NATIVE_PACKAGES = {
@@ -288,7 +288,6 @@ async function writeLaunchers(output, options) {
   await cp(join(root, 'scripts', 'agentharness-portable-start.mjs'), join(output, 'start.mjs'))
   await cp(join(root, 'scripts', 'agentharness-cluster.mjs'), join(output, 'agentharness-cluster.mjs'))
   await cp(join(root, 'scripts', 'agentharness-node-identity.mjs'), join(output, 'agentharness-node-identity.mjs'))
-  await cp(join(root, 'scripts', 'agentharness-portable-mcp.mjs'), join(output, 'mcp.mjs'))
   await cp(join(root, 'scripts', 'agentharness-portable-command.mjs'), join(output, 'agentharness.mjs'))
   const [platform, arch] = options.target.split('-')
   const runtimeName = platform === 'win32' ? 'node.exe' : 'node'
@@ -314,7 +313,6 @@ async function writeLaunchers(output, options) {
     platform,
     arch,
     entry: 'start.mjs',
-    mcpEntry: 'mcp.mjs',
     runtime: { node: `runtime/${runtimeName}` },
   }, null, 2)}\n`)
 }

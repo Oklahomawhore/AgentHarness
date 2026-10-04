@@ -6,7 +6,6 @@
     { "path": "../../../vendor/cosmokit" },
     { "path": "../../../vendor/cordis" },
     { "path": "../../../vendor/schemastery" },
-    { "path": "../development-evidence" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../development-evidence" }
   ]
 }

@@ -17,6 +17,8 @@ import type { TrajectorySnapshot } from '../src/client/trajectory-contract.ts'
 import { registerTrajectoryMessageDefinitions } from '../src/client/trajectory-message-definitions.ts'
 import { registerTrajectoryRequestHeaderDefinition } from '../src/client/trajectory-request-header-definition.ts'
 import { trajectoryViewDefinition } from '../src/client/trajectory-snapshot-builder.ts'
+import { deriveTrajectoryLayout } from '../src/client/layout.ts'
+import { t } from './locale.client.ts'
 import { registerTrajectoryToolDefinition } from '../src/client/trajectory-tool-definition.ts'
 
 const DEFINITIONS: ConversationNodeDefinition[] = []
@@ -172,6 +174,46 @@ function systemMessage(text: string) {
 }
 
 describe('Trajectory conversation Definitions', () => {
+
+  it.each(['replay', 'live'] as const)('retains native scope source metadata and replaced history (%s)', (mode) => {
+    const snapshotSource = {
+      kind: 'scope-agent-context', version: 1, form: 'snapshot', bindingId: 'binding', subscriptionId: 'subscription',
+      projection: {
+        projectionId: 'projection-1', taskId: 'task', taskRevision: 3, ownerPeerId: 'owner', recipientPeerId: 'recipient',
+        grantId: 'grant', grantGeneration: 'generation', expiresAt: 2_000_000_000_000,
+        backend: { id: 'facts', revision: '1' }, maxContextBytes: 6000, text: 'required: version',
+        selectedSources: [{ kind: 'publication', taskId: 'task', revision: 3, publicationId: 'publication' }],
+        omittedSources: [],
+      },
+    }
+    const sources = [
+      snapshotSource,
+      { kind: 'scope-agent-pulse', version: 1, bindingId: 'binding', activationId: 'activation' },
+      { kind: 'scope-agent-context', version: 1, form: 'withdrawn', reason: 'revoked' },
+    ]
+    const inputs = sources.map((source, index) => at(index + 1, 'user/message', {
+      id: `scope-${String(index)}`, role: 'user', content: [{ type: 'text', text: `record-${String(index)}` }], source,
+    }, index === 2
+      ? { surfaceOp: { op: 'replace', startSeq: 1, endSeq: 1 }, sourceEventSeqs: [1] }
+      : { surfaceOp: 'append' }))
+    const original = structuredClone(inputs)
+    const value = assembler(mode === 'replay' ? inputs : [])
+    if (mode === 'live') {
+      for (const input of inputs) value.append(input)
+      value.flush()
+    }
+    const current = snapshot(value)
+    expect(current.eventNodes.map(candidate => candidate.seq)).toEqual([1, 2, 3])
+    expect(current.eventNodes.map(candidate => 'source' in candidate ? candidate.source : undefined)).toEqual(sources)
+    const layout = deriveTrajectoryLayout({
+      nodes: current.eventNodes, eventLocations: current.eventLocations,
+      partial: current.partial, runningCalls: current.runningCalls,
+    }, t)
+    const cells = layout.flatMap(turn => turn.groups.flatMap(group => group.cells))
+    expect(cells.map(cell => cell.messageSource)).toEqual(sources)
+    expect(cells.map(cell => cell.inputDetail)).toEqual(['record-0', 'record-1', 'record-2'])
+    expect(inputs).toEqual(original)
+  })
   it('assembles streaming usage, preserves retry facts, and materializes interruption', () => {
     const value = assembler([
       at(1, 'turn/start', { turn: 1 }),

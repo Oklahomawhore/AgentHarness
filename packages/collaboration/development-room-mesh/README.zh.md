@@ -34,6 +34,8 @@ kind: "package-reference"
 - Presence 是 lease 状态，不属于耐久 Room 历史。
 - 本包不暴露面向用户的 Room 工具或 UI。
 
+本包不发布 invariant companion，因为 Consumer 从 Room service 读取 head 和 presence，入站副本的归属也由 Room service 校验。
+
 <a id="dev-note"></a>
 
 ### 开发备注

@@ -1,0 +1,9 @@
+- group:
+  - text: 分享本会话的文件工作
+  - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+  - status: 尚未允许分享文件工作
+  - text: 粘贴协作申请入口
+  - textbox "粘贴协作申请入口": "{\"version\":1,\"entryId\":\"{{entryId}}\",\"taskId\":\"{{taskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"contribution-entry\",\"sourceKind\":\"tool-observations\"}"
+  - button "验证连接"
+  - alert: 无法连接任务所有者。请确认对方在线且地址可达，然后重试。
+  - button "重新读取分享状态"

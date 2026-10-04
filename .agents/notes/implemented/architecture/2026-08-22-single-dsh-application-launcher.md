@@ -14,7 +14,7 @@ The Python SDK distributes a native executable through four platform wheels. Its
 
 ### Launch scope
 
-Every supported Node application starts through the `dsh` CLI and one named profile. The shipped application commands are `dsh web`, `dsh --profile headless`, `dsh --profile sdk`, `dsh --profile sdk-minimal`, and `dsh --profile acp`; `dsh web` is the deliberate convenience alias for `--profile web`, not another application entry.
+Every supported Node application starts through the `dsh` CLI and one named profile. The shipped application commands are `dsh web`, `dsh --profile headless`, `dsh --profile sdk`, `dsh --profile sdk-minimal`, `dsh --profile mcp`, and `dsh --profile acp`; `dsh web` is the deliberate convenience alias for `--profile web`, not another application entry.
 
 Vendor CLIs, build-only and test-only executables, direct in-process plugin mounting, and the private browser WebWorker preview are outside the application-launch inventory. A package app bin or root demo that launches a package entry is not an accepted extension point.
 
@@ -31,10 +31,15 @@ Profile manifests own patch reload:
 | `sdk` | `startup` |
 | `sdk-minimal` | `startup` |
 | `acp` | `startup` |
+| `mcp` | `startup` |
 
 Custom profiles default to `live`. A startup profile still applies its bundle, profile, home-level, and invocation `--patch` layers, but it does not watch them after boot. `dsh-base` inserts the module-HMR row disabled; a profile with a tested source-module reload lifecycle must enable it explicitly. None of the shipped profiles enable server module HMR: `patchReload: live` uses the launcher's config-only watcher while the startup profiles install no watcher. SDK and ACP cannot safely replace their server, agents, persistence, or tool registry inside one owned stdio connection.
 
 The shipped protocol profiles reserve stdout for protocol frames, expose help without starting transport, and route stdin EOF and signals through bounded root disposal. ACP remains automation-only. The SDK JSON-RPC methods, notification fields, and `initialize.serverInfo.name` remain stable. Full-profile model-visible tool and persistence defaults come from `dsh-base`, including its [default editor selection](../simplification/2026-09-05-base-default-file-editor.md); `sdk-minimal` owns its explicit defaults. Runnable snapshots own the assembled application outputs.
+
+The `mcp` profile contains only the [AgentHarness bridge](../../../../packages/mcp/agentharness-bridge/README.md) bundle. Its stdio Consumer reads an explicitly resolved private connection descriptor and exchanges the current Host launch token for a cookie before RPC. The [Connection local-access library](../../../../packages/client/connection/README.md) owns descriptor publication and authentication; neither MCP nor Claude scope transports read the signing secret. Generated external-client entries retain the chosen Harness home, actual dsh CLI path, and source-runtime arguments. Authentication, request size, response size, cancellation, and presence renewal have configured bounds. This profile runs no model or agent loop.
+
+The private descriptor requires POSIX ownership checks and kernel file locking. Windows keeps the Web application available but reports local MCP setup as unsupported and writes no client configuration; accepting a descriptor without equivalent Windows protection would grant local Host authority to an unverified file.
 
 ### TypeScript SDK customization
 

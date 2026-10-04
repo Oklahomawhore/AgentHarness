@@ -11,6 +11,10 @@ import pluginInventoryRemote from '@deepseek-ai/dsh-host-plugin-inventory/remote
 import messageFeedbackRemote from '@deepseek-ai/dsh-message-feedback/remote'
 import devWorkbenchRemote from '@deepseek-ai/dsh-host-dev-workbench/remote'
 import mcpClientSetupRemote from '@deepseek-ai/dsh-host-mcp-client-setup/remote'
+import claudeScopeRemote from '@deepseek-ai/dsh-claude-scope/remote'
+import scopeAccessRemote from '@deepseek-ai/dsh-scope-access/remote'
+import scopeAgentContextRemote from '@deepseek-ai/dsh-scope-agent-context/remote'
+import scopeAgentContributionsRemote from '@deepseek-ai/dsh-scope-agent-contribution/remote'
 import developmentRoomsRemote from '@deepseek-ai/dsh-development-room/remote'
 import developmentTasksRemote from '@deepseek-ai/dsh-development-task/remote'
 import sessionFeedbackRemote from '@deepseek-ai/dsh-command-feedback/remote'
@@ -33,6 +37,10 @@ export type {} from '@deepseek-ai/dsh-host-plugin-inventory/remote'
 export type {} from '@deepseek-ai/dsh-message-feedback/remote'
 export type {} from '@deepseek-ai/dsh-host-dev-workbench/remote'
 export type {} from '@deepseek-ai/dsh-host-mcp-client-setup/remote'
+export type {} from '@deepseek-ai/dsh-claude-scope/remote'
+export type {} from '@deepseek-ai/dsh-scope-access/remote'
+export type {} from '@deepseek-ai/dsh-scope-agent-context/remote'
+export type {} from '@deepseek-ai/dsh-scope-agent-contribution/remote'
 export type {} from '@deepseek-ai/dsh-development-room/remote'
 export type {} from '@deepseek-ai/dsh-development-task/remote'
 export type {} from '@deepseek-ai/dsh-command-feedback/remote'
@@ -103,6 +111,29 @@ export type {
 } from '@deepseek-ai/dsh-host-mcp-client-setup/types'
 
 export type {
+  ClaudeScopeJoinRequest,
+  ClaudeScopeContributionSelection,
+  ClaudeScopeContributionDetail,
+  ClaudeScopePrepareContributionRequest, ClaudeScopeContributionSource,
+  ClaudeScopeRequestContributionRequest,
+  ClaudeScopeContributionApplication,
+  ClaudeScopeContributionPreparation,
+  ClaudeScopeActivateContributionRequest,
+  ClaudeScopeContributionLeaveRequest,
+  ClaudeScopeReceiveRequest,
+  ClaudeScopeReceiveStatus,
+  ClaudeScopeLeaveRequest,
+  ClaudeScopeOpenApiSource,
+  ClaudeScopeProjectSetupResult,
+  ClaudeScopeRemoveSetupResult,
+  ClaudeScopeSessionKey,
+  ClaudeScopeSessionSummary,
+  ClaudeScopeSetupConfig,
+  ClaudeScopeSetupRequest,
+  ClaudeScopeSetupResult,
+} from '@deepseek-ai/dsh-claude-scope/types'
+
+export type {
   DevelopmentNodeId,
   DevelopmentParticipantAnnounceRequest,
   DevelopmentParticipantHeartbeatRequest,
@@ -121,6 +152,13 @@ export type {
 } from '@deepseek-ai/dsh-development-room/types'
 
 export type {
+  DevelopmentTaskApproveObservedIntervalRequest,
+  DevelopmentTaskEndObservedIntervalRequest,
+  DevelopmentTaskObservedCandidate,
+  DevelopmentTaskObservedInterval,
+  DevelopmentTaskObservedIntervalIdentity,
+  DevelopmentTaskObservedIntervalId,
+  DevelopmentTaskObservedReceipt,
   DevelopmentTaskAssignment,
   DevelopmentTaskAcknowledgeRequest,
   DevelopmentTaskBindingId,
@@ -231,6 +269,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       pluginInventoryRemote, messageFeedbackRemote, sessionFeedbackRemote, fileUploadsRemote, sessionReferencesRemote,
       subagentsRemote, sessionRemote, workspaceRemote, workspaceFilesRemote,
       devWorkbenchRemote, mcpClientSetupRemote, developmentRoomsRemote, developmentTasksRemote,
+      claudeScopeRemote, scopeAccessRemote, scopeAgentContextRemote, scopeAgentContributionsRemote,
     ]) {
       disposers.push(await ctx.remote.$mount(contribution))
     }
@@ -244,3 +283,15 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     for (const dispose of disposers.reverse()) await dispose()
   }
 }
+
+export type * from '@deepseek-ai/dsh-scope-access/types'
+export type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
+
+export type * from '@deepseek-ai/dsh-scope-agent-context/types'
+export type * from '@deepseek-ai/dsh-scope-agent-contribution/types'
+
+export type {
+  ScopeContributionProposal, ScopeContributionTransfer, ScopeContributionApproveRequest,
+  ScopeContributionInventory, ScopeContributionInventoryRequest, ScopeContributionRecoverRequest, ScopeContributionApproval,
+  ScopeContributionInvitation, ScopeContributionManagementErrorCode,
+} from '@deepseek-ai/dsh-scope-access/types'

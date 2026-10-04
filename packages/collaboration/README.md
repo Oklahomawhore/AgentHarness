@@ -32,7 +32,12 @@ See the [collaboration subsystem](../../docs/subsystems/development-room.md) for
 | `development-task` | Owns Root/Fork/Merge lineage, explicit context publications, and per-session Task bindings. |
 | `development-task-storage-domain` | Persists Task events, context blocks, and assignments as independent SQLite-routable rows. |
 | `development-task-mesh` | Replicates Task rows and routes owner mutations over the generic Mesh. |
-| `development-task-context` | Injects the bound Task context into native Agent requests and durable Session history. |
+| `development-task-context` | Selects recipient context through a replaceable backend and injects it into native Agent requests. |
+| `scope-transport` | Authenticates independent device keys and carries bounded requests over explicit direct addresses. |
+| `scope-access` | Authorizes one recipient to read a Root Task and persists exact owner-produced context without log replication. |
+| `scope-agent-context` | Admits independent scope context into native Sessions and starts idle turns under an explicit local goal and finite budget. |
+| [`scope-agent-contribution`](scope-agent-contribution/README.md) | Shares permitted native file-tool observations through independent owner approval and durable retries. |
+| `claude-scope` | Collects authorized Claude tool observations and prepares recipient context for command hooks. |
 | `development-room-context` | Legacy explicit Room text service retained outside the Task-first Web composition. |
 | `development-room-context-storage-domain` | Legacy Room-context persistence retained outside the Task-first Web composition. |
 

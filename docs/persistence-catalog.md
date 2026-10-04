@@ -396,6 +396,30 @@ Types: [ContentBlock](subsystems/core.md) · [TokenUsage](subsystems/llm-streami
 
 Source: [`packages/compaction/compaction/src/types.ts:34`](../packages/compaction/compaction/src/types.ts)
 
+### `context/*`
+
+<a id="contextsemantic-request--log-only"></a>
+
+#### `context/semantic-request` — log-only
+
+```ts persistence-catalog
+/** Exact auxiliary context request and durable call reservation before dispatch. */
+'context/semantic-request': SemanticRequestRecord
+```
+
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:21`](../packages/collaboration/development-task-context/src/semantic.ts)
+
+<a id="contextsemantic-result--log-only"></a>
+
+#### `context/semantic-result` — log-only
+
+```ts persistence-catalog
+/** Bounded raw response, usage, and validated projection for one reserved context request. */
+'context/semantic-result': SemanticResultRecord
+```
+
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+
 ### `deliverables/*`
 
 <a id="deliverablespresented--log-only"></a>
@@ -666,6 +690,71 @@ Source: [`packages/sandbox/sandbox-policy/src/session-mode.ts:33`](../packages/s
 Types: [ScheduleChange](subsystems/schedule.md)
 
 Source: [`packages/schedule/schedule/src/types.ts:219`](../packages/schedule/schedule/src/types.ts)
+
+### `scope-agent-context/*`
+
+<a id="scope-agent-contextevaluation--log-only"></a>
+
+#### `scope-agent-context/evaluation` — log-only
+
+```ts persistence-catalog
+/** Exact online decision; suppression consumes neither a pulse nor a reservation. */
+'scope-agent-context/evaluation': ScopeAgentEvaluation
+```
+
+Types: [ScopeAgentEvaluation](subsystems/development-room.md)
+
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:269`](../packages/collaboration/scope-agent-context/src/types.ts)
+
+<a id="scope-agent-contextjoin-read--log-only"></a>
+
+#### `scope-agent-context/join-read` — log-only
+
+```ts persistence-catalog
+/** Durable joint adoption plan, atomic passive binding, or irreversible cancellation. */
+'scope-agent-context/join-read': ScopeAgentJoinReadEvent
+```
+
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:265`](../packages/collaboration/scope-agent-context/src/types.ts)
+
+<a id="scope-agent-contextrequest--log-only"></a>
+
+#### `scope-agent-context/request` — log-only
+
+```ts persistence-catalog
+/** Dispatch-time association to actual model input; completion is derived from subsequent assistant and turn events. */
+'scope-agent-context/request': ScopeAgentRequestEvidence
+```
+
+Types: [ScopeAgentRequestEvidence](subsystems/development-room.md)
+
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:271`](../packages/collaboration/scope-agent-context/src/types.ts)
+
+<a id="scope-agent-contextroute--log-only"></a>
+
+#### `scope-agent-context/route` — log-only
+
+```ts persistence-catalog
+/** Durable same-grant address change; scheduling permission and receiver identity remain unchanged. */
+'scope-agent-context/route': ScopeAgentRouteEvent
+```
+
+Types: [ScopeAgentRouteEvent](subsystems/development-room.md)
+
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:267`](../packages/collaboration/scope-agent-context/src/types.ts)
+
+<a id="scope-agent-contextstate--log-only"></a>
+
+#### `scope-agent-context/state` — log-only
+
+```ts persistence-catalog
+/** Complete local scope scheduling state; reservation consumption survives cancellation and restart. */
+'scope-agent-context/state': ScopeAgentBindingStatus
+```
+
+Types: [ScopeAgentBindingStatus](subsystems/development-room.md)
+
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:263`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 ### `session/*`
 

@@ -1,0 +1,58 @@
+# Apply on every participating Web Host before semantic.cordis.yml.
+# Each patch replaces a complete config; unrelated Web values remain explicit.
+
+- id: scope-transport-libp2p
+  name: '@deepseek-ai/dsh-scope-transport/libp2p-settings'
+  config:
+    listenAddresses: !!js "process.env.AGENTHARNESS_SCOPE_LISTEN == null ? ['/ip4/127.0.0.1/tcp/0'] : JSON.parse(process.env.AGENTHARNESS_SCOPE_LISTEN)"
+    maxRequestBytes: 16384
+    maxResponseBytes: 65536
+    maxInboundRequests: 16
+    maxOutboundRequests: 16
+    maxConnections: 32
+    requestTimeoutMs: 35000
+    connectionTimeoutMs: 5000
+
+- id: scope-access
+  name: '@deepseek-ai/dsh-scope-access'
+  config:
+    maxGrants: 1024
+    maxSubscriptions: 256
+    maxProjections: 8192
+    maxContextBytes: 6000
+    maxResponseBytes: 60000
+    requestTimeoutMs: 30000
+    maxInvitationLifetimeMs: 604800000
+    maxConcurrentReads: 16
+    waitTimeoutMs: 3000
+    maxConcurrentWaits: 4
+    maxConcurrentContributions: 4
+    maxContributionRequestBytes: 16384
+    maxContributionApplications: 256
+    maxApplicationRequestBytes: 16384
+    maxApplicationLifetimeMs: 86400000
+
+- id: claude-scope
+  name: '@deepseek-ai/dsh-claude-scope'
+  disabled: !!js process.platform === 'win32'
+  config:
+    descriptorPath: !!js dshHomePath('claude-scope/connection.json')
+    maxSessions: 256
+    maxLeases: 4096
+    maxProjections: 8192
+    maxContextBytes: 8000
+    maxObservationBytes: 8192
+    maxArtifactReadBytes: 1048576
+    contributionPollIntervalMs: 2000
+    maxOpenApiSourcesPerSession: 16
+    setup:
+      home: !!js dshHomePath()
+      profileName: claude-hook-summaries
+      launchCommand: !!js process.execPath
+      launchArgs: !!js '[...process.execArgv, process.argv[1]]'
+      launchCwd: !!js process.cwd()
+      maxRequestBytes: 262144
+      maxResponseBytes: 32768
+      timeoutMs: 45000
+      hookTimeoutSeconds: 60
+      maxSettingsBytes: 1048576

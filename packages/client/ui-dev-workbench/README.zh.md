@@ -49,4 +49,4 @@ kind: "package-reference"
 
 ### 开发备注
 
-维护说明以本包源码、测试与上级架构文档为准。
+本包不发布运行时 invariant companion，因为进程生命周期由 Host workbench 服务负责；本包只管理浏览器呈现与视图偏好。

@@ -35,6 +35,19 @@ const GLOBAL_TYPES = new Set([
 /** How a package classifies for the catalog. */
 type Kind = 'config' | 'no-config' | 'seam' | 'library'
 
+/** Additional public plugin entries whose configuration evolves independently of the package root. */
+const PLUGIN_SUBPATHS: Readonly<Record<string, readonly { subpath: string; source: string }[]>> = {
+  '@deepseek-ai/dsh-claude-scope': [{ subpath: '/command', source: 'src/command.ts' }],
+  '@deepseek-ai/dsh-scope-transport': [
+    { subpath: '/libp2p', source: 'src/libp2p.ts' },
+    { subpath: '/libp2p-settings', source: 'src/libp2p-settings.ts' },
+  ],
+  '@deepseek-ai/dsh-development-task-context': [
+    { subpath: '/facts', source: 'src/facts.ts' },
+    { subpath: '/semantic', source: 'src/semantic.ts' },
+  ],
+}
+
 /** One name a pasted declaration references but the paste does not contain. */
 interface TypeRef {
   /** The name as it appears in the pasted text (the local import alias). */
@@ -55,11 +68,11 @@ interface Paste {
 
 /** One package's catalog entry. */
 export interface CatalogEntry {
-  /** npm package name, e.g. `@deepseek-ai/dsh-agent-loop`. */
+  /** Public plugin specifier, e.g. `@deepseek-ai/dsh-agent-loop` or a declared plugin subpath. */
   pkg: string
   /** Repo-relative package dir, e.g. `packages/core/agent-loop`. */
   dir: string
-  /** Repo-relative entry file, `<dir>/src/index.ts`. */
+  /** Repo-relative source of the public plugin entry. */
   entry: string
   kind: Kind
   /** Service keys the plugin `inject`s (empty when none declared). */
@@ -582,10 +595,15 @@ export function collectConfigCatalog(scanRoot: string = root): CatalogEntry[] {
   // Pre-pass: package name → dir, so schema-path lookups can follow
   // workspace-package imports while individual packages are still being walked.
   const pkgDirByName = new Map<string, string>()
-  const manifests: { dir: string; pkg: string }[] = []
+  const manifests: { dir: string; pkg: string; entryRel: string }[] = []
   for (const manifestRel of globSync('packages/*/*/package.json', { cwd: scanRoot }).map(path => path.split(sep).join('/')).sort()) {
     const dir = manifestRel.slice(0, -'/package.json'.length)
-    const manifest = JSON.parse(readFileSync(resolve(scanRoot, manifestRel), 'utf8')) as { name?: string; os?: string[]; cpu?: string[] }
+    const manifest = JSON.parse(readFileSync(resolve(scanRoot, manifestRel), 'utf8')) as {
+      name?: string
+      os?: string[]
+      cpu?: string[]
+      exports?: Record<string, unknown>
+    }
     const pkg = manifest.name
     if (!pkg) {
       violations.push(`${manifestRel} has no "name".`)
@@ -597,17 +615,23 @@ export function collectConfigCatalog(scanRoot: string = root): CatalogEntry[] {
       continue
     }
     pkgDirByName.set(pkg, dir)
-    manifests.push({ dir, pkg })
+    manifests.push({ dir, pkg, entryRel: `${dir}/src/index.ts` })
+    for (const entry of PLUGIN_SUBPATHS[pkg] ?? []) {
+      if (manifest.exports?.[`.${entry.subpath}`] === undefined || manifest.exports[`.${entry.subpath}`] === null) {
+        violations.push(`${pkg}${entry.subpath}: catalogued plugin subpath is absent from package exports.`)
+        continue
+      }
+      manifests.push({ dir, pkg: `${pkg}${entry.subpath}`, entryRel: `${dir}/${entry.source}` })
+    }
   }
   const world: World = { scanRoot, cache, pkgDirByName }
 
-  for (const { dir, pkg } of manifests) {
-    const entryRel = `${dir}/src/index.ts`
+  for (const { dir, pkg, entryRel } of manifests) {
     let ctx: FileCtx
     try {
       ctx = loadFile(resolve(scanRoot, entryRel), entryRel, cache)
     } catch {
-      // A package without src/index.ts cannot be classified — that is the
+      // An unreadable declared entry cannot be classified — that is the
       // violation itself; nothing else in this loop body can run without it.
       violations.push(`${pkg}: entry ${entryRel} is missing or unreadable.`)
       continue

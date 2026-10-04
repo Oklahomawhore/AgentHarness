@@ -3,6 +3,10 @@
     - button "Use web_search once with queries" [disabled]
   - img
   - text: Standard mode
+  - button "Collaboration":
+    - img
+    - text: Collaboration
+    - img
   - button "More actions":
     - img
   - button "Open right sidebar":

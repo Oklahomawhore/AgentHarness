@@ -7,7 +7,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { joinCluster, readClusterCredential } from './agentharness-cluster.mjs'
+import { harnessHome, joinCluster, readClusterCredential } from './agentharness-cluster.mjs'
 
 const DEFAULT_PORT = 3080
 const STARTUP_TIMEOUT_MS = 20_000
@@ -88,10 +88,17 @@ function readProcessCommand(pid) {
   return spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' })
 }
 
+function isOwnedProcess(state) {
+  if (!Number.isInteger(state.pid) || state.pid <= 1 || typeof state.entry !== 'string') return false
+  const command = readProcessCommand(state.pid)
+  return command.error === undefined && command.status === 0 && typeof command.stdout === 'string'
+    && normalizeOwnedEntry(command.stdout).includes(normalizeOwnedEntry(state.entry))
+}
+
 async function endpointReady(port) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1_000) })
-    return response.ok
+    return response.ok || response.status === 401
   } catch {
     return false
   }
@@ -195,6 +202,9 @@ async function startRuntime(args, environment) {
   const url = `http://127.0.0.1:${port}`
   const runtimeState = await readRuntimeState(environment)
   if (runtimeState !== undefined && Number.isInteger(runtimeState.pid) && processExists(runtimeState.pid)) {
+    if (!isOwnedProcess(runtimeState)) {
+      throw new Error(`process ${runtimeState.pid} does not match the recorded AgentHarness entry; refusing to reuse it`)
+    }
     if (runtimeState.version === version && runtimeState.port === port && await endpointReady(port)) {
       process.stdout.write(`AgentHarness ${version} is already running at ${url}\n`)
       if (environment.AGENTHARNESS_NO_OPEN !== '1') {
@@ -230,7 +240,8 @@ async function startRuntime(args, environment) {
         ...environment,
         AGENTHARNESS_URL: url,
         AGENTHARNESS_MCP_NODE: join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
-        AGENTHARNESS_MCP_PATH: join(root, 'mcp.mjs'),
+        AGENTHARNESS_DSH_PATH: join(root, 'lib', 'bin.js'),
+        AGENTHARNESS_MCP_NODE_ARGS: '[]',
       },
       stdio: ['ignore', log, log],
     })
@@ -254,7 +265,7 @@ async function startRuntime(args, environment) {
 
   const ready = await waitFor(async () => {
     if (exitResult !== undefined) return true
-    return endpointReady(port)
+    return isOwnedProcess({ pid: child.pid, entry: join(root, 'start.mjs') }) && await endpointReady(port)
   }, STARTUP_TIMEOUT_MS)
   if (!ready || exitResult !== undefined || !await endpointReady(port)) {
     const reason = exitResult === undefined
@@ -274,18 +285,21 @@ async function startRuntime(args, environment) {
 }
 
 /** Render copy-ready MCP setup that uses the portable bundled Node runtime. */
-export function renderMcpGuide(root = commandRoot(), port = DEFAULT_PORT) {
-  const node = join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node')
-  const mcp = join(root, 'mcp.mjs')
-  const url = `http://127.0.0.1:${port}`
+export function renderMcpGuide(root = commandRoot(), environment = process.env) {
+  if (process.platform === 'win32') return 'MCP setup is unsupported on Windows; private local authentication currently supports macOS and Linux only.\n'
+  const options = mcpSetupOptions(root, environment)
+  const { nodePath: node, dshPath: dsh, descriptorPath, harnessHome: home } = options
   const cursor = JSON.stringify({
     mcpServers: {
       'agentharness': {
         command: node,
-        args: [mcp, '--url', url, '--participant-id', '<your-name>-cursor', '--display-name', '<Your Name> / Cursor'],
+        args: [dsh, '--profile', 'mcp', '--connection', descriptorPath,
+          '--participant-id', '<your-name>-cursor', '--display-name', '<Your Name> / Cursor'],
+        env: { DSH_HOME: home },
       },
     },
   }, null, 2)
+  const launch = `${shellQuote(node)} ${shellQuote(dsh)} --profile mcp --connection ${shellQuote(descriptorPath)}`
   return [
     '',
     'MCP setup (replace <your-name> and <Your Name>):',
@@ -294,25 +308,28 @@ export function renderMcpGuide(root = commandRoot(), port = DEFAULT_PORT) {
     cursor,
     '',
     'Codex:',
-    `codex mcp add agentharness -- ${shellQuote(node)} ${shellQuote(mcp)} --url ${url} --participant-id <your-name>-codex --display-name '<Your Name> / Codex'`,
+    `codex mcp add agentharness --env ${shellQuote(`DSH_HOME=${home}`)} -- ${launch} --participant-id <your-name>-codex --display-name '<Your Name> / Codex'`,
     '',
     'Claude Code:',
-    `claude mcp add --scope user agentharness -- ${shellQuote(node)} ${shellQuote(mcp)} --url ${url} --participant-id <your-name>-claude --display-name '<Your Name> / Claude'`,
+    `claude mcp add --env ${shellQuote(`DSH_HOME=${home}`)} --transport stdio --scope user agentharness -- ${launch} --participant-id <your-name>-claude --display-name '<Your Name> / Claude'`,
     '',
     'Reload the client, then call agentharness_task_list.',
     '',
   ].join('\n')
 }
 
-function mcpSetupOptions(root, port, environment) {
+function mcpSetupOptions(root, environment) {
+  const home = harnessHome(environment)
   return {
     ...(environment.HOME === undefined ? {} : { home: environment.HOME }),
     ...(environment.PATH === undefined ? {} : { path: environment.PATH }),
     ...(environment.USER === undefined ? {} : { username: environment.USER }),
     environment,
     nodePath: join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
-    mcpPath: join(root, 'mcp.mjs'),
-    url: `http://127.0.0.1:${port}`,
+    dshPath: join(root, 'lib', 'bin.js'),
+    nodeArgs: [],
+    descriptorPath: join(home, 'mcp', 'connection.json'),
+    harnessHome: home,
   }
 }
 
@@ -332,14 +349,14 @@ async function loadMcpSetup() {
   }
 }
 
-async function configureMcpClients(root, port, environment) {
+async function configureMcpClients(root, environment) {
   const setup = await loadMcpSetup()
   if (setup === undefined) {
     process.stdout.write('\nMCP automatic setup is unavailable in this payload; use the manual guide below.\n')
-    process.stdout.write(renderMcpGuide(root, port))
+    process.stdout.write(renderMcpGuide(root, environment))
     return
   }
-  const results = await setup.setupAllMcpClients(mcpSetupOptions(root, port, environment))
+  const results = await setup.setupAllMcpClients(mcpSetupOptions(root, environment))
   process.stdout.write('\nMCP automatic setup:\n')
   for (const result of results) {
     const detail = result.client.detail === undefined ? '' : ` — ${result.client.detail}`
@@ -347,7 +364,7 @@ async function configureMcpClients(root, port, environment) {
   }
   const configured = results.filter(result => ['configured', 'already-configured'].includes(result.outcome)).length
   process.stdout.write(`Configured or already configured: ${configured}/${results.length}. Restart or reload configured clients to connect.\n`)
-  process.stdout.write(renderMcpGuide(root, port))
+  process.stdout.write(renderMcpGuide(root, environment))
 }
 
 async function printStatus(environment) {
@@ -357,11 +374,11 @@ async function printStatus(environment) {
     process.exitCode = 1
     return
   }
-  const ready = await endpointReady(state.port)
+  const ready = isOwnedProcess(state) && await endpointReady(state.port)
   process.stdout.write(`AgentHarness ${state.version} process ${state.pid}: ${ready ? `ready at ${state.url}` : 'running without a ready Web endpoint'}\n`)
   const setup = await loadMcpSetup()
   if (setup !== undefined) {
-    const clients = await setup.listMcpClients(mcpSetupOptions(commandRoot(environment), state.port, environment))
+    const clients = await setup.listMcpClients(mcpSetupOptions(commandRoot(environment), environment))
     process.stdout.write(`MCP clients:\n${renderMcpStatus(clients.clients)}\n`)
   }
   if (!ready) process.exitCode = 1
@@ -431,10 +448,10 @@ export async function runInstalledCommand(args, environment = process.env) {
   if (command === 'logs') return printLogs(environment)
   if (command === 'cluster') return runClusterCommand(rest, environment)
   if (command === 'mcp-setup') {
-    return configureMcpClients(commandRoot(environment), parsePort(rest, environment), environment)
+    return configureMcpClients(commandRoot(environment), environment)
   }
   if (command === 'mcp-guide') {
-    process.stdout.write(renderMcpGuide(commandRoot(environment), parsePort(rest, environment)))
+    process.stdout.write(renderMcpGuide(commandRoot(environment), environment))
     return
   }
   throw new Error(`unknown command ${JSON.stringify(command)}; expected start | stop | restart | status | logs | cluster | mcp-setup | mcp-guide`)

@@ -249,6 +249,30 @@ describe('authenticated generic development Mesh', () => {
     await waitForTask(third, firstFork.id, 3)
   })
 
+  it.each(['request', 'response'] as const)('keeps the connection usable after rejecting an oversized %s', async (direction) => {
+    const source = await baseNode('size-source')
+    const owner = await baseNode('size-owner')
+    await startMesh(owner, [peer(source, false)])
+    await startMesh(source, [peer(owner, true)])
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    const channelName = 'size-check/v1'
+    for (const node of [source, owner]) {
+      node.ctx.effect(() => node.ctx.developmentMesh.register(channelName, {
+        heads: () => ({}), read: () => [], receive: () => {},
+        command: payload => payload === 'large-response' ? 'x'.repeat(config([]).maxMessageBytes * 2) : 'next-command',
+      }))
+    }
+    const offline: string[] = []
+    for (const node of [source, owner]) {
+      node.ctx.on('development-mesh/peer-changed', (value) => { if (value.state !== 'online') offline.push(value.state) })
+    }
+    const payload = direction === 'request' ? 'x'.repeat(config([]).maxMessageBytes * 2) : 'large-response'
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, channelName, payload)).rejects.toThrow('frame exceeds maxMessageBytes')
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, channelName, 'small-request')).resolves.toBe('next-command')
+    expect(offline).toEqual([])
+    expect([source, owner].map(node => node.ctx.developmentMesh.list().peers[0]?.state)).toEqual(['online', 'online'])
+  })
+
   it('fails closed for missing, short, and mismatched shared secrets', async () => {
     const missing = await baseNode('node-missing', null)
     await expect(missing.ctx.plugin(DevelopmentMeshWebSocketService, config([]))).rejects.toThrow('is required')

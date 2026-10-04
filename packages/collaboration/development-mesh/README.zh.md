@@ -36,6 +36,8 @@ Channel 名称唯一并带版本，例如 `development-task/v1`。注册属于 e
 - 一个运行时只有一个 Mesh provider，且没有 channel 版本协商。
 - 传输保密由 provider 负责。
 
+本包不发布 invariant companion，因为 channel 查询和列表使用同一注册表，该注册表会拒绝重复注册。
+
 <a id="dev-note"></a>
 
 ### 开发备注

@@ -1,0 +1,55 @@
+- group:
+  - text: 批准独立来源贡献
+  - paragraph: 把申请入口交给来源用户，在这里核对并批准其采集范围。来源会自动取回授权。读取上下文和自动运行模型需要另行授权。
+  - button "刷新贡献授权"
+  - text: 对方可达的本机地址
+  - textbox "对方可达的本机地址": {{ownerAddress}}
+  - paragraph: 当前支持直接连接。默认地址仅供本机使用；跨设备需先配置可达的监听地址。
+  - text: 贡献来源
+  - combobox "贡献来源":
+    - option "授权目录内的 Write/Edit" [selected]
+    - option "单个 OpenAPI 操作"
+  - text: 申请入口有效期（小时）
+  - spinbutton "申请入口有效期（小时）"
+  - paragraph: 把入口交给一个来源用户。对方选定会话和采集目录后，申请会出现在这里；你批准前不会获得贡献权限。
+  - button "生成一次申请入口" [disabled]
+  - group: 手工审批与恢复
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 来源设备
+  - definition: {{contributorPeerId}}
+  - term: 来源名称
+  - definition: Orders
+  - term: API 操作
+  - definition: POST /orders
+  - term: 授权到期时间
+  - definition: {{expiresLocal}}
+  - term: 最多样本数
+  - definition: "8"
+  - term: 每份样本字节上限
+  - definition: "4096"
+  - text: 将邀请交给来源用户
+  - textbox "将邀请交给来源用户": "{\"version\":1,\"kind\":\"openapi-contribution\",\"ownerAddress\":\"{{ownerAddress}}\",\"grant\":{\"version\":1,\"taskId\":\"{{taskId}}\",\"grantId\":\"{{grantId}}\",\"generation\":\"{{generation}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"contributorPeerId\":\"{{contributorPeerId}}\",\"captureId\":\"{{captureId}}\",\"captureGeneration\":\"{{captureGeneration}}\",\"source\":{\"name\":\"Orders\",\"method\":\"post\",\"path\":\"/orders\"},\"expiresAt\":{{expiresAt}},\"maxSamples\":8,\"maxSampleBytes\":4096}}"
+  - button "复制文本"
+  - strong: Orders
+  - status: 已批准贡献
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 来源设备
+  - definition: {{contributorPeerId}}
+  - term: 来源名称
+  - definition: Orders
+  - term: API 操作
+  - definition: POST /orders
+  - term: 授权到期时间
+  - definition: {{expiresLocal}}
+  - term: 最多样本数
+  - definition: "8"
+  - term: 每份样本字节上限
+  - definition: "4096"
+  - button "恢复邀请"
+  - button "撤销贡献"

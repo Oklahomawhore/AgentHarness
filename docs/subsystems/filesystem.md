@@ -517,4 +517,44 @@ Single-slot decision for the next FileSystem.writeText. Calling `next()` yields 
 ```
 
 Source: [`packages/fs/fs/src/index.ts`](../../packages/fs/fs/src/index.ts)
+
+<a id="tool-fs-events"></a>
+
+### `tool-fs/*` events
+
+<a id="tool-fsmutation-start--emit"></a>
+
+#### `tool-fs/mutation-start` — emit
+
+Observe an admitted filesystem-tool attempt; this does not establish completion. Observers must contain failures and own their asynchronous work. No prior file text is included.
+
+```ts cordis-catalog
+/**
+ * Observe an admitted filesystem-tool attempt; this does not establish completion.
+ * Observers must contain failures and own their asynchronous work. No prior file text is included.
+ * @param mutation - actual provider, canonical target, normalized input, and registry execution identity.
+ * @mode emit
+ */
+'tool-fs/mutation-start'(mutation: ToolFsMutation): void
+```
+
+Source: [`packages/fs/tool-fs/src/index.ts`](../../packages/fs/tool-fs/src/index.ts)
 <!-- END GENERATED cordis-surface -->
+
+<a id="file-tool-observation"></a>
+
+## Filesystem tool observations
+
+The tools emit `tool-fs/mutation-start` after sandbox and intent checks, immediately before the provider mutation. The payload identifies an actual tool attempt, its provider, canonical target, and normalized input; it contains no prior file text and does not establish success. Observers correlate the registry execution with its final ordinary or PTC Session record and own any durability or outgoing authorization. They must contain their failures and drain their asynchronous work.
+
+```ts type-equiv
+/** Actual filesystem-tool attempt after policy and intent checks, before provider mutation. */
+type ToolFsMutation = {
+  readonly execution: Readonly<ToolExecution>
+  readonly filesystem: FileSystem
+  readonly target: Readonly<FsTarget>
+} & (
+  | { readonly tool: 'write'; readonly input: { readonly content: string } }
+  | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
+)
+```

@@ -15,6 +15,7 @@ export type AgentMcpPhase =
   | 'not-configured'
   | 'conflict'
   | 'manual'
+  | 'unsupported'
   | 'failed'
   | 'offline'
   | 'configured'
@@ -31,6 +32,8 @@ type AgentMcpMessage =
   | { readonly key: 'agent.status.notInstalled'; readonly params: Record<string, unknown> }
   | { readonly key: 'agent.status.notConfigured'; readonly params: Record<string, unknown> }
   | { readonly key: 'agent.status.conflict'; readonly params: Record<string, unknown> }
+  | { readonly key: 'agent.status.unsupported'; readonly params: Record<string, unknown> }
+  | { readonly key: 'agent.next.unsupported'; readonly params: Record<string, unknown> }
   | { readonly key: 'agent.status.manual'; readonly params: Record<string, unknown> }
   | { readonly key: 'agent.status.failed'; readonly params: Record<string, unknown> }
   | { readonly key: 'agent.status.offline'; readonly params: Record<string, unknown> }
@@ -156,6 +159,14 @@ export function agentMcpView(input: AgentMcpViewInput): AgentMcpView {
       phase: 'conflict',
       status: message('agent.status.conflict', { client: client.label }),
       next: conflictNext(client),
+    }
+  }
+  if (client.state === 'unsupported') {
+    return {
+      ...base,
+      phase: 'unsupported',
+      status: message('agent.status.unsupported', { client: client.label }),
+      next: message('agent.next.unsupported', {}),
     }
   }
   if (client.state === 'manual') {

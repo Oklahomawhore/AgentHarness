@@ -218,8 +218,8 @@ export interface HeroAgentPresetOwnerProps {
 
 /** Header actions derive their state from standard Session props. */
 export interface ConversationHeaderActionOwnerProps {
-  /** Marker field: entries receive no owner-specific values. */
-  children?: never
+  /** Select a registered View in this Session without navigating away. */
+  selectView: (view: string) => void
 }
 
 /** The header corner's occupant derives its state from standard Session props. */

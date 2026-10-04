@@ -73,3 +73,10 @@ export function browserCommand(
   platform: NodeJS.Platform,
   url: string,
 ): { command: string; args: string[] }
+
+/** Wait for the owned CLI's authenticated readiness message; unrelated HTTP listeners cannot satisfy it. */
+export function waitForNode(
+  child: import('node:child_process').ChildProcessByStdio<null, import('node:stream').Readable, import('node:stream').Readable>,
+  origin: string | undefined,
+  timeoutMs?: number,
+): Promise<string>

@@ -125,6 +125,8 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
       let outcome
       try {
         const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
+        ctx.emit('tool-fs/mutation-start', { execution: exec, filesystem: ctx.fs, target, tool: 'edit',
+          input: { oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll } })
         outcome = await ctx.fs.editText(
           target,
           { oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll },

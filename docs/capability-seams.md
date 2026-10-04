@@ -81,6 +81,8 @@ flowchart LR
   pkg_storage_domain["storage-domain"]
   svc_storageDomain["ctx.storageDomain<br/>Domain data facility"]
   pkg_workspace["workspace"]
+  pkg_claude_scope["claude-scope"]
+  pkg_scope_access["scope-access"]
   svc_messageFeedback["ctx.messageFeedback<br/>Lifecycle-bound message feedback"]
   pkg_command_feedback["command-feedback"]
   svc_sessionFeedback["ctx.sessionFeedback<br/>Session-level feedback recorder"]
@@ -116,6 +118,7 @@ flowchart LR
   svc_commands["ctx.commands<br/>Human command registry"]
   pkg_session_projection["session-projection"]
   svc_sessionProjections["ctx.sessionProjections<br/>Session projection units"]
+  pkg_scope_agent_context["scope-agent-context"]
   pkg_session_projection_cache["session-projection-cache"]
   svc_sessionProjectionCache["ctx.sessionProjectionCache<br/>Persisted projection cache"]
   pkg_subagent["subagent"]
@@ -228,11 +231,20 @@ flowchart LR
   pkg_development_room_storage_domain["development-room-storage-domain"]
   pkg_development_room_mesh["development-room-mesh"]
   pkg_development_task["development-task"]
+  pkg_scope_agent_contribution["scope-agent-contribution"]
   svc_developmentRoomStorageReady["ctx.developmentRoomStorageReady<br/>Durable Room recovery readiness"]
   pkg_development_task_storage_domain["development-task-storage-domain"]
   svc_developmentTasks["ctx.developmentTasks<br/>Immutable collaboration Task lineage"]
   pkg_development_task_mesh["development-task-mesh"]
   pkg_development_task_context["development-task-context"]
+  svc_developmentTaskContextAdmission["ctx.developmentTaskContextAdmission<br/>Live local Task admission"]
+  svc_developmentTaskContextBackend["ctx.developmentTaskContextBackend<br/>Recipient-specific Task context"]
+  pkg_scope_transport["scope-transport"]
+  svc_scopeTransport["ctx.scopeTransport<br/>Authenticated independent peer requests"]
+  svc_scopeAccess["ctx.scopeAccess<br/>Independent Task read invitations"]
+  svc_scopeAgentContext["ctx.scopeAgentContext<br/>Authorized native scope context"]
+  svc_scopeAgentContributions["ctx.scopeAgentContributions<br/>Authorized native file-tool contribution"]
+  svc_claudeScope["ctx.claudeScope<br/>Authorized external Claude scope context"]
   svc_developmentTaskAssignments["ctx.developmentTaskAssignments<br/>Active Task assignment Remote facade"]
   pkg_development_room_context["development-room-context"]
   svc_developmentRoomContexts["ctx.developmentRoomContexts<br/>Explicit shared-room context"]
@@ -274,6 +286,7 @@ flowchart LR
   pkg_authorization --> svc_authorization
   pkg_bash_local --> svc_shell
   pkg_bash_sandbox --> svc_shell
+  pkg_claude_scope --> svc_claudeScope
   pkg_client_file_upload --> svc_fileUploads
   pkg_client_modules --> svc_clientModules
   pkg_code_runtime --> svc_codeRuntime
@@ -299,6 +312,8 @@ flowchart LR
   pkg_development_room_storage_domain --> svc_developmentRoomStorageReady
   pkg_development_task --> svc_developmentTaskAssignments
   pkg_development_task --> svc_developmentTasks
+  pkg_development_task_context --> svc_developmentTaskContextAdmission
+  pkg_development_task_context --> svc_developmentTaskContextBackend
   pkg_development_task_mesh --> svc_developmentTaskMesh
   pkg_e2b --> svc_e2b
   pkg_experimental_agent_team --> svc_agentTeams
@@ -335,6 +350,10 @@ flowchart LR
   pkg_sandbox --> svc_sandbox
   pkg_sandbox_local --> svc_sandbox
   pkg_sandbox_policy --> svc_sandboxPolicy
+  pkg_scope_access --> svc_scopeAccess
+  pkg_scope_agent_context --> svc_scopeAgentContext
+  pkg_scope_agent_contribution --> svc_scopeAgentContributions
+  pkg_scope_transport --> svc_scopeTransport
   pkg_session --> svc_sessions
   pkg_session_log_deepseek --> svc_deepseekLlmApiExtensions
   pkg_session_persistence --> svc_sessionPersistence
@@ -398,6 +417,7 @@ flowchart LR
   svc_agentTeams --> pkg_experimental_tool_agent_team
   svc_agents --> pkg_acp
   svc_agents --> pkg_agent_loop
+  svc_agents --> pkg_scope_agent_context
   svc_agents --> pkg_subagent_in_process_driver
   svc_approval --> pkg_acp
   svc_approval --> pkg_tool_bash
@@ -407,6 +427,8 @@ flowchart LR
   svc_attachments --> pkg_llm_pi_ai
   svc_attachments --> pkg_tool_fs
   svc_authorization --> pkg_llm_pi_ai
+  svc_claudeScope --> pkg_api_remotes
+  svc_claudeScope --> pkg_claude_scope
   svc_clientModules --> pkg_client_hmr
   svc_codeRuntime --> pkg_tools
   svc_compaction --> pkg_compaction_basic
@@ -422,15 +444,27 @@ flowchart LR
   svc_developmentRoomContexts --> pkg_development_room_context_storage_domain
   svc_developmentRoomStorageReady --> pkg_development_task_storage_domain
   svc_developmentRooms --> pkg_api_remotes
+  svc_developmentRooms --> pkg_claude_scope
   svc_developmentRooms --> pkg_development_room_agent_presence
   svc_developmentRooms --> pkg_development_room_mesh
   svc_developmentRooms --> pkg_development_room_storage_domain
   svc_developmentRooms --> pkg_development_task
+  svc_developmentRooms --> pkg_scope_access
+  svc_developmentRooms --> pkg_scope_agent_contribution
   svc_developmentTaskAssignments --> pkg_api_remotes
+  svc_developmentTaskContextAdmission --> pkg_scope_agent_context
+  svc_developmentTaskContextBackend --> pkg_claude_scope
+  svc_developmentTaskContextBackend --> pkg_development_task_context
+  svc_developmentTaskContextBackend --> pkg_scope_access
+  svc_developmentTaskContextBackend --> pkg_scope_agent_context
   svc_developmentTasks --> pkg_api_remotes
+  svc_developmentTasks --> pkg_claude_scope
   svc_developmentTasks --> pkg_development_task_context
   svc_developmentTasks --> pkg_development_task_mesh
   svc_developmentTasks --> pkg_development_task_storage_domain
+  svc_developmentTasks --> pkg_scope_access
+  svc_developmentTasks --> pkg_scope_agent_context
+  svc_developmentTasks --> pkg_scope_agent_contribution
   svc_directoryPicker --> pkg_api_workspace_controller
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_e2b --> pkg_fs_e2b
@@ -456,6 +490,13 @@ flowchart LR
   svc_sandboxPolicy --> pkg_bash_sandbox
   svc_sandboxPolicy --> pkg_fs_sandbox
   svc_sandboxPolicy --> pkg_terminal_bash
+  svc_scopeAccess --> pkg_api_remotes
+  svc_scopeAccess --> pkg_claude_scope
+  svc_scopeAccess --> pkg_scope_agent_context
+  svc_scopeAccess --> pkg_scope_agent_contribution
+  svc_scopeAgentContext --> pkg_api_remotes
+  svc_scopeAgentContributions --> pkg_api_remotes
+  svc_scopeTransport --> pkg_scope_access
   svc_sessionPersistence --> pkg_agent_loop
   svc_sessionPersistence --> pkg_hooks_claude_code
   svc_sessionPersistence --> pkg_hooks_codex
@@ -468,6 +509,7 @@ flowchart LR
   svc_sessionProjectionCache --> pkg_session_reference
   svc_sessionProjectionCache --> pkg_subagent
   svc_sessionProjections --> pkg_api_session_controller
+  svc_sessionProjections --> pkg_scope_agent_context
   svc_sessionProjections --> pkg_session_title
   svc_sessionProjections --> pkg_tool_todo
   svc_sessionQuery --> pkg_session_reference
@@ -492,6 +534,8 @@ flowchart LR
   svc_skills --> pkg_tool_skill
   svc_spillStore --> pkg_spill_policy
   svc_storage --> pkg_storage_domain
+  svc_storageDomain --> pkg_claude_scope
+  svc_storageDomain --> pkg_scope_access
   svc_storageDomain --> pkg_workspace
   svc_subagentModelSelection --> pkg_tool_subagent
   svc_subagents --> pkg_tool_ralph
@@ -564,7 +608,7 @@ flowchart LR
 | `ctx.authorization` | `seam` | [`authorization`](../packages/credentials/authorization) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | Flows are registered by the plugin that knows how to obtain one credential and keyed by the record they write; the seam owns the conversation and the one-attempt-per-key lifecycle, never the protocol. |
 | `ctx.sessionTelemetry` | `seam` | [`session-telemetry`](../packages/session/session-telemetry) | [`session-telemetry-otel`](../packages/session/session-telemetry-otel) | - | - | The seam captures, redacts, and hands session records to one backend; nothing else consumes the service — its output leaves the process. |
 | `ctx.storage` | `seam` | [`storage`](../packages/storage/storage) | [`storage-json`](../packages/storage/storage-json), [`storage-sqlite`](../packages/storage/storage-sqlite) | [`storage-domain`](../packages/storage/storage-domain) | - | Backends register side by side under names; data forms (domain first) mount on the hub and translate typed operations into opaque KV-unit primitives. |
-| `ctx.storageDomain` | `core` | [`storage-domain`](../packages/storage/storage-domain) | - | [`workspace`](../packages/workspace/workspace) | - | Waits for every configured backend, then publishes the domain form as one lifecycle-bound service for typed durable state. |
+| `ctx.storageDomain` | `core` | [`storage-domain`](../packages/storage/storage-domain) | - | [`workspace`](../packages/workspace/workspace), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access) | - | Waits for every configured backend, then publishes the domain form as one lifecycle-bound service for typed durable state. |
 | `ctx.messageFeedback` | `core` | [`message-feedback`](../packages/feedback/message-feedback) | - | - | - | Owns per-assistant-message feedback in the canonical Session log, target validation, per-item compare-and-set, and the Host unary Remote contract. Feedback stays outside model history; log export follows the consumer policy. |
 | `ctx.sessionFeedback` | `core` | [`command-feedback`](../packages/feedback/command-feedback) | - | - | - | Records one Session-level remark with its category as a log-only feedback/record event on a live Session through the Host unary Remote contract; the /feedback command shares the same producer. |
 | `ctx.workspaceRegistry` | `core` | [`workspace`](../packages/workspace/workspace) | - | [`api-workspace-controller`](../packages/api/workspace-controller), [`api-session-controller`](../packages/api/session-controller) | - | Owns WorkspaceId-branded records over the domain facility; stable sessionIds accounts drive Host RPC and GUI projections. |
@@ -578,10 +622,10 @@ flowchart LR
 | `ctx.planMode` | `core` | [`plan-mode`](../packages/plan/plan-mode) | - | - | - | Folds logged plan/mode state, flushes user selections at turn boundaries, renders deployment-owned guidance, registers /plan, and keeps the plan-exit schema stable across transitions. |
 | `ctx.agentPresets` | `core` | [`agent-presets`](../packages/preset/agent-presets) | - | - | - | Discovers preset directories over trusted and user-authored roots and mounts one preset cordis.yml under an agent scope during creation, rejecting a row that never activates or that publishes into the root service realm. |
 | `ctx.commands` | `core` | [`commands`](../packages/interaction/commands) | - | - | - | Plugins register direct human commands without sending invocations to the model. |
-| `ctx.sessionProjections` | `core` | [`session-projection`](../packages/session/session-projection) | - | [`api-session-controller`](../packages/api/session-controller), [`tool-todo`](../packages/todo/tool-todo), [`session-title`](../packages/session/session-title) | - | Domains register state-driven fold units; the eager drive keeps per-session watermark states and the Session controller serves baselines and pushes changed values. |
+| `ctx.sessionProjections` | `core` | [`session-projection`](../packages/session/session-projection) | - | [`api-session-controller`](../packages/api/session-controller), [`tool-todo`](../packages/todo/tool-todo), [`session-title`](../packages/session/session-title), [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | Domains register state-driven fold units; the eager drive keeps per-session watermark states and the Session controller serves baselines and pushes changed values. |
 | `ctx.sessionProjectionCache` | `core` | [`session-projection-cache`](../packages/session/session-projection-cache) | - | [`api-session-controller`](../packages/api/session-controller), [`session-query`](../packages/session-query/session-query), [`session-reference`](../packages/context/session-reference), [`subagent`](../packages/subagent/subagent) | - | Durably checkpoints projection unit states per session (throttled + turn/end/detach mandatory points) and serves the cold-read ladder: cache row + persistence tail replay, so listings never load full logs. |
 | `ctx.skills` | `seam` | [`skill`](../packages/skill/skill) | [`skill-badge`](../packages/skill/skill-badge), [`skill-filesystem`](../packages/skill/skill-filesystem) | [`tool-skill`](../packages/skill/tool-skill) | - | Merges provider skill catalogs; tool-skill renders the session-prefix catalog and loads complete skill bodies. |
-| `ctx.agents` | `core` | [`agent`](../packages/core/agent) | - | [`agent-loop`](../packages/core/agent-loop), [`acp`](../packages/acp/acp), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) | - | Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation. |
+| `ctx.agents` | `core` | [`agent`](../packages/core/agent) | - | [`agent-loop`](../packages/core/agent-loop), [`acp`](../packages/acp/acp), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver), [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation. |
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`api-session-controller`](../packages/api/session-controller), [`headless`](../packages/bundle/headless) | - | Layers the default ModelSelection through settings so direct and Host-backed Agent entry points share one state owner. |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`base`](../packages/bundle/base), [`sdk-minimal`](../packages/bundle/sdk-minimal) | - | The one concrete loop plugin; extension packages depend on dsh-agent events and services, not on this package. |
 | `ctx.goals` | `core` | [`goal`](../packages/goal/goal) | - | - | - | Folds revisioned objective state from the session log and keeps live continuation activation process-local. |
@@ -609,9 +653,16 @@ flowchart LR
 | `ctx.developmentEvidence` | `seam` | [`development-evidence`](../packages/collaboration/development-evidence) | [`development-evidence-reviewed-file`](../packages/collaboration/development-evidence-reviewed-file) | - | - | Queries independent enterprise, project, and operational providers while preserving available, empty, denied, and failed outcomes; retrieval alone changes no room or Session state. |
 | `ctx.mcp` | `seam` | [`mcp`](../packages/mcp/mcp) | [`mcp-client`](../packages/mcp/mcp-client) | `agentharness-evidence-gitee-issue` | - | Publishes only connected MCP client generations for trusted Host Consumers; direct calls retain JSON protocol content and bypass model ToolRuntime presentation and approval behavior. |
 | `ctx.mcpClientSetup` | `core` | `mcp-client-setup` | - | [`api-remotes`](../packages/api/remotes) | - | Detects supported local AI clients, performs conflict-safe registration where a stable unattended mechanism exists, and reports each independent setup outcome. |
-| `ctx.developmentRooms` | `core` | [`development-room`](../packages/collaboration/development-room) | - | [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain), [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task`](../packages/collaboration/development-task), [`api-remotes`](../packages/api/remotes) | - | Owns the collaborator roster and append-only Room membership runtime used by Task assignments; separate plugins project Agent presence, persist the local log, and replicate it over the generic Mesh. |
+| `ctx.developmentRooms` | `core` | [`development-room`](../packages/collaboration/development-room) | - | [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain), [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task`](../packages/collaboration/development-task), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Owns the collaborator roster and append-only Room membership runtime used by Task assignments; separate plugins project Agent presence, persist the local log, and replicate it over the generic Mesh. |
 | `ctx.developmentRoomStorageReady` | `core` | [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain) | - | [`development-task-storage-domain`](../packages/collaboration/development-task-storage-domain) | - | Signals that the persisted Room log and its write listener are installed before restored Tasks reconcile deterministic hidden Rooms. |
-| `ctx.developmentTasks` | `core` | [`development-task`](../packages/collaboration/development-task) | - | [`development-task-storage-domain`](../packages/collaboration/development-task-storage-domain), [`development-task-mesh`](../packages/collaboration/development-task-mesh), [`development-task-context`](../packages/collaboration/development-task-context), [`api-remotes`](../packages/api/remotes) | - | Projects Root/Fork/Merge lineage, lifecycle checkpoints, inherited context, evidence, approval, and authoritative Agent assignments from append-only events. |
+| `ctx.developmentTasks` | `core` | [`development-task`](../packages/collaboration/development-task) | - | [`development-task-storage-domain`](../packages/collaboration/development-task-storage-domain), [`development-task-mesh`](../packages/collaboration/development-task-mesh), [`development-task-context`](../packages/collaboration/development-task-context), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Projects immutable Root/Fork/Merge lineage, inherited context, admitted publications, and authoritative Agent session bindings from append-only events. |
+| `ctx.developmentTaskContextAdmission` | `core` | [`development-task-context`](../packages/collaboration/development-task-context) | - | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | The installed Task consumer exposes its lifetime signal. Managed local scheduling requires this live admission point, and unload invalidates its automatic permission. |
+| `ctx.developmentTaskContextBackend` | `seam` | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | The /backend service accepts authorized Task context and recipient routing inputs; consumers persist bounded provider output in a native Session or an external-recipient projection record. |
+| `ctx.scopeTransport` | `seam` | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-access`](../packages/collaboration/scope-access) | - | The /libp2p provider authenticates persistent peer identities and carries bounded per-request streams over explicit direct addresses. |
+| `ctx.scopeAccess` | `core` | [`scope-access`](../packages/collaboration/scope-access) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Owner grants pin a Root Task to one recipient peer. Every read validates authorization before the owner computes and persists exact recipient context; receiver intent never replicates Task or Room logs. |
+| `ctx.scopeAgentContext` | `core` | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | [`api-remotes`](../packages/api/remotes) | - | Local Session bindings authorize passive request refresh or bounded automatic work. Change notices trigger fresh owner reads; Session events retain exact adopted context and execution budgets. |
+| `ctx.scopeAgentContributions` | `core` | [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution) | - | [`api-remotes`](../packages/api/remotes) | - | One explicit Session selection permits actual file-tool reports after their source log is durable. Local captures bind an exact owner Task assignment; independent sources use owner approval and the shared scope contribution controller. Both preserve source identity and terminal withdrawal. |
+| `ctx.claudeScope` | `core` | [`claude-scope`](../packages/collaboration/claude-scope) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`api-remotes`](../packages/api/remotes) | - | Project hook setup, inspection, and removal are exposed through the browser Remote assembly. Local grants authorize capture; remote Task owners separately approve source binding intervals. Hooks durably queue observations before owner admission and retain stopped intervals until durable withdrawal acknowledgement. |
 | `ctx.developmentTaskAssignments` | `core` | [`development-task`](../packages/collaboration/development-task) | - | [`api-remotes`](../packages/api/remotes) | - | Exposes assignment list, checkout, clear, and context acknowledgement as a namespace distinct from Task projection and mutation methods. |
 | `ctx.developmentRoomContexts` | `core` | [`development-room-context`](../packages/collaboration/development-room-context) | - | [`development-room-context-storage-domain`](../packages/collaboration/development-room-context-storage-domain), [`api-remotes`](../packages/api/remotes) | - | Owns current members’ explicit plain-text publications in a separate append-only log and admits unseen joined-room entries to Agent requests through durable source references; it never copies private Session history automatically. |
 | `ctx.developmentMesh` | `seam` | [`development-mesh`](../packages/collaboration/development-mesh) | [`development-mesh-websocket`](../packages/collaboration/development-mesh-websocket) | [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task-mesh`](../packages/collaboration/development-task-mesh) | - | Registers versioned delta and owner-command channels; the WebSocket provider authenticates discovery, handshakes, and envelopes with a shared credential. |

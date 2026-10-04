@@ -1,0 +1,4 @@
+Claude Code刷新会话为项目配置 hooks，再选择一个独立会话。可以准备贡献来源，或加入已选 Task。项目路径写入该项目的 .claude/settings.local.json，保留其他配置。不会自动将会话加入 Task。配置 hooks检查配置选择一个会话claude-a已观察到/projectclaude-b已加入 Task/project已加入当前 Task自动贡献工作变化重新读取贡献为这个会话授权采集目录。所有者批准后，目录内正常 Write/Edit 的变化会自动贡献；无需逐个指定文件。也可选择单个 OpenAPI 操作。此会话的职责允许观察的目录（每行一个绝对路径） /project/src
+/project/tests
+/project/src
+仅共享这些目录内 Write/Edit 的完成结果（包括失败），不验证磁盘内容；不授权 Bash 或 API 文件读取。状态不代表模型已采用上下文。更新此会话授权退出 Task

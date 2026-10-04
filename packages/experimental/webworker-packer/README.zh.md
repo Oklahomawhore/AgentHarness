@@ -27,9 +27,11 @@ VFS 镜像打包器：把一份合成 profile 变成浏览器 worker 挂载为�
 
 打包是三层标准栈：
 
-1. **Roster**——合成 profile 的插件行（标准 YAML 解析、Include 方言、`!!js` 原样保留），加上 CLI 在 `package.json` `dsh.configTrees` 里声明的每棵配置树（agent presets）的行，按 Node 式依赖闭包物化。外部包的 peer 边不追，workspace peer 保留在链上。
+1. **Roster**——合成 profile 的插件行（标准 YAML 解析、Include 方言、`!!js` 原样保留），加上 CLI 在 `package.json` `dsh.configTrees` 里声明的每棵配置树（agent presets）的行，按 Node 式依赖闭包物化。外部包的 peer 边不追，workspace peer 保留在链上。`pageOnlyPackages` 排除已静态链接到所服务页面的库；把这类包命名为 Worker 插件，或从 Worker 模块导入它，都会使打包失败。
 2. **发布视图**——每个 workspace 或 vendored 包贡献其构建后的 npm 切片（`files` 走 picomatch），不带源码和 workspace `dist/`。外部包的 `main` 或 `exports` 可能指向 `src/` 或 `dist/`，因此两处发布 JavaScript 都会保留，只应用通用的测试、map、声明与归档排除规则。
 3. **可达性 sweep**——用运行时加载器自己的解析，从全部 workspace 导出面加 worker 装配种子（`IMAGE_ENTRY_SEEDS`）出发，pack 时把每个可达模块降低到包装契约。Transform 会报告具名静态 import、re-export 与动态 import、经 `require` 发起的调用，以及通过 `node:module` 或 `module` 具名导入（含导入别名）在模块作用域直接发起的 `createRequire(import.meta.url)('pkg')` 调用。页面资产（`./client` 导出背后的 `lib/client.js`）原样直发；自家代码的不可解析请求打包即失败，第三方的容忍到 require 时 fail loud。
+
+`repository.ts` 通过 Client 校验器既有的构建配置读取函数取得 `staticPagePackages`，因此 `staticLinked` 预设仍是唯一分类依据。构建后的仓库 CLI 与 profile 合成一样，通过 tsx 调用这个源码工具，需要仓库已安装的工具链。静态浏览器库及其仅浏览器使用的依赖由页面构建提供，不复制到 Worker 镜像。
 
 `repository.ts` 拥有仓库形态输入（`vendor/`、`packages/`、`native/system/packages/` 与 `apps/` 的 workspace 扫描；经真 CLI dump 路径合成 profile）；`pack.ts` 一概不拥有，同一库换参即可打另一棵树。Native 扫描使 Landlock 入口包成为普通发布视图依赖，其可执行文件仍由 Worker 平台实现。CLI 为 `dsh-pack-vfs-image --out <file> [--profile web]`；`apps/web` 的 `build:preview` 在预览壳构建后运行它。
 

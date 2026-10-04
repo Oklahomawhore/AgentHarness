@@ -26,6 +26,8 @@ Status: implemented
 
 `verify-package-invariants` 会扫描每个包。它要求英文 README 记录包级省略原因，拒绝不完整的导出、发布或伴生入口构建接线，拒绝空 installer，并对每个已发布伴生入口执行注册、Loader namespace、reporter 使用、依赖、引用与构建检查。Vitest Host 只在当前包存在伴生入口时挂载它，拓扑与构建产物检查则枚举已发布集合。
 
+Development Mesh 适配器、Task 存储适配器、workbench UI 与 Host 包装层、MCP bridge 同样省略空伴生入口。已有准入、持久化与生命周期检查仍由拥有这些操作的服务执行。删除空注册既不会移除这些检查，也不证明每项跨服务关系都有运行时断言；新增伴生入口仍须具备独立观察与聚焦的反例测试。
+
 ### 审计结果
 
 全仓库审计删除了 209 个带说明的空伴生入口和合成的 `dsh-host-webserver` 伴生入口，留下 39 项比较独立观察的检查。保留项包括 session、command、approval、workflow 与 hook 生命周期等跨事件协议；settings、storage-domain、Workspace、client modules 与 slots 等事件到状态检查；system prompt 与 time context 等多生产方组装检查；以及 todo、plan mode 与 sandbox mode 等由 projection 或 policy state 消费的持久数据。

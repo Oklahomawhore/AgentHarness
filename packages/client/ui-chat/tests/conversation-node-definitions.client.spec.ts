@@ -7,6 +7,7 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   ConversationNodeAssembler,
+  type ContextMessageNode,
   type ConversationNodeDefinition,
   type ConversationViewDefinition,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -219,6 +220,74 @@ function toolResult(callId: string, text: string, isError = false) {
 }
 
 describe('built-in conversation node Definitions', () => {
+
+  it.each(['replay', 'live'] as const)('omits scope and Task background projections from Chat (%s)', (mode) => {
+    const text = 'shared API requires a revision'
+    const sources = [
+      { kind: 'scope-agent-context', version: 1, form: 'snapshot', bindingId: 'binding', subscriptionId: 'subscription' },
+      { kind: 'scope-agent-pulse', version: 1, bindingId: 'binding', activationId: 'activation' },
+      { kind: 'scope-agent-context', version: 1, form: 'withdrawn', reason: 'revoked' },
+      { kind: 'development-task-context', version: 1, form: 'snapshot', taskId: 'task', revision: 1 },
+      { kind: 'development-task-context', version: 2, form: 'snapshot', taskId: 'task', revision: 2 },
+      { kind: 'development-task-context', version: 3, form: 'snapshot', projection: { taskId: 'task', taskRevision: 3 } },
+      { kind: 'development-task-context', version: 3, form: 'withdrawn', reason: 'left' },
+      { kind: 'development-task-context', version: 1, form: 'retired', activeTaskId: 'task', activeRevision: 4 },
+      { kind: 'development-task-context', version: 1, form: 'disconnected' },
+    ]
+    const inputs = [
+      at(1, 'turn/start', { turn: 1 }),
+      ...sources.map((source, index) => at(index + 2, 'user/message', {
+        ...textMessage(`scope-${String(index)}`, text), source,
+      }, { surfaceOp: 'append' })),
+      at(11, 'user/message', textMessage('human', text), { surfaceOp: 'append' }),
+      at(12, 'user/message', {
+        ...textMessage('ordinary-context', text), source: { kind: 'plugin', plugin: 'scope-agent-context' },
+      }, { surfaceOp: 'append' }),
+      at(13, 'step/start', { turn: 1, step: 1 }),
+      at(14, 'assistant/message', {
+        turn: 1, step: 1, message: assistantMessage('answer', text),
+      }, { surfaceOp: 'append' }),
+    ]
+    const original = structuredClone(inputs)
+    const value = assembler(mode === 'replay' ? inputs : [])
+    if (mode === 'live') {
+      for (const input of inputs) value.append(input)
+      value.flush()
+    }
+    const visible = snapshot(value).nodes.values()
+    expect(visible.filter(candidate => candidate.kind === 'user').map(candidate => candidate.anchorSeq)).toEqual([11])
+    expect(visible.filter(candidate => candidate.kind === 'context').map(candidate => candidate.anchorSeq)).toEqual([12])
+    expect(visible.some(candidate => candidate.kind === 'assistant-step')).toBe(true)
+    expect(visible.filter(candidate => candidate.anchorSeq >= 2 && candidate.anchorSeq <= 10)).toEqual([])
+    expect(inputs).toEqual(original)
+  })
+
+  it.each([undefined, null, false, 42, 'scope-agent-context', {}, { kind: null }, { kind: 42 },
+    { kind: 'scope-agent-context-other' }])('keeps an opaque context source visible: %j', (source) => {
+    const state: ContextMessageNode = {
+      kind: 'context', seq: 1, time: 1, content: [], source,
+      provenance: { role: 'inject', label: null }, form: null,
+    }
+    const view = messageDefinition.buildViewNode?.({
+      key: 'context', kind: 'input-message', id: 'context', matches: [], start: undefined, state, current: new Map(),
+    })
+    expect(view?.kind).toBe('context')
+    expect(view?.data).toBe(state)
+  })
+
+  it('keeps an automatic scope-only turn free of human and context nodes', () => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'user/message', {
+        ...textMessage('automatic', 'work on the authorized goal'),
+        source: { kind: 'scope-agent-pulse', version: 1, bindingId: 'binding', activationId: 'activation' },
+      }, { surfaceOp: 'append' }),
+      at(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ])
+    expect(snapshot(value).nodes.values().map(candidate => candidate.kind)).toEqual(['turn-tail'])
+    expect(node(snapshot(value), 'turn-tail')?.data).toMatchObject({ closing: null })
+    expect(snapshot(value).navigation.items()[0]?.prompt).toBe('')
+  })
   it('rejects an unrelated event passed directly to the request-prompt start', () => {
     const input = at(1, 'turn/start', { turn: 1 })
     const invalidStart = {
@@ -1250,8 +1319,8 @@ describe('built-in conversation node Definitions', () => {
     value.prepend([
       at(10, 'turn/start', { turn: 1 }),
       at(11, 'user/message', textMessage('older-user', 'older'), { surfaceOp: 'append' }),
-      at(12, 'step/start', { turn: 1, step: 1 }),
-      at(13, 'assistant/message', {
+      at(13, 'step/start', { turn: 1, step: 1 }),
+      at(14, 'assistant/message', {
         turn: 1,
         step: 1,
         message: assistantMessage('older-assistant', 'older answer'),

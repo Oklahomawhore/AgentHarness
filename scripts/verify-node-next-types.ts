@@ -151,6 +151,30 @@ try {
     cwd: root,
     stdio: 'pipe',
   })
+  // Compile the DTO entry in isolation before Cordis; the all-package input can
+  // hide declaration augmentation failures by loading the service entry first.
+  writeFileSync(resolve(tmp, 'task-types-first.ts'), `import type { DevelopmentTaskContextView } from '@deepseek-ai/dsh-development-task/types';
+import type { Context } from '@deepseek-ai/cordis';
+import type {} from '@deepseek-ai/dsh-development-room';
+
+export function observe(ctx: Context, view: DevelopmentTaskContextView) {
+  ctx.effect(() => () => {});
+  ctx.on('development-task/changed', (task, entry) => {
+    const taskId: typeof view.task.id = entry.taskId;
+    void taskId;
+    void task.revision;
+  });
+  return [ctx.get('developmentRooms'), ctx.developmentRooms.list(), view.task.id];
+}
+`)
+  writeFileSync(resolve(tmp, 'task-types-first.json'), `${JSON.stringify({
+    extends: './tsconfig.json',
+    include: ['task-types-first.ts'],
+  }, null, 2)}\n`)
+  execFileSync(process.execPath, ['node_modules/typescript/bin/tsc', '-p', resolve(tmp, 'task-types-first.json'), '--pretty', 'false'], {
+    cwd: root,
+    stdio: 'pipe',
+  })
   console.log(`verify-node-next-types: ${packages.length} workspace package declaration API(s) compile under NodeNext.`)
 } catch (error: unknown) {
   failed = true

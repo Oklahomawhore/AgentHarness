@@ -1,0 +1,43 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - status: 自动协作已暂停
+  - paragraph: 自动启动额度已用完。增加有限额度后才能恢复。
+  - paragraph: 累计已用 1 / 1 次 · 每轮最多 1 步
+  - term: 共享 Task
+  - definition: {{taskId}}
+  - term: 来源设备
+  - definition: {{ownerPeerId}}
+  - term: 邀请中的职责
+  - definition: frontend
+  - paragraph: 本地目标：按已授权的订单接口事实更新前端。
+  - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - button "离开共享上下文"
+  - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "允许自动协作" [checked]
+    - text: 允许自动协作
+  - paragraph: 自动启动会调用模型并可能执行工具。预留后取消也计入次数；此额度不是费用、token 或 API 重试上限。
+  - group:
+    - text: 本地协作目标
+    - textbox "本地协作目标": 按已授权的订单接口事实更新前端。
+    - text: 允许新增的自动启动次数
+    - spinbutton "允许新增的自动启动次数": "1"
+    - text: 每轮最多步数
+    - spinbutton "每轮最多步数": "1"
+    - text: 最短间隔（秒）
+    - spinbutton "最短间隔（秒）": "0"
+    - paragraph: 允许此会话为“按已授权的订单接口事实更新前端。”再自动启动最多 1 次。
+  - button "确认启用自动协作"
+  - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
+  - group: 分享本会话的文件工作
+  - button "重新读取状态"
+  - button "查看来源"

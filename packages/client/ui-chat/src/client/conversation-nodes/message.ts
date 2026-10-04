@@ -40,7 +40,7 @@ function isCompactionCheckpoint(event: Parameters<ConversationNodeDefinition['ma
   return source.kind === 'plugin' && source.plugin === 'compact'
 }
 
-/** User, steering, and injected-context message classification Definition. */
+/** Chat message classification; native scope scheduling and context remain diagnostic-only. */
 export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   kind: 'input-message',
   target: 'chat',
@@ -85,6 +85,10 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   update: context => context.state,
   buildViewNode: (context) => {
     if (context.state === undefined) return null
+    const source = context.state.source
+    if (typeof source === 'object' && source !== null && 'kind' in source && typeof source.kind === 'string'
+      && (source.kind === 'scope-agent-context' || source.kind === 'scope-agent-pulse'
+        || source.kind === 'development-task-context')) return null
     return chatNode(context, context.state.kind, context.state.seq, context.state)
   },
 }

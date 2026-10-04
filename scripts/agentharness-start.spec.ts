@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -15,6 +15,7 @@ import {
   storedNodeIdentity,
   storedRoomNodeId,
   webArguments,
+  waitForNode,
 } from './agentharness-start.mjs'
 
 const launcher = resolve(import.meta.dirname, 'agentharness-start.mjs')
@@ -148,6 +149,38 @@ describe('AgentHarness single-node launcher', () => {
     expect(browserCommand('linux', 'http://127.0.0.1:3080')).toEqual({
       command: 'xdg-open', args: ['http://127.0.0.1:3080'],
     })
+  })
+
+  it('uses its child readiness URL when anonymous HTTP is denied', async () => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', `
+      import { createServer } from 'node:http'
+      const server = createServer((_request, response) => { response.statusCode = 401; response.end() })
+      server.listen(0, '127.0.0.1', () => console.log('dsh web: http://127.0.0.1:' + server.address().port + '/?token=fixture'))
+      process.on('SIGTERM', () => server.close())
+    `], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const closed = new Promise((resolveExit) => { child.once('close', resolveExit) })
+    try {
+      const authenticatedUrl = await waitForNode(child, undefined)
+      expect(new URL(authenticatedUrl).searchParams.get('token')).toBe('fixture')
+      expect((await fetch(new URL('/', authenticatedUrl))).status).toBe(401)
+    } finally {
+      const kill = setTimeout(() => { child.kill('SIGKILL') }, 2_000)
+      child.kill('SIGTERM')
+      await closed
+      clearTimeout(kill)
+    }
+  })
+
+  it('does not accept readiness for a different origin and rejects when its child exits', async () => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e',
+      "console.log('dsh web: http://127.0.0.1:4100/?token=fixture')"], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const closed = new Promise((resolveExit) => { child.once('close', resolveExit) })
+    try {
+      await expect(waitForNode(child, 'http://127.0.0.1:4200')).rejects.toThrow('exited before')
+    } finally {
+      child.kill('SIGKILL')
+      await closed
+    }
   })
 
   it('dry-runs without installing, building, or starting a process', () => {
