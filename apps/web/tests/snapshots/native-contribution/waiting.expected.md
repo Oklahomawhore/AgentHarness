@@ -18,4 +18,5 @@
   - definition: "8192"
   - paragraph: 等待提交的观察：0
   - button "停止分享并撤回"
+  - group: 更新所有者连接地址
   - button "重新读取分享状态"

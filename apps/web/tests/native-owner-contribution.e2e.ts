@@ -217,7 +217,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     const sharing = remotePage.locator(REMOTE)
     if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
     await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '核对申请入口', exact: true }).click()
+    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
     await sharing.getByText(task.id, { exact: true }).waitFor()
     const bRoot = join(b.workspaceCwd, 'remote-native/project')
     await permission(sharing, bRoot, REMOTE_CONSENT)

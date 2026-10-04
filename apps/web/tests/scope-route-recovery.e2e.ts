@@ -235,7 +235,7 @@ async function scenario(responses: readonly StreamChunk[][]) {
   const entry = contributionEntrySchema.parse(JSON.parse(entryText))
   const share = await sharing(sourceView)
   await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-  await share.getByRole('button', { name: '核对申请入口', exact: true }).click()
+  await share.getByRole('button', { name: '验证连接', exact: true }).click()
   await share.getByText(task.id, { exact: true }).waitFor()
   await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(sourceRoot)
   for (const name of ['写入文件（write）', '编辑文件（edit）']) await share.getByRole('checkbox', { name, exact: true }).check()

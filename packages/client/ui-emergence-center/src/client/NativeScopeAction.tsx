@@ -77,7 +77,7 @@ export function NativeScopeAction(props: NativeScopeActionProps) {
 function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeLocalContributions, useNativeTasks, useNativeParticipants,
   refreshNativeScope, actNativeScope,
   readNativeContribution, requestNativeContribution, stopNativeContribution, leaveNativeJoin,
-  previewNativeContribution, recoverNativeContributionRoute,
+  previewNativeContribution, probeNativeContribution, recoverNativeContributionRoute,
   readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution, t, ...runtime
 }: NativeScopeActionProps) {
   const snapshot = useNativeScope(value => value)
@@ -251,7 +251,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} scope={snapshot} t={t}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}
-          previewNativeContribution={previewNativeContribution} recoverNativeContributionRoute={recoverNativeContributionRoute} />
+          previewNativeContribution={previewNativeContribution} probeNativeContribution={probeNativeContribution}
+          recoverNativeContributionRoute={recoverNativeContributionRoute} />
       </>}
       {snapshot.issue !== null && <p ref={error} tabIndex={-1} className={css.notice} role="alert">{t(issueKey(snapshot.issue))}</p>}
       <div className={css.footer}><Button disabled={snapshot.pending} size="sm" onClick={refreshNativeScope}>{t('native.refresh')}</Button>

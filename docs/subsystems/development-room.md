@@ -2072,6 +2072,21 @@ type ScopeContributionEntry = {
 ```
 
 ```ts type-equiv
+/** Inspect one addressed entry before granting any local collection permission. */
+interface ScopeContributionEntryProbeRequest {
+  readonly entry: ScopeContributionEntry
+}
+```
+
+```ts type-equiv
+/** A momentary owner observation, not an application, reservation, or authorization. */
+interface ScopeContributionEntryProbeResult {
+  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
+}
+```
+
+```ts type-equiv
 /** Source consent ceiling; owner approval may narrow but cannot exceed any field. */
 interface ScopeContributionLimits {
   readonly expiresAt: number
@@ -3235,6 +3250,13 @@ async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision
  * @returns local grants and receiving intents; no remote peer can call this inventory.
  */
 @Remote('list') async list(): Promise<ScopeAccessList>
+
+/**
+ * Inspect the addressed owner's entry before local collection consent, without applying or granting permission.
+ * @param request - complete entry; only its direct address may differ from the owner's retained entry.
+ * @returns momentary entry availability, never a reservation; disposal rejects and apply still checks authority.
+ */
+@Remote('probeContributionEntry') probeContributionEntry(request: ScopeContributionEntryProbeRequest): Promise<ScopeContributionEntryProbeResult>
 
 /**
  * Validate pasted contribution text for authenticated local review without changing permission.

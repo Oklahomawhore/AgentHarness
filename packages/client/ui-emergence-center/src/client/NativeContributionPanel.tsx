@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest, ScopeAgentContributionReceiving,
   ScopeContributionEntry, ScopeContributionTransfer, ScopeAgentContributionRecoverRouteRequest,
+  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
@@ -23,6 +24,7 @@ export interface NativeContributionActions {
   readonly leaveNativeJoin: (request: ScopeAgentContributionStopRequest) => Promise<void>
   readonly stopNativeContribution: (request: ScopeAgentContributionStopRequest) => Promise<void>
   readonly previewNativeContribution: (text: string) => Promise<ScopeContributionTransfer>
+  readonly probeNativeContribution: (request: ScopeContributionEntryProbeRequest) => Promise<ScopeContributionEntryProbeResult>
 }
 
 function issueKey(code: string): EmergenceCenterKey {
@@ -70,13 +72,18 @@ function stopHint(state: ScopeAgentContributionReceiving['state']): EmergenceCen
  * @param props - current Session, authoritative management observation, and actions.
  * @returns source permission form and recoverable pending state.
  */
-export function NativeContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
-  stopNativeContribution, leaveNativeJoin, previewNativeContribution, recoverNativeContributionRoute, scope, t,
-}: NativeContributionActions & PropsLocale<'emergenceCenter'> & {
+export function NativeContributionPanel(props: NativeContributionActions & PropsLocale<'emergenceCenter'> & {
   agentId: SessionId
   scope: NativeScopeSnapshot
   entry: ContributionEntry<ScopeAgentContributionStatus> | undefined
 }) {
+  return <SessionContributionPanel key={props.agentId} {...props} />
+}
+
+function SessionContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
+  stopNativeContribution, leaveNativeJoin, previewNativeContribution, probeNativeContribution,
+  recoverNativeContributionRoute, scope, t,
+}: Parameters<typeof NativeContributionPanel>[0]) {
   const id = useId()
   const previewRevision = useRef(0)
   const actionPending = useRef(false)
@@ -84,6 +91,7 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
   const [preview, setPreview] = useState<ScopeContributionEntry>()
   const [previewing, setPreviewing] = useState(false)
   const [invalid, setInvalid] = useState(false)
+  const [probe, setProbe] = useState<ScopeContributionEntryProbeResult['status']>()
   const [roots, setRoots] = useState('')
   const [write, setWrite] = useState(false)
   const [edit, setEdit] = useState(false)
@@ -100,6 +108,12 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
   const capture = status?.capture
   const continuation = status?.receivingContinuation
   const recoverable = capture ?? continuation
+  const occupied = capture != null || continuation !== undefined
+  useEffect(() => {
+    if (!occupied) return
+    previewRevision.current++
+    setPreview(undefined); setProbe(undefined); setPreviewing(false); setReadConsent(null); setConsent(false)
+  }, [occupied])
   const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
   const eligible = ready && status?.eligibility === 'eligible'
@@ -119,14 +133,27 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
     && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || readConfirmed)
   const verify = async (): Promise<void> => {
     const revision = ++previewRevision.current
-    setPreviewing(true); setInvalid(false); setPreview(undefined)
-    try {
-      const result = await previewNativeContribution(text)
-      if (revision !== previewRevision.current) return
-      if ((result.kind === 'contribution-entry' || result.kind === 'scope-join-entry') && result.sourceKind === 'tool-observations') setPreview(result)
-      else setInvalid(true)
-    } catch { if (revision === previewRevision.current) setInvalid(true) }
-    finally { if (revision === previewRevision.current) setPreviewing(false) }
+    setPreviewing(true); setInvalid(false); setPreview(undefined); setProbe(undefined)
+    setReadConsent(null); setConsent(false)
+    let result: ScopeContributionTransfer
+    try { result = await previewNativeContribution(text) }
+    catch {
+      if (revision === previewRevision.current) { setInvalid(true); setPreviewing(false) }
+      return
+    }
+    if (revision !== previewRevision.current) return
+    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry') || result.sourceKind !== 'tool-observations') {
+      setInvalid(true); setPreviewing(false); return
+    }
+    let checked: ScopeContributionEntryProbeResult
+    try { checked = await probeNativeContribution({ entry: result }) }
+    catch {
+      if (revision === previewRevision.current) { setProbe('unavailable'); setPreviewing(false) }
+      return
+    }
+    if (revision !== previewRevision.current) return
+    setProbe(checked.status); setPreviewing(false)
+    if (checked.status === 'ready') setPreview(result)
   }
   const perform = async (operation: () => Promise<void>): Promise<void> => {
     if (actionPending.current) return
@@ -155,30 +182,34 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
       }}>
         <label className={css.field} htmlFor={`${id}-entry`}>{t('contribution.application.paste')}
           <textarea id={`${id}-entry`} rows={3} value={text} disabled={!eligible} onChange={(event) => {
-            previewRevision.current++; setText(event.target.value); setPreview(undefined); setInvalid(false)
+            previewRevision.current++; setText(event.target.value); setPreview(undefined); setInvalid(false); setProbe(undefined)
             setPreviewing(false); setReadConsent(null); setConsent(false)
           }} /></label>
-        <Button disabled={!eligible || previewing || !text.trim()} onClick={() => { void verify() }}>{t('contribution.application.verify')}</Button>
+        <Button disabled={!eligible || previewing || !text.trim()} onClick={() => { void verify() }}>{t('native.share.verify')}</Button>
+        {previewing && <p role="status" className={css.hint}>{t('native.share.verifying')}</p>}
+        {probe !== undefined && <p role={probe === 'ready' ? 'status' : 'alert'} className={css.notice}>{t(`native.share.probe.${probe}`)}</p>}
         {invalid && <p role="alert" className={css.notice}>{t('native.share.invalidEntry')}</p>}
-        {preview !== undefined && <dl className={css.details}>
-          <dt>{t('contribution.owner')}</dt><dd>{preview.ownerPeerId}</dd><dt>{t('contribution.task')}</dt><dd>{preview.taskId}</dd>
-          <dt>{t('contribution.application.entryExpires')}</dt><dd>{new Date(preview.expiresAt).toLocaleString()}</dd>
-        </dl>}
-        {joint && <>
-          <p className={css.hint}>{t('native.join.hint')}</p>
-          {!canReceive && <p role="status" className={css.notice}>{t('native.join.unboundRequired')}</p>}
-          <label className={css.consent}><input type="checkbox" checked={readConfirmed} disabled={!eligible || !canReceive}
-            onChange={(event) => {
-              setReadConsent(event.target.checked && readState !== null ? { text, seq: readState.readStateSeq } : null)
+        {preview !== undefined && <>
+          <dl className={css.details}>
+            <dt>{t('contribution.owner')}</dt><dd>{preview.ownerPeerId}</dd><dt>{t('contribution.task')}</dt><dd>{preview.taskId}</dd>
+            <dt>{t('contribution.application.entryExpires')}</dt><dd>{new Date(preview.expiresAt).toLocaleString()}</dd>
+          </dl>
+          {joint && <>
+            <p className={css.hint}>{t('native.join.hint')}</p>
+            {!canReceive && <p role="status" className={css.notice}>{t('native.join.unboundRequired')}</p>}
+            <label className={css.consent}><input type="checkbox" checked={readConfirmed} disabled={!eligible || !canReceive}
+              onChange={(event) => {
+                setReadConsent(event.target.checked && readState !== null ? { text, seq: readState.readStateSeq } : null)
+              }} />
+            {t('native.join.readConsent')}</label>
+          </>}
+          <NativeContributionPermission id={id} draft={{ roots, write, edit, hours, samples, bytes, consent }}
+            disabled={!eligible} consentKey="native.share.consent" t={t} change={(draft) => {
+              setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
+              setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
             }} />
-          {t('native.join.readConsent')}</label>
+          <Button type="submit" variant="primary" disabled={!canRequest}>{t(joint ? 'native.join.request' : 'native.share.request')}</Button>
         </>}
-        <NativeContributionPermission id={id} draft={{ roots, write, edit, hours, samples, bytes, consent }}
-          disabled={!eligible} consentKey="native.share.consent" t={t} change={(draft) => {
-            setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
-            setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
-          }} />
-        <Button type="submit" variant="primary" disabled={!canRequest}>{t(joint ? 'native.join.request' : 'native.share.request')}</Button>
       </form>}
       {capture != null && <>
         <dl className={css.details}>

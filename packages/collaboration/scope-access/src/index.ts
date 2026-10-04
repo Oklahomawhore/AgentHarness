@@ -16,12 +16,14 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import { invitationSchema, sameReadGrant, projectionDigest, projectionSchema } from './schema.ts'
 import { ContributionAccess } from './contribution.ts'
 import { ContributionApplications } from './application.ts'
+import { ContributionEntryProbe } from './entry-probe.ts'
 import type { ApplicationRecord } from './application-schema.ts'
 import { readRequestSchema, readResponseSchema, scopeAccessDomainSpec,
   waitRequestSchema, waitResponseSchema } from './state.ts'
 import type { ScopeAccessDomain } from './state.ts'
 import type {
   ScopeContributionEntryRequest, ScopeContributionEntryResult, ScopeContributionEntryRecoverRequest,
+  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult,
   ScopeContributionApplicationsRequest, ScopeContributionApplications, ScopeContributionApplicationApprovalRequest,
   ScopeContributionApplicationRejectRequest, ScopeContributionApplication, ScopeContributionApplyRequest,
   ScopeContributionApplicationRequest, ScopeContributionApplicationResult,
@@ -129,6 +131,7 @@ export default class ScopeAccessService extends TypertRemoteService {
   private readonly ordinaryCapacity: number
   private readonly contributions: ContributionAccess
   private readonly applications: ContributionApplications
+  private readonly entryProbe: ContributionEntryProbe
   private peerId!: ScopePeerId
 
   /**
@@ -167,6 +170,8 @@ export default class ScopeAccessService extends TypertRemoteService {
     this.contributions = new ContributionAccess(ctx, { config, signal: this.lifetime.signal,
       ready: async () => { await this.ready; return this.peerId },
       acquire: kind => this.acquireContribution(kind), track: operation => this.track(operation) })
+    this.entryProbe = new ContributionEntryProbe(ctx, { config, signal: this.lifetime.signal,
+      ready: () => this.ready, acquire: () => this.acquireContribution('ordinary'), track: operation => this.track(operation) })
     this.applications = new ContributionApplications(ctx, { config, signal: this.lifetime.signal,
       ready: () => this.ready, contributions: this.contributions,
       saveApplication: record => this.saveApplication(record),
@@ -346,6 +351,16 @@ export default class ScopeAccessService extends TypertRemoteService {
     const domain = await this.ready
     return { grants: [...domain.table('grants').entries()].map(([, value]) => value),
       subscriptions: [...domain.table('subscriptions').entries()].map(([, value]) => value) }
+  }
+
+  /**
+   * Inspect the addressed owner's entry before local collection consent, without applying or granting permission.
+   * @param request - complete entry; only its direct address may differ from the owner's retained entry.
+   * @returns momentary entry availability, never a reservation; disposal rejects and apply still checks authority.
+   */
+  @Remote('probeContributionEntry')
+  probeContributionEntry(request: ScopeContributionEntryProbeRequest): Promise<ScopeContributionEntryProbeResult> {
+    return this.track(this.entryProbe.probe(request))
   }
 
   /**

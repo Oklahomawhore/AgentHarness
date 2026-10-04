@@ -23,7 +23,7 @@ function fixture(initial: NativeScopeSnapshot = { phase: 'ready', pending: false
     readNativeLocalContribution: vi.fn(), checkoutNativeLocalTask: vi.fn(),
     requestNativeLocalContribution: vi.fn(), stopNativeLocalContribution: vi.fn(),
     recoverNativeContributionRoute: vi.fn(), readNativeContribution: vi.fn(), requestNativeContribution: vi.fn(),
-    stopNativeContribution: vi.fn(), leaveNativeJoin: vi.fn(), previewNativeContribution: vi.fn(),
+    stopNativeContribution: vi.fn(), leaveNativeJoin: vi.fn(), previewNativeContribution: vi.fn(), probeNativeContribution: vi.fn(),
     useNativeScope: <T,>(select: (value: NativeScopeSnapshot) => T): T => select(useSyncExternalStore(
       listener => source.subscribe(listener), () => source.getSnapshot())),
   } as unknown as NativeScopeActionProps

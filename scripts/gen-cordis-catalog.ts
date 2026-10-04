@@ -291,6 +291,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   DevelopmentTaskLocalContributionId: 'development-room.md',
   ScopeContributionEntryId: 'development-room.md',
   ScopeContributionEntry: 'development-room.md',
+  ScopeContributionEntryProbeRequest: 'development-room.md',
+  ScopeContributionEntryProbeResult: 'development-room.md',
   ScopeContributionLimits: 'development-room.md',
   ScopeContributionApplicationRequest: 'development-room.md',
   ScopeContributionApplyRequest: 'development-room.md',

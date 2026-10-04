@@ -228,6 +228,17 @@ export type ScopeContributionEntry = {
   | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' }
 )
 
+/** Inspect one addressed entry before granting any local collection permission. */
+export interface ScopeContributionEntryProbeRequest {
+  readonly entry: ScopeContributionEntry
+}
+
+/** A momentary owner observation, not an application, reservation, or authorization. */
+export interface ScopeContributionEntryProbeResult {
+  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
+}
+
 /** Source consent ceiling; owner approval may narrow but cannot exceed any field. */
 export interface ScopeContributionLimits {
   readonly expiresAt: number

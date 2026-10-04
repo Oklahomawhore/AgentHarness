@@ -2963,6 +2963,16 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeContributionEntryProbeRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeContributionEntryProbeResult",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeContributionLimits",
       "source": "packages/collaboration/scope-access/src/types.ts"
     },

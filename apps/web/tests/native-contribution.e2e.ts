@@ -1,6 +1,7 @@
 /** Browser consent, real file tools, independent owner admission, and recipient request evidence. */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
@@ -12,6 +13,7 @@ import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room
 import type {} from '@deepseek-ai/dsh-scope-agent-contribution'
 import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-access'
+import type { ScopeContributionEntry } from '@deepseek-ai/dsh-scope-access/types'
 import { assertFixtureInventory, captureStableAria, compareOrRefreshGolden, launchWebScaffold,
   watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh, saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
@@ -70,6 +72,11 @@ async function openSharing(page: Page): Promise<Locator> {
   return share
 }
 
+function entryTokens(entry: ScopeContributionEntry): (readonly [string, string])[] {
+  return [[entry.ownerAddress, '{{ownerAddress}}'], [entry.ownerPeerId, '{{ownerPeerId}}'],
+    [entry.taskId, '{{taskId}}'], [entry.entryId, '{{entryId}}'], [String(entry.expiresAt), '{{entryExpiresAt}}']]
+}
+
 async function captureStage(page: Page, workspace: string, stage: string,
   replacements: readonly (readonly [string, string])[]): Promise<void> {
   const shots = process.env.DSH_NATIVE_CONTRIBUTION_SHOTS
@@ -82,6 +89,9 @@ async function captureStage(page: Page, workspace: string, stage: string,
     }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await page.locator(PANEL).evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    const region = page.locator(SHARE)
+    const feedback = region.getByRole('alert').or(region.getByRole('status')).last()
+    await feedback.evaluate((element) => { element.scrollIntoView({ block: 'center' }) })
     if (shots !== undefined) await page.screenshot({ path: join(shots, `${stage}-${String(viewport.width)}.png`), fullPage: true })
   }
   await page.setViewportSize(DESKTOP)
@@ -94,6 +104,8 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
   let source: WebScaffold | undefined
   let receiver: WebScaffold | undefined
   let browser: Browser | undefined
+  let unavailableServer: Server | undefined
+  let unavailablePort: number
   let sourcePage: Page
   let receiverPage: Page
   let directory: string | undefined
@@ -104,6 +116,16 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
   beforeAll(async () => {
     if (MODE === 'record') throw new Error('Native contribution acceptance uses keyless controlled responses')
     directory = await mkdtemp(join(tmpdir(), 'dsh-native-contribution-web-'))
+    // An owned port accepts TCP but cannot authenticate as the invitation's owner.
+    const refusing = createServer(socket => socket.destroy())
+    unavailableServer = refusing
+    await new Promise<void>((resolve, reject) => {
+      refusing.once('error', reject)
+      refusing.listen({ host: '127.0.0.1', port: 0 }, () => { refusing.off('error', reject); resolve() })
+    })
+    const unavailableAddress = refusing.address()
+    if (unavailableAddress === null || typeof unavailableAddress === 'string') throw new Error('No refusing listener')
+    unavailablePort = unavailableAddress.port
     const sourceReplay: ReplayOverrideDoc = [
       textResponse('NATIVE_SOURCE_READY'),
       toolResponse('write', { file_path: 'project/src/client.ts', content: CODE }),
@@ -143,6 +165,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
   afterAll(async () => {
     const failures: unknown[] = []
     for (const close of [() => browser?.close(), () => receiver?.close(), () => source?.close(), () => owner?.close(),
+      () => new Promise<void>((resolve, reject) => {
+        if (!unavailableServer?.listening) { resolve(); return }
+        unavailableServer.close((error) => { if (error === undefined) resolve(); else reject(error) })
+      }),
       () => directory === undefined ? Promise.resolve() : rm(directory, { recursive: true, force: true })]) {
       try { await close() } catch (error) { failures.push(error) }
     }
@@ -175,14 +201,48 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
     const recipientId = await prompt(receiverHost, receiverPage, '准备接收协作内容。', 'NATIVE_RECIPIENT_READY')
     let share = await openSharing(sourcePage)
     await share.getByRole('status').getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    expect(await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).count()).toBe(0)
+    expect(await share.getByRole('checkbox', { name: CONSENT, exact: true }).count()).toBe(0)
+    expect((await sourceHost.ctx.scopeAgentContributions.status({ agentId: sourceId })).capture).toBeNull()
+    await captureStage(sourcePage, sourceHost.workspaceCwd, 'unselected', [])
+    const closed = await ownerHost.ctx.scopeAccess.createContributionEntry({ taskId: task.id, ownerAddress,
+      sourceKind: 'tool-observations', expiresAt: Date.now() + 3_600_000 })
+    await ownerHost.ctx.scopeAccess.rejectContributionApplication({ entryId: closed.entry.entryId, expectedProposal: null })
+    const ownerStoragePath = join(ownerHost.workspaceCwd, '.dsh-storages/scope_access.json')
+    const ownerBefore = await readFile(ownerStoragePath, 'utf8')
+    const sourceBefore = structuredClone(sourceHost.ctx.agents.get(sourceId)!.session.snapshotEvents())
+    const untouched = async (): Promise<void> => {
+      expect(await readFile(ownerStoragePath, 'utf8')).toBe(ownerBefore)
+      expect((await sourceHost.ctx.scopeAgentContributions.status({ agentId: sourceId })).capture).toBeNull()
+      expect((await sourceHost.ctx.scopeAccess.list()).subscriptions).toEqual([])
+      expect((await ownerHost.ctx.scopeAccess.list()).grants).toEqual([])
+      expect(ownerHost.ctx.developmentTasks.peerContributions({ taskId: task.id })).toEqual([])
+      expect(ownerHost.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
+      expect(sourceHost.ctx.agents.get(sourceId)!.session.snapshotEvents()).toEqual(sourceBefore)
+    }
+    const unreachable = { ...entry.entry, ownerAddress: `/ip4/127.0.0.1/tcp/${String(unavailablePort)}/p2p/${ownerIdentity.peerId}` }
+    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(JSON.stringify(unreachable))
+    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await share.getByText('无法连接任务所有者。请确认对方在线且地址可达，然后重试。', { exact: true }).waitFor()
+    expect(await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).count()).toBe(0)
+    await untouched()
+    await captureStage(sourcePage, sourceHost.workspaceCwd, 'unavailable', entryTokens(unreachable))
+    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(closed.text)
+    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await share.getByText('此入口已关闭。请向任务所有者获取新入口。', { exact: true }).waitFor()
+    expect(await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).count()).toBe(0)
+    await untouched()
+    await captureStage(sourcePage, sourceHost.workspaceCwd, 'closed', entryTokens(closed.entry))
+    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entry.text)
+    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await share.getByText(task.id, { exact: true }).waitFor()
+    await share.getByText('连接已确认，可以申请。确认本地权限后还需所有者批准；尚未开始同步。', { exact: true }).waitFor()
+    await untouched()
     expect(await share.getByRole('checkbox', { name: '写入文件（write）', exact: true }).isChecked()).toBe(false)
     expect(await share.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).isChecked()).toBe(false)
     expect(await share.getByRole('checkbox', { name: CONSENT, exact: true }).isChecked()).toBe(false)
-    expect((await sourceHost.ctx.scopeAgentContributions.status({ agentId: sourceId })).capture).toBeNull()
-    await captureStage(sourcePage, sourceHost.workspaceCwd, 'unselected', [])
-    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entry.text)
-    await share.getByRole('button', { name: '核对申请入口', exact: true }).click()
-    await share.getByText(task.id, { exact: true }).waitFor()
+    await captureStage(sourcePage, sourceHost.workspaceCwd, 'connection-ready', [...entryTokens(entry.entry),
+      [await sourcePage.evaluate(value => new Date(value).toLocaleString(), entry.entry.expiresAt), '{{entryExpiresLocal}}']])
     await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(root)
     await share.getByRole('checkbox', { name: '写入文件（write）', exact: true }).check()
     await share.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).check()
@@ -197,8 +257,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
     const pending = (await sourceHost.ctx.scopeAgentContributions.status({ agentId: sourceId })).capture
     if (pending === null) throw new Error('Local consent was not retained')
     expect(pending.collecting).toBe(false)
-    await expect.poll(async () => (await ownerHost.ctx.scopeAccess.contributionApplications({ taskId: task.id })).entries[0]?.result.status)
-      .toBe('pending')
+    await expect.poll(async () => {
+      const applications = await ownerHost.ctx.scopeAccess.contributionApplications({ taskId: task.id })
+      return applications.entries.find(item => item.entry.entryId === entry.entry.entryId)?.result.status
+    }).toBe('pending')
     expect(ownerHost.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
     const replacements: (readonly [string, string])[] = [
       [task.id, '{{taskId}}'], [entry.entry.ownerPeerId, '{{ownerPeerId}}'],
@@ -267,6 +329,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
     expect(sourceHost.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
     expect(receiverHost.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
-    await assertFixtureInventory(SNAPSHOTS, ['unselected.expected.md', 'waiting.expected.md', 'active.expected.md', 'stopped.expected.md'])
+    await assertFixtureInventory(SNAPSHOTS, ['unselected.expected.md', 'unavailable.expected.md', 'closed.expected.md', 'connection-ready.expected.md',
+      'waiting.expected.md', 'active.expected.md', 'stopped.expected.md'])
   }, 180_000)
 })

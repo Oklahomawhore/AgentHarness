@@ -2,7 +2,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ScopeContributionTransfer, ScopeAgentContributionStatus, ScopeAgentContributionCapture } from '@deepseek-ai/dsh-api-remotes/client'
+import type {
+  ScopeContributionTransfer, ScopeContributionEntryProbeResult, ScopeAgentContributionStatus, ScopeAgentContributionCapture,
+} from '@deepseek-ai/dsh-api-remotes/client'
 import { NativeContributionPanel, type NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
 import { bound, invitation, observation, state } from './native-scope-fixture.client.ts'
@@ -18,6 +20,7 @@ function fixture(value: ScopeAgentContributionStatus = emptyStatus) {
     requestNativeContribution: vi.fn(async () => {}),
     stopNativeContribution: vi.fn(async () => {}), leaveNativeJoin: vi.fn(async () => {}),
     previewNativeContribution: vi.fn(async (): Promise<ScopeContributionTransfer> => applicationEntry),
+    probeNativeContribution: vi.fn(async (): Promise<ScopeContributionEntryProbeResult> => ({ status: 'ready' })),
   }
   const scope: NativeScopeSnapshot = { phase: 'ready', pending: false, issue: null, observation: observation({ ...state, agentId }) }
   const props = { agentId, t, scope, ...actions, entry: { value, status: 'ready', pending: false } as ContributionEntry<ScopeAgentContributionStatus> }
@@ -30,7 +33,7 @@ function change(label: string, value: string): void {
 }
 async function consentFields(): Promise<void> {
   change(zh['contribution.application.paste'], 'tool-entry')
-  fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
+  fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
   await screen.findByText(applicationEntry.ownerPeerId)
   change(zh['contribution.roots'], ' /project\n/project/docs\n/project ')
   fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.write'] }))
@@ -43,9 +46,9 @@ const submit = (): HTMLButtonElement => screen.getByRole('button', { name: zh['n
 describe('native file-work consent', () => {
   it('starts closed to sharing and sends only explicitly selected permission after separate consent', async () => {
     const f = fixture()
-    for (const control of screen.getAllByRole<HTMLInputElement>('checkbox')) expect(control.checked).toBe(false)
-    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
-    expect(submit().disabled).toBe(true)
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
     await consentFields()
     expect(submit().disabled).toBe(true)
     fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
@@ -65,13 +68,14 @@ describe('native file-work consent', () => {
     const f = fixture()
     vi.mocked(f.actions.previewNativeContribution).mockResolvedValueOnce({ ...applicationEntry, kind: 'contribution-entry', sourceKind: 'openapi' })
     change(zh['contribution.application.paste'], 'openapi-entry')
-    fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
     await screen.findByText(zh['native.share.invalidEntry'])
-    expect(submit().disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
+    expect(f.actions.probeNativeContribution).not.toHaveBeenCalled()
     await consentFields()
     change(zh['contribution.application.paste'], 'unverified replacement')
     expect(screen.queryByText(applicationEntry.ownerPeerId)).toBeNull()
-    expect(submit().disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
     expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
   })
 
@@ -80,12 +84,13 @@ describe('native file-work consent', () => {
     const pending = Promise.withResolvers<ScopeContributionTransfer>()
     vi.mocked(f.actions.previewNativeContribution).mockReturnValueOnce(pending.promise)
     change(zh['contribution.application.paste'], 'old entry')
-    fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
     change(zh['contribution.application.paste'], 'new draft')
     await act(async () => { pending.resolve(applicationEntry); await pending.promise })
     expect(screen.queryByText(applicationEntry.ownerPeerId)).toBeNull()
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).value).toBe('new draft')
-    expect(submit().disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
+    expect(f.actions.probeNativeContribution).not.toHaveBeenCalled()
   })
 
   it('keeps an uncertain request draft and disables edits until authoritative status recovers', async () => {
@@ -159,7 +164,7 @@ describe('native file-work consent', () => {
   it.each(['delegated', 'fork', 'task-conflict'] as const)('never requests permission for a %s Agent', (eligibility) => {
     const f = fixture({ ...emptyStatus, eligibility })
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).disabled).toBe(true)
-    expect(submit().disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
     expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
   })
 })
@@ -220,7 +225,7 @@ describe('native joint joining', () => {
     expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
     f.rerender(<NativeContributionPanel {...f.props} />)
     change(zh['contribution.application.paste'], 'a different entry')
-    fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
     await screen.findByText(applicationEntry.ownerPeerId)
     expect(readConsent().checked).toBe(false)
     expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.consent'] }).checked).toBe(false)
@@ -406,5 +411,91 @@ describe('joint route read-state freshness', () => {
     f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.props.scope, observation: observation({ ...state, agentId }, 2) }} />)
     fireEvent.click(screen.getByText(zh['native.route.title']))
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.route.paste']).value).toBe('')
+  })
+})
+
+describe('online entry validation', () => {
+  it.each(['claimed', 'closed', 'expired', 'denied', 'capacity', 'unavailable'] as const)(
+    'withholds permission for %s and permits a new explicit ready check', async (status) => {
+      const f = fixture()
+      vi.mocked(f.actions.probeNativeContribution).mockResolvedValueOnce({ status })
+      change(zh['contribution.application.paste'], 'tool-entry')
+      fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+      await screen.findByText(zh[`native.share.probe.${status}`])
+      expect(f.actions.probeNativeContribution).toHaveBeenCalledExactlyOnceWith({ entry: applicationEntry })
+      expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
+      expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+      await screen.findByText(zh['native.share.probe.ready'])
+      expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
+      for (const control of screen.getAllByRole<HTMLInputElement>('checkbox')) expect(control.checked).toBe(false)
+      expect(submit().disabled).toBe(true)
+    },
+  )
+
+  it('keeps permission hidden during the probe and ignores ready from a replaced draft', async () => {
+    const f = fixture()
+    const pending = Promise.withResolvers<ScopeContributionEntryProbeResult>()
+    vi.mocked(f.actions.probeNativeContribution).mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ status: 'closed' })
+    change(zh['contribution.application.paste'], 'old entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await waitFor(() => { expect(f.actions.probeNativeContribution).toHaveBeenCalledOnce() })
+    expect(screen.getByText(zh['native.share.verifying'])).toBeTruthy()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    change(zh['contribution.application.paste'], 'new entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(zh['native.share.probe.closed'])
+    await act(async () => { pending.resolve({ status: 'ready' }); await pending.promise })
+    expect(screen.queryByText(zh['native.share.probe.ready'])).toBeNull()
+    expect(screen.getByText(zh['native.share.probe.closed'])).toBeTruthy()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed probe without exposing the Host error or granting file permission', async () => {
+    const f = fixture()
+    vi.mocked(f.actions.probeNativeContribution).mockRejectedValueOnce(new Error('private Host diagnostic'))
+    change(zh['contribution.application.paste'], 'tool-entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(zh['native.share.probe.unavailable'])
+    expect(screen.queryByText('private Host diagnostic')).toBeNull()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('discards pending connection checks when the displayed Session changes', async () => {
+    const f = fixture()
+    const pending = Promise.withResolvers<ScopeContributionEntryProbeResult>()
+    vi.mocked(f.actions.probeNativeContribution).mockReturnValueOnce(pending.promise)
+    change(zh['contribution.application.paste'], 'old Session entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await waitFor(() => { expect(f.actions.probeNativeContribution).toHaveBeenCalledOnce() })
+    const otherAgent = 'another-native-session' as typeof agentId
+    f.rerender(<NativeContributionPanel {...f.props} agentId={otherAgent}
+      entry={{ status: 'ready', pending: false, value: { ...emptyStatus, agentId: otherAgent } }} />)
+    fireEvent.click(screen.getByText(zh['native.share.title']))
+    await act(async () => { pending.resolve({ status: 'ready' }); await pending.promise })
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).value).toBe('')
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByText(zh['native.share.probe.ready'])).toBeNull()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('requires a fresh check after a submitted capture has stopped', async () => {
+    const f = fixture()
+    await consentFields()
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false, value: capturedStatus }} />)
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false, value: emptyStatus }} />)
+    expect(screen.queryByText(zh['native.share.probe.ready'])).toBeNull()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['native.share.request'] })).toBeNull()
+    vi.mocked(f.actions.probeNativeContribution).mockResolvedValueOnce({ status: 'claimed' })
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(zh['native.share.probe.claimed'])
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
   })
 })

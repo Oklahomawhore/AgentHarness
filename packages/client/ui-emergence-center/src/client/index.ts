@@ -115,6 +115,7 @@ export function apply(ctx: Context): void {
     stopNativeContribution: request => nativeContributions.stop(request),
     leaveNativeJoin: request => nativeContributions.leaveJoin(request),
     previewNativeContribution: async text => unwrap(await ctx.remote.scopeAccess.previewContributionText({ text })),
+    probeNativeContribution: async request => unwrap(await ctx.remote.scopeAccess.probeContributionEntry(request)),
   }
   ctx.effect(() => ctx.remote.$on('scope-agent-contribution/changed', (agentId, revision) => {
     nativeContributions.changed(agentId, revision)

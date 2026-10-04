@@ -2179,6 +2179,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'local grants and receiving intents; no remote peer can call this inventory.',
       },
       {
+        signature: '@Remote(\'probeContributionEntry\') probeContributionEntry(request: ScopeContributionEntryProbeRequest): Promise<ScopeContributionEntryProbeResult>',
+        description: 'Inspect the addressed owner\'s entry before local collection consent, without applying or granting permission.',
+        parameters: [{ name: 'request', description: 'complete entry; only its direct address may differ from the owner\'s retained entry.' }],
+        returns: 'momentary entry availability, never a reservation; disposal rejects and apply still checks authority.',
+      },
+      {
         signature: '@Remote(\'previewContributionText\') previewContributionText(request: { readonly text: string }): Promise<ScopeContributionTransfer>',
         description: 'Validate pasted contribution text for authenticated local review without changing permission.',
         parameters: [{ name: 'request', description: 'complete versioned proposal or contribution invitation text.' }],
@@ -7064,6 +7070,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeContributionEntryId',
     declaration: 'export type ScopeContributionEntryId = Branded<\'ScopeContributionEntryId\'>;',
+  },
+  {
+    name: 'ScopeContributionEntryProbeRequest',
+    declaration: 'export interface ScopeContributionEntryProbeRequest {\n    readonly entry: ScopeContributionEntry;\n}',
+  },
+  {
+    name: 'ScopeContributionEntryProbeResult',
+    declaration: 'export interface ScopeContributionEntryProbeResult {\n    readonly status: \'ready\' | \'claimed\' | \'closed\' | \'expired\' | \'denied\' | \'capacity\' | \'unavailable\';\n}',
   },
   {
     name: 'ScopeContributionEntryRecoverRequest',
