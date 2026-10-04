@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "objective": "Update the payment client and its acceptance checks according to reported contract changes. Preserve uncertainty about deployed behavior.",
+  "scope": "Payment client and QA acceptance checks",
+  "source": {
+    "kind": "tool-observations",
+    "name": "payment-work-reports",
+    "tools": [
+      "Edit",
+      "Write"
+    ]
+  },
+  "recipients": {
+    "frontend": "Implement the frontend payment client. Do not own QA fixture seeds or test artifact logistics.",
+    "qa": "Implement payment contract acceptance checks, including fixture and test artifact requirements. Do not modify the client implementation."
+  },
+  "reports": [
+    {
+      "kind": "tool-observation",
+      "version": 1,
+      "tool": "Write",
+      "reportedStatus": "success",
+      "omissions": [],
+      "fields": {
+        "rootIndex": 0,
+        "path": "frontend/payment-client.ts",
+        "content": "export const paymentRequestField = \"paymentToken\";\nexport const retryLimit = 3;\n// Retry only NETWORK_TIMEOUT. Never retry PAYMENT_DECLINED.\n"
+      }
+    },
+    {
+      "kind": "tool-observation",
+      "version": 1,
+      "tool": "Write",
+      "reportedStatus": "success",
+      "omissions": [],
+      "fields": {
+        "rootIndex": 0,
+        "path": "qa/payment-contract.md",
+        "content": "QA fixture seed: 27183.\nWrite QA test artifacts to qa/artifacts/payment-contract.json.\nThese are test harness logistics, not requirements for the client implementation.\n"
+      }
+    },
+    {
+      "kind": "tool-observation",
+      "version": 1,
+      "tool": "Edit",
+      "reportedStatus": "success",
+      "omissions": [],
+      "fields": {
+        "rootIndex": 0,
+        "path": "frontend/payment-client.ts",
+        "oldString": "retryLimit = 3",
+        "newString": "retryLimit = 1",
+        "replaceAll": false
+      }
+    },
+    {
+      "kind": "tool-observation",
+      "version": 1,
+      "tool": "Edit",
+      "reportedStatus": "failure",
+      "omissions": [
+        "oldString",
+        "newString"
+      ],
+      "fields": {
+        "rootIndex": 0,
+        "path": "frontend/payment-client.ts",
+        "replaceAll": false,
+        "error": "Attempt to replace retryLimit = 1 with retryLimit = 9 failed before any change: permission denied."
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "A-frontend",
+      "afterSequence": 2,
+      "recipient": "frontend",
+      "requiredRelevant": [
+        1
+      ],
+      "requiredIrrelevant": [
+        2
+      ],
+      "currentReportedRetryLimit": 3
+    },
+    {
+      "id": "A-qa",
+      "afterSequence": 2,
+      "recipient": "qa",
+      "requiredRelevant": [
+        1,
+        2
+      ],
+      "requiredIrrelevant": [],
+      "currentReportedRetryLimit": 3
+    },
+    {
+      "id": "B-frontend",
+      "afterSequence": 3,
+      "recipient": "frontend",
+      "requiredRelevant": [
+        1,
+        3
+      ],
+      "requiredIrrelevant": [
+        2
+      ],
+      "currentReportedRetryLimit": 1
+    },
+    {
+      "id": "B-qa",
+      "afterSequence": 3,
+      "recipient": "qa",
+      "requiredRelevant": [
+        1,
+        2,
+        3
+      ],
+      "requiredIrrelevant": [],
+      "currentReportedRetryLimit": 1
+    },
+    {
+      "id": "C-frontend",
+      "afterSequence": 4,
+      "recipient": "frontend",
+      "requiredRelevant": [
+        1,
+        3,
+        4
+      ],
+      "requiredIrrelevant": [
+        2
+      ],
+      "currentReportedRetryLimit": 1
+    },
+    {
+      "id": "C-qa",
+      "afterSequence": 4,
+      "recipient": "qa",
+      "requiredRelevant": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "requiredIrrelevant": [],
+      "currentReportedRetryLimit": 1
+    }
+  ],
+  "semantic": {
+    "provider": "deepseek-official",
+    "model": "deepseek-flash",
+    "temperature": 0,
+    "reasoningEffort": "off",
+    "maxInputBytes": 32768,
+    "maxOutputTokens": 2048,
+    "maxOutputBytes": 262144,
+    "timeoutMs": 60000,
+    "maxConcurrentCalls": 1,
+    "maxCalls": 6
+  },
+  "limits": {
+    "maxContextBytes": 10000,
+    "wallTimeoutMs": 480000,
+    "cleanupTimeoutMs": 30000,
+    "grantLifetimeMs": 900000,
+    "maxKnownCostUsd": 1
+  },
+  "pricing": {
+    "checkedDate": "2026-10-04",
+    "url": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "currency": "USD",
+    "inputMissPerMillion": 0.3,
+    "inputHitPerMillion": 0.006,
+    "outputPerMillion": 1.2,
+    "basis": "peak list-price estimate; not invoice or hard monetary cap"
+  },
+  "execution": {
+    "kind": "live",
+    "endpoint": "https://api.deepseek.com",
+    "apiKeyEnv": "DEEPSEEK_API_KEY"
+  }
+}

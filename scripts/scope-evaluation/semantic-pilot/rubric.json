@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "method": "Human proposition review of update claims, separately from structural acceptance; do not grade by searching whole projection for numeric strings.",
+  "commonRequired": [
+    "paymentRequestField is paymentToken",
+    "Retry only NETWORK_TIMEOUT",
+    "Never retry PAYMENT_DECLINED",
+    "No claim of independent file/deployment verification"
+  ],
+  "roles": {
+    "frontend": {
+      "exclude": [
+        "QA fixture seed or artifact path as client requirements"
+      ]
+    },
+    "qa": {
+      "include": [
+        "QA fixture seed 27183",
+        "QA artifact path qa/artifacts/payment-contract.json"
+      ]
+    }
+  },
+  "stages": {
+    "A": {
+      "currentReportedRetryLimit": 3
+    },
+    "B": {
+      "currentReportedRetryLimit": 1,
+      "required": "Successful same-source correction supersedes the reported limit 3; retain unchanged E1 requirements."
+    },
+    "C": {
+      "currentReportedRetryLimit": 1,
+      "required": "Attempted value 9 failed before any change and does not establish a successful update or rollback."
+    }
+  },
+  "classifications": [
+    "pass",
+    "fail",
+    "indeterminate",
+    "unreviewed"
+  ],
+  "negativeControls": [
+    {
+      "claim": "PAYMENT_DECLINED may be retried.",
+      "expected": "fail",
+      "reason": "negation reversed"
+    },
+    {
+      "claim": "After the successful 3→1 edit, the current reported retry limit is 3.",
+      "expected": "fail",
+      "reason": "obsolete value retained"
+    },
+    {
+      "claim": "The failed attempt established retry limit 9.",
+      "expected": "fail",
+      "reason": "failure treated as success"
+    },
+    {
+      "claim": "No report is relevant to either recipient.",
+      "expected": "fail",
+      "reason": "required role information omitted"
+    }
+  ],
+  "limits": "Six synthetic cells reveal failures; they cannot establish collaboration quality, human time saved, representative reliability, or cost advantage."
+}

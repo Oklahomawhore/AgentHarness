@@ -70,6 +70,8 @@ A live runner needs named `dsh` profiles, production sampling and delivery, iden
 
 The four planned conditions are no sharing, original admitted publication projection, one shared summary, and recipient-specific facts. Every condition has the same complete context byte limit. The source edit trajectory is fixed; frontend and QA sessions form one sample. Native next-request behavior and idle activation are separate studies. A completed offline run does not authorize replacing missing live evidence with controlled provider responses.
 
+The separate [semantic pilot](semantic-pilot/README.md) freezes six auxiliary summary calls and their manual review rubric. Its local HTTP calibration checks production provider dispatch while recording zero live model attempts.
+
 <a id="dev-note"></a>
 ## Dev Note
 
