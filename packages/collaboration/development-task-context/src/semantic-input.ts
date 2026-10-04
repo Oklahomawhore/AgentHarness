@@ -1,6 +1,6 @@
 /** Deterministic evidence selection and attribution around recipient-directed model output. */
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
-import { isTerminalPublication, publicationInterval, publicationObservation } from './publication.ts'
+import { isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection, DevelopmentTaskContextOmission,
   DevelopmentTaskContextSourceRef } from './types.ts'
 import { semanticDigest, semanticJson, semanticReplySchema, semanticCapturedInputSchema,
@@ -45,6 +45,7 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
   const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef, historical: boolean): void => {
     selected.push({ kind: 'task', ...basis })
     const ended = new Set(context.filter(isTerminalPublication).map(publicationInterval))
+    const toolHistory = publicationToolHistory(context)
     const samples = context.map((publication) => {
       const sample = publicationObservation(publication)
       return sample === undefined ? undefined : { ...sample,
@@ -62,7 +63,8 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
       if (!terminal && interval !== undefined && ended.has(interval)) {
         omitted.push({ source, reason: 'withdrawn' }); continue
       }
-      if (sample !== undefined && sample.observation.sequence !== heads.get(sample.chain)) {
+      if (toolHistory[index]?.superseded === true
+        || (sample !== undefined && sample.observation.sequence !== heads.get(sample.chain))) {
         omitted.push({ source, reason: 'superseded' }); continue
       }
       if (terminal || sample !== undefined) {

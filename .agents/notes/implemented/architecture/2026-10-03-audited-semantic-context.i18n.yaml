@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-03-audited-semantic-context.md
-2026-10-03-audited-semantic-context.md: b94d72a45a97c15992ee60639f30629b8904655b
-2026-10-03-audited-semantic-context.zh.md: de4b5cd86df3f8739254afa38664df025f64625b
+2026-10-03-audited-semantic-context.md: a82e0a30d89f1d2d4df465a130abad747b6a6e5e
+2026-10-03-audited-semantic-context.zh.md: 86eae325718368987b6c00b4e79e20b474667ca3

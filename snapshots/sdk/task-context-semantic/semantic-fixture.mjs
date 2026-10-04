@@ -27,7 +27,7 @@ const grant = {
   version: 1, taskId, grantId: 'grant-semantic-snapshot', generation: 'grant-generation-one',
   ownerPeerId, contributorPeerId, captureId: 'capture-semantic-snapshot', captureGeneration: 'capture-generation-one',
   source: { kind: 'tool-observations', name: 'session-work', tools: ['Edit', 'Write'] },
-  expiresAt: now + 60000, maxSamples: 3, maxSampleBytes: 4096,
+  expiresAt: now + 60000, maxSamples: 4, maxSampleBytes: 4096,
 }
 const reports = [
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
@@ -35,12 +35,15 @@ const reports = [
   { kind: 'tool-observation', version: 1, tool: 'Edit', reportedStatus: 'success', omissions: [],
     fields: { rootIndex: 0, path: 'docs/coordination.md', oldString: 'Manual synchronization',
       newString: 'EDIT_BETA: synchronize authorized work automatically', replaceAll: false } },
+  { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
+    fields: { rootIndex: 0, path: 'src/retry.ts', content: 'export const retryPolicy = "WRITE_CURRENT";\n' } },
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure', omissions: ['content'],
     fields: { rootIndex: 0, path: 'src/retry.ts', error: 'FAILURE_GAMMA: permission denied' } },
 ]
 const summaries = [
   { marker: 'WRITE_ALPHA', text: 'The source reports writing the implementation retry policy (WRITE_ALPHA).' },
   { marker: 'EDIT_BETA', text: 'The source reports editing the collaboration documentation (EDIT_BETA).' },
+  { marker: 'WRITE_CURRENT', text: 'The source reports replacing the implementation retry policy (WRITE_CURRENT).' },
   { marker: 'FAILURE_GAMMA', text: 'A later Write failed with permission denied (FAILURE_GAMMA); it does not confirm a file update.' },
 ]
 const digest = value => createHash('sha256').update(value).digest('hex')
@@ -120,11 +123,15 @@ export async function apply(ctx) {
       await ctx.developmentTasks.checkout({ taskId, participantId, bindingId, sessionLabel: 'Implementation and documentation' })
     }
     if (turn < 4) {
-      const request = { grant, sourceId: digest(`semantic-snapshot/${turn}`), sequence: turn, result: reports[turn - 1] }
-      const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
-      assert.equal(result.outcome, 'published')
-      assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
-      admitted.push(result.publication)
+      const indices = turn === 1 ? [0, 1] : [turn]
+      for (const index of indices) {
+        const sequence = admitted.length + 1
+        const request = { grant, sourceId: digest(`semantic-snapshot/${sequence}`), sequence, result: reports[index] }
+        const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
+        assert.equal(result.outcome, 'published')
+        assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
+        admitted.push(result.publication)
+      }
     } else {
       const ended = await ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, ownerPeerId)
       assert.equal(ended.event.kind, 'peer-contribution-ended')
@@ -143,7 +150,7 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     const message = visible[0]
     assert.equal(message.source.backend.id, 'semantic')
-    assert.equal(message.source.revision, observedTurn + 3)
+    assert.equal(message.source.revision, observedTurn + 4)
     const json = content(message).split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
     assert.ok(json)
     const projection = JSON.parse(json)
@@ -153,18 +160,25 @@ export async function apply(ctx) {
       && item.source.publicationId === unrelated.id))
     assert.ok(!JSON.stringify(options.messages).includes('UNRELATED_ADMIN'))
     if (observedTurn < 4) {
-      assert.deepEqual(projection.updates.map(update => update.text), summaries.slice(0, observedTurn).map(value => value.text))
-      for (const [index, update] of projection.updates.entries()) {
+      const indices = observedTurn === 1 ? [0, 1] : observedTurn === 2 ? [1, 2] : [1, 2, 3]
+      assert.deepEqual(projection.updates.map(update => update.text), indices.map(index => summaries[index].text))
+      for (const [position, update] of projection.updates.entries()) {
+        const index = indices[position]
         assert.equal(update.sources[0].source.publicationId, admitted[index].id)
         assert.equal(update.sources[0].quote, summaries[index].marker)
         assert.equal(update.sources[0].attribution.authorization.contributorPeerId, contributorPeerId)
+      }
+      if (observedTurn > 1) {
+        assert.ok(!JSON.stringify(options.messages).includes('WRITE_ALPHA'))
+        assert.deepEqual(message.source.omittedSources.filter(item => item.reason === 'superseded')
+          .map(item => item.source.publicationId), [admitted[0].id])
       }
     } else {
       assert.deepEqual(projection.updates, [])
       assert.equal(projection.mandatory.length, 1)
       assert.equal(projection.mandatory[0].kind, 'withdrawal')
-      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 3)
-      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md']) {
+      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 4)
+      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'WRITE_CURRENT', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md']) {
         assert.ok(!JSON.stringify(options.messages).includes(value), 'withdrawn reports must not remain in the actual request')
       }
     }

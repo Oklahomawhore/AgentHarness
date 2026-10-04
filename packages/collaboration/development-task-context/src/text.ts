@@ -2,7 +2,7 @@
 
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
 import DevelopmentTaskContextBackend from './backend.ts'
-import { isTerminalPublication, publicationInterval, publicationObservation } from './publication.ts'
+import { isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type {
   DevelopmentTaskContextInput,
   DevelopmentTaskContextOmission,
@@ -36,19 +36,22 @@ interface PublicationCandidate {
   readonly publication: DevelopmentTaskContextPublication
   readonly withdrawn: boolean
   readonly superseded: boolean
+  readonly toolChain: string | undefined
 }
 
 /** Selects complete original publications; it performs no semantic inference or summarization. */
 export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
-  readonly identity = { id: 'text', revision: '6' }
+  readonly identity = { id: 'text', revision: '7' }
 
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   override async compute(input: DevelopmentTaskContextInput): Promise<DevelopmentTaskContextProjection> {
     input.signal.throwIfAborted()
     const { task, inherited } = input.view
     const selectedSources: DevelopmentTaskContextSourceRef[] = [{ kind: 'task', taskId: task.id, revision: task.revision }]
-    const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef): PublicationCandidate[] => {
+    const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef,
+      snapshot: number): PublicationCandidate[] => {
       const ended = new Set(context.filter(isTerminalPublication).map(publicationInterval))
+      const toolHistory = publicationToolHistory(context)
       const samples = context.map((publication) => {
         const typed = publicationObservation(publication)
         return typed === undefined ? undefined : {
@@ -61,18 +64,20 @@ export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskCo
       }
       return context.map<PublicationCandidate>((publication, index) => {
         const sample = samples[index]
+        const tool = toolHistory[index]
         return {
           source: { kind: 'publication', ...basis, publicationId: publication.id }, publication,
           withdrawn: !isTerminalPublication(publication)
             && publicationInterval(publication) !== undefined && ended.has(publicationInterval(publication)),
-          superseded: sample !== undefined && sample.sequence !== heads.get(sample.chain),
+          superseded: tool?.superseded === true || (sample !== undefined && sample.sequence !== heads.get(sample.chain)),
+          toolChain: tool === undefined ? undefined : JSON.stringify([snapshot, tool.chain]),
         }
       })
     }
-    const candidates = collect(task.context, { taskId: task.id, revision: task.revision })
-    for (const source of inherited?.sources ?? []) {
+    const candidates = collect(task.context, { taskId: task.id, revision: task.revision }, 0)
+    for (const [index, source] of (inherited?.sources ?? []).entries()) {
       selectedSources.push({ kind: 'task', ...source.parent })
-      candidates.push(...collect(source.context, source.parent))
+      candidates.push(...collect(source.context, source.parent, index + 1))
     }
     const included = new Set<PublicationCandidate>()
     const omissions = (): DevelopmentTaskContextOmission[] => candidates.filter(item => !included.has(item)).map(item => ({
@@ -103,15 +108,29 @@ export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskCo
     if (Buffer.byteLength(render(), 'utf8') > input.maxContextBytes) {
       throw new Error('development-task-context: mandatory Task context exceeds maxContextBytesPerStep')
     }
-    // Terminal notices precede ordinary publications; output keeps source order.
-    for (const candidate of [...candidates].sort((left, right) =>
-      Number(isTerminalPublication(right.publication)) - Number(isTerminalPublication(left.publication))
-      || right.publication.publishedAt - left.publication.publishedAt)) {
+    const groups: { candidates: PublicationCandidate[]; terminal: boolean; publishedAt: number }[] = []
+    const toolGroups = new Map<string, (typeof groups)[number]>()
+    for (const candidate of candidates) {
       if (candidate.withdrawn || candidate.superseded) continue
-      if (!isTerminalPublication(candidate.publication)
-        && candidate.publication.publishedBy === input.recipient.participantId) continue
-      included.add(candidate)
-      if (Buffer.byteLength(render(), 'utf8') > input.maxContextBytes) included.delete(candidate)
+      const terminal = isTerminalPublication(candidate.publication)
+      if (!terminal && candidate.publication.publishedBy === input.recipient.participantId) continue
+      const existing = candidate.toolChain === undefined ? undefined : toolGroups.get(candidate.toolChain)
+      if (existing !== undefined) {
+        existing.candidates.push(candidate)
+        existing.publishedAt = Math.max(existing.publishedAt, candidate.publication.publishedAt)
+      } else {
+        const group = { candidates: [candidate], terminal, publishedAt: candidate.publication.publishedAt }
+        groups.push(group)
+        if (candidate.toolChain !== undefined) toolGroups.set(candidate.toolChain, group)
+      }
+    }
+    // Each retained file history is indivisible; terminal notices precede it and output keeps source order.
+    for (const group of groups.sort((left, right) =>
+      Number(right.terminal) - Number(left.terminal) || right.publishedAt - left.publishedAt)) {
+      for (const candidate of group.candidates) included.add(candidate)
+      if (Buffer.byteLength(render(), 'utf8') > input.maxContextBytes) {
+        for (const candidate of group.candidates) included.delete(candidate)
+      }
     }
     return {
       activation: { kind: 'exact' },

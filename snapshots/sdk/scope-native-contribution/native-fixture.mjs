@@ -107,9 +107,13 @@ export async function apply(ctx) {
       const phases = agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/join-read')
       assert.deepEqual(phases.map(event => event.data.phase), ['planned', 'adopted'])
     } else if (turn === 2) {
-      await runSource([toolReply('source-failed-edit', 'edit', { file_path: 'project/src/client.ts', old_string: 'DOES_NOT_EXIST', new_string: 'NEVER_APPLIED' })])
-      await until('failed Edit publication', () => owner.ctx.developmentTasks.get({ taskId: task.id }).context.length === 4)
-      const failure = owner.ctx.developmentTasks.get({ taskId: task.id }).context[3].peerToolObservation
+      await runSource([
+        toolReply('source-rewrite-client', 'write', { file_path: 'project/src/client.ts', content: 'export const mode = "NATIVE_REPLACEMENT";\n' }),
+        toolReply('source-failed-edit', 'edit', { file_path: 'project/src/client.ts', old_string: 'DOES_NOT_EXIST', new_string: 'NEVER_APPLIED' }),
+      ])
+      await until('replacement Write and failed Edit publications', () => owner.ctx.developmentTasks.get({ taskId: task.id }).context.length === 5)
+      assert.equal(await readFile(join(allowed, 'src/client.ts'), 'utf8'), 'export const mode = "NATIVE_REPLACEMENT";\n')
+      const failure = owner.ctx.developmentTasks.get({ taskId: task.id }).context[4].peerToolObservation
       assert.equal(failure.reportedStatus, 'failure')
       assert.ok(!Object.hasOwn(failure.fields, 'newString'))
       assert.ok(failure.omissions.includes('oldString') && failure.omissions.includes('newString'))
@@ -127,18 +131,25 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     const projection = visible[0].source.projection
     assert.equal(projection.backend.id, 'text')
-    assert.equal(projection.backend.revision, '6')
-    assert.equal(projection.taskRevision, requests + 4)
+    assert.equal(projection.backend.revision, '7')
+    assert.equal(projection.taskRevision, requests === 1 ? 5 : requests + 5)
     const text = options.messages.map(body).join('\n')
     if (requests < 3) {
-      for (const marker of ['NATIVE_ALPHA', 'NATIVE_BETA', 'NATIVE_CORRECTED']) assert.ok(text.includes(marker))
+      assert.ok(text.includes('NATIVE_BETA'))
+      if (requests === 1) {
+        for (const marker of ['NATIVE_ALPHA', 'NATIVE_CORRECTED']) assert.ok(text.includes(marker))
+      } else {
+        assert.ok(text.includes('NATIVE_REPLACEMENT'))
+        for (const marker of ['NATIVE_ALPHA', 'NATIVE_CORRECTED']) assert.ok(!text.includes(marker))
+        assert.equal(projection.omittedSources.filter(item => item.reason === 'superseded').length, 2)
+      }
       assert.ok(text.includes('not a current file snapshot'))
       assert.ok(text.includes('snapshot-native-source-peer'))
-      assert.equal(sentSamples, requests === 1 ? 3 : 4)
+      assert.equal(sentSamples, requests === 1 ? 3 : 5)
     } else {
-      for (const marker of ['NATIVE_ALPHA', 'NATIVE_BETA', 'NATIVE_CORRECTED', 'NEVER_APPLIED']) assert.ok(!text.includes(marker))
+      for (const marker of ['NATIVE_ALPHA', 'NATIVE_BETA', 'NATIVE_CORRECTED', 'NATIVE_REPLACEMENT', 'NEVER_APPLIED']) assert.ok(!text.includes(marker))
       assert.ok(text.includes('revoked'))
-      assert.equal(projection.omittedSources.filter(item => item.reason === 'withdrawn').length, 4)
+      assert.equal(projection.omittedSources.filter(item => item.reason === 'withdrawn').length, 5)
     }
     if (requests === 2) { assert.ok(text.includes('failure')); assert.ok(!text.includes('NEVER_APPLIED')) }
     assert.deepEqual(ctx.developmentTasks.list({ limit: 32 }), [])
@@ -148,7 +159,9 @@ export async function apply(ctx) {
     const replay = Session.create(receiver.id, events, receiver.session.header)
     assert.deepEqual(scopeMessages(replay.deriveMessages()), visible)
     const original = events.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context')
-    assert.ok(body(original.data).includes('NATIVE_BETA'), 'source withdrawal does not erase the original Session evidence')
+    for (const marker of ['NATIVE_ALPHA', 'NATIVE_BETA', 'NATIVE_CORRECTED']) {
+      assert.ok(body(original.data).includes(marker), 'replacement and withdrawal retain the original Session evidence')
+    }
     return next()
   })
 }

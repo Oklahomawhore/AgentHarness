@@ -77,7 +77,8 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     this.config = deepFreeze(SemanticDevelopmentTaskContextBackend.Config(config))
     if ([config.auditSessionId, config.provider, config.model].some(value => value.trim() === '')
       || config.reasoningEffort?.trim() === '') throw new Error('semantic backend: identity and route must be nonempty')
-    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 1, system: SYSTEM, config: this.config }) })
+    // Source selection changes invalidate consumer caches without rewriting retained audit requests.
+    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 2, system: SYSTEM, config: this.config }) })
     this.ready = SemanticAudit.open(ctx, this.config.auditSessionId)
     // compute and disposal observe the same initialization failure; construction must not leave an unhandled rejection.
     void this.ready.catch(() => undefined)

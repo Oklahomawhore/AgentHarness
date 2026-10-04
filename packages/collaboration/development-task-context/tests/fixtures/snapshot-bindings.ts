@@ -29,8 +29,6 @@ export async function apply(ctx: Context): Promise<void> {
     },
   }])
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
-    const decision = await next()
-    if (decision.kind === 'reject') return decision
     const participantId = developmentAgentParticipantId(agent.id)
     if (turn === 1) {
       await ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Snapshot Agent' })
@@ -38,7 +36,7 @@ export async function apply(ctx: Context): Promise<void> {
     } else if (turn === 2) {
       await ctx.developmentTasks.clear({ bindingId, participantId })
     }
-    return decision
+    return await next()
   })
   ctx.on('llm/stream', (options, next) => {
     const text = options.messages.flatMap(message => message.content)

@@ -16,7 +16,7 @@ Status: implemented
 
 后台恢复在本地变更队列内取得最早待确认样本或撤回的快照，在队列外发送 peer 请求，再在队列内采用响应。采用时重新核对当前采集标识、代际、完整邀请和保留样本，保留更新的本地序列和回执状态。结束优先于发布；只有匹配的拥有者终止回执才能清理 outbox。取消使旧 workers 失效，销毁等待其完成。前景采集和启动恢复保留既有串行行为。
 
-[文本后端](../../../../packages/collaboration/development-task-context/README.zh.md) 保留完整 publication 文本与来源信息。只有文本以换行和逐字节相同的序列化观察结尾时，投影才省略结构化 peer 工具观察。其他文本不变，不匹配的表示保留两个字段。耐久 publication、权限检查、来源选择、失败字段和整条 publication 的预算准入保持不变。后端 revision 6 使缓存的 revision 5 投影失效。
+[文本后端](../../../../packages/collaboration/development-task-context/README.zh.md) 保留完整 publication 文本与来源信息。只有文本以换行和逐字节相同的序列化观察结尾时，投影才省略结构化 peer 工具观察。其他文本不变，不匹配的表示保留两个字段。去重保留耐久 publication、权限检查和失败字段。[完整 Write 检查点](../feature/2026-10-04-tool-report-checkpoints.zh.md) 管理通用报告选择和整段预算准入。
 
 ## 考虑过的替代方案
 

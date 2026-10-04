@@ -55,3 +55,32 @@ export function publicationObservation(publication: DevelopmentTaskContextPublic
     observation, chain: JSON.stringify([observation.observerNodeId, observation.grantId]),
   }
 }
+
+/**
+ * Partition one snapshot's generic tool reports and retire history before its last complete reported Write.
+ * @param context - Publications from exactly one current Task or frozen parent snapshot.
+ * @returns Per-publication file chain and supersession; terminal and non-tool publications have no tool chain.
+ */
+export function publicationToolHistory(context: readonly DevelopmentTaskContextPublication[]): readonly ({
+  readonly chain: string
+  readonly superseded: boolean
+} | undefined)[] {
+  const checkpoints = new Map<string, number>()
+  const samples = context.map((publication) => {
+    const tool = publication.peerToolObservation ?? publication.localToolObservation
+    const source = publication.peerContribution?.grant.source ?? publication.localContribution?.grant.source
+    const interval = publicationInterval(publication)
+    if (tool === undefined || source?.kind !== 'tool-observations' || interval === undefined
+      || isTerminalPublication(publication)) return undefined
+    const chain = JSON.stringify([interval, source.name, [...source.tools].sort(), tool.fields.rootIndex, tool.fields.path])
+    if (tool.tool === 'Write' && tool.reportedStatus === 'success' && tool.fields.content !== undefined) {
+      checkpoints.set(chain, Math.max(checkpoints.get(chain) ?? 0, tool.sequence))
+    }
+    return { chain, sequence: tool.sequence }
+  })
+  return samples.map((sample) => {
+    if (sample === undefined) return undefined
+    const checkpoint = checkpoints.get(sample.chain)
+    return { chain: sample.chain, superseded: checkpoint !== undefined && sample.sequence < checkpoint }
+  })
+}
