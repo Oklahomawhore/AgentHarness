@@ -1,4 +1,4 @@
-/** Existing owner Agent reacts to a peer's real file work using bounded local automatic permission. */
+/** Existing owner Agent pauses before reserving another turn when current peer file evidence exceeds its context budget. */
 import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -18,6 +18,7 @@ export const name = 'scope-owner-idle-snapshot'
 export const inject = ['agents', 'scopeAgentContext', 'scopeAgentContributions', 'scopeAccess', 'developmentTasks', 'developmentRooms', 'sessionProjections', 'llm']
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+const oversizedPeerContent = `PEER_CURRENT_OVER_BUDGET\n${'x'.repeat(16384)}\n`
 const reply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
   { type: 'block-end', index: 0, block: { type: 'text', text } }, { type: 'finish', reason: { kind: 'stop' } }]
 async function until(label, predicate) {
@@ -59,7 +60,7 @@ export async function apply(ctx) {
       await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: 'idle-owner-binding' })
       const epoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
       target = { taskId: task.id, taskBindingId: 'idle-owner-binding', expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
-      const limits = { expiresAt: Date.now() + 50000, maxSamples: 4, maxSampleBytes: 8192 }
+      const limits = { expiresAt: Date.now() + 50000, maxSamples: 4, maxSampleBytes: 32768 }
       await ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null, taskId: task.id,
         bindingId: target.taskBindingId, expectedBindingEpoch: target.expectedBindingEpoch, roots: [ownerRoot], tools: ['write'], limits })
       await until('local capture', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.collecting)
@@ -73,17 +74,19 @@ export async function apply(ctx) {
         expectedProposal: proposal.capture.proposal, limits, ownerAddress })
       await until('peer capture', async () => (await source.ctx.scopeAgentContributions.status({ agentId: peer.id })).capture?.collecting)
       const bound = await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target,
-        automatic: { goal: 'Update the owner result when peer work changes.', activationLimit: 1, maxStepsPerTurn: 2, minIntervalMs: 0 } })
+        automatic: { goal: 'Update the owner result when peer work changes.', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 } })
       bindingId = bound.binding.id
-      trigger = async () => {
-        const call = { type: 'tool-call', id: 'idle-peer-write', name: 'write',
-          arguments: JSON.stringify({ file_path: 'peer.txt', content: 'PEER_AUTOMATIC_TRIGGER\n' }) }
+      trigger = async (content, sequence) => {
+        const call = { type: 'tool-call', id: `idle-peer-write-${sequence}`, name: 'write',
+          arguments: JSON.stringify({ file_path: 'peer.txt', content }) }
         source.adapter.script.push([{ type: 'block-start', index: 0, blockType: 'tool-call' },
           { type: 'block-end', index: 0, block: call }, { type: 'finish', reason: { kind: 'tool-calls' } }], reply('Peer finished.'))
         peer.followup(createUserMessage({ content: [{ type: 'text', text: 'Complete the peer implementation.' }], source: { kind: 'user' } }))
         await peer.whenIdle()
-        assert.equal(await readFile(join(source.workspace, 'peer.txt'), 'utf8'), 'PEER_AUTOMATIC_TRIGGER\n')
-        await until('peer durable publication', () => ctx.developmentTasks.get({ taskId: task.id }).context.some(item => item.peerToolObservation !== undefined))
+        assert.equal(await readFile(join(source.workspace, 'peer.txt'), 'utf8'), content)
+        await until(`peer durable publication ${sequence}`, () => ctx.developmentTasks.get({ taskId: task.id }).context
+          .some(item => item.peerToolObservation?.sequence === sequence && item.peerToolObservation.tool === 'Write'
+            && item.peerToolObservation.fields.content === content))
       }
       stage = 'first'
     } else if (turn === 2 && step === 2) {
@@ -95,6 +98,37 @@ export async function apply(ctx) {
       assert.equal(last.data.turn, 2)
       assert.equal(last.data.step, 2)
       assert.equal(evidence.completed.requestSeq, last.seq)
+      const state = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentContext')
+      assert.equal(state.binding.id, bindingId)
+      assert.equal(state.mode, 'paused')
+      assert.equal(state.pauseReason, 'coverage')
+      assert.equal(state.automatic.activationLimit, 2)
+      assert.equal(state.usedBudget, 1)
+      assert.equal(state.pendingActivation, null)
+      assert.equal(requests, 3)
+      const events = agent.session.snapshotEvents()
+      assert.equal(events.filter(event => event.type === 'scope-agent-context/evaluation' && event.data.decision === 'activate').length, 1)
+      assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-pulse').length, 1)
+      const blocked = events.findLast(event => event.type === 'scope-agent-context/evaluation')
+      assert.equal(blocked.data.decision, 'blocked-current')
+      assert.equal(blocked.data.bindingId, bindingId)
+      assert.equal(blocked.data.activationId, null)
+      assert.equal(blocked.data.projection.activation.kind, 'exact')
+      assert.equal(blocked.data.projection.taskRevision, 6)
+      assert.equal(blocked.data.projection.maxContextBytes, 12000)
+      assert.equal(ctx.developmentTasks.get({ taskId: task.id }).revision, 6)
+      const publication = ctx.developmentTasks.get({ taskId: task.id }).context
+        .find(item => item.peerToolObservation?.sequence === 2)
+      assert.equal(publication.peerToolObservation.tool, 'Write')
+      assert.equal(publication.peerToolObservation.reportedStatus, 'success')
+      assert.deepEqual(publication.peerToolObservation.omissions, [])
+      assert.equal(publication.peerToolObservation.fields.content, oversizedPeerContent)
+      assert.ok(blocked.data.projection.omittedSources.some(item => item.source.kind === 'publication'
+        && item.source.publicationId === publication.id && item.reason === 'budget'))
+      assert.ok(!blocked.data.projection.text.includes('PEER_AUTOMATIC_TRIGGER'))
+      assert.ok(!blocked.data.projection.text.includes('PEER_CURRENT_OVER_BUDGET'))
+      assert.ok(events.some(event => event.type === 'user/message' && event.data.source.kind === 'development-task-context'
+        && body(event.data).includes('PEER_AUTOMATIC_TRIGGER')))
       assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.collecting, true)
       await ctx.scopeAgentContext.leaveLocalTask({ agentId: agent.id, expectedBindingId: bindingId, ...target })
       await until('local source ended', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture === null)
@@ -104,9 +138,20 @@ export async function apply(ctx) {
     return next()
   }, { prepend: true })
   ctx.on('agent/status', ({ agent, status }) => {
-    if (agent !== owner || status !== 'idle' || stage !== 'first') return
-    stage = 'triggered'
-    own(trigger())
+    if (agent !== owner || status !== 'idle') return
+    if (stage === 'first') {
+      stage = 'triggered'
+      own(trigger('PEER_AUTOMATIC_TRIGGER\n', 1))
+    } else if (stage === 'triggered') {
+      stage = 'oversized'
+      own((async () => {
+        const ended = agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
+        assert.equal(ended.data.turn, 2)
+        assert.equal(ended.data.reason.kind, 'completed')
+        assert.equal(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence').completed.turnEndSeq, ended.seq)
+        await trigger(oversizedPeerContent, 2)
+      })())
+    }
   })
   ctx.on('llm/stream', (options, next) => {
     requests++
@@ -114,6 +159,7 @@ export async function apply(ctx) {
     const visible = contexts(options.messages)
     assert.equal(visible.length, 1)
     const text = body(visible[0])
+    assert.ok(!text.includes('PEER_CURRENT_OVER_BUDGET'))
     if (requests === 4) {
       assert.equal(visible[0].source.form, 'disconnected')
       assert.ok(!text.includes('PEER_AUTOMATIC_TRIGGER'))

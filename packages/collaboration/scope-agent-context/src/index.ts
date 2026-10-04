@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
+import { blocksCurrentCoverage } from './coverage.ts'
 import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { joinReadEventSchema, joinReadHistory } from './join-read.ts'
 import { routeEventSchema } from './route.ts'
@@ -1287,8 +1288,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     }
     const initialBinding = initial.binding
     this.contextMessage(initialBinding, result.projection)
-    if (('kind' in result.projection || result.projection.version === 2) && result.projection.activation.kind === 'recipient-evidence'
-      && result.projection.activation.coverage === 'blocked-current') {
+    if (blocksCurrentCoverage(result.projection, true)) {
       this.evaluate(runtime, 'blocked-current', result.projection, null)
       this.pauseRuntime(runtime, 'coverage')
       this.withdrawIdle(runtime, 'failed')
@@ -1393,11 +1393,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         this.pauseRuntime(runtime, result.status === 'unavailable' ? 'unavailable' : 'terminal')
         return this.withoutFacts(runtime, decision, messages, external, result.status)
       }
-      if (('kind' in result.projection || result.projection.version === 2) && result.projection.activation.kind === 'recipient-evidence'
-        && result.projection.activation.coverage === 'blocked-current') {
+      const automatic = runtime.activeTurn === turn
+      if (blocksCurrentCoverage(result.projection, automatic)) {
         this.evaluate(runtime, 'blocked-current', result.projection, null)
         this.pauseRuntime(runtime, 'coverage')
-        return this.withoutFacts(runtime, decision, messages, external, 'failed')
+        const withdrawn = this.withoutFacts(runtime, decision, messages, external, 'failed')
+        // Tool continuations still belong to the automatic turn after its pulse has been consumed.
+        return automatic && external.length === 0 ? { kind: 'reject' } : withdrawn
       }
       let message: UserMessage
       try { message = this.contextMessage(state.binding, result.projection) } catch {

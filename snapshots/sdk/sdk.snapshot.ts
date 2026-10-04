@@ -101,7 +101,7 @@ function dirOf(url: string): string {
 
 interface SdkAssertions {
   /** Observe completed background evaluations before issuing the next fixture prompt. */
-  afterTurnEvaluations?: readonly { turn: number; taskRevision: number; decision: 'suppress-unchanged' }[]
+  afterTurnEvaluations?: readonly { turn: number; taskRevision: number; decision: 'suppress-unchanged' | 'blocked-current' }[]
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
@@ -126,7 +126,10 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
-  'scope-owner-idle': { expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.' },
+  'scope-owner-idle': {
+    expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
+    afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
+  },
   'scope-owner-participation': {
     expectedFinalResponse: 'Both source captures ended; historical evidence remains.',
   },

@@ -9,6 +9,8 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import DevelopmentRooms, { type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room'
 import DevelopmentTasks, { type DevelopmentTaskBindingId } from '@deepseek-ai/dsh-development-task'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
+import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
+import type { DevelopmentTaskContextInput } from '@deepseek-ai/dsh-development-task-context/types'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -61,6 +63,31 @@ function evidenceProjection(text: string, revision: number, evidence: string, co
     digest: createHash('sha256').update(evidence).digest('hex'), coverage })
   const fields = { ...original, version: 2 as const, activation }
   return projectionSchema.parse({ ...fields, projectionId: projectionDigest(fields) })
+}
+
+// These are actual Text computations; only the remote authorized delivery is controlled by this fixture.
+async function textProjection(ctx: Context, oversized: boolean, legacy = false): Promise<ScopeAccessProjection> {
+  const provider = ctx.get('developmentTaskContextBackend') ?? new TextBackend(ctx)
+  const input: DevelopmentTaskContextInput = {
+    view: { task: {
+      id: invitation.taskId, revision: oversized ? 2 : 1,
+      ownerNodeId: 'owner-node' as DevelopmentTaskContextInput['view']['task']['ownerNodeId'],
+      hiddenRoomId: 'room' as DevelopmentTaskContextInput['view']['task']['hiddenRoomId'],
+      origin: { kind: 'root' }, runtime: 'ready', objective: 'Apply current payment policy', scope: 'Payment client',
+      createdBy: 'author' as DevelopmentParticipantId, createdAt: 1, updatedAt: 2,
+      context: [{ id: 'current-report', publishedAt: 1, publishedBy: 'author' as DevelopmentParticipantId,
+        text: oversized ? 'MISSING_CORRECTION'.repeat(500) : 'DELIVERED_BASELINE' }],
+    } },
+    recipient: { participantId: 'reader' as DevelopmentParticipantId },
+    maxContextBytes: 6000, signal: new AbortController().signal,
+  }
+  const output = await provider.compute(input)
+  const fields = { ...projection('', input.view.task.revision), ...output, backend: provider.identity,
+    maxContextBytes: input.maxContextBytes, version: 2 as const }
+  const current = projectionSchema.parse({ ...fields, projectionId: projectionDigest(fields) })
+  if (!legacy) return current
+  const { version: _version, activation: _activation, ...old } = fields
+  return projectionSchema.parse({ ...old, projectionId: projectionDigest(old) })
 }
 
 // Only the external authorized read/wait service is controlled; Agents, inboxes, Session projection, Loader, and Loop are real.
@@ -579,6 +606,86 @@ describe('native scope context through real Loader and AgentLoop', () => {
       const freshMessages = adapter.requests[1]!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-pulse')
       expect(freshMessages).toHaveLength(1) // Only the first, already logged historical pulse remains.
     }
+  })
+
+  it.each([false, true])('pauses real Text budget omissions without a new reservation, retaining manual delivery; legacy=%s', async (legacy) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const complete = await textProjection(ctx, false, legacy)
+    const incomplete = await textProjection(ctx, true, legacy)
+    expect(incomplete.omittedSources).toEqual([{ source: { kind: 'publication', taskId: invitation.taskId,
+      revision: 2, publicationId: 'current-report' }, reason: 'budget' }])
+    access.result = { status: 'active', projection: complete }
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await requests(adapter, 1)
+    await agent.whenIdle()
+    const baseline = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
+    access.change({ status: 'active', projection: incomplete })
+    await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('coverage')
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+    expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toEqual(baseline)
+    agent.followup(user('Continue this explicit request'))
+    await requests(adapter, 2)
+    await agent.whenIdle()
+    expect(text(adapter.requests[1]!)).toContain(incomplete.text)
+    expect(text(adapter.requests[1]!)).not.toContain('DELIVERED_BASELINE')
+    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+  })
+
+  it('keeps partial Text coverage usable for an explicitly passive manual request', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const incomplete = await textProjection(ctx, true)
+    access.result = { status: 'active', projection: incomplete }
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic: null })
+    agent.followup(user('Read the available context'))
+    await requests(adapter, 1)
+    await agent.whenIdle()
+    expect(text(adapter.requests[0]!)).toContain(incomplete.text)
+    expect((await state(ctx, agent.id))).toMatchObject({ mode: 'passive', usedBudget: 0, pauseReason: null })
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/evaluation')).toEqual([])
+  })
+
+  it.each([false, true])('rechecks real Text coverage for a reserved pulse while retaining human input=%s', async (withUser) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    access.result = { status: 'active', projection: await textProjection(ctx, false) }
+    const incomplete = await textProjection(ctx, true)
+    ctx.on('agent/inbox/inserted', ({ message }) => {
+      if (message.source.kind !== 'scope-agent-pulse') return
+      access.result = { status: 'active', projection: incomplete }
+      if (withUser) agent.inbox.append('next-step', user('Keep this human request'))
+    })
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('coverage')
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(withUser ? 1 : 0)
+    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+    expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toBeNull()
+    if (withUser) {
+      expect(text(adapter.requests[0]!)).toContain('Keep this human request')
+      expect(text(adapter.requests[0]!)).toContain('No current shared scope facts')
+      expect(adapter.requests[0]!.messages.some(message => message.role === 'user'
+        && message.source.kind === 'scope-agent-pulse')).toBe(false)
+    }
+  })
+
+  it('does not dispatch a contextless tool continuation when current Text coverage becomes incomplete', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    access.result = { status: 'active', projection: await textProjection(ctx, false) }
+    const incomplete = await textProjection(ctx, true)
+    adapter.toolCalls = 1
+    ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Publish a larger correction',
+      parameters: {}, execute: async () => {
+        access.change({ status: 'active', projection: incomplete })
+        return [{ type: 'text', text: 'Correction published' }]
+      } }))
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('coverage')
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
+    expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toBeNull()
+    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
   })
 
   it('pauses blocked current coverage before reserving and withdraws older current facts', async () => {
