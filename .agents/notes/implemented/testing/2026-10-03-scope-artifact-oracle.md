@@ -23,4 +23,6 @@ A separate file workbench exposes exact file permissions without an arbitrary sh
 
 ## Consequences
 
+The separate [data-artifact study](2026-10-04-scope-data-artifact-study.md) accepts unknown JSON through a fixed interpreter; it does not replace this executable-source restriction.
+
 The repository gains reproducible artifact grading without claiming product benefit. The five synthetic cases are narrow and do not cover arbitrary semantic decisions. The offline command does not establish live provider behavior, fair baseline comparisons, or model cost. The [runtime calibration decision](2026-10-03-scope-native-evaluation.md) owns execution evidence beyond artifact recognition.

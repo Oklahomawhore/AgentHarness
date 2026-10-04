@@ -31,4 +31,6 @@ The [native checks](../../../../scripts/scope-evaluation/native-run.spec.ts) cov
 
 ## Consequences
 
+The [ordinary data-artifact study](2026-10-04-scope-data-artifact-study.md) owns production-provider inference on non-executable artifacts; this controlled runtime calibration remains separate.
+
 The checker can inspect and retain execution restrictions and cleanup evidence for its registered fixtures. It cannot accept arbitrary model-generated tests or treat a controlled response as a model trial. Model inference, quality comparisons, and cost-benefit measurements remain separate evidence; controlled executions record zero model trials and unknown model usage and cost.

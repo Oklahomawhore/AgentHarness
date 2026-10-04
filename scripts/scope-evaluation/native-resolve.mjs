@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url'
 export function resolveNativeModules(repo) {
   const owners = {
     scope: join(repo, 'packages/collaboration/claude-scope/package.json'),
+    capture: join(repo, 'packages/collaboration/scope-agent-contribution/package.json'),
     sdk: join(repo, 'packages/bundle/sdk-minimal/package.json'),
     jsonl: join(repo, 'packages/session/session-persistence-jsonl/package.json'),
   }
@@ -31,6 +32,10 @@ export function resolveNativeModules(repo) {
     Projection: ['sdk', '@deepseek-ai/dsh-session-projection'], Prompt: ['sdk', '@deepseek-ai/dsh-system-prompt'],
     Tools: ['sdk', '@deepseek-ai/dsh-tools'], Jsonl: ['sdk', '@deepseek-ai/dsh-session-persistence-jsonl'],
     Native: ['scope', '@deepseek-ai/dsh-scope-agent-context'],
+    DeepSeek: ['sdk', '@deepseek-ai/dsh-llm-deepseek'],
+    Semantic: ['scope', '@deepseek-ai/dsh-development-task-context/semantic'],
+    FsLocal: ['capture', '@deepseek-ai/dsh-fs-local'], FsPolicy: ['capture', '@deepseek-ai/dsh-fs-observation-policy'],
+    ToolFs: ['capture', '@deepseek-ai/dsh-tool-fs'], Contribution: ['capture', '@deepseek-ai/dsh-scope-agent-contribution'],
   }
   return Object.fromEntries(Object.entries(names).map(([key, [owner, specifier]]) => {
     const anchor = owners[owner]

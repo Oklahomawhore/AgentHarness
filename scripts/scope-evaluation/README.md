@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This reference covers artifact checking and controlled native Session calibration for scope collaboration. It verifies frontend behavior, QA discrimination, real file tools, and logged context delivery. It does not run a model or measure product benefit.
+This reference covers controlled artifact checking and native Session calibration for scope collaboration. The separate [ordinary Agent JSON study](data-study/README.md) accepts autonomous, non-executable artifacts and provides an explicit model execution entry. Controlled checks do not measure product benefit.
 
 ## Table of Contents
 

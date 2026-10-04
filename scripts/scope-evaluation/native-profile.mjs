@@ -1,7 +1,7 @@
 /** Private named dsh profile: production scope services and optional native evaluation Session. */
 import { rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { mountNativeSession } from './native-session.mjs'
+import { mountNativeSession, mountDataSemantic } from './native-session.mjs'
 
 export const name = 'scope-evaluation-native-profile'
 
@@ -23,23 +23,31 @@ export async function apply(ctx, config) {
   await mount('Tasks', { maxTasks: 32, maxEventsPerTask: 128, maxMergeParents: 8, maxContextBlockBytes: 65536,
     maxLineageTasks: 64, maxTextBytes: 8192, roomRetryIntervalMs: 10000 })
   await mount('TaskStorage', { orphanGraceMs: 86400000 })
-  await mount('Facts', { routes: [
+  let manage
+  if (config.data === undefined) await mount('Facts', { routes: [
     { responsibility: 'frontend', fields: ['operationId', 'requestBodyRequired', 'requiredRequestFields', 'deprecated'] },
     { responsibility: 'qa', fields: ['operationId', 'requestBodyRequired', 'requiredRequestFields', 'responseStatuses', 'deprecated'] },
   ], unmatchedFields: ['operationId', 'requestBodyRequired', 'requiredRequestFields', 'responseStatuses', 'deprecated'] })
-  await mount('Transport', { listenAddresses: ['/ip4/127.0.0.1/tcp/0'], maxRequestBytes: 65536, maxResponseBytes: 65536,
-    maxInboundRequests: 8, maxOutboundRequests: 8, maxConnections: 8, requestTimeoutMs: 30000, connectionTimeoutMs: 3000 })
-  await mount('Access', { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: 8000,
-    maxResponseBytes: 32768, requestTimeoutMs: 30000, maxInvitationLifetimeMs: 900000, maxConcurrentReads: 8,
-    waitTimeoutMs: 20000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 16384,
-    maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 86400000 })
+  if (config.data !== undefined) {
+    if (config.data.condition === 'R' && config.data.role === 'O') manage = await mountDataSemantic(ctx, config.data, modules)
+    else await mount('Text')
+  }
+  const peerTimeoutMs = config.data?.peerTimeoutMs ?? 30000
+  await mount('Transport', { listenAddresses: ['/ip4/127.0.0.1/tcp/0'], maxRequestBytes: config.data === undefined ? 65536 : 262144, maxResponseBytes: config.data === undefined ? 65536 : 262144,
+    maxInboundRequests: 8, maxOutboundRequests: 8, maxConnections: 8, requestTimeoutMs: peerTimeoutMs, connectionTimeoutMs: 3000 })
+  await mount('Access', { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: config.data?.contextBytes ?? 8000,
+    maxResponseBytes: config.data === undefined ? 32768 : 131072, requestTimeoutMs: peerTimeoutMs,
+    maxInvitationLifetimeMs: config.data === undefined ? 900000 : 3600000, maxConcurrentReads: 8,
+    waitTimeoutMs: 20000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: config.data === undefined ? 16384 : 32768,
+    maxContributionApplications: 16, maxApplicationRequestBytes: config.data === undefined ? 16384 : 32768,
+    maxApplicationLifetimeMs: config.data === undefined ? 86400000 : 3600000 })
   const web = ctx.get('webServer')
   const connection = ctx.get('connection')
   ctx.effect(() => web.register({ kind: 'exact', path: '/', handler(request, response) {
     if (connection.authorizeIndex(request, response)) response.end('Controlled evaluation')
   } }), 'evaluation connection authorization')
-  if (config.native !== undefined) {
-    const manage = await mountNativeSession(ctx, config.native, modules)
+  if (config.native !== undefined) manage = await mountNativeSession(ctx, config.native, modules)
+  if (manage !== undefined) {
     const operations = new Set()
     ctx.effect(() => web.register({ kind: 'exact', path: '/evaluation/session', handler(request, response) {
       if (connection.requestRejection(request) !== undefined) { response.writeHead(401); response.end(); return }
