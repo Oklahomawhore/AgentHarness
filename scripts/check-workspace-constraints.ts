@@ -185,6 +185,11 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // through a hashed chunk. The committed bin.js is the link target pnpm can
   // resolve at install time, before the build produces lib/bin.js.
   '@deepseek-ai/dsh-experimental-webworker-packer': ['bin.js', 'lib/repository-*.js'],
+  // The bridge's library and stdio entries share private authentication/RPC code.
+  '@deepseek-ai/dsh-agentharness-bridge': ['lib/chunks/*.js'],
+  // These runtime/invariant entry pairs import one private bundled domain schema.
+  '@deepseek-ai/dsh-development-room-storage-domain': ['lib/schema-*.js'],
+  '@deepseek-ai/dsh-development-room-context-storage-domain': ['lib/schema-*.js'],
 }
 
 function sameStringList(actual: readonly string[] | undefined, expected: readonly string[]): boolean {
@@ -209,6 +214,8 @@ export function expectedDshPackageFiles(manifest: PackageManifest): readonly str
     // Keyed on the artifact path, like ./client below.
     ...exportDefault(manifest, './worker') === './lib/worker.cjs' ? ['lib/worker.cjs'] : [],
     ...exportDefault(manifest, './worker') === './lib/worker.js' ? ['lib/worker.js'] : [],
+    // The local-authentication entry is independently imported by Node consumers.
+    ...exportDefault(manifest, './local-access') === './lib/local-access.js' ? ['lib/local-access.js'] : [],
     // UI plugin packages ship their browser bundle beside the node lib
     // (single-artifact ruling: dist/ retired, ./client resolves lib/client.js).
     // Keyed on the artifact path, not the subpath name: a package's ./client is
@@ -221,6 +228,8 @@ export function expectedDshPackageFiles(manifest: PackageManifest): readonly str
     // A surface bundle's startup row is its own bundle: the Loader imports it
     // as a row module, so it cannot ride inside the package entry.
     ...exportDefault(manifest, './startup') === './lib/startup.js' ? ['lib/startup.js'] : [],
+    // A stdio profile loads its Consumer independently of the package library.
+    ...exportDefault(manifest, './stdio') === './lib/stdio.js' ? ['lib/stdio.js'] : [],
     ...extras,
     // Subpaths whose runtime default is the tsc-emitted tree (lib/types/*.js —
     // browser-safe source channels rehomed off src so plain Node can import

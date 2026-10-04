@@ -3,6 +3,10 @@
     - button "Begin your reply with the" [disabled]
   - img
   - text: Standard mode
+  - button "Collaboration":
+    - img
+    - text: Collaboration
+    - img
   - button "More actions":
     - img
   - button "Open right sidebar":

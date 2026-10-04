@@ -494,7 +494,12 @@ function stringArray(
   return value as string[]
 }
 
-async function readStaticLinkedRoster(root: string): Promise<Set<string>> {
+/**
+ * Read the static browser-library roster from the shipping build configurations.
+ * @param root - Repository root containing package build configurations.
+ * @returns Package names whose Client face uses the shared staticLinked preset.
+ */
+export async function readStaticLinkedRoster(root: string): Promise<Set<string>> {
   const presetUrl = pathToFileURL(resolve(import.meta.dirname, '..', STATIC_PRESET_SOURCE)).href
   const preset = await import(presetUrl) as { isStaticLinkedConfig?: unknown }
   if (typeof preset.isStaticLinkedConfig !== 'function') {

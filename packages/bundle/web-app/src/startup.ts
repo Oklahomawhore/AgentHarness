@@ -62,9 +62,9 @@ Examples:
 
 /**
  * Parse and provide the Web invocation as an ordinary Cordis service. The
- * command's action publishes the flags this invocation named; `--host 0.0.0.0`
- * or a non-numeric `--port` is a usage error, so on rejection (and on `--help`)
- * nothing is provided.
+ * command's action publishes the flags this invocation named, including an
+ * explicit all-interfaces host. A non-numeric `--port` is a usage error; on
+ * rejection and on `--help`, nothing is provided.
  * @param ctx - plugin context carrying the command line.
  */
 export function apply(ctx: Context): void {

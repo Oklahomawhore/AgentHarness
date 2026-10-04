@@ -367,13 +367,14 @@ describe('web e2e: settings modal and General preferences', () => {
     expectThemeColorSynchronized(reloaded)
 
     // A second live Host binds another ephemeral port but shares the same
-    // user-settings home. Its fresh origin has no theme localStorage and still
+    // settings document. Its fresh origin has no theme localStorage and still
     // converges to dark before the settings dialog opens.
-    const second = await launchWebScaffold({ harnessHome: scaffold.harnessHome })
+    const second = await launchWebScaffold({ settingsPath: join(scaffold.harnessHome, 'settings.yaml') })
     const secondPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     const secondTripwire = watchConsole(secondPage)
     try {
       expect(second.baseUrl).not.toBe(scaffold.baseUrl)
+      expect(second.harnessHome).not.toBe(scaffold.harnessHome)
       await secondPage.emulateMedia({ colorScheme: 'light' })
       await secondPage.goto(second.authenticatedUrl, { waitUntil: 'load' })
       await secondPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
@@ -534,11 +535,12 @@ describe('web e2e: settings modal and General preferences', () => {
     const reloaded = page.getByRole('dialog', { name: '设置' })
     await reloaded.getByRole('button', { name: '插话发送' }).waitFor({ timeout: 10_000 })
 
-    const second = await launchWebScaffold({ harnessHome: scaffold.harnessHome })
+    const second = await launchWebScaffold({ settingsPath: join(scaffold.harnessHome, 'settings.yaml') })
     const secondPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     const secondTripwire = watchConsole(secondPage)
     try {
       expect(second.baseUrl).not.toBe(scaffold.baseUrl)
+      expect(second.harnessHome).not.toBe(scaffold.harnessHome)
       await secondPage.goto(second.authenticatedUrl, { waitUntil: 'load' })
       await secondPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await secondPage.getByRole('button', { name: '设置', exact: true }).click()
@@ -600,11 +602,12 @@ describe('web e2e: settings modal and General preferences', () => {
 
     // A Chinese browser on another port still receives the explicit English
     // preference from the shared Host settings document.
-    const second = await launchWebScaffold({ harnessHome: scaffold.harnessHome })
+    const second = await launchWebScaffold({ settingsPath: join(scaffold.harnessHome, 'settings.yaml') })
     const secondPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     const secondTripwire = watchConsole(secondPage)
     try {
       expect(second.baseUrl).not.toBe(scaffold.baseUrl)
+      expect(second.harnessHome).not.toBe(scaffold.harnessHome)
       await secondPage.goto(second.authenticatedUrl, { waitUntil: 'load' })
       await secondPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await secondPage.getByRole('button', { name: 'Settings', exact: true }).click()

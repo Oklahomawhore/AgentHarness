@@ -1,0 +1,11 @@
+version: 1
+scenario: task-context-semantic
+profile: sdk
+composition: sdk-task-context-semantic
+recording: authored
+header:
+  class: task-context-semantic
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

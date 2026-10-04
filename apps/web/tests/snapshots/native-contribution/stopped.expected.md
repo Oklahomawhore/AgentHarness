@@ -1,0 +1,25 @@
+- group:
+  - text: 分享本会话的文件工作
+  - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+  - status: 尚未允许分享文件工作
+  - text: 粘贴协作申请入口
+  - textbox "粘贴协作申请入口"
+  - button "核对申请入口" [disabled]
+  - text: 允许采集的目录
+  - textbox "允许采集的目录"
+  - group "允许分享的文件操作":
+    - text: 允许分享的文件操作
+    - checkbox "写入文件（write）"
+    - text: 写入文件（write）
+    - checkbox "编辑文件（edit）"
+    - text: 编辑文件（edit）
+  - text: 授权有效期（小时）
+  - spinbutton "授权有效期（小时）"
+  - text: 最多样本数
+  - spinbutton "最多样本数"
+  - text: 每份样本字节上限
+  - spinbutton "每份样本字节上限"
+  - checkbox "我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。"
+  - text: 我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。
+  - button "申请并允许批准后自动启用" [disabled]
+  - button "重新读取分享状态"

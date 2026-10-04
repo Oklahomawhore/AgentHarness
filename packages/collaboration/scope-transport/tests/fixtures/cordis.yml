@@ -1,0 +1,7 @@
+- name: '@deepseek-ai/dsh-credentials-local'
+  config:
+    path: !!js ctx.get('scopeTransportFixture').credentialsPath
+    dshHome: !!js ctx.get('scopeTransportFixture').directory
+    watch: false
+- name: '@deepseek-ai/dsh-scope-transport/libp2p'
+  config: !!js ctx.get('scopeTransportFixture').transport

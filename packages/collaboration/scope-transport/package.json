@@ -1,0 +1,46 @@
+{
+  "name": "@deepseek-ai/dsh-scope-transport",
+  "description": "Authenticated bounded request streams between explicitly addressed scope peers",
+  "version": "0.1.5-rc.2",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/collaboration/scope-transport"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./libp2p": { "types": "./lib/types/libp2p.d.ts", "default": "./lib/types/libp2p.js" },
+    "./types": { "types": "./lib/types/types.d.ts", "default": "./lib/types/types.js" },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "lib/types/**/*.js", "lib/types/**/*.d.ts"],
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-brand": "workspace:^",
+    "@deepseek-ai/dsh-util-values": "workspace:^",
+    "@deepseek-ai/schemastery": "workspace:^",
+    "@libp2p/crypto": "5.1.23",
+    "@libp2p/noise": "17.0.3",
+    "@libp2p/peer-id": "6.0.15",
+    "@libp2p/tcp": "11.0.28",
+    "@libp2p/yamux": "8.0.3",
+    "@multiformats/multiaddr": "13.0.3",
+    "libp2p": "3.3.11"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-credentials": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/cordis-plugin-include": "workspace:^",
+    "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+    "@deepseek-ai/dsh-credentials": "workspace:^",
+    "@deepseek-ai/dsh-credentials-local": "workspace:^"
+  }
+}

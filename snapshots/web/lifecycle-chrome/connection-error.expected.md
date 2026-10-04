@@ -1,3 +1,6 @@
+- button "Open the Emergence Center":
+  - img
+  - text: Emergence Center 0
 - button "Settings":
   - img
   - text: Settings

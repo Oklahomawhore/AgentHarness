@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { notAvailableError, notImplementedFail } from '../../src/node/notImplementedFail.ts'
 import * as childProcess from '../../src/node/builtin_modules/implemented/child_process.ts'
 import * as dnsPromises from '../../src/node/builtin_modules/mock/dns/promises.ts'
+import * as dgram from '../../src/node/builtin_modules/mock/dgram.ts'
 import * as net from '../../src/node/builtin_modules/mock/net.ts'
 import * as sqlite from '../../src/node/builtin_modules/mock/sqlite.ts'
 import * as stream from '../../src/node/builtin_modules/implemented/stream.ts'
@@ -35,6 +36,7 @@ const quiet = (): void => { vi.spyOn(console, 'error').mockImplementation(() => 
 /** Symbols that refuse when called. */
 const CALLED: [string, Record<string, unknown>, readonly string[]][] = [
   ['node:dns/promises', dnsPromises, ['lookup']],
+  ['node:dgram', dgram, ['createSocket']],
   ['node:net', net, ['createServer', 'connect']],
   ['node:sqlite', sqlite, ['backup']],
   ['node:vm', vm, ['createContext', 'runInContext', 'runInNewContext', 'runInThisContext', 'isContext']],

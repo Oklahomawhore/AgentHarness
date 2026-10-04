@@ -84,10 +84,16 @@ import {
   type SessionHeader,
 } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-// Empty type imports carry the webServer/agents/sessionPersistence Context merges.
+// Empty type imports carry the Host services used by this fixture.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-agent'
-import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
+import type {} from '@deepseek-ai/dsh-claude-scope'
+import type {} from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-client-connection'
+import { provideCmdline, type AppReady } from '@deepseek-ai/dsh-cmdline'
+import McpClientSetupService, {
+  type Config as McpClientSetupConfig, type McpClientSetupOptions,
+} from '@deepseek-ai/dsh-host-mcp-client-setup'
 import { REPO_ROOT, requireDist } from './support.ts'
 
 // Host-side web e2e cannot import a browser package: doing so would pull that
@@ -402,8 +408,12 @@ export interface LaunchOptions {
    * 127.0.0.1; a non-resolving authority fails before Host trust is exercised.
    */
   remoteAuthority?: string
-  /** Reuse an existing harness home so a second Host can verify user settings across origins. */
+  /** Boot a fixture-owned harness home containing preexisting state. */
   harnessHome?: string
+  /** Share one settings document across independent Hosts without sharing their databases or descriptor leases. */
+  settingsPath?: string
+  /** Detect only a fixture Cursor installation and manual-only Doubao, without reading user clients or PATH. */
+  hermeticMcpClients?: boolean
 }
 
 /** Dispose the booted tree and remove both owned temp roots, reporting every independent cleanup failure. */
@@ -413,6 +423,32 @@ async function cleanupScaffoldWorld(ctx: Context, workspaceCwd: string, persiste
   await rm(workspaceCwd, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
   await rm(persistenceRoot, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
   return failures
+}
+
+/** Commit the same launcher readiness event as the dsh profile after its rows settle. */
+function createAppReady(): { service: AppReady; commit(): void } {
+  let ready = false
+  const listeners = new Set<() => void>()
+  return {
+    service: {
+      onReady(listener) {
+        if (ready) { listener(); return () => {} }
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    },
+    commit() {
+      if (ready) return
+      ready = true
+      const failures: unknown[] = []
+      for (const listener of [...listeners]) {
+        try { listener() }
+        catch (error) { failures.push(error) }
+      }
+      listeners.clear()
+      if (failures.length > 0) throw new AggregateError(failures, 'web scaffold application readiness failed')
+    },
+  }
 }
 
 /**
@@ -465,9 +501,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   // whole scaffold lifetime, not just the boot, since presets mount when a
   // session is created. Without this a developer's real ~/.dsh/skills silently
   // enters replay requests and goldens while CI sees none. `DSH_HOME` follows
-  // the resolved harness home so a scaffold sharing another's home — the
-  // cross-port persistence scenario — pins the same roots the settings and
-  // credentials rows were configured with.
+  // this Host's harness home, independently of a shared settings document.
   const skillRootEnvironment = {
     DSH_HOME: harnessHome,
     DSH_AGENTS_HOME: join(workspaceCwd, '.agents-home'),
@@ -512,6 +546,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     surfaceContext?: boolean
   } | undefined
   const surfaceContext = webRuntimeConfig?.surfaceContext !== false
+  const mcpFixtureRoot = join(workspaceCwd, '.mcp-client-fixture')
   const patches: PatchOptions[] = [
     ...basePatches,
     ...surfacePatches,
@@ -520,6 +555,16 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       ? []
       : [{ id: 'agent-default-model', config: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } }],
     ...extraOverlayPatches,
+    ...options.hermeticMcpClients !== true ? [] : [
+      { id: 'mcp-client-setup', disabled: true },
+      { insert: [{
+        id: 'scaffold-mcp-client-setup', name: 'cordis:scaffold-mcp-client-setup',
+        config: {
+          nodePath: process.execPath, dshPath: join(mcpFixtureRoot, 'dsh.mjs'), nodeArgs: [],
+          harnessHome, descriptorPath: join(harnessHome, 'mcp', 'connection.json'),
+        },
+      }] },
+    ],
     // The roster's shipped presets are the plugin's own, bundled inside
     // `dsh-agent-presets` and prepended by it. Pin only the machine-local
     // root away: a developer's own `~/.dsh/.agent-presets` must not be able
@@ -594,7 +639,10 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     ...options.remoteAuthority === undefined
       ? []
       : [{ id: 'connection', config: { trustedHosts: [options.remoteAuthority] } }],
-    { id: 'settings', config: { dshHome: harnessHome } },
+    { id: 'settings', config: {
+      dshHome: harnessHome,
+      ...(options.settingsPath === undefined ? {} : { path: options.settingsPath }),
+    } },
     { id: 'credentials', config: { dshHome: harnessHome } },
     // The shipped directory-picker row is the -auto chooser, which resolves
     // the interaction from the RUNNING host (display, SSH launch, bind). The
@@ -642,6 +690,9 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   // the temp workspace so tool cwd, session cwd, and fixtures agree.
   const originalCwd = process.cwd()
   const ctx = new Context()
+  const appReady = createAppReady()
+  let requestedExit: Error | undefined
+  let exitDisposal = Promise.resolve<unknown[]>([])
   if (options.openInAppEnvironment !== undefined) ctx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.openInAppEnvironment)
   const observedSessions = new Map<SessionId, Session>()
   const stopObservingSessions = ctx.on('session/created', (session) => {
@@ -689,17 +740,37 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     ctx.baseUrl = pathToFileURL(profileDir).href + '/'
     // This direct Loader harness supplies the same root-path capability as app-boot.
     ctx.provide('dshHomePath', dshHomePath)
-    // A host with no command line still provides one: the web bundle's startup
-    // row releases the rows waiting on it, and with no arguments each starts on
-    // the values this scaffold composed above. An exit request can only come
-    // from a rejected argument, which a fixed empty list has none of.
+    // App plugins receive the same launch facts as dsh. This embedding never
+    // exits the Vitest process; an app exit disposes its tree and fails the fixture.
     provideCmdline(ctx, {
       args: [],
+      ready: appReady.service,
       exit: (code) => {
-        throw new Error(`web e2e scaffold: the web app requested exit ${String(code)} with no arguments to reject`)
+        if (requestedExit !== undefined) return
+        requestedExit = new Error(`web e2e scaffold: the web app requested exit ${String(code)}`)
+        exitDisposal = Promise.resolve().then(() => ctx.fiber.dispose()).then(() => [], (error: unknown) => [error])
       },
     })
     await ctx.plugin(Loader)
+    if (options.hermeticMcpClients === true) {
+      for (const directory of ['home', 'bin', 'Applications/Cursor.app', 'Applications/Doubao.app']) {
+        await mkdir(join(mcpFixtureRoot, directory), { recursive: true })
+      }
+      // Retain the real service and its filesystem inspection; only launcher
+      // inputs are fixture-owned. The inherited Loader schema stays unchanged.
+      ctx.loader.builtins['scaffold-mcp-client-setup'] = class extends McpClientSetupService {
+        constructor(context: Context, config: McpClientSetupConfig) {
+          const fixtureHome = join(mcpFixtureRoot, 'home')
+          const fixtureBin = join(mcpFixtureRoot, 'bin')
+          const options: McpClientSetupOptions = {
+            ...config, home: fixtureHome, path: fixtureBin, username: 'Browser fixture',
+            environment: { PATH: fixtureBin },
+            applicationRoots: [join(mcpFixtureRoot, 'Applications')],
+          }
+          super(context, options)
+        }
+      }
+    }
     ctx.loader.builtins.include = Include
     // `cordis:group` beside it, exactly as `boot()` registers it: a group row is
     // how a preset gives one `isolate` realm to a provider and its consumers,
@@ -780,6 +851,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         new RouteOnlyAdapter(replayProviders(options.replayContextWindow)),
       ), 'web e2e scaffold: route-only adapter')
     }
+    if (requestedExit !== undefined) throw requestedExit
     baseUrl = `http://${browserHost}:${String(port)}`
     authenticatedUrl = ctx.connection.authenticatedUrl(baseUrl)
     const login = await fetch(authenticatedUrl, { redirect: 'manual' })
@@ -791,9 +863,13 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     if (cookieHeader.length === 0) {
       throw new Error('web e2e scaffold: browser token exchange returned an empty session cookie')
     }
+    if (requestedExit !== undefined) throw requestedExit
+    appReady.commit()
+    await ctx.get('claudeScope')?.sessions()
+    if (requestedExit !== undefined) throw requestedExit
   } catch (error) {
     if (process.cwd() !== originalCwd) process.chdir(originalCwd)
-    const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)
+    const cleanupFailures = [...await exitDisposal, ...await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)]
     restoreCredentialEnvironment()
     restoreSkillRootEnvironment()
     if (cleanupFailures.length > 0) {
@@ -866,11 +942,13 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       }
       try {
         stopObservingSessions()
+        failures.push(...await exitDisposal)
         failures.push(...await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot))
       } finally {
         restoreCredentialEnvironment()
         restoreSkillRootEnvironment()
       }
+      if (requestedExit !== undefined) failures.push(requestedExit)
       if (failures.length > 0) throw new AggregateError(failures, 'web scaffold teardown failed')
     },
   }

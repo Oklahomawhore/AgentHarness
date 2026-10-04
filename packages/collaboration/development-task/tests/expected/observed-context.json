@@ -1,0 +1,12 @@
+{
+  "outcomes": [
+    "published",
+    "reused"
+  ],
+  "revision": 2,
+  "publication": {
+    "id": "context-observation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "text": "{\"kind\":\"tool-observation\",\"result\":\"nonce-42\"}",
+    "publishedBy": "agent"
+  }
+}

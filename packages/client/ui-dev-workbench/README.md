@@ -41,4 +41,4 @@ None; browser inventory and iframe state do not affect provider requests.
 
 ### Dev Note
 
-Use this package’s source, tests, and architecture documentation as the maintainer reference.
+No runtime invariant companion is published because process lifecycle belongs to the Host workbench service; this package owns only browser presentation and view preferences.

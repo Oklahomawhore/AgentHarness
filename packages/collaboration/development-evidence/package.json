@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-development-evidence",
   "description": "Bounded provider registry for explicit enterprise and project evidence retrieval",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

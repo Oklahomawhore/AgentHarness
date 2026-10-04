@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-development-room-storage-domain",
   "description": "Durable append-only room-log recovery over the storage-domain data form",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

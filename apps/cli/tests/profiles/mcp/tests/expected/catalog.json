@@ -1,0 +1,59 @@
+{
+  "instructions": "A Task stores shared context and immutable parent revisions, not a workflow. Call agentharness_task_connect only in the Codex or editor session that should join. Keep the returned bindingId in that conversation and never reuse it in another session. These tools return stored Task context, not a live summary computed for the recipient. contextDelta is the full stored view, not an incremental delta. Reads do not revalidate current peer contribution grants or automatically filter expired, withdrawn, revoked, or superseded observations from stored history. No stage, evidence, approval, or completion actions exist.",
+  "tools": [
+    {
+      "name": "agentharness_task_list",
+      "title": "List AgentHarness Tasks",
+      "description": "List bounded shared-context Tasks in the emergence collaboration center."
+    },
+    {
+      "name": "agentharness_task_get",
+      "title": "Get one AgentHarness Task",
+      "description": "Read one stored Task record and its immutable parent-revision references; this is not a live recipient-specific summary."
+    },
+    {
+      "name": "agentharness_task_create",
+      "title": "Create a Root AgentHarness Task",
+      "description": "Create an independent shared-context Task."
+    },
+    {
+      "name": "agentharness_task_fork",
+      "title": "Fork an AgentHarness Task",
+      "description": "Create a new Task from one immutable parent context revision."
+    },
+    {
+      "name": "agentharness_task_merge",
+      "title": "Merge AgentHarness Tasks",
+      "description": "Create a new Task that combines explicit context from two or more parent revisions."
+    },
+    {
+      "name": "agentharness_task_connect",
+      "title": "Connect this Agent session to an AgentHarness Task",
+      "description": "Bind only this conversation to one Task and return its stored context and immutable parent-revision history."
+    },
+    {
+      "name": "agentharness_task_disconnect",
+      "title": "Disconnect this Agent session from AgentHarness",
+      "description": "Clear one conversation binding without affecting other Codex or editor sessions."
+    },
+    {
+      "name": "agentharness_task_context_publish",
+      "title": "Publish explicit Task context",
+      "description": "Publish text or an artifact reference from the connected Agent session for later Fork/Merge inheritance."
+    },
+    {
+      "name": "agentharness_task_status",
+      "title": "Read this Agent session connection",
+      "description": "Return one explicit session binding and its stored Task context, and record the returned revision."
+    }
+  ],
+  "resourceTemplates": [
+    {
+      "name": "agentharness-task-context",
+      "title": "AgentHarness stored Task context",
+      "description": "Stored Task context and immutable parent-revision history; expired, withdrawn, revoked, or superseded observations may remain.",
+      "uriTemplate": "agentharness://tasks/{taskId}/context",
+      "mimeType": "application/json"
+    }
+  ]
+}

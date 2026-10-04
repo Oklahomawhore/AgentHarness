@@ -1,34 +1,20 @@
-#!/usr/bin/env node
 /** Verify a fresh installed portable runtime serves the Workspace onboarding UI in Chromium. */
 
-import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { execFile, spawn } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 
 
-function freePort() {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (address === null || typeof address === 'string') {
-        server.close(() => { reject(new Error('portable browser smoke received no TCP port')) })
-        return
-      }
-      server.close(() => { resolvePort(address.port) })
-    })
-  })
-}
-
 function waitForReady(child) {
   return new Promise((resolveReady, reject) => {
     let output = ''
     const timer = setTimeout(() => {
-      reject(new Error(`installed portable Web did not start in 90 seconds:\n${output}`))
+      reject(new Error(`installed portable Web did not start in 90 seconds:\n${output.replace(/([?&]token=)[^\s&#]+/gu, '$1[redacted]')}`))
     }, 90_000)
     const read = (chunk) => {
       output += chunk.toString()
@@ -41,7 +27,7 @@ function waitForReady(child) {
     child.stderr.on('data', read)
     child.once('exit', (code) => {
       clearTimeout(timer)
-      reject(new Error(`installed portable Web exited before readiness (${String(code)}):\n${output}`))
+      reject(new Error(`installed portable Web exited before readiness (${String(code)}):\n${output.replace(/([?&]token=)[^\s&#]+/gu, '$1[redacted]')}`))
     })
     child.once('error', reject)
   })
@@ -82,6 +68,36 @@ async function dismissFirstRunSteps(page) {
   }
 }
 
+async function configureMcpClient(portableRoot, clientHome, harnessHome, environment) {
+  const resolver = createRequire(join(portableRoot, 'package.json'))
+  const { setupMcpClient } = await import(pathToFileURL(resolver.resolve('@deepseek-ai/dsh-host-mcp-client-setup')).href)
+  const applications = join(clientHome, 'Applications')
+  const fixtureBin = join(clientHome, 'bin')
+  await mkdir(join(applications, 'Cursor.app'), { recursive: true })
+  await mkdir(fixtureBin)
+  const result = await setupMcpClient({
+    home: clientHome, path: fixtureBin, applicationRoots: [applications], environment,
+    nodePath: join(portableRoot, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'), dshPath: join(portableRoot, 'lib', 'bin.js'), nodeArgs: [],
+    descriptorPath: join(harnessHome, 'mcp', 'connection.json'), harnessHome, username: 'portable-fixture',
+  }, { clientId: 'cursor' })
+  if (process.platform === 'win32') {
+    assert(result.outcome === 'unsupported' && result.client.canSetup === false, 'Windows must report MCP authentication as unsupported')
+    return undefined
+  }
+  assert(result.outcome === 'configured', 'temporary Cursor configuration did not succeed')
+  return join(clientHome, '.cursor', 'mcp.json')
+}
+
+async function proveMcp(portableRoot, configuration, environment, expectExisting) {
+  const result = await promisify(execFile)(process.execPath, [
+    resolve(import.meta.dirname, '../../../scripts/agentharness-portable-live-e2e.mjs'),
+    '--root', portableRoot, '--config', configuration, ...expectExisting ? ['--expect-existing'] : [],
+  ], { env: environment, timeout: 60_000, maxBuffer: 1024 * 1024 })
+  const proof = JSON.parse(result.stdout)
+  assert(proof.contextInherited === true && proof.independentBindings.length === 2, 'portable MCP proof was incomplete')
+  if (expectExisting) assert(proof.restoredTasksBeforeCreate > 0, 'MCP task state did not survive Host restart')
+}
+
 async function main(args) {
   if (args.length !== 1) throw new Error('usage: portable-onboarding.smoke.mjs <portable-root>')
   const portableRoot = resolve(args[0])
@@ -89,12 +105,15 @@ async function main(args) {
   const current = join(fixture, 'current')
   const harnessHome = join(fixture, 'dsh-home')
   await symlink(portableRoot, current, 'dir')
-  const port = await freePort()
-  const environment = { ...process.env, DSH_HOME: harnessHome }
-  delete environment.DEEPSEEK_API_KEY
-  delete environment.AGENTHARNESS_PROVIDER_API_KEY
+  const clientHome = join(fixture, 'client-home')
+  await mkdir(clientHome)
+  const environment = {
+    ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
+    ...(process.env.LANG === undefined ? {} : { LANG: process.env.LANG }),
+    HOME: clientHome, USERPROFILE: clientHome, USER: 'portable-fixture', DSH_HOME: harnessHome,
+  }
   const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', String(port)], {
+  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', '0'], {
     cwd: current,
     env: environment,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -103,6 +122,8 @@ async function main(args) {
   let browser
   try {
     const baseUrl = await waitForReady(child)
+    const mcpConfiguration = await configureMcpClient(portableRoot, clientHome, harnessHome, environment)
+    if (mcpConfiguration !== undefined) await proveMcp(portableRoot, mcpConfiguration, environment, false)
     const executablePath = process.env.DSH_PLAYWRIGHT_EXECUTABLE_PATH
     browser = await chromium.launch(executablePath === undefined ? {} : { executablePath })
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
@@ -125,6 +146,7 @@ async function main(args) {
     const restartedPage = await page.goto(restartedUrl, { waitUntil: 'domcontentloaded' })
     assert(restartedPage?.ok(), 'restarted portable Web endpoint is unavailable')
     assert(await readFile(credentialsPath, 'utf8') === credentials, 'restart changed persisted credentials')
+    if (mcpConfiguration !== undefined) await proveMcp(portableRoot, mcpConfiguration, environment, true)
     process.stdout.write(`Installed portable browser smoke passed: ${basename(portableRoot)}\n`)
   } finally {
     await browser?.close()

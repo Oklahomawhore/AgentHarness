@@ -105,8 +105,10 @@ describe('web e2e: queue row actions', () => {
     await input.fill(ACTIVE_PROMPT)
     await input.press('Enter')
     await expect.poll(() => existsSync(readyFile), { timeout: 15_000 }).toBe(true)
+    // The adapter marker does not wait for the browser to render its chunk.
+    await page.locator('[data-streaming="true"]').getByText('partial', { exact: true })
+      .waitFor({ state: 'visible', timeout: 10_000 })
 
-    const admitted = page.waitForResponse('**/api/session/prompt')
     const received = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
     await page.route('**/api/session/prompt', async (route) => {
@@ -114,6 +116,12 @@ describe('web e2e: queue row actions', () => {
       await release.promise
       await route.continue()
     }, { times: 1 })
+    const admitted = Promise.allSettled([
+      page.waitForResponse('**/api/session/prompt').then((response) => {
+        expect(response.ok()).toBe(true)
+      }),
+    ])
+    const pendingFailures: unknown[] = []
     try {
       await input.fill(REMOVE)
       await input.press('Enter')
@@ -133,10 +141,15 @@ describe('web e2e: queue row actions', () => {
       await expect.poll(() => pending.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
       await page.setViewportSize({ width: 1680, height: 1000 })
       await page.locator('[data-sidebar-collapsed="true"]').waitFor({ state: 'detached' })
+    } catch (error) {
+      pendingFailures.push(error)
     } finally {
       release.resolve(undefined)
+      const [admission] = await admitted
+      if (admission.status === 'rejected') pendingFailures.push(admission.reason as unknown)
     }
-    expect((await admitted).ok()).toBe(true)
+    if (pendingFailures.length === 1) throw pendingFailures[0]
+    if (pendingFailures.length > 1) throw new AggregateError(pendingFailures, 'queue pending submission failed')
     await expect.poll(() => page.getByRole('button', { name: 'Remove queued message' }).isEnabled()).toBe(true)
     expect(await page.locator('[data-queue-dock] [data-submission-echo]').count()).toBe(0)
     expect(await page.locator('[data-queue-dock]').getByRole('status').count()).toBe(0)

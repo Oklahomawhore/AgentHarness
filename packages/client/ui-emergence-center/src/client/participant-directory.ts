@@ -1,4 +1,5 @@
 import type {
+  DevelopmentNodeId,
   DevelopmentParticipantAnnounceRequest,
   DevelopmentParticipantHeartbeatRequest,
   DevelopmentParticipantSnapshot,
@@ -18,6 +19,7 @@ export interface ParticipantDirectoryPort {
 
 /** Last known participant roster plus transport state; Room data remains hidden. */
 export interface ParticipantDirectoryState {
+  readonly nodeId?: DevelopmentNodeId
   readonly participants: readonly DevelopmentParticipantSnapshot[]
   readonly presenceTtlMs: number
   readonly read: boolean
@@ -58,7 +60,7 @@ export function createParticipantDirectory(
     for (const listener of [...listeners]) listener()
   }
   const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): void => {
-    publish({ participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
+    publish({ nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
   }
   const scheduleHeartbeat = (ttl: number): void => {
     if (heartbeat !== undefined) clearTimeout(heartbeat)

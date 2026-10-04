@@ -1,0 +1,119 @@
+---
+description: "在明确许可后，将既有原生 Agent 会话的文件工作分享给独立 Task 所有者，保留持久来源报告并支持撤回。"
+kind: "package-reference"
+---
+# 原生 Agent 来源贡献
+
+[English](README.md) | 中文
+
+## 概述
+
+将既有原生 Agent 的获准写入与编辑分享给本机所有的 Root Task，或另行批准来源的独立 Task 所有者。两种方式都须明确目录、工具、期限和样本额度，后续工作自动提交。接收上下文与启动空闲工作仍然独立。本地自动工作可以复用同一 Task 绑定和 checkout 代际，但不授予文件访问。
+
+## 目录
+
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步阅读](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延后工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+在提供 Agent、文件工具、Session 持久化、存储及 [scope 访问](../scope-access/README.zh.md)的 `dsh` profile 中挂载。挂载不授予任何许可。经过认证的 `scopeAgentContributions` Remote 向[协作界面](../../client/ui-emergence-center/README.zh.md)提供独立所有者的 `request`/`status`、本机所有者的 `requestLocal`/`localStatus`，共用的 `stop`，以及联合加入的 `leaveJoin`。
+
+### 最小配置
+
+在该组合中加入以下条目；所有额度都必须填写：
+
+```yaml
+- name: '@deepseek-ai/dsh-scope-agent-contribution'
+  config:
+    maxSessions: 100
+    maxLeases: 1000
+    maxObservationBytes: 65536
+    contributionPollIntervalMs: 25
+```
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `maxSessions` | 必填 | 两种方式共同保留的来源 Session，包含已结束的采集。 |
+| `maxLeases` | 必填 | 所有 Session 保留的样本与未完成观察总数；已确认样本也保留到采集终结。 |
+| `maxObservationBytes` | 必填 | 完整申请或样本请求的字节数，同时受所有者授权限制。 |
+| `contributionPollIntervalMs` | 必填 | 未完成同步与持久化工作的重试间隔。 |
+
+允许范围见[配置目录](../../../docs/config-catalog.zh.md)。部署时明确选择额度；这些值与 [Loader 组合](tests/fixtures/hosts.ts)一致。
+
+### 授权与恢复
+
+连接独立所有者时，选择在线普通 Agent、工具观察入口、根目录、`write`/`edit` 和有限额度，所有者批准后启用采集。连接本机所有的 Task 时，先检出该 Root Task，再针对精确绑定代际批准文件范围。Task 直接记录本地许可，不使用 peer 邀请。绝对根目录仅在本机保存；获准报告正文可能包含私有文本。
+
+联合入口还要求针对已观察到的未绑定 Session 状态明确同意被动读取。审批等待期间，原采用身份和读取状态序号保持不变。贡献可以先启用，读取另行等待恢复；状态分别显示。贡献成功激活，或经核对的终态收据移除待处理申请后，后台工作者才采用原读取邀请，不启用空闲工作。期间发生的手工读取操作会使待采用许可失效。
+
+管理操作比较界面展示的采集身份；结果不确定时先读取状态。状态展示资格、采集、待提交样本以及独立的所有者与采集问题，不启动 Agent，也不证明送达。缺少检查点或保存失败时，在有界内存中保留完成记录并重试。保留额度、样本额度和来源信息容量不足会明确显示。
+
+停止分享保留已经采用的读取，并取消尚未采用的读取。`leaveJoin` 持久终结所选贡献及这次加入持有的读取绑定，不移除后来手工建立的绑定。贡献终结后，每个 Session 至多保留一条持久读取后续工作。结算前，停止或 `leaveJoin` 可选择该工作，新贡献同意需等待。清理后，通过独立读取控件退出保留的读取绑定。
+
+停止和 Agent 卸载会停止采集，并保留终结工作直到所有者确认。本地 Task 清除或换绑也会结束旧采集。重启等待应用就绪后终结保留许可，绝不恢复采集。持久样本原样重试；尚未保存的完成记录无法抵御进程死亡。独立贡献地址变化需要显式恢复路由；联合读取邀请保留原地址。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现细节 — 点击展开</summary>
+
+权限检查后，实际文件工具提供方发出 mutation-start。采集固定 Agent、文件系统提供方、目标、参数和许可代际。普通与嵌套 PTC 结果必须关联 Session 开始记录。先 flush Session，再将样本持久准入；同名自定义工具不提供文件系统证据。
+
+[适配器](src/index.ts)负责许可与完成记录保留。[报告](src/capture.ts)保留获准参数或标记整字段省略；失败不声称替换内容已生效。[持久记录](src/state.ts)保留身份与回执。所有者请求及读取采用、取消均在原生管理队列外执行。读取结果仅对相同采集、采用意图及原存活 Agent 提交；重启取消旧的待采用操作。本地采集使用独立的 `scope_agent_local_contributions` 存储域；远端存储域保留其版本一记录。一个管理队列保证模式互斥与共用保留额度。Task 事件持有本地授权、样本回执和不可逆终结，来源存储域持有许可与待处理工作。
+
+本包不发布 invariant companion，因为持久来源关系在解析和执行准入时校验；本包没有需要独立检查的派生注册表。
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## 进一步阅读
+
+- [Scope 访问](../scope-access/README.zh.md) — 独立申请与所有者权威。
+- [原生 scope 上下文](../scope-agent-context/README.zh.md) — 独立的接收和空闲工作许可。
+- [文件工具](../../fs/tool-fs/README.zh.md) — 实际写入、编辑与执行权限。
+
+-----
+
+<a id="model-experience"></a>
+## 模型体验
+
+间接影响，通过 Task 后端和接收 consumer 渲染本地所有者或经过身份认证的 peer 报告并记录采用。本地所有者通过既有 Task 上下文在下一请求中接收他人报告；贡献许可不启动空闲工作。
+
+#### KV Cache 影响
+
+采集不会改变来源请求前缀。接收者投影发生变化时，可能使其请求后缀的缓存失效；该替换由接收 consumer 负责。
+
+## 已知限制与延后工作
+
+<a id="known-limitations-and-deferred-work"></a>
+
+当前采集范围有以下限制：
+
+- 一个联合入口选择一个原生 Session 采集，不是可重复使用的群组邀请。已绑定 Session 使用独立管理操作。已采用读取表示本地绑定意图，不证明当前在线授权或模型使用。
+- 不采集冷会话、委派 Agent 或派生会话。本地采集要求当前绑定本机所有的 Root Task；独立所有者采集拒绝任何本地 Task 绑定。
+- 插件或整个 Host 卸载会保留持久采集意图，但不保证立即撤回。需要在线确认时使用停止；重载先核对原 Task 权威再清理本地意图。旧构建不管理本地所有者许可。
+- 不读取对话、read、Bash、任意工具元数据，也不观察外部编辑器或补采历史。直接注入的 scope 文本不是来源，但 Agent 派生文件工作仍没有完整的跨 Agent 因果历史。
+- 采集报告尝试参数与完成状态，不独立验证磁盘当前事实。跨机器可用性与真实模型协作质量需要单独证据。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者工作上下文 — 点击展开</summary>
+
+无。
+
+</details>

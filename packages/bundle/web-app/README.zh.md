@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-运行 `dsh --profile web`，打开提供聊天、模型与设置管理以及会话历史的交互式浏览器 GUI。它使用与其他 dsh 表层相同的模型访问、工具与安全默认值。启动时会打印经过认证的 URL，通常还会在默认浏览器中打开；SSH 会话和 `--no-open` 会保留该 URL，供你手动打开。你可以更改端口并允许额外主机，但不能绑定所有网络接口。需要在浏览器中交互式工作时选择本包；一次性的命令行任务应使用 `dsh-headless`。
+运行 `dsh --profile web`，打开提供聊天、模型与设置管理以及会话历史的交互式浏览器 GUI。它使用与其他 dsh 表层相同的模型访问、工具与安全默认值。启动时会打印经过认证的 URL，通常还会在默认浏览器中打开；SSH 会话和 `--no-open` 会保留该 URL，供你手动打开。默认监听 loopback；`--host 0.0.0.0` 会显式启用所有接口监听。需要在浏览器中交互式工作时选择本包；一次性的命令行任务应使用 `dsh-headless`。
 
 ## 目录
 
@@ -24,6 +24,10 @@ kind: "package-bundle"
 
 <a id="use-this-package"></a>
 ## 使用本包
+
+组合包挂载[独立 scope 访问](../../collaboration/scope-access/README.zh.md)及其 [libp2p 传输](../../collaboration/scope-transport/README.zh.md)。默认 TCP 仅监听回环地址。`AGENTHARNESS_SCOPE_LISTEN` 接受显式 IP/TCP 监听地址的 JSON 数组，用于设备直连；公布的地址与邀请包含持久公开 peer 身份。默认后端文本预算为 6000 字节，位于 Claude 完整输出的 8000 字节预算内。启动不会创建授权。 在线贡献申请的保留容量、请求字节、入口期限与后台查询间隔均为显式组合配置；启动 Web 不会创建申请或来源许可。
+
+组合还挂载[原生 scope 接收](../../collaboration/scope-agent-context/README.zh.md)的认证管理方法。服务启动不创建会话绑定或自动工作许可；每个 Agent 必须单独绑定邀请，并显式选择被动接收或有额度的自动执行。
 
 启动 GUI、打开浏览器，然后开始与 agent（智能体）对话。flag 用于微调本次调用。
 
@@ -49,9 +53,11 @@ dsh --profile web --no-open --port 8080
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-web-app)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
+<a id="lan-access-and-trusted-hosts"></a>
+
 ### LAN 访问与可信主机
 
-默认情况下 GUI 只接受本机的连接。绑定所有网络接口的部署也会允许 LAN 内的浏览器访问，此时打印的 URL 会附带一个 LAN 地址；`--trusted-host` 在两种情况下都能添加额外主机。Host 与 Origin 检查控制可达性，token 交换则认证每个 Host API 方法与 WebSocket stream。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告。
+默认情况下 GUI 只接受本机的连接。`dsh --profile web --host 0.0.0.0` 也允许浏览器通过启动时采样所得的非 internal IPv4 地址访问，并在存在此类地址时打印 LAN URL；`--trusted-host` 在两种情况下都能添加额外主机。Host 与 Origin 检查控制可达性，token 交换则认证每个 Host API 方法与 WebSocket stream。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告。
 
 ### 通过 SSH 运行
 
@@ -60,6 +66,8 @@ dsh --profile web --no-open --port 8080
 ### 按会话的 agent 设置
 
 每个浏览器会话都从随发行版交付的 preset（默认 `standard`）组合自己的 agent（智能体），而不是共享一套进程级工具集。你可以更改默认 preset，或在 `$DSH_HOME/.agent-presets` 下添加自己的 preset。
+
+在 macOS 和 Linux 上，组合包还会挂载 [Claude scope 适配器](../../collaboration/claude-scope/README.zh.md)。安装 Hook 和加入 Task 仍须显式操作；仅启动 Web 不会授予对 Claude 会话或其文件的访问权限。共享上下文后端默认仍为 `/text`。Claude 适配器在 Windows 上禁用，因为其私有连接描述文件需要尚不支持的操作系统锁；Web 的其他部分仍可启动。
 
 -----
 
@@ -146,7 +154,7 @@ URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发�
 - **只能观察到交接的启动**——GUI 只报告浏览器被请求打开，而不是它确实打开了；之后的浏览器退出永远不会上报，打印的 URL 是你的手动回退路径。
 - **SSH 会话保留 URL 但跳过浏览器交接**——打印的 URL 指向远端宿主机 loopback 端点；SSH 客户端或编辑器必须暴露并打开本地转发地址。
 - **`BROWSER` 覆盖只能来自环境**——被发现的 `.env` 不能设置 `BROWSER`；只有继承值能为自动交接选择可执行文件。
-- **不支持绑定所有网络接口**——出于安全考虑，`--host 0.0.0.0` 会在启动时被拒绝；请使用默认 loopback 主机。
+- **随附监听器使用 HTTP**——`--host 0.0.0.0` 启用网络访问，但不增加 TLS。Host/Origin 校验和浏览器认证不会加密连接。
 
 <a id="dev-note"></a>
 ### 开发备注

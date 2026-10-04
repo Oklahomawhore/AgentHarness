@@ -67,7 +67,6 @@ async function portableArchive(root: string, version = '1.2.3', platform = proce
   await cp(commandScript, join(payload, 'agentharness.mjs'))
   await copyClusterRuntime(payload)
   await writeFile(join(payload, 'start.mjs'), '')
-  await writeFile(join(payload, 'mcp.mjs'), '')
   await writeFile(join(payload, 'agentharness-portable.json'), `${JSON.stringify({
     formatVersion: 1,
     product: 'AgentHarness',
@@ -75,7 +74,6 @@ async function portableArchive(root: string, version = '1.2.3', platform = proce
     platform,
     arch,
     entry: 'start.mjs',
-    mcpEntry: 'mcp.mjs',
     runtime: { node: `runtime/${runtimeName}` },
   })}\n`)
   const archive = join(root, `agentharness-${platform}-${arch}.tgz`)
@@ -145,10 +143,20 @@ describe('AgentHarness portable release staging', () => {
     expect(powershell).toContain('Read-Host "AgentHarness cluster join secret" -AsSecureString')
     expect(powershell).toContain('Get-FileHash -Algorithm SHA256')
     expect(powershell).toContain('& $CommandPath mcp-setup')
-    const guide = renderMcpGuide('/opt/AgentHarness/current', 4080)
+    const guide = renderMcpGuide('/opt/AgentHarness/current', { DSH_HOME: '/private/harness-home' })
+    if (process.platform === 'win32') {
+      expect(guide).toContain('unsupported on Windows')
+      expect(guide).not.toContain('mcp add')
+      return
+    }
     expect(guide).toContain('/opt/AgentHarness/current/runtime/node')
     expect(guide).toContain('codex mcp add agentharness')
-    expect(guide).toContain('claude mcp add --scope user agentharness')
+    expect(guide).toContain('claude mcp add --env')
+    expect(guide).toContain('--transport stdio --scope user agentharness')
+    expect(guide).toContain('--profile mcp --connection')
+    expect(guide).toContain('/private/harness-home/mcp/connection.json')
+    expect(guide).toContain('DSH_HOME')
+    expect(guide).not.toContain('mcp.mjs')
     expect(guide).toContain('agentharness_task_list')
   })
 
@@ -363,7 +371,7 @@ describe('AgentHarness LAN release server and installed command', () => {
     await expect(readFile(join(state, 'server.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('starts, reports, and stops a detached packed runtime', async () => {
+  it.each([200, 401])('starts, reports, and stops its owned runtime with HTTP %s', async (httpStatus) => {
     const fixture = await temporaryDirectory('agentharness command test ')
     const portable = join(fixture, 'portable')
     const state = join(fixture, 'state')
@@ -376,7 +384,7 @@ describe('AgentHarness LAN release server and installed command', () => {
       'const args = process.argv.slice(2)',
       'const index = args.findIndex(value => value === \'--port\')',
       'const port = Number(index === -1 ? 3080 : args[index + 1])',
-      'const server = createServer((_request, response) => response.end(\'ready\'))',
+      `const server = createServer((_request, response) => { response.statusCode = ${String(httpStatus)}; response.end('ready') })`,
       'server.listen(port, \'127.0.0.1\')',
       'const close = () => server.close(() => process.exit(0))',
       'process.on(\'SIGINT\', close)',
@@ -397,7 +405,8 @@ describe('AgentHarness LAN release server and installed command', () => {
       expect(started).toContain(`AgentHarness 9.8.7 is ready at http://127.0.0.1:${port}`)
       expect(execFileSync(process.execPath, [installedCommand, 'status'], { env, encoding: 'utf8' })).toContain('ready at')
       expect(execFileSync(process.execPath, [installedCommand, 'start'], { env, encoding: 'utf8' })).toContain('already running')
-      expect(execFileSync(process.execPath, [installedCommand, 'mcp-guide'], { env, encoding: 'utf8' })).toContain(`http://127.0.0.1:${port}`)
+      expect(execFileSync(process.execPath, [installedCommand, 'mcp-guide'], { env, encoding: 'utf8' }))
+        .toContain(join(env.DSH_HOME, 'mcp', 'connection.json'))
       const joined = spawnSync(process.execPath, [installedCommand, 'cluster', 'join', '--secret-stdin'], {
         env,
         encoding: 'utf8',
@@ -422,7 +431,7 @@ describe('AgentHarness LAN release server and installed command', () => {
     expect(spawnSync(process.execPath, [installedCommand, 'status'], { env, encoding: 'utf8' }).status).not.toBe(0)
 
     const occupiedPort = await freePort()
-    await listen(createServer((_request, response) => response.end('unmanaged')), occupiedPort)
+    await listen(createServer((_request, response) => { response.statusCode = 401; response.end('unmanaged') }), occupiedPort)
     const occupied = await runShell(`${JSON.stringify(process.execPath)} ${JSON.stringify(installedCommand)} start`, {
       ...env,
       AGENTHARNESS_PORT: String(occupiedPort),
@@ -430,6 +439,31 @@ describe('AgentHarness LAN release server and installed command', () => {
     expect(occupied.status).not.toBe(0)
     expect(occupied.stderr).toContain(`port ${occupiedPort} already has a responding HTTP service`)
     expect(await (await fetch(`http://127.0.0.1:${occupiedPort}`)).text()).toBe('unmanaged')
+  })
+
+  it('rejects a live foreign PID even when its recorded port answers HTTP 401', async () => {
+    const fixture = await temporaryDirectory('agentharness wrong owner ')
+    const portable = join(fixture, 'portable')
+    const state = join(fixture, 'state')
+    await mkdir(portable)
+    await mkdir(state)
+    await cp(commandScript, join(portable, 'agentharness.mjs'))
+    await copyClusterRuntime(portable)
+    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
+    const server = createServer((_request, response) => { response.statusCode = 401; response.end('foreign') })
+    await listen(server, 0)
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('missing server address')
+    await writeFile(join(state, 'server.json'), JSON.stringify({
+      pid: process.pid, entry: join(portable, 'start.mjs'), version: '9.8.7', port: address.port,
+    }))
+    const result = await runShell(`${JSON.stringify(process.execPath)} ${JSON.stringify(join(portable, 'agentharness.mjs'))} start`, {
+      ...process.env, AGENTHARNESS_RUNTIME_DIR: state, AGENTHARNESS_PORT: String(address.port), AGENTHARNESS_NO_OPEN: '1',
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('does not match the recorded AgentHarness entry')
+    expect(result.stdout).not.toContain('already running')
+    expect(await (await fetch(`http://127.0.0.1:${String(address.port)}`)).text()).toBe('foreign')
   })
 
   it('bounds restart time when an old page keeps the previous runtime alive', async () => {

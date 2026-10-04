@@ -58,6 +58,10 @@ with DeepSeekHarness(dsh_home="/absolute/path/to/test-dsh-home") as harness:
 
 `python/sdk/tests/manual_sdk_agent_smoke.py` 使用内部 `_launch_args` 测试适配器，通过 tsx 验证未构建的 TypeScript CLI。公开 SDK 刻意不提供任意 argv 替换。
 
+构建 checkout 并安装 Python SDK 后，可对 `scripts/smoke-python-runtime.py` 传入 `--scenario sdk-scope-context --exe apps/cli/lib/bin.js`，执行无需密钥的原生 scope 回放。这个显式本地场景独立于 `all`，需要仓库中的 fixture 辅助程序及 `PATH` 上的 Node。它通过公开 Python SDK 启动已构建的 `dsh --profile sdk`，将完整归一化 Session 与 [TypeScript 记录](../snapshots/sdk/scope-context-live/session.v3.jsonl)比较，并检查 [Python 运行时 fixture](../scripts/snapshots/python-sdk-single-exe/scope-context-live/)中的 Python 结果与 Session。Scope owner 和模型回复均由受控 fixture 提供；该运行证明自动轮次交付、当前上下文替换、撤回及已消耗激活预算的保留，但不能证明真实模型行为或打包 wheel 的安装。只有在审阅此场景的新期望输出时才使用 `--update-snapshots`。
+
+满足相同前提后，使用 `--scenario sdk-task-context-peer-facts --exe apps/cli/lib/bin.js`，通过 Python SDK 检查有效、更正、无效及撤销的 peer 贡献，并与[已记录的 Task 上下文](../snapshots/sdk/task-context-peer-facts/session.v3.jsonl)和 [Python 期望输出](../scripts/snapshots/python-sdk-single-exe/task-context-peer-facts/)比对。这个显式本地场景同样独立于 `all`；其直接调用 Host API 的 fixture 验证上下文采用，不验证网络身份认证、文件采集或真实模型行为。
+
 ## 构建分发包
 
 根目录 `package.json` 的版本是两个 Python 分发包的权威版本。暂存脚本会将该版本注入两个 wheel 包，并将 SDK 固定到同版本的 `deepseek-harness-runtime-bin`。

@@ -52,6 +52,8 @@ None directly.
 - The file is trusted reviewed input and has no per-item runtime authorization. Use a native access-scoped provider when readers have different permissions.
 - This provider is read-only and does not publish accepted room results back to the source.
 
+No invariant companion is published because this provider loads one immutable corpus before registration; the evidence registry owns provider registration lifecycle.
+
 ### Dev Note
 
 Use this package’s source, tests, and architecture documentation as the maintainer reference.

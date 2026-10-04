@@ -57,6 +57,218 @@ function userTexts(agent: Agent): string[] {
 }
 
 describe('Agent.cancel()', () => {
+  it('notifies every cancellation call while the activity retains its first cause', async () => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('cancel-request-observer'), { provider: 'mock', model: 'mock' })
+    const other = await ctx.agentLoop.create(SessionId('other-cancel-observer'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    const observed: { cause: import('@deepseek-ai/dsh-agent').AgentCancelCause; aborted: boolean }[] = []
+    const subjects: Agent[] = []
+    let activeSignal: AbortSignal | undefined
+    const ownerCause = { kind: 'hook', reason: 'replace an automatic binding' } as const
+    agent.ctx.on('agent/cancel-requested', ({ agent: subject, cause }) => {
+      subjects.push(subject)
+      observed.push({ cause, aborted: activeSignal?.aborted ?? false })
+    })
+    try {
+      other.cancel({ kind: 'user' })
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      const maintenance = agent.runMaintenance(async (signal) => {
+        activeSignal = signal
+        await finish.promise
+      })
+      agent.cancel(ownerCause, { keepInbox: true })
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      expect(subjects.map(subject => subject.id)).toEqual([agent.id, agent.id, agent.id])
+      expect(observed).toEqual([
+        { cause: { kind: 'user' }, aborted: false },
+        { cause: ownerCause, aborted: true },
+        { cause: { kind: 'user' }, aborted: true },
+      ])
+      expect(activeSignal?.reason).toBe(ownerCause)
+      finish.resolve(undefined)
+      await maintenance
+      expect(adapter.requests).toHaveLength(0)
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('parks a maintenance wake and retains queued input when cancellation keeps the inbox', async () => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('kept-maintenance-wake'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    const wake = createUserMessage({ content: [{ type: 'text', text: 'earlier waking input' }], source: { kind: 'user' } })
+    const parked = createUserMessage({ content: [{ type: 'text', text: 'non-waking input' }], source: { kind: 'user' } })
+    try {
+      const maintenance = agent.runMaintenance(async () => {
+        agent.followup(wake)
+        await finish.promise
+      })
+      agent.inbox.append('next-turn', parked)
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      finish.resolve(undefined)
+      await maintenance
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(0)
+      expect(agent.inbox.nextTurn.map(message => message.id)).toEqual([wake.id, parked.id])
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(0)
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('accepts a new wake after a maintenance cancellation keeps earlier input', async () => {
+    const adapter = new MockAdapter([textResponse('earlier reply'), textResponse('new reply')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('new-maintenance-wake'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    try {
+      const maintenance = agent.runMaintenance(async () => {
+        send(agent, 'earlier input')
+        await finish.promise
+      })
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      send(agent, 'new explicit wake')
+      finish.resolve(undefined)
+      await maintenance
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(2)
+      expect(userTexts(agent)).toEqual(['earlier input', 'new explicit wake'])
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('a repeated cancellation parks a newer maintenance wake without deleting its input', async () => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('repeated-maintenance-cancel'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    try {
+      const maintenance = agent.runMaintenance(async () => { await finish.promise })
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      send(agent, 'wake after first stop')
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      finish.resolve(undefined)
+      await maintenance
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(0)
+      expect(agent.inbox.nextTurn).toHaveLength(1)
+      expect(userTexts(agent)).toEqual([])
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('a repeated cancellation parks a wake during running-driver abort convergence', async () => {
+    const adapter = new MockAdapter(['hang'])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('repeated-running-cancel'), { provider: 'mock', model: 'mock' })
+    const streaming = Promise.withResolvers<undefined>()
+    ctx.on('agent/assistant-stream', ({ agent: current, frame }) => {
+      if (current === agent && frame.type === 'chunk') streaming.resolve(undefined)
+    })
+    try {
+      send(agent, 'active input')
+      await streaming.promise
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      send(agent, 'wake after first stop')
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(1)
+      expect(userTexts(agent)).toEqual(['active input'])
+      expect(agent.inbox.nextTurn).toHaveLength(1)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps a new maintenance wake submitted by the cancellation notification', async () => {
+    const adapter = new MockAdapter([textResponse('after abort')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('abort-listener-wake'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    try {
+      const maintenance = agent.runMaintenance(async (signal) => {
+        signal.addEventListener('abort', () => { send(agent, 'new abort-listener wake') }, { once: true })
+        await finish.promise
+      })
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      finish.resolve(undefined)
+      await maintenance
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(1)
+      expect(userTexts(agent)).toEqual(['new abort-listener wake'])
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it.each([false, true])('parks a send cancelled by its maintenance inbox observer (already cancelled: %s)', async (alreadyCancelled) => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('insertion-cancelled-maintenance'), { provider: 'mock', model: 'mock' })
+    const finish = Promise.withResolvers<undefined>()
+    const wake = createUserMessage({ content: [{ type: 'text', text: 'cancelled wake' }], source: { kind: 'user' } })
+    const parked = createUserMessage({ content: [{ type: 'text', text: 'parked input' }], source: { kind: 'user' } })
+    ctx.on('agent/inbox/inserted', ({ agent: current, message }) => {
+      if (current !== agent || message.id !== wake.id) return
+      agent.inbox.append('next-turn', parked)
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+    })
+    try {
+      const maintenance = agent.runMaintenance(async () => { await finish.promise })
+      if (alreadyCancelled) agent.cancel({ kind: 'user' }, { keepInbox: true })
+      agent.followup(wake)
+      finish.resolve(undefined)
+      await maintenance
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(0)
+      expect(agent.inbox.nextTurn.map(message => message.id)).toEqual([wake.id, parked.id])
+      expect(userTexts(agent)).toEqual([])
+    } finally {
+      finish.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('parks a waking send cancelled by an idle inbox observer until a new send arrives', async () => {
+    const adapter = new MockAdapter([textResponse('old'), textResponse('new')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('insertion-cancelled-idle'), { provider: 'mock', model: 'mock' })
+    const wake = createUserMessage({ content: [{ type: 'text', text: 'cancelled wake' }], source: { kind: 'user' } })
+    ctx.on('agent/inbox/inserted', ({ agent: current, message }) => {
+      if (current === agent && message.id === wake.id) agent.cancel({ kind: 'user' }, { keepInbox: true })
+    })
+    try {
+      agent.followup(wake)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(0)
+      expect(agent.inbox.nextTurn.map(message => message.id)).toEqual([wake.id])
+
+      send(agent, 'new wake')
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(2)
+      expect(userTexts(agent)).toEqual(['cancelled wake', 'new wake'])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('cancel() on an idle agent with nothing queued is a no-op; the next prompt runs (F2 leak guard)', async () => {
     const adapter = new MockAdapter([textResponse('reply')])
     const ctx = await harness(adapter)

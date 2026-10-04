@@ -3,6 +3,10 @@
     - button "Use the ask_user_question tool to" [disabled]
   - img
   - text: Standard mode
+  - button "Collaboration":
+    - img
+    - text: Collaboration
+    - img
   - button "More actions":
     - img
   - button "Open right sidebar":

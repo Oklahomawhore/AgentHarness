@@ -1,0 +1,33 @@
+- region "自动贡献工作变化":
+  - heading "自动贡献工作变化" [level=3]
+  - button "重新读取贡献"
+  - paragraph: 为这个会话授权采集目录。所有者批准后，目录内正常 Write/Edit 的变化会自动贡献；无需逐个指定文件。也可选择单个 OpenAPI 操作。
+  - status: 贡献已启用
+  - term: API 文件
+  - definition: {{cwd}}/openapi.json
+  - term: 来源名称
+  - definition: Orders
+  - term: API 操作
+  - definition: POST /orders
+  - term: 允许采集的目录
+  - definition: {{cwd}}
+  - group: 重新连接任务所有者
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 来源设备
+  - definition: {{contributorPeerId}}
+  - term: 来源名称
+  - definition: Orders
+  - term: API 操作
+  - definition: POST /orders
+  - term: 授权到期时间
+  - definition: {{expiresLocal}}
+  - term: 最多样本数
+  - definition: "8"
+  - term: 每份样本字节上限
+  - definition: "4096"
+  - paragraph: {{ownerAddress}}
+  - paragraph: 启用后，此会话会自动贡献已授权的工作变化。贡献记录来自此会话，不代表结果已被独立验证。接收共享上下文需要另行授权。
+  - button "停止贡献"

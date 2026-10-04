@@ -44,7 +44,7 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 ### 驱动 agent 的对话
 
-句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；`whenIdle()` 在整个 agent 达到完全停稳后兑现。
+句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动并取消该活动此前的唤醒请求，maintenance 期间也如此。未设置 `keepInbox` 时，它还会清除待处理工作。保留的输入等待新的唤醒 send；重复取消会取消上一次取消之后请求的唤醒。`whenIdle()` 在整个 agent 达到完全停稳后兑现。
 
 ```text
 handle.agent.followup({
@@ -103,6 +103,8 @@ await handle.agent.whenIdle()
 | [`src/invariant.ts`](src/invariant.ts) | 不变式配套：无操作的 `agent/status` 转换会失败 |
 
 ### 注册表与生命周期
+
+取消观察者通过 `agent/cancel-requested` 接收每次调用，即使已经中止的信号仍保留较早原因。[循环 README](../agent-loop/README.zh.md#understand-the-implementation)定义通知时机与取消效果。
 
 `AgentRegistry` 为每个实时 agent 保留一个条目，含其载体与创建者关系。`register()` 记录一个已构造完成的 agent；异步工厂使用拆分的 `enter()`/`announce()` 对，使 setup 与发布始终处于回滚保护之下。创建分发期间请求的 detach 会等待该次分发退栈，且每次 detach 都绑定到确切条目，因此陈旧 disposer 无法移除之后出现的同 id 替代项。Teardown 顺序是停止并排空循环、撤销作用域、detach agent、detach 会话；私有清理完成后该 id 即可复用。
 
@@ -172,7 +174,7 @@ await handle.agent.whenIdle()
 - **发起方作用域只存在于进程内**：worker、子进程、HTTP、持久队列和重启必须显式传递所需身份。
 - **环境身份可能比存活状态更久**：消费方在生命周期敏感工作前，仍要检查 `agent.status`、取消状态和所属能力约定。
 - **`agent/session-start` 不能为启动设置门禁**：它仍是同步且不可 veto 的通知；必须在发布前完成的异步组合属于工厂的 `setup(agentCtx, agent)` 事务。
-- **`cancel()` 默认清空收件箱**：它会中止正在处理的轮次以及排队和 steering 工作；`cancel(cause, { keepInbox: true })` 只中止轮次并保留待处理项，且不存在让轮次继续运行、只中止步骤的操作。
+- **`cancel()` 默认清空收件箱**：`cancel(cause, { keepInbox: true })` 会保留待处理项，等待新的唤醒 send，同时仍中止当前活动；不存在让轮次继续运行、只中止步骤的操作。
 - **每条附加 `UserMessage` 恰好携带一个 `MessageSource`**：多个插件合并到一条消息上的贡献会归入同一来源，因此该消息无法列出多个生产者。
 
 <a id="dev-note"></a>

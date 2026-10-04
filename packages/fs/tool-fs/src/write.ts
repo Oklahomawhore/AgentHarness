@@ -112,6 +112,7 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
       // Single-slot decision: the policy plugin produces createIfAbsent/
       // replaceIfVersion; the bare default is undefined (unconditional). No stat.
       const intent = await ctx.waterfall('fs/write-intent', target, exec, () => undefined)
+      ctx.emit('tool-fs/mutation-start', { execution: exec, filesystem: ctx.fs, target, tool: 'write', input: { content: input.content } })
       let outcome: FsWriteOutcome
       try {
         outcome = await ctx.fs.writeText(target, input.content, intent, exec.signal, sandboxPolicy)

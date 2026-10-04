@@ -143,3 +143,63 @@ describe('package payload constraints', () => {
     ])
   })
 })
+
+describe('published auxiliary entry payloads', () => {
+  it('includes the authenticated local-access entry beside both connection faces', () => {
+    expect(expectedDshPackageFiles({
+      name: '@deepseek-ai/dsh-client-connection',
+      exports: {
+        './local-access': { default: './lib/local-access.js' },
+        './client': { default: './lib/client.js' },
+      },
+    })).toEqual([
+      'lib/index.js',
+      'lib/local-access.js',
+      'lib/client.js',
+      'lib/types/**/*.d.ts',
+    ])
+  })
+
+  it('includes the stdio entry, profile patch, and private shared bridge chunks', () => {
+    expect(expectedDshPackageFiles({
+      name: '@deepseek-ai/dsh-agentharness-bridge',
+      exports: { './stdio': './lib/stdio.js' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })).toEqual([
+      'lib/index.js',
+      'lib/stdio.js',
+      'cordis.patch.yml',
+      'lib/chunks/*.js',
+      'lib/types/**/*.d.ts',
+    ])
+  })
+
+  it.each(['development-room-storage-domain', 'development-room-context-storage-domain'])(
+    'retains the schema chunk shared by the runtime and invariant for %s', (name) => {
+      expect(expectedDshPackageFiles({
+        name: `@deepseek-ai/dsh-${name}`,
+        exports: { './invariant': { default: './lib/invariant.js' } },
+      })).toEqual([
+        'lib/index.js',
+        'lib/invariant.js',
+        'lib/schema-*.js',
+        'lib/types/**/*.d.ts',
+      ])
+    },
+  )
+
+  it('does not infer auxiliary bundles from a subpath targeting the emitted tree', () => {
+    expect(expectedDshPackageFiles({
+      name: '@deepseek-ai/dsh-other',
+      exports: {
+        './local-access': { default: './lib/types/local-access.js' },
+        './stdio': { default: './lib/types/stdio.js' },
+      },
+    })).toEqual(['lib/index.js', 'lib/types/**/*.js', 'lib/types/**/*.d.ts'])
+  })
+
+  it('does not add auxiliary entries or private chunk globs to an unrelated package', () => {
+    expect(expectedDshPackageFiles({ name: '@deepseek-ai/dsh-other' }))
+      .toEqual(['lib/index.js', 'lib/types/**/*.d.ts'])
+  })
+})

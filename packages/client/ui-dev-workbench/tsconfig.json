@@ -9,7 +9,6 @@
     { "path": "../store" },
     { "path": "../ui-sidebar" },
     { "path": "../ui-renderer" },
-    { "path": "../ui-slots" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../ui-slots" }
   ]
 }

@@ -36,6 +36,9 @@
       "path": "../../collaboration/development-room"
     },
     {
+      "path": "../../collaboration/claude-scope"
+    },
+    {
       "path": "../../collaboration/development-task"
     },
     {
@@ -94,6 +97,18 @@
     },
     {
       "path": "../../feedback/command-feedback"
+    },
+    {
+      "path": "../../collaboration/scope-access"
+    },
+    {
+      "path": "../../collaboration/scope-transport"
+    },
+    {
+      "path": "../../collaboration/scope-agent-context"
+    },
+    {
+      "path": "../../collaboration/scope-agent-contribution"
     }
   ]
 }

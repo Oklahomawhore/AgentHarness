@@ -1,0 +1,20 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "CONNECTED" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "CONNECTED" } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "DISCONNECTED" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "DISCONNECTED" } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

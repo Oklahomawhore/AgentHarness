@@ -1,0 +1,8 @@
+- id: scope-access
+  name: 'fixture:scope-access'
+- id: scope-consumer
+  name: '@deepseek-ai/dsh-scope-agent-context'
+  config:
+    maxContextBytes: 8000
+    coalesceMs: 1
+    retryDelayMs: 1000

@@ -18,6 +18,7 @@ export type McpClientSetupState =
   | 'conflict'
   | 'manual'
   | 'not-installed'
+  | 'unsupported'
   | 'failed'
 
 /** Result of the latest requested setup operation. */
@@ -27,6 +28,7 @@ export type McpClientSetupOutcome =
   | 'conflict'
   | 'manual'
   | 'not-installed'
+  | 'unsupported'
   | 'failed'
 
 /** Public detection and setup state for one client. */

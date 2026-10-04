@@ -377,6 +377,10 @@ export function normalizeSessionLog(
       if ('durationMs' in data) data.durationMs = 0
     }
     normalizeFeedbackClocks(record)
+    if (record.type === 'scope-agent-context/state' && record.data !== null && typeof record.data === 'object') {
+      const data = record.data as Record<string, unknown>
+      if (typeof data.lastActivationAt === 'number') data.lastActivationAt = 0
+    }
     if (record.type === 'goal/change' && record.data !== null && typeof record.data === 'object') {
       const data = record.data as Record<string, unknown>
       if ('createdAt' in data) data.createdAt = 0

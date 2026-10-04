@@ -11,6 +11,7 @@
     "src/browser-auth.ts",
     "src/http-bridge.ts",
     "src/index.ts",
+    "src/local-access.ts",
     "src/loopback-hostname.ts",
     "src/recovery-config.ts",
     "src/rpc-host.ts",
@@ -38,6 +39,12 @@
     },
     {
       "path": "../../util/brand"
+    },
+    {
+      "path": "../../boot/cmdline"
+    },
+    {
+      "path": "../../../native/system/packages/entry"
     }
   ]
 }

@@ -1,0 +1,3 @@
+## Shared scope authorization unavailable
+This receiving interval is no longer authorized. Do not treat earlier shared-scope projections as current facts or current permission. This notice does not erase information already present in this conversation.
+{"projectionId":"claude-projection-dd8fccf5b627c72ff1517ca281d72dbe9ac6389c0679e55fcfbd13da395f8dd5","supersedes":"claude-projection-7b02c9f19b13f1e03f96ade85c19c2fbc2f874c2726b1f5f3c7123d33ab9c987","taskId":"task-fixture","ownerPeerId":"owner-peer","grantId":"grant-fixture","grantGeneration":"grant-generation","status":"revoked"}

@@ -81,6 +81,8 @@ export interface PackOptions {
   readonly root?: string
   /** Package name to absolute directory, for workspace and vendored packages. */
   readonly workspaces: ReadonlyMap<string, string>
+  /** Packages linked into the served page; a Worker module importing one is a pack error. */
+  readonly pageOnlyPackages?: ReadonlySet<string>
   /** Directory Node-style dependency resolution walks up from for the roster. */
   readonly resolveFrom: string
   /** Config trees to copy in beside the composition. */
@@ -402,6 +404,10 @@ function sweepImage(
   let rewritten = 0
   for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
     const { specifier, from, importer } = entry
+    if (options.pageOnlyPackages?.has(packageNameOf(specifier)) === true) {
+      failures.push(`${importer}: page-only package ${JSON.stringify(specifier)} is not a Worker module`)
+      continue
+    }
     let resolution
     try {
       resolution = loader.resolve(specifier, from)
@@ -515,7 +521,7 @@ function materialize(
 
   for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
     const { name, from } = entry
-    if (packages.has(name) || replaced.has(name)) continue
+    if (packages.has(name) || replaced.has(name) || options.pageOnlyPackages?.has(name) === true) continue
     const directory = options.workspaces.get(name) ?? resolveDependency(from, name)
     if (directory === undefined) {
       missing.push(`${name} (from ${relative(options.resolveFrom, from) || '.'})`)
@@ -603,6 +609,11 @@ export function packVfsImage(options: PackOptions): PackResult {
     ...rosterOf(options.config),
     ...configTrees.filter(tree => tree.scanRoster === true).flatMap(tree => treeRosterOf(tree.directory)),
   ])]
+  for (const name of roster) {
+    if (options.pageOnlyPackages?.has(name) === true) {
+      throw new Error(`vfs image: composition names page-only package ${JSON.stringify(name)} as a Worker plugin`)
+    }
+  }
   const { files, packages, missing } = materialize(roster, options)
 
   files[CONFIG_PATH] = encoder.encode(options.config)

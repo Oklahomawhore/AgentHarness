@@ -98,6 +98,31 @@ export function composeProfile(repoRoot: string, profile: string): string {
 }
 
 /**
+ * Read packages already linked into the page from the same build reader the Client gate uses.
+ * The repository adapter runs source tooling through tsx, as profile composition does.
+ * @param repoRoot - Repository root with its installed source tooling and build configurations.
+ * @returns Page-only package names to exclude from the Worker image.
+ * @throws When build classification fails or its process returns malformed JSON.
+ */
+export function staticPagePackages(repoRoot: string): ReadonlySet<string> {
+  const source = `
+    import { pathToFileURL } from 'node:url'
+    import { join } from 'node:path'
+    const root = process.argv[1]
+    const { readStaticLinkedRoster } = await import(pathToFileURL(join(root, 'scripts/verify-client-packages.ts')).href)
+    process.stdout.write(JSON.stringify([...await readStaticLinkedRoster(root)]))
+  `
+  const output = execFileSync(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', source, repoRoot], {
+    cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  })
+  const names: unknown = JSON.parse(output)
+  if (!Array.isArray(names) || !names.every((name): name is string => typeof name === 'string' && name !== '')) {
+    throw new Error('vfs image: static Client classification must return an array of package names')
+  }
+  return new Set(names)
+}
+
+/**
  * Config trees the CLI package declares for deployment images
  * (`dsh.configTrees` in its package.json): `path` is relative to the CLI
  * package root, `mount` is the image path, `scanRoster` feeds the tree's yml

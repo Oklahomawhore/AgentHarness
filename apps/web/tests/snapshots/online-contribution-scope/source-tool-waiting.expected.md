@@ -1,0 +1,27 @@
+- region "自动贡献工作变化":
+  - heading "自动贡献工作变化" [level=3]
+  - button "重新读取贡献"
+  - paragraph: 为这个会话授权采集目录。所有者批准后，目录内正常 Write/Edit 的变化会自动贡献；无需逐个指定文件。也可选择单个 OpenAPI 操作。
+  - status: 等待所有者批准；批准后自动启用
+  - term: 来源名称
+  - definition: session-work
+  - term: 贡献来源
+  - definition: 授权目录内的 Write/Edit
+  - term: 允许采集的工具
+  - definition: Edit, Write
+  - term: 允许采集的目录
+  - definition: {{cwd}}/directory-work
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 授权到期时间
+  - definition: {{permissionExpiresLocal}}
+  - term: 最多样本数
+  - definition: "4"
+  - term: 每份样本字节上限
+  - definition: "4096"
+  - paragraph: Host 会在后台取回批准结果。可以关闭此页面；停止 Host 时会暂缓，重新启动后继续。
+  - group: 更新申请连接地址
+  - paragraph: 启用后，此会话会自动贡献已授权的工作变化。贡献记录来自此会话，不代表结果已被独立验证。接收共享上下文需要另行授权。
+  - button "停止贡献"

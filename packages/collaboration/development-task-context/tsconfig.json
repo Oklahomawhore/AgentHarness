@@ -1,18 +1,63 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "lib/types" },
-  "include": ["src"],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../../../vendor/cordis" },
-    { "path": "../../../vendor/schemastery" },
-    { "path": "../../core/agent" },
-    { "path": "../../core/session" },
-    { "path": "../../core/system-prompt" },
-    { "path": "../../core/tools" },
-    { "path": "../../llm/llm" },
-    { "path": "../../runtime-diagnostics/invariants" },
-    { "path": "../development-room" },
-    { "path": "../development-room-agent-presence" },
-    { "path": "../development-task" }
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/session"
+    },
+    {
+      "path": "../../core/system-prompt"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
+      "path": "../development-room"
+    },
+    {
+      "path": "../development-room-agent-presence"
+    },
+    {
+      "path": "../development-task"
+    },
+    {
+      "path": "../../session/session-persistence"
+    },
+    {
+      "path": "../../session/session-persistence-jsonl"
+    },
+    {
+      "path": "../../session-query/session-query-sqlite"
+    },
+    {
+      "path": "../../session/session-projection"
+    },
+    {
+      "path": "../../util/timeout"
+    },
+    {
+      "path": "../../util/values"
+    }
   ]
 }

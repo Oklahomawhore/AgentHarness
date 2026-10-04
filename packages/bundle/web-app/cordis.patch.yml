@@ -138,14 +138,24 @@
         maxOutputBytes: 262144
         graceMs: 3000
 
-    # Trusted local connection center. The source launcher supplies the source
-    # bridge while the portable launcher supplies its bundled runtime paths.
+    # Trusted local connection center; every client launches the named MCP profile.
     - id: mcp-client-setup
       name: '@deepseek-ai/dsh-host-mcp-client-setup'
       config:
         nodePath: !!js process.env.AGENTHARNESS_MCP_NODE ?? process.execPath
-        mcpPath: !!js process.env.AGENTHARNESS_MCP_PATH ?? `${process.cwd()}/scripts/agentharness-portable-mcp.mjs`
-        url: !!js process.env.AGENTHARNESS_URL ?? 'http://127.0.0.1:3080'
+        dshPath: !!js process.env.AGENTHARNESS_DSH_PATH ?? process.argv[1]
+        nodeArgs: !!js >-
+          process.env.AGENTHARNESS_MCP_NODE_ARGS ? JSON.parse(process.env.AGENTHARNESS_MCP_NODE_ARGS) : process.execArgv
+        sourceTsconfigPath: !!js >-
+          (() => {
+            const path = process.getBuiltinModule('node:path');
+            const configured = process.env.AGENTHARNESS_MCP_TSCONFIG ?? process.env.TSX_TSCONFIG_PATH;
+            if (configured) return path.resolve(configured);
+            return /[\\/]apps[\\/]cli[\\/]src[\\/]bin\.ts$/.test(process.argv[1] ?? '')
+              ? path.resolve(path.dirname(process.argv[1]), '../../../tsconfig.base.json') : undefined;
+          })()
+        descriptorPath: !!js dshHomePath('mcp/connection.json')
+        harnessHome: !!js dshHomePath()
 
     # Shared process-local room directory. Agent and browser participants
     # renew presence leases and explicitly join or leave topic rooms.
@@ -219,12 +229,89 @@
       name: '@deepseek-ai/dsh-development-task-mesh'
       disabled: !!js process.env.AGENTHARNESS_NODE_ID == null && process.env.DSH_ROOM_NODE_ID == null && process.env.AGENTHARNESS_MESH_PEER_URL == null && process.env.AGENTHARNESS_MESH_PEERS == null
 
+    - id: development-task-context-text
+      name: '@deepseek-ai/dsh-development-task-context/text'
+
     # Native Agent context is injected at the next pre-step and committed as a
     # replayable user/message event before the model request.
     - id: development-task-context
       name: '@deepseek-ai/dsh-development-task-context'
       config:
         maxContextBytesPerStep: 262144
+
+    # Independent read invitations expose bounded projections, without Mesh replication.
+    - id: scope-transport-libp2p
+      name: '@deepseek-ai/dsh-scope-transport/libp2p'
+      config:
+        listenAddresses: !!js "process.env.AGENTHARNESS_SCOPE_LISTEN == null ? ['/ip4/127.0.0.1/tcp/0'] : JSON.parse(process.env.AGENTHARNESS_SCOPE_LISTEN)"
+        maxRequestBytes: 16384
+        maxResponseBytes: 65536
+        maxInboundRequests: 16
+        maxOutboundRequests: 16
+        maxConnections: 32
+        requestTimeoutMs: 5000
+        connectionTimeoutMs: 5000
+
+    - id: scope-access
+      name: '@deepseek-ai/dsh-scope-access'
+      config:
+        maxGrants: 1024
+        maxSubscriptions: 256
+        maxProjections: 8192
+        maxContextBytes: 6000
+        maxResponseBytes: 60000
+        requestTimeoutMs: 5000
+        maxInvitationLifetimeMs: 604800000
+        maxConcurrentReads: 16
+        waitTimeoutMs: 3000
+        maxConcurrentWaits: 4
+        maxConcurrentContributions: 4
+        maxContributionRequestBytes: 16384
+        maxContributionApplications: 256
+        maxApplicationRequestBytes: 16384
+        maxApplicationLifetimeMs: 86400000
+
+    - id: scope-agent-context
+      name: '@deepseek-ai/dsh-scope-agent-context'
+      config:
+        maxContextBytes: 8000
+        coalesceMs: 50
+        retryDelayMs: 1000
+
+    - id: scope-agent-contribution
+      name: '@deepseek-ai/dsh-scope-agent-contribution'
+      config:
+        maxSessions: 256
+        maxLeases: 4096
+        maxObservationBytes: 16384
+        contributionPollIntervalMs: 1000
+
+    # External Claude sessions join explicitly; hooks receive context at their
+    # next eligible request. The descriptor's OS lock is unavailable on Windows.
+    - id: claude-scope
+      name: '@deepseek-ai/dsh-claude-scope'
+      disabled: !!js process.platform === 'win32'
+      config:
+        descriptorPath: !!js dshHomePath('claude-scope/connection.json')
+        maxSessions: 256
+        maxLeases: 4096
+        maxProjections: 8192
+        maxContextBytes: 8000
+        maxObservationBytes: 8192
+        maxArtifactReadBytes: 1048576
+        contributionPollIntervalMs: 2000
+        maxOpenApiSourcesPerSession: 16
+        setup:
+          home: !!js dshHomePath()
+          profileName: claude-hook
+          launchCommand: !!js process.execPath
+          launchArgs: !!js '[...process.execArgv, process.argv[1]]'
+          launchCwd: !!js process.cwd()
+          maxRequestBytes: 262144
+          maxResponseBytes: 32768
+          timeoutMs: 10000
+          hookTimeoutSeconds: 30
+          maxSettingsBytes: 1048576
 
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.

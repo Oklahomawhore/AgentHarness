@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-development-mesh-websocket",
   "description": "HMAC-authenticated WebSocket provider for generic development Mesh channels",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -18,16 +18,11 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
-    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
-    "lib/invariant.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
@@ -41,8 +36,7 @@
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-development-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
-    "@deepseek-ai/dsh-host-webserver": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-host-webserver": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -50,7 +44,6 @@
     "@deepseek-ai/dsh-development-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^",
     "@types/ws": "^8.18.1",
     "@deepseek-ai/dsh-development-task": "workspace:^"
   }

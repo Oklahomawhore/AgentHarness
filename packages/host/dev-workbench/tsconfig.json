@@ -8,7 +8,6 @@
     { "path": "../../../vendor/schemastery" },
     { "path": "../../util/brand" },
     { "path": "../../subprocess/subprocess" },
-    { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../typert/protocol" }
   ]
 }

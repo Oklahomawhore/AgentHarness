@@ -44,6 +44,9 @@ const NO_MODEL_EXPERIENCE_SECTION: Readonly<Record<string, string>> = {
  * blocks. A package moves on or off this list with its context behavior.
  */
 const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
+  'packages/collaboration/scope-agent-contribution': { kind: 'indirect', reason: 'Native capture publishes authenticated source reports; Task backends and recipient consumers own model rendering and admission.' },
+  'packages/collaboration/scope-access': { kind: 'indirect', reason: 'Owner authorization prepares exact context; recipient consumers own model admission and framing.' },
+  'packages/collaboration/scope-transport': { kind: 'none', reason: 'Authenticated peer requests carry protocol data without registering model input.' },
   'packages/client/ui-dev-workbench': { kind: 'none', reason: 'The browser panel displays development process state and does not assemble model requests.' },
   'packages/client/ui-emergence-center': { kind: 'indirect', reason: 'The UI invokes Task operations; the Task context consumer or MCP bridge owns model admission.' },
   'packages/collaboration/development-mesh': { kind: 'none', reason: 'The Mesh service carries peer data and does not register model input.' },

@@ -517,4 +517,44 @@ Single-slot decision for the next FileSystem.writeText. Calling `next()` yields 
 ```
 
 Source: [`packages/fs/fs/src/index.ts`](../../packages/fs/fs/src/index.ts)
+
+<a id="tool-fs-events"></a>
+
+### `tool-fs/*` events
+
+<a id="tool-fsmutation-start--emit"></a>
+
+#### `tool-fs/mutation-start` — emit
+
+Observe an admitted filesystem-tool attempt; this does not establish completion. Observers must contain failures and own their asynchronous work. No prior file text is included.
+
+```ts cordis-catalog
+/**
+ * Observe an admitted filesystem-tool attempt; this does not establish completion.
+ * Observers must contain failures and own their asynchronous work. No prior file text is included.
+ * @param mutation - actual provider, canonical target, normalized input, and registry execution identity.
+ * @mode emit
+ */
+'tool-fs/mutation-start'(mutation: ToolFsMutation): void
+```
+
+Source: [`packages/fs/tool-fs/src/index.ts`](../../packages/fs/tool-fs/src/index.ts)
 <!-- END GENERATED cordis-surface -->
+
+<a id="file-tool-observation"></a>
+
+## 文件工具观察
+
+工具在沙箱和意图检查之后、调用 provider 修改文件之前发出 `tool-fs/mutation-start`。载荷标识实际工具尝试、provider、规范目标和已归一化输入；它不包含原文件正文，也不证明操作成功。观察者将执行身份与最终普通或 PTC Session 记录关联，并自行负责持久化和外发授权。观察者必须隔离自身故障并等待其异步工作结束。
+
+```ts type-equiv
+/** Actual filesystem-tool attempt after policy and intent checks, before provider mutation. */
+type ToolFsMutation = {
+  readonly execution: Readonly<ToolExecution>
+  readonly filesystem: FileSystem
+  readonly target: Readonly<FsTarget>
+} & (
+  | { readonly tool: 'write'; readonly input: { readonly content: string } }
+  | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
+)
+```

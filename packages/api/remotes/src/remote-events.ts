@@ -8,6 +8,9 @@
 
 import type {} from '@deepseek-ai/dsh-api-session-controller/remote-events'
 import type {} from '@deepseek-ai/dsh-development-room/types'
+import type {} from '@deepseek-ai/dsh-claude-scope/types'
+import type {} from '@deepseek-ai/dsh-scope-access/types'
+import type {} from '@deepseek-ai/dsh-scope-agent-contribution/types'
 import type {} from '@deepseek-ai/dsh-development-task'
 import type { TypertForwardableEventEntry } from '@deepseek-ai/dsh-typert-protocol'
 
@@ -29,6 +32,9 @@ export const API_REMOTE_FORWARDED_EVENTS = [
   { event: 'development-room/presence-changed', mode: 'emit' },
   { event: 'development-task/changed', mode: 'emit' },
   { event: 'development-task/assignment-changed', mode: 'emit' },
+  { event: 'scope-access/contribution-application-changed', mode: 'emit' },
+  { event: 'scope-agent-contribution/changed', mode: 'emit' },
+  { event: 'claude-scope/session-changed', mode: 'emit' },
   { event: 'goal/activation-changed', mode: 'emit' },
   { event: 'cordis/request-run', mode: 'emit' },
   { event: 'cordis/request-run-resolved', mode: 'emit' },

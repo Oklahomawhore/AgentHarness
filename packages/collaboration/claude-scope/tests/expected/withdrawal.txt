@@ -1,0 +1,3 @@
+## Shared scope disconnected
+The shared-scope connection is no longer active. Earlier shared-scope projections do not establish current authorization or current facts. This notice does not erase information already present in this conversation.
+{"projectionId":"claude-projection-6fc3af79858b1a9b7cb0c3ae4bb6f74ece4ff0abe0500b2e9e3607ba081ef6fe","supersedes":"claude-projection-fe1bf72dfa8dc684cb77829f21d47f1edeee43e81075bf5fda007595d4d80ef5"}

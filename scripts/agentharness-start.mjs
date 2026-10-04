@@ -138,22 +138,42 @@ async function prepareSource(options, pnpm) {
   }
 }
 
-async function waitForNode(child, url, timeoutMs = 180_000) {
-  if (url === undefined) return
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error('the AgentHarness node exited before its Web UI became ready')
+/** Wait for the owned CLI's authenticated readiness message, without an anonymous HTTP probe. */
+export function waitForNode(child, origin, timeoutMs = 180_000) {
+  return new Promise((resolveReady, reject) => {
+    let output = ''
+    const finish = (error, url) => {
+      clearTimeout(timer)
+      child.stdout.removeListener('data', read)
+      child.stderr.removeListener('data', read)
+      child.removeListener('error', failed)
+      child.removeListener('exit', exited)
+      if (error !== undefined) reject(error)
+      else resolveReady(url)
     }
-    try {
-      const response = await fetch(url)
-      if (response.ok) return
-    } catch {
-      // The local listener is expected to refuse connections while booting.
+    const failed = error => finish(error)
+    const exited = () => finish(new Error('the AgentHarness node exited before its Web UI became ready'))
+    const read = (chunk) => {
+      output = (output + chunk.toString()).slice(-16_384)
+      const matches = output.matchAll(/dsh web: (https?:\/\/[^\s]+)/gu)
+      for (const match of matches) {
+        let candidate
+        try { candidate = new URL(match[1]) } catch { continue }
+        if (candidate.hostname !== '127.0.0.1' || !candidate.searchParams.get('token')) continue
+        if (origin !== undefined && candidate.origin !== origin) continue
+        finish(undefined, candidate.href)
+        return
+      }
     }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-  }
-  throw new Error(`the AgentHarness node did not become ready within ${String(timeoutMs / 1000)} seconds`)
+    const timer = setTimeout(() => {
+      finish(new Error(`the AgentHarness node did not become ready within ${String(timeoutMs / 1000)} seconds`))
+    }, timeoutMs)
+    child.stdout.on('data', read)
+    child.stderr.on('data', read)
+    child.once('error', failed)
+    child.once('exit', exited)
+    if (child.exitCode !== null || child.signalCode !== null) exited()
+  })
 }
 
 /** Resolve the platform browser opener for one loopback URL. */
@@ -172,17 +192,20 @@ function openBrowser(url) {
 
 async function runNode(pnpm, args, environment, noOpen) {
   const url = localNodeUrl(args)
-  const runtimeEnvironment = url === undefined ? environment : {
+  const runtimeEnvironment = {
     ...environment,
-    AGENTHARNESS_URL: url,
     AGENTHARNESS_MCP_NODE: process.execPath,
-    AGENTHARNESS_MCP_PATH: join(root, 'scripts', 'agentharness-portable-mcp.mjs'),
+    AGENTHARNESS_DSH_PATH: join(root, 'apps', 'cli', 'src', 'bin.ts'),
+    AGENTHARNESS_MCP_TSCONFIG: join(root, 'tsconfig.base.json'),
+    AGENTHARNESS_MCP_NODE_ARGS: JSON.stringify(['--import', import.meta.resolve('tsx/esm')]),
   }
   const child = spawn(pnpm.command, [...pnpm.prefix, ...webArguments(args)], {
     cwd: root,
     env: runtimeEnvironment,
-    stdio: 'inherit',
+    stdio: ['inherit', 'pipe', 'pipe'],
   })
+  child.stdout.pipe(process.stdout, { end: false })
+  child.stderr.pipe(process.stderr, { end: false })
   const exit = new Promise((resolvePromise, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => resolvePromise({ code, signal }))
@@ -192,14 +215,9 @@ async function runNode(pnpm, args, environment, noOpen) {
   process.once('SIGINT', forwardInterrupt)
   process.once('SIGTERM', forwardTerminate)
   try {
-    await Promise.race([
-      waitForNode(child, url),
-      exit.then(() => { throw new Error('the AgentHarness node exited before its Web UI became ready') }),
-    ])
-    if (url !== undefined) {
-      process.stdout.write(`\nAgentHarness node is ready: ${url}\n`)
-      if (!noOpen) openBrowser(url)
-    }
+    const authenticatedUrl = await waitForNode(child, url)
+    process.stdout.write(`\nAgentHarness node is ready: ${new URL(authenticatedUrl).origin}\n`)
+    if (!noOpen) openBrowser(authenticatedUrl)
     const outcome = await exit
     return outcome.code ?? (outcome.signal === 'SIGINT' ? 130 : 1)
   } catch (error) {

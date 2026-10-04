@@ -100,6 +100,8 @@ function dirOf(url: string): string {
 }
 
 interface SdkAssertions {
+  /** Observe completed background evaluations before issuing the next fixture prompt. */
+  afterTurnEvaluations?: readonly { turn: number; taskRevision: number; decision: 'suppress-unchanged' }[]
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
@@ -124,6 +126,16 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-owner-idle': { expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.' },
+  'scope-owner-participation': {
+    expectedFinalResponse: 'Both source captures ended; historical evidence remains.',
+  },
+  'scope-context-live': {
+    afterTurnEvaluations: [
+      { turn: 2, taskRevision: 4, decision: 'suppress-unchanged' },
+      { turn: 2, taskRevision: 5, decision: 'suppress-unchanged' },
+    ],
+  },
   'ptc-turn': {
     patches: [fileURLToPath(new URL('./ptc-turn/runtime.cordis.yml', import.meta.url))],
     expectedFinalResponse: 'CODE_ONE+CODE_TWO',
@@ -503,6 +515,33 @@ async function waitForRootEvent(
   }
 }
 
+async function waitForScopeEvaluations(
+  subscription: NotificationSubscription,
+  sessionId: string,
+  targets: NonNullable<SdkAssertions['afterTurnEvaluations']>,
+  observe: (notification: HarnessNotification) => void,
+): Promise<void> {
+  if (targets.length === 0) return
+  const observed: unknown[] = []
+  let expired = false
+  const deadline = setTimeout(() => { expired = true; subscription.close() }, 110_000)
+  try {
+    for (const target of targets) {
+      await waitForRootEvent(subscription, sessionId, event => {
+        if (event.type !== 'scope-agent-context/evaluation') return false
+        const data = event.data as JsonObject | undefined
+        const projection = data?.projection as JsonObject | undefined
+        observed.push({ decision: data?.decision, taskRevision: projection?.taskRevision })
+        return data?.decision === target.decision && projection?.taskRevision === target.taskRevision
+      }, observe)
+    }
+  } catch (error) {
+    throw new Error(`SDK background evaluation ${expired ? 'deadline expired' : 'stream ended'}; expected ${JSON.stringify(targets)}, observed ${JSON.stringify(observed)}`, { cause: error })
+  } finally {
+    clearTimeout(deadline)
+  }
+}
+
 function authoredPatches(scenario: CorpusScenario, replaying: boolean): string[] {
   const owner = compositionOwner(scenario)
   if (scenario.manifest.composition.startsWith('sdk-')) {
@@ -618,6 +657,8 @@ async function runScenario(scenario: CorpusScenario): Promise<{
             event => event.type === 'turn/end' && (event.data as JsonObject | undefined)?.turn === action.turn,
             observe,
           )
+          await waitForScopeEvaluations(subscription, sessionId,
+            assertions.afterTurnEvaluations?.filter(target => target.turn === action.turn) ?? [], observe)
           continue
         }
         const result = await session.run(materializeInput(action.content, scenario, cwd, liveSessions), {
@@ -639,6 +680,8 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           event => event.type === 'turn/end' && (event.data as JsonObject | undefined)?.turn === action.turn,
           observe,
         )
+        await waitForScopeEvaluations(subscription, sessionId,
+          assertions.afterTurnEvaluations?.filter(target => target.turn === action.turn) ?? [], observe)
       }
       for (const type of postTurnEventTypes(primaryFixture)) {
         await waitForRootEvent(subscription, sessionId, event => event.type === type, observe)
@@ -811,9 +854,10 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       if (assertions.expectedFinalResponse !== undefined) {
         expect(results.at(-1)?.finalResponse, `${scenario.name}: final response`).toBe(assertions.expectedFinalResponse)
         const parent = ordered[0]
-        if (parent === undefined) throw new Error(`${scenario.name}: no primary session log`)
+        const expected = replayContents[0]
+        if (parent === undefined || expected === undefined) throw new Error(`${scenario.name}: no primary session log`)
         const turnEnds = records(parent.content).filter(record => record.type === 'turn/end')
-        expect(turnEnds, `${scenario.name}: completed turns`).toHaveLength(results.length)
+        expect(turnEnds, `${scenario.name}: completed turns`).toHaveLength(turnActions(expected).length)
         for (const turnEnd of turnEnds) expect(turnEnd).toMatchObject({ data: { reason: { kind: 'completed' } } })
       }
 

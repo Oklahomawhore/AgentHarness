@@ -73,6 +73,8 @@ export class ReactLoopAgent implements Agent {
   readonly inbox: ReactLoopInbox
   private phase: Phase
   private activityDone: Promise<void> = Promise.resolve()
+  /** Invalidates wakes from sends cancelled during their synchronous inbox insertion. */
+  private cancellationRevision = 0
 
   /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */
   readonly scope: Scope
@@ -129,9 +131,10 @@ export class ReactLoopAgent implements Agent {
     // Waking input cannot join an aborted activity, so it starts the next turn.
     // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
     const wakingAfterAbort = wakeup && this.phase.kind !== 'idle' && this.phase.abort.signal.aborted
+    const cancellationRevision = this.cancellationRevision
     const resolvedTarget = wakingAfterAbort ? 'next-turn' : target
     this.inbox.splice(resolvedTarget, Infinity, 0, [message])
-    if (wakeup) this.wakeDriver(wakingAfterAbort)
+    if (wakeup && cancellationRevision === this.cancellationRevision) this.wakeDriver(wakingAfterAbort)
   }
 
   followup(input: UserMessage): void {
@@ -147,11 +150,15 @@ export class ReactLoopAgent implements Agent {
   }
 
   cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
+    this.cancellationRevision++
     if (!options.keepInbox) {
       this.inbox.clear()
-      if (this.phase.kind !== 'idle') this.phase.wakeRequested = false
     }
-    if (this.phase.kind !== 'idle') this.phase.abort.abort(cause)
+    if (this.phase.kind !== 'idle') {
+      this.phase.wakeRequested = false
+      this.phase.abort.abort(cause)
+    }
+    this.dispatch.emit('agent/cancel-requested', { cause })
   }
 
   runMaintenance<T>(job: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -178,7 +185,7 @@ export class ReactLoopAgent implements Agent {
 
   /**
    * Start one driver, or latch its wake behind maintenance or an aborted
-   * activity. A wake sent while idle always opens its turn boundary, even
+   * activity. An uncancelled wake sent while idle opens its turn boundary, even
    * when its message was cleared; only a latched replay is suppressed when
    * the queue no longer holds the wake.
    * @param wakeAfterAbort - the {@link send} classification, captured before

@@ -6,6 +6,34 @@ MCP 子系统把传输复用与模型工具执行分开。`@deepseek-ai/dsh-mcp`
 
 宿主直接调用保留 JSON 协议内容，使用调用方取消信号和提供者超时，并在对应传输世代断开时立即消失。它不会请求模型工具审批、渲染模型结果或写入 Session 历史。消费者如要把返回数据送入模型请求，必须先执行自身的选择、大小、访问和日志规则。
 
+## 本地客户端接入状态
+
+接入操作分别报告检测和安装状态。`unsupported` 表示当前平台无法发布私有本地 Connection 能力；仍可列出状态，接入操作不写入客户端配置，Web Host 继续运行。[接入包](../../packages/host/mcp-client-setup/README.zh.md)负责客户端检测与冲突处理。
+
+```ts type-equiv
+/** Current safe-to-report configuration state. */
+type McpClientSetupState =
+  | 'configured'
+  | 'not-configured'
+  | 'conflict'
+  | 'manual'
+  | 'not-installed'
+  | 'unsupported'
+  | 'failed'
+```
+
+```ts type-equiv
+/** Result of the latest requested setup operation. */
+type McpClientSetupOutcome =
+  | 'configured'
+  | 'already-configured'
+  | 'conflict'
+  | 'manual'
+  | 'not-installed'
+  | 'unsupported'
+  | 'failed'
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

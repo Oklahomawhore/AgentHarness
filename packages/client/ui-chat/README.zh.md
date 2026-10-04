@@ -14,6 +14,7 @@ kind: "package-reference"
 
 ## 目录
 
+- [原生 scope 后台记录](#native-scope-background-records)
 - [系统提示词行](#system-prompt-row)
 - [轮次 token 用量](#turn-token-usage)
 - [已完成轮次的页脚](#completed-turn-footer)
@@ -22,6 +23,13 @@ kind: "package-reference"
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
+
+-----
+
+<a id="native-scope-background-records"></a>
+## 原生 scope 后台记录
+
+Chat 对 `source.kind` 为 `scope-agent-context`、`scope-agent-pulse` 或 `development-task-context` 的记录省略普通消息节点，包括各版本的快照、旧上下文退役、断开、撤回和自动调度输入。用户消息、Assistant 结果、审批及其他注入上下文仍按原有方式显示，即使正文与 scope 记录相同。这些记录仍保留在 Session 日志和 [Trajectory](../ui-trajectory/README.zh.md) 中，包含来源元数据及替换历史；隐藏显示不改变模型输入或已记录历史。
 
 -----
 

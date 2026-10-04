@@ -1,6 +1,10 @@
 - banner:
   - navigation "Session hierarchy":
     - button "Reference order target" [disabled]
+  - button "Collaboration":
+    - img
+    - text: Collaboration
+    - img
   - button "More actions":
     - img
   - button "Open right sidebar":

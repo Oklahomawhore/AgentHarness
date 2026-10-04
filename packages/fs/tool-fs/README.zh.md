@@ -87,6 +87,8 @@ kind: "package-reference"
 
 工具就是执行器；策略是事件门禁。工具不注入策略服务，也不检查任何缓存——每次变更都通过 `ctx.waterfall` 向单一意图槽位请求防护，每个操作只在成功后发出 `fs/observed`。读取恰好执行一次提供方 `stat`（类型与大小路由加观察到的版本）；变更一次也不执行，因为防护来自意图槽位，提供方在锁内重新检查。
 
+`write` 与 `edit` 执行器在 provider 修改文件之前发出已通过准入检查的尝试。[文件工具观察类型](../../../docs/subsystems/filesystem.zh.md#file-tool-observation) 将实际 provider 和目标与注册表执行关联；Consumer 仍需等待最终日志结果，并取得各自的来源共享许可。事件不包含原文件正文。
+
 ### 源码地图
 
 | 文件 | 职责 |

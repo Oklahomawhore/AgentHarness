@@ -1085,7 +1085,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Header actions derive their state from standard Session props. */\nexport interface ConversationHeaderActionOwnerProps {\n  /** Marker field: entries receive no owner-specific values. */\n  children?: never\n}',
+      '/** Header actions derive their state from standard Session props. */\nexport interface ConversationHeaderActionOwnerProps {\n  /** Select a registered View in this Session without navigating away. */\n  selectView: (view: string) => void\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [
@@ -1110,6 +1110,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     declaredBy: 'an entry in \'conversation.session.header\' (client-ui-conversation), so it exists while that entry is mounted',
     occupants: [
       'client-ui-agent-preset AgentPresetLabel id \'agent-preset\'',
+      'client-ui-emergence-center NativeScopeAction id \'native-scope\'',
       'client-ui-jobs JobListAction id \'job-list\'',
       'client-ui-schedule ScheduleCatalogAction id \'schedule-catalog\'',
       'experimental-client-ui-agent-team TeamAction id \'agent-team\'',
@@ -1223,7 +1224,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Header actions derive their state from standard Session props. */\nexport interface ConversationHeaderActionOwnerProps {\n  /** Marker field: entries receive no owner-specific values. */\n  children?: never\n}',
+      '/** Header actions derive their state from standard Session props. */\nexport interface ConversationHeaderActionOwnerProps {\n  /** Select a registered View in this Session without navigating away. */\n  selectView: (view: string) => void\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [

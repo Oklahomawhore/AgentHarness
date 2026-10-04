@@ -1,0 +1,28 @@
+- group:
+  - text: 独立设备协作
+  - paragraph: 将一个 Task 的上下文授权给另一台设备，并选择接收它的会话。
+  - text: 本机设备身份
+  - textbox "本机设备身份": {{ownerPeerId}}
+  - paragraph: 将这段公开身份交给邀请人。它不包含密钥或会话内容。
+  - text: 接收设备身份
+  - textbox "接收设备身份": {{recipientPeerId}}
+  - text: 对方可达的本机地址
+  - textbox "对方可达的本机地址": {{ownerAddress}}
+  - paragraph: 当前支持直接连接。默认地址仅供本机使用；跨设备需先配置可达的监听地址。
+  - text: 此会话的职责
+  - textbox "此会话的职责": frontend
+  - text: 有效小时数
+  - spinbutton "有效小时数": "24"
+  - button "生成只读邀请"
+  - text: 将此邀请交给接收人
+  - textbox "将此邀请交给接收人": "{\"version\":1,\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"recipientPeerId\":\"{{recipientPeerId}}\",\"taskId\":\"{{taskId}}\",\"grantId\":\"{{uuid}}\",\"generation\":\"{{uuid}}\",\"expiresAt\":{{expiresAt}},\"responsibility\":\"frontend\"}"
+  - code: {{recipientPeerId}}
+  - text: 已授予读取权限
+  - button "撤销读取权限"
+  - text: 粘贴收到的邀请
+  - textbox "粘贴收到的邀请"
+  - text: 选择一个会话
+  - combobox "选择一个会话":
+    - option "请选择一个会话" [selected]
+  - paragraph: 只接收上下文，不授权采集工具或读取项目文件。连接后在下一次支持的 Hook 处自动更新；空闲会话不会被唤醒。
+  - button "连接所选会话" [disabled]

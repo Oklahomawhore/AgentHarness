@@ -6,6 +6,34 @@ The MCP subsystem separates transport reuse from model tool execution. `@deepsee
 
 Direct Host calls retain JSON protocol content, use caller cancellation and provider timeouts, and disappear as soon as their transport generation disconnects. They do not request model-tool approval, render model results, or write Session history. A Consumer that admits returned data into a model request must first apply its own selection, size, access, and logging rules.
 
+## Local client setup states
+
+Setup reports detection and installation separately. `unsupported` means this platform cannot publish the private local Connection capability; listing remains available, setup writes no client configuration, and the Web Host continues running. The [setup package](../../packages/host/mcp-client-setup/README.md) owns client detection and conflict handling.
+
+```ts type-equiv
+/** Current safe-to-report configuration state. */
+type McpClientSetupState =
+  | 'configured'
+  | 'not-configured'
+  | 'conflict'
+  | 'manual'
+  | 'not-installed'
+  | 'unsupported'
+  | 'failed'
+```
+
+```ts type-equiv
+/** Result of the latest requested setup operation. */
+type McpClientSetupOutcome =
+  | 'configured'
+  | 'already-configured'
+  | 'conflict'
+  | 'manual'
+  | 'not-installed'
+  | 'unsupported'
+  | 'failed'
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

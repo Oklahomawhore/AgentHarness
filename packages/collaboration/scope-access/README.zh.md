@@ -1,0 +1,130 @@
+---
+description: "授权独立 Host 读取 Root Task 上下文或贡献有界来源观察"
+kind: "package-reference"
+---
+# 独立 scope 授权
+
+[English](README.md) | 中文
+
+## 概述
+
+Owner 可以邀请一个独立 Host 接收单个 Root Task 的上下文。接收方显式加入，并在其消费方每次请求上下文时在线验证授权。撤销和过期会停止新的授权响应；暂时断线返回未知状态，不附带缓存事实。读授权既不采集接收方文件，也不允许发布。Owner 另行批准后，一个经认证的贡献方可以从指定采集代际提交有界 OpenAPI 样本或 Write/Edit 观察。
+
+## 目录
+
+- [使用此包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与后续工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+<a id="use-this-package"></a>
+## 使用此包
+
+在正常 `dsh --profile` 组合中挂载此 Cordis 插件，并配备经认证的 [scope transport](../scope-transport/README.zh.md)、storage-domain、本地 Task 与 Room 服务以及[上下文后端](../development-task-context/README.zh.md)。启动器提供应用就绪与退出处理。本包不是独立可执行程序或可安装的 profile bundle。
+
+```yaml
+- name: '@deepseek-ai/dsh-scope-access'
+  config:
+    maxGrants: 256
+    maxSubscriptions: 256
+    maxProjections: 8192
+    maxContextBytes: 6000
+    maxResponseBytes: 32768
+    requestTimeoutMs: 10000
+    maxInvitationLifetimeMs: 86400000
+    maxConcurrentReads: 16
+    maxConcurrentContributions: 8
+    maxContributionRequestBytes: 16384
+    maxContributionApplications: 256
+    maxApplicationRequestBytes: 16384
+    maxApplicationLifetimeMs: 86400000
+    waitTimeoutMs: 7000
+    maxConcurrentWaits: 4
+```
+
+所有限制均为必填。授权和订阅保留终态记录；容量耗尽会拒绝新身份。不同的精确投影同样消耗保留容量，重复的相同输出则复用记录。撤销已有授权或退出订阅不需要空余记录。`maxContextBytes` 限制后端文本；`maxResponseBytes` 还限制包含来源覆盖的完整响应。消费方须自行预算额外框架文本。将保留容量或文本限制降至已保留状态以下会导致初始化失败，而不是丢弃证据。
+
+`waitForChange(subscriptionId, cursor, signal)` 返回不含事实的变化提示。省略 cursor 时立即校准；返回的游标不透明，可传给下一次有界等待。changed 和 unchanged 提示均不授权使用缓存上下文：消费方仍须调用 `retrieve`。同一订阅的新等待会取消旧等待。调用方取消会拒绝 promise；退出、撤销和过期分别以对应状态结束接收。
+
+`maxConcurrentWaits` 共同限制 owner 与接收方正在等待的操作。读取与贡献状态查询、样本请求共享 `min(transport 入站上限, 出站上限) - maxConcurrentWaits - 1` 个槽位，加载时必须至少留有一个普通槽位；各自配置的并发上限也同时生效。另为贡献结束请求各保留一个入站和出站槽位；此保障仅约束本服务流量，不涵盖任意其他传输处理器。`waitTimeoutMs` 必须短于 `requestTimeoutMs`，后者不得超过传输截止时间。网络超时或断线返回 `unavailable`。等待既不计算后端文本，也不保留投影。
+
+Owner 选择一个 Root Task、接收方的公开 peer 身份、已公布的 owner 地址、过期时间和职责。邀请固定双方 peer 及精确授权代际。职责用于路由后端字段，不会缩小该 scope 的读取权限。Fork 和 Merge Task 不能通过此服务共享。
+
+加入只保存接收意图。本地 active 订阅不代表远端授权已经成立。每次获取都发送新的请求身份，并在保留精确输出前验证 owner、recipient、Task、grant、generation、响应关联、来源归属和字节预算。未知 peer 和不匹配的邀请收到拒绝，不触发 Task 查询、列表、Room 或副本。采集与写入授权保持独立。
+
+贡献邀请固定 owner、贡献方、Task、采集与授权代际、来源许可、到期时间、样本数和样本字节数。来源可以是一个 OpenAPI 操作或明确的 Write/Edit 集合；传输标签不能改变该许可。贡献方发送结构化来源证据，不带本地绝对根目录、Session 标识或调用方撰写的发布文本。工具字段可以含用户撰写的正文及相对路径。Task 准入派生归属并核对来源与工具的对应关系。读邀请不能授权贡献。`maxContributionRequestBytes` 限制完整请求，`maxResponseBytes` 限制完整响应；若终结请求和收据无法容纳，批准会拒绝该邀请。
+
+Owner 预览带版本的贡献申请，选择不可变的期限与采样额度，无需自行构造授权标识即可批准。并发相同批准及响应丢失后的重试会恢复原 Task 授权；更改来源或额度、批准已终结的 capture 都会被拒绝，必须准备新的 capture。恢复将原授权与本次确认的 owner 公布地址组合，不复原历史邀请字节。终结授权也可重取以完成待确认的撤回；它仍保持终态，不能恢复贡献。贡献文本预览不授予任何权限。类型化管理错误区分文本无效、许可无效、批准冲突、授权已终结、选择过期、容量不足和临时存储失败。
+
+Owner 清单按稳定授权标识顺序分页保留活跃及终结的 Task 记录。每个完整页面都符合 `maxResponseBytes`；单条记录也无法容纳时返回类型化容量错误。游标必须属于所选 Task。各页并非冻结快照：从第一页刷新才能查看新插入的授权。Peer 协议不能访问此清单。`maxContributionRequestBytes` 同时限制完整粘贴文本，批准前还会检查包含邀请和文本的完整响应预算。
+
+Owner 创建只接受一个 capture、带明确来源模式的申请入口，并一次性交换入口文本。来源在线提交匹配的 capture 申请，以及明确的到期时间、样本数和样本字节数上限；本地根目录留在来源端。Owner 批准相同或更窄的额度。经认证的来源取回原授权及 Task 收据，无需第二次交换文本。来源适配器负责自动激活与本地采集许可。旧 OpenAPI 入口只接受 OpenAPI 申请。入口既不授予读取权限，也不允许发布。显式联合入口为一个 Session 提供被动读取与工具贡献申请；提交申请表示同意两项请求，owner 批准时仍必须单独选择读取职责。读取期限等于批准的贡献期限。普通贡献入口不能获得读取权限。
+
+`maxContributionApplications` 限制所有保留的入口，包括已拒绝和已取消记录。`maxApplicationRequestBytes` 限制完整请求与保留的决策记录；`maxApplicationLifetimeMs` 限制新申请或批准的时间窗口。入口过期不妨碍取回或撤回已经批准的授权。申请清单按稳定入口标识分页，并遵守完整响应预算；提交后的变化发出 `scope-access/contribution-application-changed`，供本地观察者重新读取。原入口可以通过当前确认的 owner 地址重取，但不会重新开放。
+
+联合批准先保留原读取邀请与贡献授权，再分别提交权限。部分失败可使用原身份重试，计划中的读取授权会预留保留容量。申请取消或拒绝会先撤销联合读取并终结贡献，再返回确认。仅结束贡献会保留读取；仅撤销读取会保留贡献。`readState` 表示 owner 当前观察，不允许复用缓存上下文。来源消费者负责本地采用、独立文件同意以及任何自动启动许可。
+
+Owner 不可达时返回 `unavailable`，这禁止将旧上下文复用为当前已授权内容。已撤销和过期的订阅保留终态；退出结束本地接收身份。重新加入产生新的订阅和代际。撤回不能删除已经交付给其他进程的字节或对话中已存在的信息。
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现内部——点击展开</summary>
+
+Owner 在读取 Task 前验证经认证的传输 principal。它在耐久修改队列外计算，然后在返回已持久输出前复核授权、所有权、provider 身份、过期和取消。撤销不等待慢速后端。在后续发布持续到达时，已捕获的 Task 修订仍可交付；后续贡献终结会使其失效。当前读取在捕获和最终验权前通过 Task 队列提交已到期贡献的终结。下一次获取捕获新修订，因此持续到达的样本不会阻止交付。
+
+Host 消费者可向 `ensureSubscription` 提供已经耐久预分配的身份。它只复用精确代际与邀请，保留终态，并拒绝以同一身份改用不同权限。消费者必须保留自身的采用与取消状态；相同邀请文本不能标识一个 Session 的读取操作。
+
+接收方将每个响应关联到其最新请求与耐久订阅代际。本地退出、更新的请求、过期或卸载会阻止迟到结果被采用。双方 Host 都保留精确投影字节和覆盖记录。`scope_access` 存储域将所有记录固定到本地传输 peer 身份；保留记录却更换密钥会导致初始化失败。严格解析器拒绝畸形耐久和线上数据，不将其当作可丢弃缓存。
+
+新投影使用 `version: 2`，并要求后端提供 `activation` 值：`exact` 或带版本的 `recipient-evidence`。精确投影 ID 包含该值以及文本、来源引用、授权和预算。因此，证据摘要相等时，精确投影 ID 和输出字节仍可能不同。[后端](../development-task-context/README.zh.md)定义相关事实与 `blocked-current`；消费者仍需在线验权、检查完整交付预算，并负责是否自动调度。证据相等不会去重持久来源记录，也不保证外部客户端输出不变。
+
+严格解析器也能读取不含版本和 activation 元数据的已保留投影，保留原字段和投影 ID，不添加默认值或改写旧记录。不支持的版本、不完整的 activation 值、额外字段和不匹配的摘要都会被拒绝。缺少 activation 元数据不能确立接收者证据等价。
+
+变化等待在任何 Task 查询前验权，注册监听后再次核对授权和游标。只有已授权 Task 的提交、grant 撤销、后端替换、过期、取消或等待截止时间会结束该次等待。读取和投影持久化不会发送变化提示。游标比较订阅与授权代际、Task revision、后端身份和输出预算；它不是耐久事件流，可以跳过中间版本。等待不占用变更队列，并使用独立于读取的请求身份。
+
+Task 事件日志是贡献授权、样本与终态收据的权威。写入可能已提交但响应超时：贡献方保留精确样本，直到收到匹配收据。重试恢复原事件收据，包括终结后的重试，不重新开启授权。显式结束与过期停止准入并撤回当前证据；终结持久化失败会阻止当前交付。返回或复用投影前，交付同时检查 peer 与 owner 本地采集的终结版本；晚到的 backend 结果不能恢复已撤回来源。后台到期提交失败会记录错误，等待后续 Task 变更或显式操作重试，不进行零延迟循环，也不关闭无关 Agent。
+
+[在线申请](src/application.ts)在修改 Task 授权前保留批准或取消意图。单个 owner 队列排列这些决定；已批准记录包含完整计划贡献授权；联合入口批准还包含独立读取邀请。恢复将该授权与 Task 事件核对，即使授权开启的响应丢失或开启尚未提交，取消仍能终结它。终结提交失败仍为未确认。在尚未选择授权时取消入口，只关闭该入口，不禁止 owner 以后另行手工授权。严格的[记录与线上解析器](src/application-schema.ts)保留原 capture 与同意额度的关联。现有存储域保留这些记录，不重写读取授权或投影。
+
+公开的 [`./contribution` 控制器](src/contribution-client.ts)协调来源申请、已选邀请、原始待投递样本与终结收据。来源适配器提供串行化的本地记录，并自行保有文件许可与执行证据。peer 请求在本地回调之间执行；收据采用时核对当前 capture、邀请与精确样本。控制器不产生采集许可或 Task 副本。重试调度、取消与销毁由适配器负责，适配器可以为共用记录解析器扩展本地字段。
+
+[服务](src/index.ts)负责授权与生命周期，[类型](src/types.ts)定义消费方结果，[状态模块](src/state.ts)负责线上与耐久解析。[贡献协议](src/contribution.ts)验证经认证的 peer 与精确收据；[贡献解析器](src/contribution-schema.ts)验证有界线上消息。公开 `./schema` 入口向耐久消费方提供邀请、投影与贡献校验器。[决策记录](../../../.agents/notes/implemented/architecture/2026-10-03-independent-scope-read-grants.zh.md)说明隔离与离线取舍。
+
+</details>
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+- [Scope transport](../scope-transport/README.zh.md)认证直连 peer。
+- [Task 上下文](../development-task-context/README.zh.md)计算接收方输出。
+- [Claude scope](../claude-scope/README.zh.md)准备外部会话交付。
+- [存储域](../../storage/storage-domain/README.zh.md)拥有耐久记录。
+
+<a id="model-experience"></a>
+## 模型体验
+
+本包通过接收方消费组件间接影响模型；这些组件将已获授权的精确后端上下文纳入模型请求。
+
+#### KV Cache 影响
+
+已授权上下文变化时，消费组件可能改变模型请求前缀；本服务不控制请求组装或缓存复用。
+
+## 已知限制与后续工作
+
+<a id="known-limitations-and-deferred-work"></a>
+
+- 仅支持 Root Task，不推断父级授权。
+- 贡献接受明确授权的 OpenAPI 声明和 Write/Edit 报告，不接受任意发布，也不提取语义事实。认证标识报告者，不证明执行、文件当前内容或已部署服务。工具事件保持独立报告，有界后端可能省略它们。
+- 每次获取都需要 owner 在线；没有离线读租约；本服务不启动空闲 Agent。
+- Owner 的授权决定不能召回已发送响应；接收方拒绝本地能够识别的过时结果。
+- 联合入口只邀请一个 Session，不接受多个申请者。其原读取邀请地址保持固定；读取地址变化后的恢复需要新的明确读取授权。
+- 地址必须保持可达；传输连通性和接收方模型采用与读取成功是不同事项。
+
+<a id="dev-note"></a>
+### 开发备注
+
+服务在线上数据进入和耐久状态恢复时检查授权、订阅与投影关联。本包不发布不变量伴随插件，因为这些准入检查负责验证上述关联。精确投影持久化证明输出已准备，不证明下游模型准入。

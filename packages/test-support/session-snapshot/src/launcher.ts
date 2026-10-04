@@ -391,6 +391,9 @@ function packageDirFromPatch(source: string, packageName: string): string | unde
  */
 function linkProfilePackage(source: string, cwd: string, packageName: string): void {
   const packageDir = packageDirFromPatch(source, packageName)
+    ?? (packageName === '@deepseek-ai/dsh-llm-replay'
+      ? dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh-llm-replay/package.json'))
+      : undefined)
   // The package may instead belong to the dsh installation; profile boot heals those links.
   if (packageDir === undefined) return
   const link = join(cwd, '.dsh', 'profiles', 'node_modules', packageName)
@@ -407,6 +410,9 @@ function linkProfilePackage(source: string, cwd: string, packageName: string): v
 
 /**
  * Copy one authored patch into the launch cwd with relative plugin names made absolute.
+ * Bare packages resolve beside the patch first; the replay provider can also
+ * resolve from this package's declared dependency. Other unresolved names remain
+ * available for the installed profile to resolve at launch.
  * @param source - authored profile patch path.
  * @param cwd - isolated process cwd whose profile fallback receives package links.
  * @param targetDir - existing directory that owns the materialized patch.

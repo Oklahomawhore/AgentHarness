@@ -215,7 +215,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/api/session-controller/src/index.ts:69`](../packages/api/session-controller/src/index.ts)
+来源：[`packages/api/session-controller/src/index.ts:71`](../packages/api/session-controller/src/index.ts)
 
 <a id="deepseek-aidsh-api-settings-controller"></a>
 
@@ -340,6 +340,96 @@ export type Config = LocalConfig
 依赖：[`LocalConfig`](#deepseek-aidsh-bash-local)
 
 来源：[`packages/shell/bash-sandbox/src/index.ts:36`](../packages/shell/bash-sandbox/src/index.ts)
+
+<a id="deepseek-aidsh-claude-scope"></a>
+
+## `@deepseek-ai/dsh-claude-scope`
+
+需要： `developmentTasks` · `developmentRooms` · `developmentTaskContextBackend` · `storageDomain` · `connection` · `webServer`
+
+```ts config-catalog
+/** Explicit retention and complete-output bounds for the local adapter. */
+export interface Config extends ClaudeScopeDescriptorConfig {
+  /** Project hook installer inputs; installation does not authorize collection. */
+  readonly setup: ClaudeScopeSetupConfig
+  /** Maximum retained observed sessions; new identities fail when the limit is reached. */
+  readonly maxSessions: number
+  /** Maximum retained tool leases across sessions; ending a grant removes its leases. */
+  readonly maxLeases: number
+  /** Maximum retained exact projections; new records fail when the limit is reached. */
+  readonly maxProjections: number
+  /** Complete projection UTF-8 byte budget, including framing; at most 10,000 bytes. */
+  readonly maxContextBytes: number
+  /** Complete observation JSON and transferable proposal byte budget; optional observation fields are omitted whole. */
+  readonly maxObservationBytes: number
+  /** Maximum bytes read from one explicitly authorized API document. */
+  readonly maxArtifactReadBytes: number
+  /** Maximum explicit API source grants retained for one joined session. */
+  readonly maxOpenApiSourcesPerSession: number
+  /** Delay between independent approval, sample, and withdrawal retries; background peer requests do not hold the global mutation queue. */
+  readonly contributionPollIntervalMs: number
+}
+
+/** Host-owned location of the private local connection capability. */
+export interface ClaudeScopeDescriptorConfig {
+  /** Absolute file path in an owner-only directory; one live Host holds its kernel lease. */
+  descriptorPath: string
+}
+
+/** Explicit deployment inputs for project-local hook installation. */
+export interface ClaudeScopeSetupConfig {
+  /** Absolute Harness home used for the shared profile and the hook's DSH_HOME. */
+  readonly home: string
+  /** Custom startup-only profile name; shipped and reserved application names are rejected. */
+  readonly profileName: string
+  /** Absolute executable used to invoke the current dsh installation. */
+  readonly launchCommand: string
+  /** Arguments before --profile: retain Node startup flags followed by the dsh CLI entry. */
+  readonly launchArgs: string[]
+  /** Absolute launcher directory retained so source-mode imports resolve at hook startup. */
+  readonly launchCwd: string
+  /** Maximum bytes for Hook stdin, descriptor reads, and the complete serialized RPC request. */
+  readonly maxRequestBytes: number
+  /** Maximum bytes for the RPC response and complete Hook stdout JSON, including its newline. */
+  readonly maxResponseBytes: number
+  /** Command deadline in milliseconds, from application readiness through completed stdout. */
+  readonly timeoutMs: number
+  /** Claude hook timeout in seconds, at most 60; must exceed the command deadline to allow dsh startup. */
+  readonly hookTimeoutSeconds: number
+  /** Maximum bytes per configuration file read or complete write, including shared profile files. */
+  readonly maxSettingsBytes: number
+}
+```
+
+来源： [`packages/collaboration/claude-scope/src/index.ts:64`](../packages/collaboration/claude-scope/src/index.ts)
+
+<a id="deepseek-aidsh-claude-scopecommand"></a>
+
+## `@deepseek-ai/dsh-claude-scope/command`
+
+```ts config-catalog
+/** Complete stdin, transport, stdout, and operation limits, explicitly selected by the profile. */
+export interface Config extends ClaudeScopeTransportConfig {
+  /** Deadline from application readiness through completed stdout write. */
+  timeoutMs: number
+}
+
+/** Command-side limits on complete serialized files and RPC messages. */
+export interface ClaudeScopeTransportConfig extends ClaudeScopeDescriptorConfig {
+  /** Maximum descriptor, stdin, and serialized Typert request size in UTF-8 bytes. */
+  maxRequestBytes: number
+  /** Maximum complete Typert response envelope size in UTF-8 bytes. */
+  maxResponseBytes: number
+}
+
+/** Host-owned location of the private local connection capability. */
+export interface ClaudeScopeDescriptorConfig {
+  /** Absolute file path in an owner-only directory; one live Host holds its kernel lease. */
+  descriptorPath: string
+}
+```
+
+来源： [`packages/collaboration/claude-scope/src/command.ts:18`](../packages/collaboration/claude-scope/src/command.ts)
 
 <a id="deepseek-aidsh-client-connection"></a>
 
@@ -706,14 +796,14 @@ Source: [`packages/collaboration/development-room-context/src/index.ts:36`](../p
 
 ## `@deepseek-ai/dsh-development-task`
 
-Requires: `developmentRooms`
+需要： `developmentRooms`
 
 ```ts config-catalog
 /** Retention and payload bounds for one Task runtime. */
 export interface Config {
   /** Maximum Tasks retained by this Host. */
   readonly maxTasks: number
-  /** Maximum events retained for one Task. */
+  /** Maximum retained events plus reserved retirement for live artifact grants, remote intervals, peer grants, and local captures. */
   readonly maxEventsPerTask: number
   /** Maximum parent Tasks accepted by Merge. */
   readonly maxMergeParents: number
@@ -721,20 +811,20 @@ export interface Config {
   readonly maxContextBlockBytes: number
   /** Maximum Tasks returned by a lineage query. */
   readonly maxLineageTasks: number
-  /** Maximum UTF-8 bytes accepted for one text field. */
+  /** Maximum UTF-8 bytes per text field and, separately, per complete observation JSON. */
   readonly maxTextBytes: number
   /** Delay between best-effort retries for locally owned degraded Task Rooms. */
   readonly roomRetryIntervalMs: number
 }
 ```
 
-Source: [`packages/collaboration/development-task/src/index.ts:75`](../packages/collaboration/development-task/src/index.ts)
+来源： [`packages/collaboration/development-task/src/index.ts:141`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
 ## `@deepseek-ai/dsh-development-task-context`
 
-Requires: `agents` · `developmentTasks`
+需要： `agents` · `developmentTasks` · `developmentTaskContextBackend`
 
 ```ts config-catalog
 /** Request-time context bound. */
@@ -744,7 +834,70 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task-context/src/index.ts:44`](../packages/collaboration/development-task-context/src/index.ts)
+来源： [`packages/collaboration/development-task-context/src/index.ts:28`](../packages/collaboration/development-task-context/src/index.ts)
+
+<a id="deepseek-aidsh-development-task-contextfacts"></a>
+
+## `@deepseek-ai/dsh-development-task-context/facts`
+
+```ts config-catalog
+/** Explicit field selection; unmatched labels never trigger semantic inference. */
+export interface Config {
+  /** Unique, nonempty exact session-label matches; field sets contain no duplicates. */
+  readonly routes: OpenApiFactRoute[]
+  /** Field set for absent or unmatched labels; conflicts retain all fields even when this set is empty. */
+  readonly unmatchedFields: OpenApiFactField[]
+}
+
+/** Exact responsibility match and selected declaration fields; conflicts always retain all fields. */
+export interface OpenApiFactRoute {
+  /** Complete session label to match exactly; whitespace-only labels are invalid. */
+  readonly responsibility: string
+  /** Declaration fields for a matching label; duplicate fields are invalid. */
+  readonly fields: OpenApiFactField[]
+}
+
+/** OpenAPI declaration fields eligible for explicit recipient selection. */
+export type OpenApiFactField = 'operationId' | 'requestBodyRequired' | 'requiredRequestFields' | 'responseStatuses' | 'deprecated'
+```
+
+来源： [`packages/collaboration/development-task-context/src/facts.ts:37`](../packages/collaboration/development-task-context/src/facts.ts)
+
+<a id="deepseek-aidsh-development-task-contextsemantic"></a>
+
+## `@deepseek-ai/dsh-development-task-context/semantic`
+
+需要： `llm` · `sessions` · `sessionPersistence`
+
+```ts config-catalog
+/** Explicit model route, persistence identity, and bounded execution policy. */
+export interface Config {
+  /** Stable Session ID in the separately isolated audit persistence service. */
+  readonly auditSessionId: string
+  /** Registered LLM provider route. */
+  readonly provider: string
+  /** Exact model to resolve through the provider. */
+  readonly model: string
+  /** Optional sampling temperature passed to model preparation. */
+  readonly temperature?: number
+  /** Optional exact reasoning effort; absent values use the resolved adapter default. */
+  readonly reasoningEffort?: string
+  /** Maximum complete system plus user-message UTF-8 bytes. */
+  readonly maxInputBytes: number
+  /** Requested model output token ceiling. */
+  readonly maxOutputTokens: number
+  /** Maximum cumulative serialized stream-chunk bytes retained by one call. */
+  readonly maxOutputBytes: number
+  /** Deadline for preparation and computation, including persistence before dispatch. */
+  readonly timeoutMs: number
+  /** Maximum independent request keys computing concurrently. */
+  readonly maxConcurrentCalls: number
+  /** Maximum durable call reservations across all revisions in this audit Session. */
+  readonly maxCalls: number
+}
+```
+
+来源： [`packages/collaboration/development-task-context/src/semantic.ts:28`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="deepseek-aidsh-development-task-storage-domain"></a>
 
@@ -961,7 +1114,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-file-reference-local`
 
-需要：`agents` · `sessionProjections`
+需要：`agents`
 
 ```ts config-catalog
 /** Local file-reference discovery configuration. */
@@ -1207,15 +1360,23 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-host-mcp-client-setup`
 
+需要： `connection` · `webServer`
+
 ```ts config-catalog
 /** Cordis deployment facts for the browser-facing setup service. */
 export interface Config {
   /** Absolute Node.js executable used by generated STDIO entries. */
   readonly nodePath: string
-  /** Absolute packaged AgentHarness MCP bridge entry point. */
-  readonly mcpPath: string
-  /** Loopback AgentHarness HTTP base URL. */
-  readonly url: string
+  /** Absolute installed dsh CLI entry, or the source CLI used by this deployment. */
+  readonly dshPath: string
+  /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
+  readonly nodeArgs: string[]
+  /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
+  readonly sourceTsconfigPath?: string
+  /** Absolute private local Connection descriptor published by this Host. */
+  readonly descriptorPath: string
+  /** Absolute Harness home supplied explicitly to every configured MCP process. */
+  readonly harnessHome: string
 }
 ```
 
@@ -1823,7 +1984,7 @@ Source: [`packages/mcp/mcp/src/index.ts:42`](../packages/mcp/mcp/src/index.ts)
 
 ## `@deepseek-ai/dsh-mcp-client`
 
-需要：`tools`
+需要：`mcp` · `tools`
 
 ```ts config-catalog
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -2158,6 +2319,122 @@ export interface Config {
 
 来源：[`packages/sandbox/sandbox-policy/src/index.ts:70`](../packages/sandbox/sandbox-policy/src/index.ts)
 
+<a id="deepseek-aidsh-scope-access"></a>
+
+## `@deepseek-ai/dsh-scope-access`
+
+需要： `scopeTransport` · `storageDomain` · `developmentTasks` · `developmentRooms` · `developmentTaskContextBackend`
+
+```ts config-catalog
+/** Required storage, work, expiry, and complete wire-output limits. */
+export interface Config {
+  /** Retained owner grants including revoked tombstones. */
+  readonly maxGrants: number
+  /** Retained receiver subscriptions including ended intents. */
+  readonly maxSubscriptions: number
+  /** Retained distinct exact projections on each Host. */
+  readonly maxProjections: number
+  /** Complete backend text budget in UTF-8 bytes; consumer framing is additional. */
+  readonly maxContextBytes: number
+  /** Complete JSON response limit including attribution and coverage. */
+  readonly maxResponseBytes: number
+  /** Deadline covering remote authorization and projection computation. */
+  readonly requestTimeoutMs: number
+  /** Maximum lifetime of an invitation from local issuance. */
+  readonly maxInvitationLifetimeMs: number
+  /** Maximum simultaneous owner computations and receiver network requests. */
+  readonly maxConcurrentReads: number
+  /** Maximum owner wait duration before an unchanged reply, excluding network overhead. */
+  readonly waitTimeoutMs: number
+  /** Maximum owner and sender status/sample requests, further bounded by shared ordinary capacity. */
+  readonly maxConcurrentContributions: number
+  /** Complete contribution JSON request limit, including invitation and source attribution. */
+  readonly maxContributionRequestBytes: number
+  /** Shared bound for pending owner and recipient waits; leaves ordinary transport capacity available. */
+  readonly maxConcurrentWaits: number
+  /** Retained contribution application entries, including rejected and cancelled records. */
+  readonly maxContributionApplications: number
+  /** Complete application request and retained decision record limit in UTF-8 bytes. */
+  readonly maxApplicationRequestBytes: number
+  /** Maximum time from entry creation to its last new application or approval. */
+  readonly maxApplicationLifetimeMs: number
+}
+```
+
+来源： [`packages/collaboration/scope-access/src/index.ts:44`](../packages/collaboration/scope-access/src/index.ts)
+
+<a id="deepseek-aidsh-scope-agent-context"></a>
+
+## `@deepseek-ai/dsh-scope-agent-context`
+
+需要： `agents` · `sessionProjections` · `scopeAccess`
+
+```ts config-catalog
+/** Complete consumer text and background scheduling limits. */
+export interface Config {
+  /** Complete UTF-8 context message budget, including consumer framing; minimum 512 bytes. */
+  readonly maxContextBytes: number
+  /** Minimum delay before one idle activation attempt; changes during the delay are coalesced. */
+  readonly coalesceMs: number
+  /** Delay before rechecking an unavailable owner; automatic permission remains paused. */
+  readonly retryDelayMs: number
+}
+```
+
+来源： [`packages/collaboration/scope-agent-context/src/index.ts:38`](../packages/collaboration/scope-agent-context/src/index.ts)
+
+<a id="deepseek-aidsh-scope-agent-contribution"></a>
+
+## `@deepseek-ai/dsh-scope-agent-contribution`
+
+需要： `agents` · `sessions` · `storageDomain` · `scopeAccess` · `fs`
+
+```ts config-catalog
+/** Bounded durable source inventory, complete report bytes, and peer retry cadence. */
+export interface Config {
+  /** Maximum retained source Session rows, including ended captures. */
+  readonly maxSessions: number
+  /** Maximum retained samples and simultaneous unfinished observations across source Sessions. */
+  readonly maxLeases: number
+  /** Maximum complete owner-bound sample and application request bytes. */
+  readonly maxObservationBytes: number
+  /** Delay between unsuccessful peer reconciliation attempts. */
+  readonly contributionPollIntervalMs: number
+}
+```
+
+来源： [`packages/collaboration/scope-agent-contribution/src/index.ts:45`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+
+<a id="deepseek-aidsh-scope-transportlibp2p"></a>
+
+## `@deepseek-ai/dsh-scope-transport/libp2p`
+
+需要： `credentials`
+
+```ts config-catalog
+/** Explicit listener, concurrency, byte, and time budgets for one device transport. */
+export interface Config {
+  /** Direct ip4/ip6 TCP listeners, without a peer suffix; port zero delegates allocation to the OS. */
+  readonly listenAddresses: string[]
+  /** Maximum complete request envelope, including framing, in UTF-8 bytes. */
+  readonly maxRequestBytes: number
+  /** Maximum complete response envelope, including framing, in UTF-8 bytes. */
+  readonly maxResponseBytes: number
+  /** Maximum admitted inbound requests across all peers and protocols. */
+  readonly maxInboundRequests: number
+  /** Maximum concurrent outbound requests, including dialing. */
+  readonly maxOutboundRequests: number
+  /** Maximum established connections before the library prunes excess connections. */
+  readonly maxConnections: number
+  /** Deadline covering each inbound handler or complete outbound operation. */
+  readonly requestTimeoutMs: number
+  /** Deadline for TCP/Noise establishment and library connection shutdown. */
+  readonly connectionTimeoutMs: number
+}
+```
+
+来源： [`packages/collaboration/scope-transport/src/libp2p.ts:20`](../packages/collaboration/scope-transport/src/libp2p.ts)
+
 <a id="deepseek-aidsh-sdk-app"></a>
 
 ## `@deepseek-ai/dsh-sdk-app`
@@ -2401,7 +2678,7 @@ export enum SessionTelemetryMode {
 
 ## `@deepseek-ai/dsh-session-title`
 
-需要：`sessions`
+需要：`sessions` · `sessionProjections`
 
 ```ts config-catalog
 /** Required deterministic fallback and accepted-title limits. */
@@ -2566,7 +2843,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-spill-policy`
 
-需要：`tools` · `sessionProjections`
+需要：`tools`
 
 ```ts config-catalog
 /** Plugin config. */
@@ -2989,7 +3266,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/context/time-context/src/index.ts:48`](../packages/context/time-context/src/index.ts)
+来源：[`packages/context/time-context/src/index.ts:49`](../packages/context/time-context/src/index.ts)
 
 <a id="deepseek-aidsh-tmux-context"></a>
 
@@ -3078,7 +3355,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/fs/tool-fs/src/index.ts:25`](../packages/fs/tool-fs/src/index.ts)
+来源：[`packages/fs/tool-fs/src/index.ts:50`](../packages/fs/tool-fs/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs-search"></a>
 
@@ -3405,7 +3682,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-todo`
 
-需要：`tools`
+需要：`tools` · `sessionProjections`
 
 ```ts config-catalog
 /** Model-facing todo tool configuration. */
@@ -3550,7 +3827,7 @@ export interface Config {
 export type ApprovalPolicy = 'ask' | 'never'
 ```
 
-来源：[`packages/interaction/user-approval/src/index.ts:126`](../packages/interaction/user-approval/src/index.ts)
+来源：[`packages/interaction/user-approval/src/index.ts:127`](../packages/interaction/user-approval/src/index.ts)
 
 <a id="deepseek-aidsh-web"></a>
 
@@ -3808,7 +4085,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-ui-user-questions`（[`packages/client/ui-user-questions/src/index.ts`](../packages/client/ui-user-questions/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-workflow-run`（[`packages/client/ui-workflow-run/src/index.ts`](../packages/client/ui-workflow-run/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-workspace`（[`packages/client/ui-workspace/src/index.ts`](../packages/client/ui-workspace/src/index.ts)）
-- `@deepseek-ai/dsh-command-compact` — 需要 `commands` · `compact`（[`packages/compaction/command-compact/src/index.ts`](../packages/compaction/command-compact/src/index.ts)）
+- `@deepseek-ai/dsh-command-compact` — 需要 `commands` · `compaction`（[`packages/compaction/command-compact/src/index.ts`](../packages/compaction/command-compact/src/index.ts)）
 - `@deepseek-ai/dsh-command-feedback` — 需要 `commands`（[`packages/feedback/command-feedback/src/index.ts`](../packages/feedback/command-feedback/src/index.ts)）
 - `@deepseek-ai/dsh-command-goal` — 需要 `commands` · `goals`（[`packages/goal/command-goal/src/index.ts`](../packages/goal/command-goal/src/index.ts)）
 - `@deepseek-ai/dsh-commands`（[`packages/interaction/commands/src/index.ts`](../packages/interaction/commands/src/index.ts)）
@@ -3838,7 +4115,7 @@ export interface Config {
 - `@deepseek-ai/dsh-subagent`（[`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts)）
 - `@deepseek-ai/dsh-subprocess-local`（[`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts)）
 - `@deepseek-ai/dsh-terminal`（[`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts)）
-- `@deepseek-ai/dsh-tool-ask-user` — 需要 `tools` · `userInteraction`（[`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts)）
+- `@deepseek-ai/dsh-tool-ask-user` — 需要 `tools` · `userQuestions`（[`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts)）
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — 需要 `tools`（[`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts)）
 - `@deepseek-ai/dsh-tool-cordis` — 需要 `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect`（[`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts)）
 - `@deepseek-ai/dsh-tool-subagent-control` — 需要 `tools` · `subagents`（[`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts)）
@@ -3853,16 +4130,17 @@ export interface Config {
 - `@deepseek-ai/dsh-attachment` — 抽象 `AttachmentStore`（[`packages/attachment/attachment/src/index.ts`](../packages/attachment/attachment/src/index.ts)）
 - `@deepseek-ai/dsh-code-runtime` — 抽象 `CodeRuntime`（[`packages/code-runtime/code-runtime/src/index.ts`](../packages/code-runtime/code-runtime/src/index.ts)）
 - `@deepseek-ai/dsh-compaction` — 抽象 `CompactionEngine`（[`packages/compaction/compaction/src/index.ts`](../packages/compaction/compaction/src/index.ts)）
-- `@deepseek-ai/dsh-credentials` — 抽象 `Credentials`（[`packages/credentials/credentials/src/index.ts`](../packages/credentials/credentials/src/index.ts)）
+- `@deepseek-ai/dsh-credentials` — 抽象 `CredentialProvider`（[`packages/credentials/credentials/src/index.ts`](../packages/credentials/credentials/src/index.ts)）
 - `@deepseek-ai/dsh-development-mesh` — abstract `DevelopmentMeshService` ([`packages/collaboration/development-mesh/src/index.ts`](../packages/collaboration/development-mesh/src/index.ts))
 - `@deepseek-ai/dsh-file-reference` — 抽象 `FileReferenceService`（[`packages/context/file-reference/src/index.ts`](../packages/context/file-reference/src/index.ts)）
 - `@deepseek-ai/dsh-fs` — 抽象 `FileSystem`（[`packages/fs/fs/src/index.ts`](../packages/fs/fs/src/index.ts)）
 - `@deepseek-ai/dsh-host-directory-picker` — 抽象 `DirectoryPicker`（[`packages/host/directory-picker/src/index.ts`](../packages/host/directory-picker/src/index.ts)）
 - `@deepseek-ai/dsh-jobs` — 抽象 `JobRegistry`（[`packages/jobs/jobs/src/index.ts`](../packages/jobs/jobs/src/index.ts)）
 - `@deepseek-ai/dsh-sandbox` — 抽象 `SandboxProvider`（[`packages/sandbox/sandbox/src/index.ts`](../packages/sandbox/sandbox/src/index.ts)）
+- `@deepseek-ai/dsh-scope-transport` — 抽象 `ScopeTransport`（[`packages/collaboration/scope-transport/src/index.ts`](../packages/collaboration/scope-transport/src/index.ts)）
 - `@deepseek-ai/dsh-session-persistence` — 抽象 `SessionPersistence`（[`packages/session/session-persistence/src/index.ts`](../packages/session/session-persistence/src/index.ts)）
 - `@deepseek-ai/dsh-session-query` — 抽象 `SessionQueryEngine`（[`packages/session-query/session-query/src/index.ts`](../packages/session-query/session-query/src/index.ts)）
-- `@deepseek-ai/dsh-settings` — 抽象 `Settings`（[`packages/settings/settings/src/index.ts`](../packages/settings/settings/src/index.ts)）
+- `@deepseek-ai/dsh-settings` — 抽象 `SettingsProvider`（[`packages/settings/settings/src/index.ts`](../packages/settings/settings/src/index.ts)）
 - `@deepseek-ai/dsh-shell` — 抽象 `ShellExecutor`（[`packages/shell/shell/src/index.ts`](../packages/shell/shell/src/index.ts)）
 - `@deepseek-ai/dsh-spill` — 抽象 `SpillStore`（[`packages/spill/spill/src/index.ts`](../packages/spill/spill/src/index.ts)）
 - `@deepseek-ai/dsh-subprocess` — 抽象 `SubprocessRuntime`（[`packages/subprocess/subprocess/src/index.ts`](../packages/subprocess/subprocess/src/index.ts)）

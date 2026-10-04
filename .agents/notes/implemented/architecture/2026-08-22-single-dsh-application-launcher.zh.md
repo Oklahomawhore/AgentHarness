@@ -14,7 +14,7 @@ Python SDK 通过四个平台 wheel 包分发原生可执行文件。其打包�
 
 ### 启动范围
 
-所有受支持的 Node 应用都通过 `dsh` CLI 与一个具名 profile 启动。随附应用命令是 `dsh web`、`dsh --profile headless`、`dsh --profile sdk`、`dsh --profile sdk-minimal` 与 `dsh --profile acp`；`dsh web` 是刻意为 `--profile web` 保留的便捷别名，不是另一个应用入口。
+所有受支持的 Node 应用都通过 `dsh` CLI 与一个具名 profile 启动。随附应用命令是 `dsh web`、`dsh --profile headless`、`dsh --profile sdk`、`dsh --profile sdk-minimal`、`dsh --profile mcp` 与 `dsh --profile acp`；`dsh web` 是刻意为 `--profile web` 保留的便捷别名，不是另一个应用入口。
 
 Vendor CLI、仅用于构建和测试的可执行文件、进程内直接挂载插件以及私有浏览器 WebWorker 预览都不属于应用启动清单。包应用 bin 或直接启动包入口的根 demo 都不是可接受的扩展点。
 
@@ -31,10 +31,15 @@ Profile manifest 负责 patch 重载：
 | `sdk` | `startup` |
 | `sdk-minimal` | `startup` |
 | `acp` | `startup` |
+| `mcp` | `startup` |
 
 自定义 profile 默认为 `live`。`startup` profile 仍会应用组合包、profile、home 级与调用时 `--patch` 各层，但启动后不会监视这些文件。`dsh-base` 插入的模块 HMR（热模块替换）配置项默认禁用；具有经过验证的源码模块重载生命周期的 profile 必须显式启用它。随附 profile 均不启用服务器模块 HMR：`patchReload: live` 使用启动器的仅配置 watcher，`startup` profile 则不安装 watcher。SDK 与 ACP 无法在一个自有 stdio 连接内安全替换其服务器、agent、持久化或工具注册表。
 
 随附协议 profile 将 stdout 保留给协议帧，显示帮助时不启动 transport，并通过有界根节点 dispose（资源释放）处理 stdin EOF 与信号。ACP 继续仅用于自动化。SDK JSON-RPC 方法、通知字段与 `initialize.serverInfo.name` 保持稳定。完整 profile 的模型可见工具与持久化默认值来自 `dsh-base`，包括其[默认编辑器选择](../simplification/2026-09-05-base-default-file-editor.zh.md)；`sdk-minimal` 拥有自己的显式默认值。可运行快照负责固定已组装的应用输出。
+
+`mcp` profile 只包含 [AgentHarness bridge](../../../../packages/mcp/agentharness-bridge/README.zh.md) 组合包。其 stdio Consumer 读取显式解析的私有连接描述文件，在 RPC 前把当前 Host 启动 token 交换为 cookie。[Connection 本机访问库](../../../../packages/client/connection/README.zh.md)负责描述文件发布和认证；MCP 与 Claude scope transport 均不读取签名密钥。生成的外部客户端配置保留选定的 Harness home、真实 dsh CLI 路径和源码运行参数。认证、请求大小、响应大小、取消与在线租约续期都有可配置的限制。该 profile 不运行模型或 agent loop。
+
+私有描述文件依赖 POSIX 文件归属检查与内核文件锁。Windows 保持 Web 应用可用，但将本机 MCP 配置明确标为不支持，且不写入客户端配置；在缺少等效 Windows 保护时接受描述文件，会让未经检查的文件获得本机 Host 权限。
 
 ### TypeScript SDK 自定义
 

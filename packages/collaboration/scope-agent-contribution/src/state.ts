@@ -1,0 +1,169 @@
+/** Durable native source permission and exact samples; Session logs remain the authority for tool execution. */
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
+import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+import type { SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
+import { contributionRecordSchema } from '@deepseek-ai/dsh-scope-access/contribution'
+import type { ContributionRecord, ContributionOutboxItem } from '@deepseek-ai/dsh-scope-access/contribution'
+import { contributionEntrySchema, contributionLimitsSchema, invitationSchema, validateContributionReceipt } from '@deepseek-ai/dsh-scope-access/schema'
+import type { ScopeContributionEntry, ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
+import { peerContributionSampleSchema, peerContributionAdmissionReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
+
+import type { ScopeAgentContributionReceiving } from './types.ts'
+
+/** Original passive receiving consent and independently recoverable departure intent. */
+export interface NativeReceiving extends ScopeAgentContributionReceiving {
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly leaveAdopted: boolean
+  readonly intent?: 'adopt' | 'cancel-pending' | 'leave' | undefined
+}
+
+/** Immutable local file selection and original consent retained after owner activation. */
+export interface NativeCapture extends ContributionRecord {
+  readonly roots: readonly string[]
+  readonly rootUrls: readonly string[]
+  readonly tools: readonly ('write' | 'edit')[]
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  readonly receiving?: NativeReceiving | undefined
+}
+
+/** Detached read work has no file permission; its original live Agent is checked separately. */
+export interface NativeReceivingContinuation {
+  readonly proposal: NativeCapture['proposal']
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  readonly receiving: NativeReceiving
+}
+
+/** One actual file-tool completion, linked to the source Session's persisted start and settlement. */
+export interface NativeSample extends ContributionOutboxItem {
+  readonly callSeq: SessionSeq
+  readonly resultSeq: SessionSeq
+  readonly callId: string
+  readonly rootCallId: string
+  readonly argumentDigest: string
+  readonly completionDigest: string
+  readonly captureId: NativeCapture['proposal']['captureId']
+  readonly captureGeneration: NativeCapture['proposal']['captureGeneration']
+  readonly sample: NonNullable<ContributionOutboxItem['sample']>
+}
+
+/** One atomic row owns sequence allocation, source samples, and management revisions. */
+export interface NativeSourceRecord {
+  readonly agentId: SessionId
+  readonly revision: number
+  readonly capture: NativeCapture | null
+  readonly samples: readonly NativeSample[]
+  readonly receivingContinuation?: NativeReceivingContinuation | undefined
+}
+
+/**
+ * Derive stable local sample identities from durable execution coordinates.
+ * @param value - complete source coordinates or original logged data.
+ * @returns SHA-256 of its JSON representation; never an authorization token.
+ */
+export function nativeDigest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+const sequence = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeq)
+const digest = z.string().regex(/^[a-f0-9]{64}$/)
+const receivingSchema = z.object({
+  adoptionId: z.uuid().transform(value => value as NativeReceiving['adoptionId']),
+  expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
+  state: z.enum(['waiting', 'adopting', 'active', 'ended', 'superseded', 'failed']),
+  invitation: invitationSchema.nullable(), leaveAdopted: z.boolean(),
+  intent: z.enum(['adopt', 'cancel-pending', 'leave']).optional(),
+}).strict().refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
+  { message: 'receiving departure intent disagrees' })
+const captureSchema = contributionRecordSchema.safeExtend({
+  roots: z.array(z.string().min(1)).min(1), rootUrls: z.array(z.string().startsWith('file:')).min(1),
+  tools: z.array(z.enum(['write', 'edit'])).min(1).max(2),
+  entry: contributionEntrySchema, limits: contributionLimitsSchema,
+  receiving: receivingSchema.optional(),
+}).superRefine((capture, ctx) => {
+  const source = capture.proposal.source
+  const tools = capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit')
+  const grant = capture.invitation?.grant
+  const receiving = capture.receiving
+  const read = receiving?.invitation
+  if ((capture.entry.kind === 'scope-join-entry') !== (receiving !== undefined)
+    || (receiving !== undefined && ((receiving.state === 'adopting' || receiving.state === 'active') && read == null))
+    || (read != null && (read.taskId !== capture.entry.taskId || read.ownerPeerId !== capture.entry.ownerPeerId
+      || read.recipientPeerId !== capture.proposal.contributorPeerId || read.expiresAt > capture.limits.expiresAt
+      || (grant !== undefined && read.expiresAt !== grant.expiresAt)))
+    || capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
+    || new Set(capture.tools).size !== capture.tools.length || source.kind !== 'tool-observations'
+    || JSON.stringify(source.tools) !== JSON.stringify(tools) || source.name !== 'session-work'
+    || (grant !== undefined && (grant.ownerPeerId !== capture.entry.ownerPeerId || grant.taskId !== capture.entry.taskId
+      || grant.expiresAt > capture.limits.expiresAt || grant.maxSamples > capture.limits.maxSamples
+      || grant.maxSampleBytes > capture.limits.maxSampleBytes))) {
+    ctx.addIssue({ code: 'custom', message: 'native contribution source differs from the retained local consent' })
+  }
+})
+const sampleSchema: z.ZodType<NativeSample> = z.object({
+  id: digest, callSeq: sequence, resultSeq: sequence,
+  callId: z.string().min(1), rootCallId: z.string().min(1), argumentDigest: digest, completionDigest: digest,
+  captureId: z.string().min(1).transform(value => value as NativeCapture['proposal']['captureId']),
+  captureGeneration: z.string().min(1).transform(value => value as NativeCapture['proposal']['captureGeneration']),
+  sample: peerContributionSampleSchema, receipt: peerContributionAdmissionReceiptSchema.optional(),
+}).strict()
+const continuationSchema = z.object({
+  proposal: contributionRecordSchema.shape.proposal, entry: contributionEntrySchema, limits: contributionLimitsSchema,
+  receiving: receivingSchema,
+}).strict().refine(value => value.entry.kind === 'scope-join-entry' && value.proposal.source.kind === 'tool-observations'
+  && value.receiving.intent !== undefined
+  && (value.receiving.invitation === null ? value.receiving.intent !== 'adopt'
+    : value.receiving.invitation.ownerPeerId === value.entry.ownerPeerId
+      && value.receiving.invitation.taskId === value.entry.taskId
+      && value.receiving.invitation.recipientPeerId === value.proposal.contributorPeerId
+      && value.receiving.invitation.expiresAt <= value.limits.expiresAt),
+{ message: 'detached receiving differs from original consent' })
+const recordSchema: z.ZodType<NativeSourceRecord> = z.object({
+  agentId: z.string().min(1).transform(value => value as SessionId),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  capture: captureSchema.nullable(), samples: z.array(sampleSchema), receivingContinuation: continuationSchema.optional(),
+}).strict().superRefine((record, ctx) => {
+  if (record.capture !== null && record.receivingContinuation !== undefined) {
+    ctx.addIssue({ code: 'custom', message: 'capture and detached receiving cannot coexist' })
+  }
+  const seen = new Set<number>()
+  try {
+    if (record.capture === null && record.samples.length !== 0) throw new Error('samples have no source permission')
+    for (const sample of record.samples) {
+      if (record.capture === null) throw new Error('sample has no capture')
+      validateNativeSample(record.agentId, sample, record.capture)
+      if (seen.has(sample.sample.sequence)) throw new Error('sample sequence is duplicated')
+      seen.add(sample.sample.sequence)
+    }
+  } catch (error) { ctx.addIssue({ code: 'custom', message: String(error) }) }
+})
+
+/**
+ * Check durable sample attribution and exact receipts before restoring or retransmitting.
+ * @param agentId - source Session owning the row.
+ * @param item - original retained observation.
+ * @param capture - immutable local selection and owner grant.
+ */
+export function validateNativeSample(agentId: SessionId, item: NativeSample, capture: NativeCapture): void {
+  const id = nativeDigest(['native-tool', agentId, capture.proposal.captureId, capture.proposal.captureGeneration, item.callSeq, item.resultSeq])
+  if (item.id !== id || item.captureId !== capture.proposal.captureId || item.captureGeneration !== capture.proposal.captureGeneration
+    || item.callSeq >= item.resultSeq || item.sample.sourceId !== nativeDigest([id, item.sample.sequence])
+    || item.sample.sequence > capture.sequence || capture.invitation === undefined
+    || !('kind' in item.sample.result) || !capture.tools.includes(item.sample.result.tool === 'Write' ? 'write' : 'edit')) {
+    throw new Error('native contribution sample has different source coordinates')
+  }
+  if (item.receipt !== undefined) validateContributionReceipt(capture.invitation, item.receipt, item.sample)
+}
+
+/** Bounded source authority; restart never grants a new live instance collection permission. */
+export const nativeContributionDomain = defineDomain({
+  name: 'scope_agent_contributions', version: 1,
+  global: { schema: z.object({ version: z.literal(1) }).strict(), initial: { version: 1 as const } },
+  tables: { sessions: domainTable<SessionId, NativeSourceRecord>(recordSchema) },
+})
+
+/** The single native source durable authority. */
+export type NativeContributionDomain = Domain<typeof nativeContributionDomain>

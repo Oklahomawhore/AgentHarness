@@ -1,0 +1,3 @@
+## Shared scope authorization unavailable
+The owner could not be reached to verify current authorization. This is not evidence of revocation. Do not treat earlier shared-scope projections as current facts or current permission. This notice does not erase information already present in this conversation.
+{"projectionId":"claude-projection-21dbf1cfbefa7cfb029a6eafeca1de4364eb48b0cee9836d6da2f7fc4c5d24d0","supersedes":"claude-projection-7b02c9f19b13f1e03f96ade85c19c2fbc2f874c2726b1f5f3c7123d33ab9c987","taskId":"task-fixture","ownerPeerId":"owner-peer","grantId":"grant-fixture","grantGeneration":"grant-generation","status":"unavailable"}

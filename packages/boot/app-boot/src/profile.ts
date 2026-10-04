@@ -124,6 +124,10 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
     patchReload: 'startup',
   },
+  mcp: {
+    bundles: ['@deepseek-ai/dsh-agentharness-bridge'],
+    patchReload: 'startup',
+  },
   'sdk-minimal': {
     bundles: ['@deepseek-ai/dsh-sdk-minimal'],
     patchReload: 'startup',

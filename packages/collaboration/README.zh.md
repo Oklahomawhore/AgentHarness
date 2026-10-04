@@ -34,7 +34,12 @@ kind: "package-group"
 | `development-task` | 负责 Root/Fork/Merge 谱系、显式上下文发布和按 Session 隔离的 Task 绑定。 |
 | `development-task-storage-domain` | 把 Task 事件、context block 和 assignment 持久化为可路由到 SQLite 的独立行。 |
 | `development-task-mesh` | 经通用 Mesh 复制 Task 行并路由 owner mutation。 |
-| `development-task-context` | 把已绑定 Task 的上下文注入原生 Agent 请求和耐久 Session 历史。 |
+| `development-task-context` | 通过可替换后端选择接收者上下文，并注入原生 Agent 请求。 |
+| `scope-transport` | 认证独立设备密钥，通过显式直连地址传送有界请求。 |
+| `scope-access` | 授权一个接收者读取独立 Task，并耐久保存 owner 生成的确切上下文，不复制日志。 |
+| `scope-agent-context` | 在原生 Session 中在线接收独立 scope，并按本地目标和有限额度启动空闲轮次。 |
+| [`scope-agent-contribution`](scope-agent-contribution/README.zh.md) | 经独立所有者批准与持久重试，分享获准的原生文件工具观察。 |
+| `claude-scope` | 采集获授权的 Claude 工具观察，并为命令 hook 准备接收者上下文。 |
 | `development-room-context` | 保留在 Task-first Web 组合之外的旧 Room 显式文本服务。 |
 | `development-room-context-storage-domain` | 保留在 Task-first Web 组合之外的旧 Room context 持久化。 |
 

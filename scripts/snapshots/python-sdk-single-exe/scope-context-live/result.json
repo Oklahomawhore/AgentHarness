@@ -1,0 +1,30 @@
+{
+  "first": {
+    "text": "INITIAL",
+    "finishReason": "completed"
+  },
+  "last": {
+    "text": "WITHDRAWN",
+    "finishReason": "completed"
+  },
+  "observedAutomaticTurn": true,
+  "automaticUserInputs": 0,
+  "automaticPulses": 1,
+  "contextRevisions": [
+    1,
+    2,
+    3,
+    null
+  ],
+  "finalMode": "left",
+  "usedBudget": 1,
+  "pendingActivation": null,
+  "suppressedRevisions": [
+    4,
+    5
+  ],
+  "automaticRequestRevisions": [
+    2,
+    3
+  ]
+}

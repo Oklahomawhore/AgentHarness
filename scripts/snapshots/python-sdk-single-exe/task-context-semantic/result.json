@@ -1,0 +1,82 @@
+{
+  "turns": [
+    {
+      "text": "Fixture response 1.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 2.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 3.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 4.",
+      "finishReason": "completed"
+    }
+  ],
+  "contextRevisions": [
+    4,
+    5,
+    6,
+    7
+  ],
+  "backend": "semantic",
+  "updateCounts": [
+    1,
+    2,
+    3,
+    0
+  ],
+  "irrelevantOmissionCounts": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "withdrawnSourceCount": 3,
+  "controlledSemanticRequests": 4,
+  "realModelRequests": 0,
+  "auditResults": [
+    {
+      "requestSeq": 0,
+      "status": "completed",
+      "purpose": "context-summary",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 80
+      }
+    },
+    {
+      "requestSeq": 2,
+      "status": "completed",
+      "purpose": "context-summary",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 80
+      }
+    },
+    {
+      "requestSeq": 4,
+      "status": "completed",
+      "purpose": "context-summary",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 80
+      }
+    },
+    {
+      "requestSeq": 6,
+      "status": "completed",
+      "purpose": "context-summary",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 80
+      }
+    }
+  ],
+  "wirePreservesExactContextMessages": true,
+  "isolatedAuditMatchesNativeContext": true
+}

@@ -28,7 +28,7 @@ import type { Browser } from 'playwright'
 import { expect, it } from 'vitest'
 import {
   composeProfile, configTrees, indexWorkspacePackages, packVfsImage, packVfsOverlay,
-  previewFixtures, WRAPPER_CONTRACT,
+  previewFixtures, staticPagePackages, WRAPPER_CONTRACT,
 } from '@deepseek-ai/dsh-experimental-webworker-packer'
 import {
   IMAGE_FILE_NAME, PREVIEW_FIXTURE_MANIFEST_FILE, PREVIEW_FIXTURE_MANIFEST_VERSION,
@@ -145,6 +145,7 @@ function requireVfsAssets(): PreviewAssets {
       workspaces: indexWorkspacePackages(REPO_ROOT),
       resolveFrom: REPO_ROOT,
       configTrees: configTrees(REPO_ROOT),
+      pageOnlyPackages: staticPagePackages(REPO_ROOT),
     })
     if (packed.missing.length > 0) {
       throw new Error(`preview boot: ${String(packed.missing.length)} dependencies did not resolve: ${packed.missing.join(', ')}`)
@@ -278,10 +279,10 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
   const page = await newEnglishPage(browser)
   const pageErrors: Error[] = []
   const consoleErrors: string[] = []
-  page.on('pageerror', (error) => { pageErrors.push(error) })
   // Registered before navigation: the worker reports its tree long before the
   // tunnel serves the client, so a listener added later would miss the line.
-  const treeActive = new Promise<string>((reported) => {
+  const treeActive = new Promise<string | Error>((reported) => {
+    page.on('pageerror', (error) => { pageErrors.push(error); reported(error) })
     page.on('console', (message) => {
       const text = message.text()
       if (text.includes(TREE_ACTIVE)) reported(text)
@@ -307,6 +308,7 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
     // The activated tree ran bodies lowered against the contract this
     // checkout's packer emits; a dist built before a contract change would
     // report the older one.
+    if (bootLine instanceof Error) throw bootLine
     expect(bootLine).toContain(`image lowering=${WRAPPER_CONTRACT}`)
     expect(bootLine).toContain('data overlays=1')
     // The versioned notice is the seeded preview's first stable interactive
@@ -448,11 +450,11 @@ async function bootEmptyPreview(origin: string, browser: Browser): Promise<void>
   const pageErrors: Error[] = []
   const consoleErrors: string[] = []
   const failedResponses: string[] = []
-  page.on('pageerror', (error) => { pageErrors.push(error) })
   page.on('response', (response) => {
     if (response.status() >= 400) failedResponses.push(new URL(response.url()).pathname)
   })
-  const treeActive = new Promise<string>((reported) => {
+  const treeActive = new Promise<string | Error>((reported) => {
+    page.on('pageerror', (error) => { pageErrors.push(error); reported(error) })
     page.on('console', (message) => {
       const text = message.text()
       if (text.includes(TREE_ACTIVE)) reported(text)
@@ -467,6 +469,7 @@ async function bootEmptyPreview(origin: string, browser: Browser): Promise<void>
       BOOT_TIMEOUT_MS,
       `empty preview boot: the worker never reported "${TREE_ACTIVE}"`,
     )
+    if (bootLine instanceof Error) throw bootLine
     expect(bootLine).toContain(`image lowering=${WRAPPER_CONTRACT}`)
     expect(bootLine).toContain('data overlays=0')
     await page.getByRole('textbox', { name: 'Choose workspace' }).waitFor({ timeout: HERO_TIMEOUT_MS })

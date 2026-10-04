@@ -8,7 +8,7 @@
   - list:
     - listitem: 保存协作身份
     - listitem: 新建一个 Task 上下文
-    - listitem: 在需要加入的 Agent Session 中调用 agentharness_task_connect
+    - listitem: 选择 Claude 会话加入，或在目标 MCP 会话中调用 agentharness_task_connect
   - text: 协作显示名
   - textbox "协作显示名": 浏览器验收用户
   - button "身份已生效" [disabled]
@@ -17,20 +17,20 @@
   - navigation:
     - button "我的任务"
     - button "全部"
-  - button "Merge 修订 r1 网页汇合任务 浏览器验收用户":
-    - text: Merge 修订 r1
+  - button "合并 修订 r1 网页汇合任务 浏览器验收用户":
+    - text: 合并 修订 r1
     - strong: 网页汇合任务
     - text: 浏览器验收用户
-  - button "Fork 修订 r1 网页派生任务二 浏览器验收用户":
-    - text: Fork 修订 r1
+  - button "分支 修订 r1 网页派生任务二 浏览器验收用户":
+    - text: 分支 修订 r1
     - strong: 网页派生任务二
     - text: 浏览器验收用户
-  - button "Fork 修订 r1 网页派生任务一 浏览器验收用户":
-    - text: Fork 修订 r1
+  - button "分支 修订 r1 网页派生任务一 浏览器验收用户":
+    - text: 分支 修订 r1
     - strong: 网页派生任务一
     - text: 浏览器验收用户
-  - button "Root 修订 r2 网页共享上下文验收 浏览器验收用户":
-    - text: Root 修订 r2
+  - button "独立 修订 r2 网页共享上下文验收 浏览器验收用户":
+    - text: 独立 修订 r2
     - strong: 网页共享上下文验收
     - text: 浏览器验收用户
 - main "任务有向无环谱系图":
@@ -44,19 +44,19 @@
     - img:
       - group "Edge from task-{{uuid}} to task-{{uuid}}"
     - group:
-      - text: Merge · r1
+      - text: 合并 · 修订 r1
       - strong: 网页汇合任务
       - text: 浏览器验收用户 · 运行正常
     - group:
-      - text: Fork · r1
+      - text: 分支 · 修订 r1
       - strong: 网页派生任务二
       - text: 浏览器验收用户 · 运行正常
     - group:
-      - text: Fork · r1
+      - text: 分支 · 修订 r1
       - strong: 网页派生任务一
       - text: 浏览器验收用户 · 运行正常
     - group:
-      - text: Root · r2
+      - text: 独立 · 修订 r2
       - strong: 网页共享上下文验收
       - text: 浏览器验收用户 · 运行正常
     - img "任务图缩略图"
@@ -68,49 +68,45 @@
       - img
     - img
 - complementary:
-  - text: Merge · 修订 r1
+  - region "Claude Code":
+    - heading "Claude Code" [level=3]
+    - button "刷新会话"
+    - paragraph: 为项目配置 hooks，再选择一个独立会话。可以准备贡献来源，或加入已选 Task。
+    - text: 项目路径
+    - textbox "项目路径":
+      - /placeholder: /绝对路径/项目
+    - paragraph: 写入该项目的 .claude/settings.local.json，保留其他配置。不会自动将会话加入 Task。
+    - button "配置 hooks" [disabled]
+    - button "检查配置" [disabled]
+    - paragraph: 尚未观察到 Claude 会话。配置项目后，在 Claude Code 中发送一条消息，再刷新。
+  - group: 批准独立来源贡献
+  - group: 独立设备协作
+  - text: 合并 · 修订 r1
   - heading "网页汇合任务" [level=1]
   - text: 运行正常
   - region "让 Agent Session 加入当前 Task":
     - heading "让 Agent Session 加入当前 Task" [level=2]
-    - paragraph: 配置只安装能力；真正加入必须在目标 Codex/Cursor/Claude Session 内调用 agentharness_task_connect，其他 Session 不受影响。
+    - paragraph: Claude 会话可在下方单独加入；使用 MCP 的会话需自行调用 agentharness_task_connect。配置不会自动加入其他会话。
     - code: task-{{uuid}}
+    - region "远程工作观察授权":
+      - heading "远程工作观察授权" [level=3]
+      - button "刷新授权"
+      - paragraph: 下方是已同步到此 Host 的远程会话绑定。批准只允许该次绑定提交工作观察；对方仍需在本机授权采集。这是互信 Mesh 内的操作授权。
+      - paragraph: 尚无可批准的远程绑定。参与者加入并完成同步后会出现在这里。
+    - heading "其他 Agent：通过 MCP 加入" [level=3]
     - article:
       - strong: Cursor
-      - text: 同名冲突
+      - text: 等待配置
       - list "智能体连接进度":
         - listitem: 已配置
         - listitem: 在线
         - listitem: Session 已连接
         - listitem: 已确认上下文
-      - paragraph: Cursor 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
+      - paragraph: 已检测到 Cursor，但 AgentHarness MCP 尚未配置。
       - paragraph:
         - strong: 下一步：
-        - text: 运行 agentharness mcp-guide 获取准确接入命令；检查 /Users/example/.cursor/mcp.json，移除或改名冲突项后按指南重新添加，再刷新本页。
-    - article:
-      - strong: Codex
-      - text: 同名冲突
-      - list "智能体连接进度":
-        - listitem: 已配置
-        - listitem: 在线
-        - listitem: Session 已连接
-        - listitem: 已确认上下文
-      - paragraph: Codex 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
-      - paragraph:
-        - strong: 下一步：
-        - text: 运行 agentharness mcp-guide 获取准确接入命令；在 Codex MCP 配置中移除或改名同名项后重新添加，重启 Codex，再刷新本页。
-    - article:
-      - strong: Claude Code
-      - text: 同名冲突
-      - list "智能体连接进度":
-        - listitem: 已配置
-        - listitem: 在线
-        - listitem: Session 已连接
-        - listitem: 已确认上下文
-      - paragraph: Claude Code 中已有内容不同的“agentharness”同名 MCP 配置。保护机制已停止自动设置，没有覆盖原配置。
-      - paragraph:
-        - strong: 下一步：
-        - text: 运行 agentharness mcp-guide 获取准确接入命令；检查 /Users/example/.claude.json，移除或改名冲突项后按指南重新添加，再刷新本页。
+        - text: 点击下方“自动配置”，完成后重启或重新加载 Cursor，再刷新本页。
+      - button "自动配置"
     - article:
       - strong: Doubao
       - text: 需要手动配置
@@ -124,7 +120,7 @@
         - strong: 下一步：
         - text: 运行 agentharness mcp-guide，按 Doubao 的说明手动添加；重启客户端后刷新本页。
   - heading "共享上下文" [level=2]
-  - text: 这里只保存主动发布的内容，不收集私聊、完整 Session 或内部推理。
+  - text: 这里包含主动发布及已授权的工作观察，不收集私聊、完整 Session 或内部推理。
   - article:
     - strong: 初始上下文
     - paragraph: 网页汇合任务的增量上下文。

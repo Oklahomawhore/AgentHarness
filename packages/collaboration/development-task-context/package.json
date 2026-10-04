@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-development-task-context",
   "description": "Connected Task context admitted into reconstructable Agent requests",
-  "version": "0.1.0-rc.12",
+  "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -18,49 +18,73 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
+    "./backend": {
+      "types": "./lib/types/backend.d.ts",
+      "default": "./lib/types/backend.js"
+    },
+    "./text": {
+      "types": "./lib/types/text.d.ts",
+      "default": "./lib/types/text.js"
+    },
+    "./facts": {
+      "types": "./lib/types/facts.d.ts",
+      "default": "./lib/types/facts.js"
     },
     "./types": {
       "types": "./lib/types/types.d.ts",
       "default": "./lib/types/types.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./semantic": {
+      "types": "./lib/types/semantic.d.ts",
+      "default": "./lib/types/semantic.js"
+    },
+    "./local": {
+      "types": "./lib/types/local.d.ts",
+      "default": "./lib/types/local.js"
+    }
   },
   "files": [
     "lib/index.js",
-    "lib/invariant.js",
     "lib/types/**/*.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "dependencies": {
+    "@deepseek-ai/dsh-brand": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@deepseek-ai/dsh-timeout": "workspace:^",
+    "@deepseek-ai/dsh-util-values": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
     "@deepseek-ai/dsh-development-room-agent-presence": "workspace:^",
     "@deepseek-ai/dsh-development-task": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
-    "@deepseek-ai/dsh-session": "workspace:^"
+    "@deepseek-ai/dsh-session": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence": "workspace:^",
+    "@deepseek-ai/dsh-development-room": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/cordis-plugin-include": "workspace:^",
+    "@deepseek-ai/cordis-plugin-loader": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
     "@deepseek-ai/dsh-agent-loop": "workspace:^",
     "@deepseek-ai/dsh-agent-loop-testkit": "workspace:^",
     "@deepseek-ai/dsh-development-room-agent-presence": "workspace:^",
     "@deepseek-ai/dsh-development-task": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-system-prompt": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
-    "@deepseek-ai/dsh-development-room": "workspace:^"
+    "@deepseek-ai/dsh-development-room": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^",
+    "@deepseek-ai/dsh-session-query-sqlite": "workspace:^",
+    "@deepseek-ai/dsh-session-projection": "workspace:^"
   }
 }

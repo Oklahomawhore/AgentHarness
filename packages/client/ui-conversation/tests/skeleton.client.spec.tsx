@@ -29,7 +29,7 @@ import type { HeroShellProps } from '../src/client/skeleton/EmptyHero.tsx'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
-  ComposerBarOwnerProps, ConversationHeaderLineageOwnerProps,
+  ComposerBarOwnerProps, ConversationHeaderActionOwnerProps, ConversationHeaderLineageOwnerProps,
 } from '../src/client/contract/slots.ts'
 import type { ViewTab } from '../src/client/contract/views.ts'
 
@@ -170,6 +170,7 @@ function mount(
   const open = vi.fn()
   const slotCalls: string[] = []
   const lineageOwners: ConversationHeaderLineageOwnerProps[] = []
+  const actionOwners: ConversationHeaderActionOwnerProps[] = []
   const viewTabs = options.viewTabs ?? [
     { id: 'chat', label: 'Chat' },
     { id: 'trajectory', label: 'Trajectory' },
@@ -180,6 +181,9 @@ function mount(
   let pickerOwner: unknown
   const renderSlot = ((key: string, owner: object, opts?: { only?: string; fallback?: ReactNode }) => {
     slotCalls.push(key)
+    if (key === 'conversation.session.header.actions' || key === 'conversation.session.header.utilities') {
+      actionOwners.push(owner as ConversationHeaderActionOwnerProps)
+    }
     if (key === 'conversation.input.model' || key === 'conversation.input.plan') {
       seatOwners.push({ key, owner })
     }
@@ -318,7 +322,7 @@ function mount(
   }
   const view = render(<ConversationRoot {...props} />)
   return {
-    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
+    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, actionOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationRoot {...props} />) },
   }
@@ -451,6 +455,16 @@ describe('ConversationRoot resident composer', () => {
     expect(b.slotCalls).toContain('conversation.session.header.actions')
     expect(b.slotCalls).toContain('conversation.session.header.utilities')
     expect(b.slotCalls).toContain('conversation.session.header.corner')
+  })
+
+  it('header actions select a Session view without replacing the composer draft', () => {
+    const b = mount(sessionSnapshotOf())
+    expect(b.actionOwners.length).toBeGreaterThanOrEqual(2)
+    act(() => { b.actionOwners[0]!.selectView('trajectory') })
+    expect(b.store.getSnapshot()).toMatchObject({ view: 'trajectory', draft: 'ordinary draft' })
+    act(() => { b.actionOwners[1]!.selectView('chat') })
+    expect(b.store.getSnapshot()).toMatchObject({ view: 'chat', draft: 'ordinary draft' })
+    expect(b.open).not.toHaveBeenCalled()
   })
 
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {

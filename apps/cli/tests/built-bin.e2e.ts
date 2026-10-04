@@ -356,14 +356,14 @@ describe.skipIf(!existsSync(dshBin))('dsh BUILT bin (node lib/bin.js, no tsx)', 
       expect(web.stdout).toContain('--port <port>')
       expect(web.stdout).not.toContain('dsh web: http://')
 
-      const wildcardHost = await runBuiltBin(['web', '--host', '0.0.0.0'], {
+      const invalidPort = await runBuiltBin(['--profile', 'web', '--no-open', '--port', 'abc'], {
         DSH_HOME: home,
         DSH_TELEMETRY_DISABLED: '1',
       })
-      expect(wildcardHost.code).toBe(1)
-      expect(wildcardHost.stdout).toBe('')
-      expect(wildcardHost.stderr).toContain('--host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead')
-      expect(wildcardHost.stderr).not.toContain('dsh web: http://')
+      expect(invalidPort.code).toBe(1)
+      expect(invalidPort.stdout).toBe('')
+      expect(invalidPort.stderr).toContain('--port must be a number')
+      expect(invalidPort.stderr).not.toContain('dsh web: http://')
 
       const headlessHelp = await runBuiltBin(['--profile', 'headless', '--help'], {
         DSH_HOME: home,
@@ -388,6 +388,15 @@ describe.skipIf(!existsSync(dshBin))('dsh BUILT bin (node lib/bin.js, no tsx)', 
       expect(acpHelp.code).toBe(0)
       expect(acpHelp.stderr).toBe('')
       expect(acpHelp.stdout).toContain('Usage: dsh --profile acp')
+
+      const mcpHelp = await runBuiltBin(['--profile', 'mcp', '--help'], {
+        DSH_HOME: home,
+        DSH_TELEMETRY_DISABLED: '1',
+      })
+      expect(mcpHelp.code).toBe(0)
+      expect(mcpHelp.stderr).toBe('')
+      expect(mcpHelp.stdout).toContain('Usage: dsh --profile mcp')
+      expect(mcpHelp.stdout).toContain('--connection')
 
       const missingTask = await runBuiltBin(['--profile', 'headless'], {
         DSH_HOME: home,

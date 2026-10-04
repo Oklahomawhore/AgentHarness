@@ -1,0 +1,11 @@
+version: 1
+scenario: scope-context-live
+profile: sdk
+composition: sdk-scope-context-live
+recording: authored
+header:
+  class: scope-context-live
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

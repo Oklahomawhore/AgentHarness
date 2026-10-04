@@ -1,0 +1,7 @@
+- paragraph: 把当前会话连接到本机创建的目标，再单独决定是否分享文件工作。其他会话不会自动加入。
+- text: 本机目标
+- combobox "本机目标":
+  - option "选择一个目标" [selected]
+  - option "两位用户共同维护重试行为"
+- button "连接当前会话" [disabled]
+- button "重新读取分享状态"

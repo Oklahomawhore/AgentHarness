@@ -347,21 +347,15 @@ function requireLoweredImage(vfs: MemoryVfs, path: string): void {
 }
 
 /**
- * The shipped preset root, as the application layer that owns the composition
- * supplies it.
- *
- * A launcher appends this root itself rather than writing it into the roster —
- * `apps/cli` does it in `composeProfile` (`profile-boot.ts:159-166`) because only
- * the application knows where its own presets sit. The worker's presets travel
- * in the image, so the same overlay names their virtual path. Patching replaces
- * a row's whole `config`, so the current one is read and spread, and a roster
- * that already names roots keeps them.
+ * Adapt the application composition to the worker's virtual filesystem and available host capabilities.
+ * Preset roots and JSONL encoding target the image; the default Task SQLite route selects JSON.
+ * Native client setup, peer networking, SQLite and their collaboration page are disabled.
+ * Patches replace whole row configs, so unrelated fields are retained and the image config stays unchanged.
  * @param loader - Module loader, for the image's YAML reader.
  * @param vfs - Filesystem holding the composed configuration.
  * @param configPath - Composed configuration path.
  * @param root - Virtual root.
- * @returns Boot patches (preset root overlay, frontend serving off) and
- * whether the preset overlay was applied.
+ * @returns Deployment patches and whether the preset overlay was applied.
  */
 function bootPatches(
   loader: WorkerModuleLoader,
@@ -408,6 +402,24 @@ function bootPatches(
   const jsonl = find(rows, 'session-persistence-jsonl')
   if (jsonl !== undefined) {
     patches.push({ id: 'session-persistence-jsonl', config: { ...configOf(jsonl), compression: 'none' } })
+  }
+  // The default Task route uses the existing JSON backend in the worker's ephemeral VFS.
+  const domain = find(rows, 'storage-domain')
+  if (domain !== undefined) {
+    const config = configOf(domain)
+    const routes = config.routes
+    if (typeof routes === 'object' && routes !== null && !Array.isArray(routes)
+      && 'development_tasks' in routes && routes.development_tasks === 'sqlite') {
+      patches.push({ id: 'storage-domain', config: { ...config, routes: { ...routes, development_tasks: 'json' } } })
+    }
+  }
+  // Native client setup, peer networking, SQLite and their collaboration UI require a local Node process.
+  for (const id of [
+    'mcp-client-setup', 'claude-scope', 'scope-transport-libp2p', 'scope-access', 'scope-agent-context', 'scope-agent-contribution',
+    'development-mesh-websocket', 'development-room-mesh', 'development-task-mesh',
+    'storage-sqlite', 'ui-emergence-center',
+  ]) {
+    if (find(rows, id) !== undefined) patches.push({ id, disabled: true })
   }
   return { patches, presetOverlay }
 }

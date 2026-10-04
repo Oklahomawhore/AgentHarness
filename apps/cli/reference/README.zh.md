@@ -10,9 +10,9 @@
 
 `dsh --profile <name>` 启动位于 `$DSH_HOME/profiles/<name>` 的 profile。生效配置树以空根节点为起点，依次叠加 profile manifest（元数据清单）的 `dsh.profile.bundles` 列表中指定的各组合包 patch、profile 自身的 `cordis.patch.yml`、home 级的 `$DSH_HOME/cordis.patch.yml`（这是各 profile 共享的机器本地偏好，因此优先于逐 profile 配置层），以及按 argv 顺序指定的各个 `--patch <path>` 覆盖层。对同一配置行，后应用的层优先。patch 会替换目标行的整个 `config` 值，而不是深度合并其中的键；patch 也可以插入新行。`dsh.profile.patchReload` 可选择 `live` patch 文件监视或 `startup` 单次加载；自定义 profile 省略该值时默认使用 `live`。配置解析、schema 校验、模块解析或插件启动失败时，系统会报告错误并以非零状态退出。收到 SIGINT 或 SIGTERM 时，挂载的根节点会先 dispose（资源释放）再退出。
 
-组合包名称先从 dsh 安装目录解析，再从 profile 目录解析。因此，内置组合包（`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、`@deepseek-ai/dsh-headless`、`@deepseek-ai/dsh-sdk-app`、`@deepseek-ai/dsh-sdk-minimal`、`@deepseek-ai/dsh-acp-app`）始终来自当前运行的 `dsh` 所属的安装；树外组合包则来自 profile 中由 pnpm 管理的 `node_modules`。patch 行中的裸插件 `name` 会从 profile 目录开始，按照 Node 的模块解析规则逐级向父目录查找，直至由 dsh 维护的安装后备目录 `$DSH_HOME/profiles/node_modules`。普通 Node 安装会为依赖闭包中的每个包放置并修复一个符号链接。pkg 可执行程序则放置真实 ESM 代理，镜像显式 exports 并重新导出虚拟包 URL，因为操作系统符号链接无法进入 pkg 的 `/snapshot` 文件系统。每次启动还会把仅由所选外部 bundle 携带的包经 dsh 自有目录链接到当前 profile 的 `node_modules`；已有 pnpm 条目优先，且每个 profile 独立拥有自己的链接。
+组合包名称先从 dsh 安装目录解析，再从 profile 目录解析。因此，内置组合包（`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、`@deepseek-ai/dsh-headless`、`@deepseek-ai/dsh-sdk-app`、`@deepseek-ai/dsh-sdk-minimal`、`@deepseek-ai/dsh-acp-app`、`@deepseek-ai/dsh-agentharness-bridge`）始终来自当前运行的 `dsh` 所属的安装；树外组合包则来自 profile 中由 pnpm 管理的 `node_modules`。patch 行中的裸插件 `name` 会从 profile 目录开始，按照 Node 的模块解析规则逐级向父目录查找，直至由 dsh 维护的安装后备目录 `$DSH_HOME/profiles/node_modules`。普通 Node 安装会为依赖闭包中的每个包放置并修复一个符号链接。pkg 可执行程序则放置真实 ESM 代理，镜像显式 exports 并重新导出虚拟包 URL，因为操作系统符号链接无法进入 pkg 的 `/snapshot` 文件系统。每次启动还会把仅由所选外部 bundle 携带的包经 dsh 自有目录链接到当前 profile 的 `node_modules`；已有 pnpm 条目优先，且每个 profile 独立拥有自己的链接。
 
-`web`、`headless`、`sdk`、`sdk-minimal` 和 `acp` profile 首次使用时会从随附模板自动初始化（`web`：base + web-app，实时应用 patch；`headless`：base + headless，只在启动时应用 patch；`sdk`：base + sdk-app，只在启动时应用 patch；`sdk-minimal`：独立组合包，只在启动时应用 patch；`acp`：base + acp-app，只在启动时应用 patch）。其他缺失的 profile 会显式报错，并提示运行 `dsh plugin --profile <name> add <package>`。
+`web`、`headless`、`sdk`、`sdk-minimal`、`mcp` 和 `acp` profile 首次使用时会从随附模板自动初始化（`web`：base + web-app，实时应用 patch；`headless`：base + headless，只在启动时应用 patch；`sdk`：base + sdk-app，只在启动时应用 patch；`sdk-minimal`：独立组合包，只在启动时应用 patch；`acp`：base + acp-app，只在启动时应用 patch；`mcp`：独立 bridge 组合包，只在启动时应用 patch）。其他缺失的 profile 会显式报错，并提示运行 `dsh plugin --profile <name> add <package>`。
 
 `dsh --profile <name> --from-default-profile <template>` 会在启动前，从上述五个随附模板之一初始化新的自定义目标。目标名称不能是随附 profile 名称，并且完整的目标 profile 目录必须不存在。launcher 会以独占方式领取该目录，因此残留文件和另一个并发创建者都会在不作修改的情况下被拒绝。它把模板当前的 bundle 列表和 `patchReload` 值复制进一份依赖为空、用户 patch 为空的新 manifest。它不会读取 `<template>` 指定的本地同名 profile，不会复制其依赖或 patch，也不会持久化继承字段；模板列表之后的变化不会改写新 profile。复制列表中指名的内置 bundle 仍从当前 dsh 安装目录解析。初始化成功不会增加 launcher 输出。
 
@@ -39,6 +39,7 @@ dsh --profile rescue
 | `headless` | 任务文本，作为位置参数 |
 | `sdk` | 无选项；stdio 携带 JSON-RPC 协议 |
 | `sdk-minimal` | 无选项；stdio 携带相同的 JSON-RPC 协议 |
+| `mcp` | `--connection`、`--url` origin 约束、`--participant-id`、`--display-name`；通过 MCP stdio 提供经过认证的本机 Host RPC |
 | `acp` | 无选项；stdio 携带 Agent Client Protocol |
 
 一次性任务（`dsh --profile headless "run the tests"`）通过核心注册表创建一个全新的持久化 Agent（智能体），提交任务、等待完全停稳并对会话执行 flush，再从其持久化事件区间中推导最后一个非空 assistant 文本与最终 `turn/end` 原因。它在 `dsh: reasoning:` 标题下将非空的提供方推理分片流式写入 stderr，只在 stdout 打印最终文本，并在原因为 `completed` 时以 0 退出，否则以 1 退出；没有推理内容的成功响应会保持 stderr 为空。没有任务的调用是该应用的用法错误。随附 headless profile 不挂载浏览器 Connection、HTTP 服务器、Web 运行时或浏览器客户端，也不会打开监听端口。
@@ -104,7 +105,7 @@ dsh web --help
 
 反馈记录在会话日志中，不会启动模型工作。开启 [DeepSeek 会话日志贡献器](../../../packages/session/session-log-deepseek/README.zh.md)后，后续 DeepSeek 请求会发送尚未确认的完整日志后缀，包括发往配置网关的请求。[OTel 会话上传](../../../packages/session/session-telemetry-otel/README.zh.md)适用于所有用户和提供方，包括 `deepseek-official`，无需请求头。基础配置默认使用 `FEEDBACK_ONLY`：新的自身文本反馈、消息评分、编辑与撤回会释放截至该事件的完整权威日志前缀，包含存储的上下文；后续记录等待下一次显式反馈。继承的父级反馈不构成 fork 的授权。请求、恢复、挂载和 HMR 不触发捕获。SDK 批处理可完成已授权上传，无需进一步交互或模型工作。`DSH_TELEMETRY_MODE=DISABLED` 禁止 OTel 投递；`FULL` 被拒绝，任何非空的 `DSH_TELEMETRY_DISABLED` 都会禁用其配置行。`DSH_TELEMETRY_OTLP_URL` 选择采集端。交接尽力而为，不代表采集端接受；不提供持久化 outbox 或重试保证。这些 OTel 设置不会开启或关闭 DeepSeek 贡献。两条路径都不改变模型输入，但导出可能包含消息文本、工具参数和结果，以及工作区路径。
 
-通过 `dsh plugin --profile <name> add <package-or-git-spec>` 安装外部插件组合包。安装的包拥有其依赖，并贡献其声明的 `cordis.patch.yml` 层。CLI 还随附 `@deepseek-ai/dsh-mcp-client` 作为供 patch 层使用的依赖，但默认不启用 MCP 服务器，因为每条服务器命令都是 agent（智能体）沙箱之外的受信任可执行代码。
+通过 `dsh plugin --profile <name> add <package-or-git-spec>` 安装外部插件组合包。安装的包拥有其依赖，并贡献其声明的 `cordis.patch.yml` 层。CLI 还随附 `@deepseek-ai/dsh-mcp-client` 作为供 patch 层使用的依赖，但基于 base 的 agent 默认不启用外部 MCP 服务器，因为每条服务器命令都是 agent（智能体）沙箱之外的受信任可执行代码。独立的 [`mcp` profile](../../../packages/mcp/agentharness-bridge/README.zh.md) 向外部客户端提供本机 Host 能力，不启动 agent loop。
 
 <a id="source-execution"></a>
 ## 源码执行

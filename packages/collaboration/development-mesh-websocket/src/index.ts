@@ -517,7 +517,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
       nodeId: this.nodeId,
       targetNodeId: peer.config.nodeId,
       nonce: randomUUID(),
-      seq: ++peer.sendSeq,
+      seq: peer.sendSeq + 1,
       at: Date.now(),
       body,
     }
@@ -527,6 +527,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     if (Buffer.byteLength(bytes, 'utf8') > this.config.maxMessageBytes) {
       return Promise.reject(new Error('development Mesh frame exceeds maxMessageBytes'))
     }
+    peer.sendSeq = frame.seq
     return new Promise((resolve, reject) => {
       socket.send(bytes, (error) => {
         if (error == null) resolve()

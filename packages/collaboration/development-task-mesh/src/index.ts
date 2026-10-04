@@ -7,15 +7,23 @@ import {
   developmentTaskAssignmentEventSchema,
   developmentTaskContextBlockSchema,
   developmentTaskEventSchema,
+  developmentTaskObservedIntervalIdentitySchema,
+  developmentTaskAdmitRemoteObservedContextRequestSchema,
+  developmentTaskAdmitRemoteObservedContextResultSchema,
+  developmentTaskObservedIntervalSchema,
+  developmentTaskObservedReceiptSchema,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {} from '@deepseek-ai/dsh-development-task'
+import { DevelopmentTaskError, observedIntervalId } from '@deepseek-ai/dsh-development-task'
 import type {} from '@deepseek-ai/dsh-development-room'
 import type {
   DevelopmentNodeId,
   DevelopmentTaskAssignmentLogEntry,
   DevelopmentTaskLogEntry,
-  DevelopmentTaskPublishContextRequest,
-  DevelopmentTaskSnapshot,
+  DevelopmentTaskOwnerCommand,
+  DevelopmentTaskOwnerCommandResult,
+  DevelopmentTaskObservedInterval,
+  DevelopmentTaskObservedReceipt,
 } from '@deepseek-ai/dsh-development-task'
 import { z } from 'zod'
 
@@ -25,14 +33,17 @@ const itemSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('task-event'), entry: developmentTaskEventSchema }),
   z.strictObject({ kind: z.literal('assignment-event'), entry: developmentTaskAssignmentEventSchema }),
 ])
-const commandSchema = z.strictObject({
-  method: z.literal('publishContext'),
-  request: z.strictObject({ taskId: z.string(), participantId: z.string(), text: z.string(), uri: z.string().optional() }),
-})
+const commandSchema = z.discriminatedUnion('method', [
+  z.strictObject({ method: z.literal('publishContext'),
+    request: z.strictObject({ taskId: z.string(), participantId: z.string(), text: z.string(), uri: z.string().optional() }),
+  }),
+  z.strictObject({ method: z.literal('observedIntervals'), request: z.strictObject({ taskId: z.string() }) }),
+  z.strictObject({ method: z.literal('admitObservedRemote'), request: developmentTaskAdmitRemoteObservedContextRequestSchema }),
+  z.strictObject({ method: z.literal('endObservedInterval'), request: developmentTaskObservedIntervalIdentitySchema }),
+])
 
 /** Mutations that must execute on the Task owner node. */
-export type DevelopmentTaskMeshCommand =
-  | { readonly method: 'publishContext'; readonly request: DevelopmentTaskPublishContextRequest }
+export type DevelopmentTaskMeshCommand = DevelopmentTaskOwnerCommand
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -53,10 +64,46 @@ export class DevelopmentTaskMeshService extends Service {
    * Route one Task mutation to its authoritative owner.
    * @param ownerNodeId - node that authored the Task creation event.
    * @param command - Task mutation and validated request.
-   * @returns updated Task projection from the owner.
+   * @returns the command-specific owner result after its required durable commit.
    */
-  async route(ownerNodeId: DevelopmentNodeId, command: DevelopmentTaskMeshCommand): Promise<DevelopmentTaskSnapshot> {
-    return await this.ctx.developmentMesh.command(ownerNodeId, CHANNEL, command) as DevelopmentTaskSnapshot
+  async route<C extends DevelopmentTaskOwnerCommand>(
+    ownerNodeId: DevelopmentNodeId, command: C,
+  ): Promise<DevelopmentTaskOwnerCommandResult<C>> {
+    let result: unknown = await this.ctx.developmentMesh.command(ownerNodeId, CHANNEL, command)
+    switch (command.method) {
+      case 'publishContext': break
+      case 'observedIntervals': {
+        const intervals = z.array(developmentTaskObservedIntervalSchema).parse(result)
+        for (const interval of intervals) {
+          if (interval.taskId !== command.request.taskId || interval.id !== observedIntervalId(interval)) {
+            throw new DevelopmentTaskError('owner interval response does not match its Task query and source identity', 'INVALID_REQUEST')
+          }
+          switch (interval.state) {
+            case 'active': this.requireIntervalReceipt(interval, interval.approvalReceipt, ownerNodeId); break
+            case 'ended':
+              this.requireIntervalReceipt(interval, interval.endReceipt, ownerNodeId)
+              if (interval.approvalReceipt !== undefined) this.requireIntervalReceipt(interval, interval.approvalReceipt, ownerNodeId)
+              break
+            default: this.assertNever(interval)
+          }
+        }
+        result = intervals
+        break
+      }
+      case 'admitObservedRemote': result = developmentTaskAdmitRemoteObservedContextResultSchema.parse(result); break
+      case 'endObservedInterval': result = developmentTaskObservedReceiptSchema.parse(result); break
+      default: return this.assertNever(command)
+    }
+    return result as DevelopmentTaskOwnerCommandResult<C>
+  }
+
+  private requireIntervalReceipt(
+    interval: DevelopmentTaskObservedInterval, receipt: DevelopmentTaskObservedReceipt, ownerNodeId: DevelopmentNodeId,
+  ): void {
+    if (receipt.taskId !== interval.taskId || receipt.intervalId !== interval.id
+      || receipt.ownerNodeId !== ownerNodeId || receipt.event.nodeId !== ownerNodeId) {
+      throw new DevelopmentTaskError('owner interval receipt does not match its Task, source interval, and owner', 'INVALID_REQUEST')
+    }
   }
 
   /** Register Task delta and command behavior on the generic Mesh. */
@@ -65,7 +112,7 @@ export class DevelopmentTaskMeshService extends Service {
       heads: () => this.heads(),
       read: after => this.read(after),
       receive: (items, sourceNodeId) => this.receive(items, sourceNodeId),
-      command: payload => this.execute(commandSchema.parse(payload) as DevelopmentTaskMeshCommand),
+      command: (payload, sourceNodeId) => this.execute(commandSchema.parse(payload) as DevelopmentTaskMeshCommand, sourceNodeId),
     }), 'development Task Mesh channel')
     this.ctx.on('development-task/changed', (_task, _entry, origin) => { if (origin.kind === 'local') this.ctx.developmentMesh.publish(CHANNEL) })
     this.ctx.on('development-task/assignment-changed', (_assignment, _entry, origin) => { if (origin.kind === 'local') this.ctx.developmentMesh.publish(CHANNEL) })
@@ -176,8 +223,18 @@ export class DevelopmentTaskMeshService extends Service {
     })
   }
 
-  private async execute(command: DevelopmentTaskMeshCommand): Promise<DevelopmentTaskSnapshot> {
-    return await this.ctx.developmentTasks.publishContext(command.request)
+  private execute(command: DevelopmentTaskMeshCommand, sourceNodeId: DevelopmentNodeId): Promise<unknown> {
+    switch (command.method) {
+      case 'publishContext': return this.ctx.developmentTasks.publishContext(command.request)
+      case 'observedIntervals': return this.ctx.developmentTasks.observedIntervals(command.request)
+      case 'admitObservedRemote': return this.ctx.developmentTasks.acceptObservedRemote(command.request, sourceNodeId)
+      case 'endObservedInterval': return this.ctx.developmentTasks.acceptObservedIntervalEnd(command.request, sourceNodeId)
+      default: return this.assertNever(command)
+    }
+  }
+
+  private assertNever(value: never): never {
+    throw new Error(`unsupported Task Mesh command: ${JSON.stringify(value)}`)
   }
 }
 

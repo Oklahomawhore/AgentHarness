@@ -1,0 +1,58 @@
+# Test-only opt-in composition; the harness supplies private temporary roots.
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+- id: rooms
+  name: '@deepseek-ai/dsh-development-room'
+  config:
+    nodeId: semantic-owner
+    presenceTtlMs: 10000
+    maxParticipants: 16
+    maxRooms: 32
+    maxTextBytes: 4096
+- id: tasks
+  name: '@deepseek-ai/dsh-development-task'
+  config:
+    maxTasks: 32
+    maxEventsPerTask: 64
+    maxMergeParents: 8
+    maxContextBlockBytes: 65536
+    maxLineageTasks: 64
+    maxTextBytes: 4096
+    roomRetryIntervalMs: 10000
+- id: sessions
+  name: '@deepseek-ai/dsh-session'
+- id: projections
+  name: '@deepseek-ai/dsh-session-projection'
+- id: ordinary-persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: __ORDINARY_ROOT__
+    compression: none
+- id: ordinary-query
+  name: '@deepseek-ai/dsh-session-query-sqlite'
+  config:
+    path: ':memory:'
+- id: audit
+  name: cordis:group
+  group: true
+  isolate:
+    sessionPersistence: true
+  config:
+    - id: audit-persistence
+      name: '@deepseek-ai/dsh-session-persistence-jsonl'
+      config:
+        root: __AUDIT_ROOT__
+        compression: none
+    - id: semantic
+      name: '@deepseek-ai/dsh-development-task-context/semantic'
+      disabled: __SEMANTIC_DISABLED__
+      config:
+        auditSessionId: semantic-composition-audit
+        provider: semantic-composition
+        model: controlled-summary
+        maxInputBytes: 32768
+        maxOutputTokens: 1024
+        maxOutputBytes: 16384
+        timeoutMs: 3000
+        maxConcurrentCalls: 2
+        maxCalls: 8
