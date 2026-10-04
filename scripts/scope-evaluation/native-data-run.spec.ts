@@ -1,5 +1,4 @@
 /** HTTP transport calibration, never a quality claim about a real model. */
-import { createServer } from 'node:http'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,86 +9,55 @@ import { createDataStudy, type NativeDataStudy } from './data-study.ts'
 import { executePayment, gradeDataArtifacts, parsePolicy, sealDataArtifact } from './data-artifacts.ts'
 import { prepareDataStudy, runDataPhase } from './data-cli.ts'
 import { runNativeData } from './native-data-run.ts'
+import { openDataHttpFixture } from './data-http-fixture.ts'
 
 const repo = fileURLToPath(new URL('../..', import.meta.url))
 const enabled = process.env.DSH_NATIVE_DATA_EVALUATION === '1' && process.platform !== 'win32'
-const envelopeSchema = z.object({ model: z.string(), messages: z.array(z.object({ role: z.string(), content: z.unknown() }).loose()) })
 async function calibration(omitUsage: boolean, cancel?: AbortController) {
   let study: NativeDataStudy | undefined
-  const calls: { kind: string; body: unknown }[] = []
-  const errors: unknown[] = []; const pending = new Set<Promise<void>>()
-  const server = createServer((request, response) => {
-    const work = (async () => {
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
-      const envelope = envelopeSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown)
-      if (study === undefined) throw new Error('calibration study not configured')
-      expect(request.url).toBe('/chat/completions')
-      expect(request.headers.authorization).toBe('Bearer transport-calibration-not-a-secret')
-      const system = JSON.stringify(envelope.messages.filter(message => message.role === 'system'))
-      let reply: unknown
-      let finish: 'stop' | 'tool_calls' = 'stop'
-      let kind: string
-      if (system.includes('Summarize the supplied authorized work reports')) {
-        kind = 'semantic'
-        const input = z.object({ sources: z.array(z.object({ sourceId: z.string(), body: z.string() })) }).parse(
-          JSON.parse(z.string().parse(envelope.messages.at(-1)?.content)) as unknown)
-        expect(input.sources).toHaveLength(3)
-        reply = { content: JSON.stringify({ version: 1,
-          decisions: input.sources.map(source => ({ sourceId: source.sourceId, relevant: true })),
-          updates: [{ text: 'Policy correction: maxRetries: 1. A later Edit failed and did not set nine retries.',
-            sources: input.sources.map(source => ({ sourceId: source.sourceId, quote: source.body.slice(0, 40) })) }] }) }
-      } else {
-        const all = JSON.stringify(envelope.messages)
-        const role = all.includes('Maintain client/payment-policy.json') ? 'B' : 'C'
-        kind = role
-        const index = envelope.messages.filter(message => message.role === 'tool').length
-        const initialText = study.roles.B.initialFiles['public/payment-policy.json']
-        if (initialText === undefined) throw new Error('public initial policy missing')
-        const initial = parsePolicy(sealDataArtifact(initialText))
-        const selected = { ...initial, maxRetries: all.includes('maxRetries: 1') ? 1 : 3 }
-        const body = Object.fromEntries(initial.requiredFields.map(field => [field, 'calibration-public-value']))
-        const input = { body, responses: [{ kind: 'error' as const, code: 'NETWORK_TIMEOUT' }] }
-        const artifact = role === 'B' ? selected : { version: 1, cases: [
-          { id: 'retry-limit', input, expected: executePayment(selected, input) },
-        ] }
-        const program = [
-          { name: 'evaluation_read', args: { path: 'README.md' } },
-          { name: 'evaluation_write', args: { path: study.roles[role].artifactPath, text: JSON.stringify(artifact) + '\n' } },
-          { name: 'evaluation_test', args: {} },
-        ]
-        const item = program[index]
-        if (item === undefined) { if (index !== program.length) throw new Error('unexpected extra ordinary call'); reply = { content: 'Calibration completed.' } }
-        else { finish = 'tool_calls'; reply = { tool_calls: [{ index: 0, id: `call-${role}-${index}`, type: 'function',
-          function: { name: item.name, arguments: JSON.stringify(item.args) } }] } }
-      }
-      calls.push({ kind, body: envelope })
-      if (cancel !== undefined && kind !== 'semantic') {
-        const disconnected = new Promise<void>(resolve => response.once('close', resolve))
-        cancel.abort(new Error('calibration cancels an actual ordinary HTTP stream'))
-        await disconnected
-        return
-      }
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
-      const frame = (value: unknown) => response.write(`data: ${JSON.stringify(value)}\n\n`)
-      frame({ id: `calibration-${calls.length}`, object: 'chat.completion.chunk', model: envelope.model, created: 1,
-        choices: [{ index: 0, delta: { role: 'assistant', ...z.record(z.string(), z.unknown()).parse(reply) }, finish_reason: null }] })
-      frame({ id: `calibration-${calls.length}`, object: 'chat.completion.chunk', model: envelope.model, created: 1,
-        choices: [{ index: 0, delta: {}, finish_reason: finish }],
-        ...omitUsage && kind !== 'semantic' ? {} : { usage: { prompt_tokens: 100, completion_tokens: 40, total_tokens: 140,
-          prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 100 } } })
-      response.end('data: [DONE]\n\n')
-    })().catch((error: unknown) => { errors.push(error); response.destroy() }).finally(() => pending.delete(work))
-    pending.add(work)
+  const http = await openDataHttpFixture((envelope) => {
+    if (study === undefined) throw new Error('calibration study not configured')
+    const system = JSON.stringify(envelope.messages.filter(message => message.role === 'system'))
+    let reply: unknown
+    let finish: 'stop' | 'tool_calls' = 'stop'
+    let kind: string
+    if (system.includes('Summarize the supplied authorized work reports')) {
+      kind = 'semantic'
+      const input = z.object({ sources: z.array(z.object({ sourceId: z.string(), body: z.string() })) }).parse(
+        JSON.parse(z.string().parse(envelope.messages.at(-1)?.content)) as unknown)
+      expect(input.sources).toHaveLength(3)
+      reply = { content: JSON.stringify({ version: 1,
+        decisions: input.sources.map(source => ({ sourceId: source.sourceId, relevant: true })),
+        updates: [{ text: 'Policy correction: maxRetries: 1. A later Edit failed and did not set nine retries.',
+          sources: input.sources.map(source => ({ sourceId: source.sourceId, quote: source.body.slice(0, 40) })) }] }) }
+    } else {
+      const all = JSON.stringify(envelope.messages)
+      const role = all.includes('Maintain client/payment-policy.json') ? 'B' : 'C'
+      kind = role
+      const index = envelope.messages.filter(message => message.role === 'tool').length
+      const initialText = study.roles.B.initialFiles['public/payment-policy.json']
+      if (initialText === undefined) throw new Error('public initial policy missing')
+      const initial = parsePolicy(sealDataArtifact(initialText))
+      const selected = { ...initial, maxRetries: all.includes('maxRetries: 1') ? 1 : 3 }
+      const body = Object.fromEntries(initial.requiredFields.map(field => [field, 'calibration-public-value']))
+      const input = { body, responses: [{ kind: 'error' as const, code: 'NETWORK_TIMEOUT' }] }
+      const artifact = role === 'B' ? selected : { version: 1, cases: [
+        { id: 'retry-limit', input, expected: executePayment(selected, input) },
+      ] }
+      const program = [
+        { name: 'evaluation_read', args: { path: 'README.md' } },
+        { name: 'evaluation_write', args: { path: study.roles[role].artifactPath, text: JSON.stringify(artifact) + '\n' } },
+        { name: 'evaluation_test', args: {} },
+      ]
+      const item = program[index]
+      if (item === undefined) { if (index !== program.length) throw new Error('unexpected extra ordinary call'); reply = { content: 'Calibration completed.' } }
+      else { finish = 'tool_calls'; reply = { tool_calls: [{ index: 0, id: `call-${role}-${index}`, type: 'function',
+        function: { name: item.name, arguments: JSON.stringify(item.args) } }] } }
+    }
+    return { kind, delta: z.record(z.string(), z.unknown()).parse(reply), finish,
+      omitUsage: omitUsage && kind !== 'semantic', ...cancel !== undefined && kind !== 'semantic' ? { cancel } : {} }
   })
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('no calibration address')
-  return { endpoint: `http://127.0.0.1:${address.port}`, calls, errors, configure(value: NativeDataStudy) { study = value }, async close() {
-    server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close((error) => { if (error === undefined) resolve(); else reject(error) }))
-    await Promise.allSettled(pending)
-  } }
+  return { ...http, configure(value: NativeDataStudy) { study = value } }
 }
 async function run(condition: 'N' | 'E' | 'R', omitUsage = false, smallInput = false, cancelStream = false) {
   const root = await mkdtemp(join(tmpdir(), 'native-data-spec-'))

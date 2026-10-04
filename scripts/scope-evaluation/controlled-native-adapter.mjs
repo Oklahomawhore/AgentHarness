@@ -6,9 +6,10 @@ import { isDeepStrictEqual } from 'node:util'
  * @param options Private program, owning agent lookup, and request recorder.
  * @returns A controlled adapter instance; missing usage remains unknown.
  */
-export function createControlledNativeAdapter({ LlmAdapter, Session }, { program, agent, requests }) {
+export function createControlledNativeAdapter({ LlmAdapter, Session }, { program, agent, requests, beforeRequest }) {
   return new class extends LlmAdapter {
     async * stream(request) {
+      await beforeRequest?.(requests.length, request.signal)
       recordNativeRequest(Session, agent(), request, requests)
       const index = requests.length - 1
       const call = program[index]

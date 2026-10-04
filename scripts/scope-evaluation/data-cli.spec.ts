@@ -38,7 +38,8 @@ describe.skipIf(process.env['DSH_NATIVE_EVALUATION'] !== '1')('ordinary data reg
     const manifest = await prepareDataStudy({ root, seed: 32, execution: 'live', config })
     const manifestPath = join(root, 'manifest.json')
     for (const changed of [{ ...manifest, seed: 33 }, { ...manifest, nodeVersion: 'changed' },
-      { ...manifest, maximumDispatches: 99 }, { ...manifest, sourceHashes: {} }, { ...manifest, artifactHashes: {} },
+      { ...manifest, maximumDispatches: 99 }, { ...manifest, protocol: 'continuity' },
+      { ...manifest, id: 'payment-policy-continuity-v1' }, { ...manifest, conditions: ['E', 'R'] }, { ...manifest, sourceHashes: {} }, { ...manifest, artifactHashes: {} },
       { ...manifest, sourceHashes: { [manifestPath]: '0'.repeat(64) } }]) {
       await writeFile(manifestPath, JSON.stringify(changed) + '\n')
       await expect(runDataPhase('execute', root)).rejects.toThrow()
@@ -48,6 +49,23 @@ describe.skipIf(process.env['DSH_NATIVE_EVALUATION'] !== '1')('ordinary data reg
     expect((await inspectDataStudy(root)).manifest.seed).toBe(32)
     const registration = JSON.parse(await readFile(join(root, 'registration.json'), 'utf8')) as unknown
     expect(registration).toMatchObject({ modelDispatches: 0, credentialRead: false })
+  })
+
+  it('freezes a distinct two-condition existing-Session protocol without renewing its per-Session budget', async () => {
+    const root = await fresh()
+    const manifest = await prepareDataStudy({ root, seed: 34, execution: 'live', config, protocol: 'continuity' })
+    expect(manifest).toMatchObject({ id: 'payment-policy-continuity-v1', protocol: 'continuity',
+      conditions: ['E', 'R'], maximumDispatches: 10 })
+    const inspected = await inspectDataStudy(root)
+    expect(inspected.study.runtime.roles.B.writableFiles).toContain('current-work.json')
+    expect(await runDataPhase('preflight', root)).toMatchObject({ failed: false, credentialRead: false,
+      hostsStarted: 0, modelDispatches: 0, liveModelDispatches: 0 })
+    for (const changed of [{ ...manifest, protocol: 'single-wave' }, { ...manifest, conditions: ['N', 'E', 'R'] },
+      { ...manifest, maximumDispatches: 26 }]) {
+      await writeFile(join(root, 'manifest.json'), JSON.stringify(changed) + '\n')
+      await expect(runDataPhase('execute', root)).rejects.toThrow()
+      expect(await readdir(root)).not.toContain('execute')
+    }
   })
 
   it('refuses live/calibration provenance changes without accessing a provider', async () => {

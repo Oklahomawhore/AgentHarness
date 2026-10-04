@@ -6,6 +6,8 @@
 
 本参考说明 scope 协作的受控产物检查与原生 Session 校准。独立的[普通 Agent JSON 试验](data-study/README.zh.md) 接受自主生成的不可执行产物，并提供显式模型执行入口。受控检查不衡量产品收益。
 
+独立的[原有 Session 协议](continuity-study/README.zh.md) 检查一个持续接收者在初始工作、更正和贡献撤回之间的自动采用。
+
 ## 目录
 
 - [离线验证](#offline-verification)

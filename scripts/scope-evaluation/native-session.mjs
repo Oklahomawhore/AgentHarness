@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createControlledNativeAdapter, recordNativeRequest } from './controlled-native-adapter.mjs'
 
-/** Mount one ordinary native Session without shell access or automatic scope activation.
+/** Mount one native Session with bounded file tools and optional explicitly authorized automatic scope work.
  * @param ctx Profile-owned Cordis context.
  * @param config Private explicit recipient configuration.
  * @param modules Resolved public production modules.
@@ -27,6 +27,14 @@ export async function mountNativeSession(ctx, config, modules) {
       maxObservationBytes: 16384, contributionPollIntervalMs: 50 })
   }
   const lifetime = new AbortController()
+  const phaseGate = async (operation, signal) => {
+    const response = await fetch(config.coordinatorUrl, { method: 'POST',
+      signal: AbortSignal.any([lifetime.signal, ...(signal === undefined ? [] : [signal])]),
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.coordinatorToken}` },
+      body: JSON.stringify({ role: config.role, sessionId: config.sessionId, operation }) })
+    await response.body?.cancel()
+    if (!response.ok) throw new Error('continuity phase admission failed')
+  }
   const work = new Set()
   const requests = []
   let agent
@@ -39,6 +47,9 @@ export async function mountNativeSession(ctx, config, modules) {
   } else {
     const recordingAdapter = createControlledNativeAdapter({ ...modules.Llm, Session: modules.Session.Session }, {
       program: config.program, agent: () => agent, requests,
+      beforeRequest: config.continuity && config.mode === 'data-source' ? async (index, signal) => {
+        if (index === 3) await phaseGate('source-stage', signal)
+      } : undefined,
     })
     ctx.effect(() => ctx.get('llm').registerAdapter(['controlled-evaluation'], recordingAdapter), 'evaluation adapter')
   }
@@ -76,9 +87,19 @@ export async function mountNativeSession(ctx, config, modules) {
       },
     })), `evaluation ${name}`)
   }
+  if (config.continuity && config.mode === 'data-recipient') {
+    ctx.on('agent/pre-step', async ({ signal }, next) => {
+      await phaseGate('phase-admission', signal)
+      return next()
+    }, { global: true, prepend: true })
+  }
   let started = false
   const manage = async input => {
-    if (input.kind === 'status') return { agentId: agent.id, started, requests: requests.length }
+    if (input.kind === 'status') return { agentId: agent.id, started, requests: requests.length,
+      ...config.continuity ? { sessionId: config.sessionId, agentStatus: agent.status,
+        lastTurnEnd: agent.session.snapshotEvents().findLast(event => event.type === 'turn/end') ?? null,
+        scopeState: config.mode === 'data-recipient' ? ctx.get('sessionProjections').stateOf(agent.session, 'scopeAgentContext') ?? null : null,
+        completed: config.mode === 'data-recipient' ? ctx.get('sessionProjections').stateOf(agent.session, 'scopeAgentEvidence')?.completed ?? null : null } : {} }
     if (input.kind === 'cancel') { agent.cancel({ kind: 'user' }); return { cancelled: true } }
     if (input.kind === 'start') {
       if (started) throw new Error('session already started')
@@ -87,8 +108,8 @@ export async function mountNativeSession(ctx, config, modules) {
       return { started: true }
     }
     if (input.kind !== 'finish') throw new Error('unknown native management action')
-    if (!started) throw new Error('session has not started')
-    await agent.whenIdle()
+    if (!started && !config.continuity) throw new Error('session has not started')
+    if (!config.continuity || config.mode !== 'data-source') await agent.whenIdle()
     const flushed = await ctx.get('sessions').flush(agent.session)
     if (!flushed) throw new Error('Session has no persistence participant')
     const files = (await readdir(config.sessionRoot, { recursive: true })).filter(path => path.endsWith('.jsonl'))

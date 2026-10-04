@@ -6,6 +6,8 @@ English | [中文](README.zh.md)
 
 This reference covers controlled artifact checking and native Session calibration for scope collaboration. The separate [ordinary Agent JSON study](data-study/README.md) accepts autonomous, non-executable artifacts and provides an explicit model execution entry. Controlled checks do not measure product benefit.
 
+The separate [existing Session protocol](continuity-study/README.md) checks automatic adoption across initial work, correction and contribution withdrawal in one continuing receiver.
+
 ## Table of Contents
 
 - [Offline verification](#offline-verification)

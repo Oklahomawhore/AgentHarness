@@ -33,7 +33,7 @@ export interface DataRoleProject {
 /** Exact runtime input; private grading cases and expected artifacts are excluded. */
 export interface NativeDataStudy {
   readonly version: 1
-  readonly id: 'payment-json-work-v1'
+  readonly id: 'payment-json-work-v1' | 'payment-policy-continuity-v1'
   readonly seed: number
   readonly roles: Readonly<Record<'B' | 'C', DataRoleProject>>
   readonly source: {
