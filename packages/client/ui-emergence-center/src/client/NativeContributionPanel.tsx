@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest, ScopeAgentContributionReceiving,
-  ScopeContributionEntry, ScopeContributionTransfer,
+  ScopeContributionEntry, ScopeContributionTransfer, ScopeAgentContributionRecoverRouteRequest,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
@@ -11,12 +11,14 @@ import type { ContributionEntry } from './contribution-directory.ts'
 import type { NativeScopeSnapshot } from './native-scopes.ts'
 import { ContributionGrantSummary, contributionErrorKey } from './contribution-ui.tsx'
 import type { EmergenceCenterKey } from './locales.ts'
+import { NativeContributionRoute } from './NativeContributionRoute.tsx'
 import { NativeContributionPermission } from './NativeContributionPermission.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Local management callbacks supplied by the apply-owned directory. */
 export interface NativeContributionActions {
   readonly readNativeContribution: (agentId: SessionId) => void
+  readonly recoverNativeContributionRoute: (request: ScopeAgentContributionRecoverRouteRequest) => Promise<void>
   readonly requestNativeContribution: (request: ScopeAgentContributionRequest) => Promise<void>
   readonly leaveNativeJoin: (request: ScopeAgentContributionStopRequest) => Promise<void>
   readonly stopNativeContribution: (request: ScopeAgentContributionStopRequest) => Promise<void>
@@ -28,7 +30,7 @@ function issueKey(code: string): EmergenceCenterKey {
     case 'scope-agent-contribution/not-live': return 'native.share.notLive'
     case 'scope-agent-contribution/ineligible': return 'native.share.ineligible'
     case 'scope-agent-contribution/task-conflict': return 'native.share.conflict'
-    case 'scope-agent-contribution/stale-capture': case 'scope-agent-contribution/superseded': return 'contribution.error.stale'
+    case 'scope-agent-contribution/stale-route': case 'scope-agent-contribution/stale-capture': case 'scope-agent-contribution/superseded': return 'contribution.error.stale'
     case 'scope-agent-contribution/invalid-permission': return 'contribution.error.permission'
     case 'scope-agent-contribution/unavailable':
     case 'gateway/service-unavailable': case 'gateway/method-unavailable': return 'native.share.unavailable'
@@ -69,11 +71,12 @@ function stopHint(state: ScopeAgentContributionReceiving['state']): EmergenceCen
  * @returns source permission form and recoverable pending state.
  */
 export function NativeContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
-  stopNativeContribution, leaveNativeJoin, previewNativeContribution, scope, t }: NativeContributionActions & PropsLocale<'emergenceCenter'> & {
-    agentId: SessionId
-    scope: NativeScopeSnapshot
-    entry: ContributionEntry<ScopeAgentContributionStatus> | undefined
-  }) {
+  stopNativeContribution, leaveNativeJoin, previewNativeContribution, recoverNativeContributionRoute, scope, t,
+}: NativeContributionActions & PropsLocale<'emergenceCenter'> & {
+  agentId: SessionId
+  scope: NativeScopeSnapshot
+  entry: ContributionEntry<ScopeAgentContributionStatus> | undefined
+}) {
   const id = useId()
   const previewRevision = useRef(0)
   const actionPending = useRef(false)
@@ -96,6 +99,8 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
   const status = entry?.value
   const capture = status?.capture
   const continuation = status?.receivingContinuation
+  const recoverable = capture ?? continuation
+  const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
   const eligible = ready && status?.eligibility === 'eligible'
   const joint = preview?.kind === 'scope-join-entry'
@@ -205,6 +210,11 @@ export function NativeContributionPanel({ agentId, entry, readNativeContribution
           void perform(() => stopNativeContribution({ agentId, expectedCapture: continuation.selection }))
         }}>{t(continuation.intent === 'adopt' ? 'native.join.cancelRead' : 'native.join.retryCancel')}</Button>}
       </div>}
+      {recoverable != null && <NativeContributionRoute
+        key={`${agentId}/${recoverable.selection.captureId}/${recoverable.selection.captureGeneration}/${recoverable.entry.ownerAddress}/${recoverable.routeRevision}/${routeReadSeq ?? ''}`}
+        agentId={agentId} current={recoverable} ready={ready && !scope.pending && (recoverable.entry.kind !== 'scope-join-entry' || scope.phase === 'ready')} t={t}
+        {...(recoverable.entry.kind === 'scope-join-entry' && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
+        preview={previewNativeContribution} recover={request => perform(() => recoverNativeContributionRoute(request))} />}
       {entry?.status !== 'error' && entry?.error !== undefined && <p role="alert" className={css.notice}>{t(issueKey(entry.error))}</p>}
       <Button size="sm" disabled={entry?.pending} onClick={() => { readNativeContribution(agentId) }}>{t('native.share.refresh')}</Button>
     </div>

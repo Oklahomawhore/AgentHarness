@@ -61,7 +61,8 @@
     "@deepseek-ai/dsh-tool-fs": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
-    "@deepseek-ai/dsh-development-room": "workspace:^"
+    "@deepseek-ai/dsh-development-room": "workspace:^",
+    "@deepseek-ai/dsh-scope-transport": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

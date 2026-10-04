@@ -11,6 +11,7 @@ export const applicationEntry: ScopeContributionEntry = {
   ownerAddress: '/ip4/127.0.0.1/tcp/1/p2p/owner-peer', expiresAt: 2100000000000,
 }
 export const capture: ScopeAgentContributionCapture = {
+  routeRevision: 0,
   selection: {
     captureId: 'capture-a' as ScopeAgentContributionCapture['selection']['captureId'],
     captureGeneration: 'generation-a' as ScopeAgentContributionCapture['selection']['captureGeneration'],

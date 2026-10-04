@@ -13,7 +13,7 @@ const grantId = z.uuid().transform(value => value as ScopeGrantId)
 const generation = z.uuid().transform(value => value as ScopeGeneration)
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 
-export { invitationSchema } from './invitation-schema.ts'
+export { invitationSchema, sameReadGrant } from './invitation-schema.ts'
 
 const source = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), taskId: task, revision: integer.positive() }).strict(),

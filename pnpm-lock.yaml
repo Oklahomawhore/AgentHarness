@@ -5408,6 +5408,9 @@ importers:
       '@deepseek-ai/dsh-scope-access':
         specifier: workspace:^
         version: link:../scope-access
+      '@deepseek-ai/dsh-scope-transport':
+        specifier: workspace:^
+        version: link:../scope-transport
       '@deepseek-ai/dsh-session':
         specifier: workspace:^
         version: link:../../core/session

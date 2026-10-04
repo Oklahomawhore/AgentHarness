@@ -59,6 +59,8 @@ kind: "package-reference"
 
 监听地址只接受显式 IPv4/IPv6 TCP multiaddr。端口为零时由操作系统分配。`identity()` 等待初始化完成，返回公开 PeerId 和带 `/p2p/<PeerId>` 后缀的已绑定地址。请求目标必须在该后缀中包含完全一致的预期 PeerId；Noise 验证目标持有对应私钥。
 
+`@deepseek-ai/dsh-scope-transport/address` 向持久化恢复路由的消费方公开相同的直连地址校验。目标必须保留预期 PeerId，并使用具有非零端口的显式 IP/TCP 地址。校验检查地址语法和身份选择，不证明网络可达。
+
 `limits()` 返回本地 provider 的不可变入站、出站请求上限与请求截止时间。消费方使用这些部署值，在准入长等待时为普通请求保留容量。这些值既不代表远端 peer 的限制，也不为本消费方排他预留槽位。
 
 字节限制包含完整 UTF-8 JSON 信封，必须容纳最小请求或固定失败响应。并发请求上限覆盖所有协议和对端；`maxConnections` 配置库的连接裁剪阈值和待完成入站连接上限。`requestTimeoutMs` 覆盖完整出站操作或已准入的入站处理器。`connectionTimeoutMs` 限制连接建立、协议协商和库的连接关闭时间。两个时长均须处于 Node 定时器的取值范围。

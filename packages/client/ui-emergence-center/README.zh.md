@@ -58,6 +58,8 @@ MCP 客户端卡片区分配置、进程在线、按 Session 的 Task 连接和�
 
 <a id="model-experience"></a>
 
+原生恢复控件更新当前显示的原采集或读取绑定。贡献恢复预览同一申请入口的新所有者地址，即使 Session 已冷却或入口已过期，也保留文件权限与待确认撤回。联合恢复还携带显示时的读取状态比较值。独立读取地址表单保留原订阅、自动策略和累计用量。Host 持久化与刷新后的状态决定结果；保存地址不证明连接成功或模型已采用上下文。
+
 ## 模型体验
 
 本包通过操作间接影响模型；这些操作把模型可见上下文准入委托给 `dsh-development-task-context`、`dsh-agentharness-bridge`、`dsh-claude-scope` 或 `dsh-scope-agent-context`。显式原生自动许可可在 Agent 空闲时启动有界轮次；被动接收不会。

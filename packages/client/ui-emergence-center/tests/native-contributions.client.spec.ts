@@ -5,7 +5,8 @@ import { agentId, capture, capturedStatus, emptyStatus, request } from './native
 
 function fixture(status: NativeContributionPort['status'] = vi.fn(async () => emptyStatus)) {
   const port: NativeContributionPort = {
-    status, leaveJoin: vi.fn(async () => emptyStatus), request: vi.fn(async () => capturedStatus), stop: vi.fn(async () => emptyStatus),
+    recoverRoute: vi.fn(async () => capturedStatus), status, leaveJoin: vi.fn(async () => emptyStatus),
+    request: vi.fn(async () => capturedStatus), stop: vi.fn(async () => emptyStatus),
   }
   return { port, source: createNativeContributionDirectory(port, vi.fn()) }
 }
@@ -128,7 +129,7 @@ describe('joint leave ownership', () => {
 describe('receiving continuation ownership', () => {
   it('blocks new requests and stale stops while preserving exact continuation cancellation through reset and lost replies', async () => {
     const continuation: NonNullable<ScopeAgentContributionStatus['receivingContinuation']> = {
-      selection: capture.selection, entry: capture.entry, intent: 'cancel-pending', receiving: {
+      routeRevision: 0, selection: capture.selection, entry: capture.entry, intent: 'cancel-pending', receiving: {
         adoptionId: 'join-a' as NonNullable<ScopeAgentContributionStatus['receivingContinuation']>['receiving']['adoptionId'],
         state: 'failed', invitation: null,
       },
@@ -158,6 +159,32 @@ describe('receiving continuation ownership', () => {
       expect(source.directory.getSnapshot()[agentId]).toMatchObject({ status: 'ready', pending: false, value: authority })
       await source.leaveJoin(operation)
       expect(port.leaveJoin).not.toHaveBeenCalled()
+    } finally { source.dispose() }
+  })
+})
+
+describe('native route mutation ownership', () => {
+  it('retains a sent recovery through reset and lost reply, then rejects stale displayed addresses', async () => {
+    let authority: ScopeAgentContributionStatus = { ...capturedStatus, eligibility: 'not-live', capture: { ...capture, state: 'ending' } }
+    const pending = Promise.withResolvers<ScopeAgentContributionStatus>()
+    const { source, port } = fixture(vi.fn(async () => authority))
+    vi.mocked(port.recoverRoute).mockReturnValueOnce(pending.promise)
+    const entry = { ...capture.entry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }
+    const request = { agentId, expectedCapture: capture.selection, expectedRouteRevision: 0,
+      expectedOwnerAddress: capture.entry.ownerAddress, entry }
+    try {
+      await source.directory.refresh(agentId)
+      const sent = source.recoverRoute(request)
+      source.reset(); await source.directory.refresh(agentId)
+      await source.recoverRoute(request); await source.stop({ agentId, expectedCapture: capture.selection })
+      expect(port.recoverRoute).toHaveBeenCalledExactlyOnceWith(request)
+      expect(port.stop).not.toHaveBeenCalled()
+      authority = { ...authority, revision: 2, capture: { ...capture, state: 'ending', entry } }
+      pending.reject(new Error('route committed, reply lost')); await sent
+      expect(source.directory.getSnapshot()[agentId]).toMatchObject({ pending: false, value: authority })
+      await source.recoverRoute(request)
+      expect(port.recoverRoute).toHaveBeenCalledOnce()
+      expect(port.request).not.toHaveBeenCalled()
     } finally { source.dispose() }
   })
 })

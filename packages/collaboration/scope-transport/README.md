@@ -59,6 +59,8 @@ The [configuration catalog](../../../docs/config-catalog.md) derives accepted fi
 
 Listeners accept only explicit IPv4/IPv6 TCP multiaddrs. Port zero lets the OS allocate a port. `identity()` waits for initialization and returns the public PeerId and bound addresses with their `/p2p/<PeerId>` suffix. A request target must include exactly the expected PeerId in that suffix; Noise verifies the destination's possession of the corresponding key.
 
+`@deepseek-ai/dsh-scope-transport/address` exposes the same direct-address validation to consumers that persist recovery routes. A destination must retain the expected PeerId and use an explicit IP/TCP address with a nonzero port. Validation checks address syntax and identity selection, not network reachability.
+
 `limits()` returns the local provider's immutable inbound and outbound request limits and request deadline. Consumers use these deployment values to leave capacity for ordinary requests when admitting long waits. These values neither advertise a remote peer's limits nor reserve slots against other consumers.
 
 The byte limits include the complete UTF-8 JSON envelope. They must accommodate the minimum request or fixed failure response. Concurrent requests are bounded across all protocols and peers; `maxConnections` configures the library's connection-pruning threshold and pending inbound connection limit. `requestTimeoutMs` covers a complete outbound operation or admitted inbound handler. `connectionTimeoutMs` bounds connection establishment, protocol negotiation, and library connection shutdown. Both durations must fit Node's timer range.

@@ -868,6 +868,8 @@ interface ScopeReadGrant {
 ```ts type-equiv
 /** Explicit receiver intent; active means locally enabled, not remotely verified. */
 interface ScopeSubscription {
+  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
+  readonly routeRevision?: number
   readonly id: ScopeSubscriptionId
   readonly generation: ScopeGeneration
   readonly invitation: ScopeInvitation
@@ -1034,6 +1036,21 @@ interface ScopeAgentContributionRequest {
 ```
 
 ```ts type-equiv
+/** Update only the original capture's owner address, including retained termination for a cold Session. */
+interface ScopeAgentContributionRecoverRouteRequest {
+  readonly agentId: SessionId
+  readonly expectedCapture: ScopeAgentContributionSelection
+  /** Previously displayed address; an already adopted identical new address is also accepted. */
+  readonly expectedOwnerAddress: string
+  /** Monotonic route command revision shown with the original capture or continuation. */
+  readonly expectedRouteRevision: number
+  readonly entry: ScopeContributionEntry
+  /** Explicitly recover the original joint read binding against this observed management state. */
+  readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor }
+}
+```
+
+```ts type-equiv
 /** Stop the selected sharing and cancel pending read adoption; preserve already adopted reading. */
 interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
@@ -1044,6 +1061,7 @@ interface ScopeAgentContributionStopRequest {
 ```ts type-equiv
 /** Durable source consent and pending work; contains no captured tool content. */
 interface ScopeAgentContributionCapture {
+  readonly routeRevision: number
   readonly selection: ScopeAgentContributionSelection
   readonly proposal: ScopeContributionProposal
   readonly roots: readonly string[]
@@ -1088,6 +1106,7 @@ interface ScopeAgentContributionReceiving {
 ```ts type-equiv
 /** Read work retained after contribution terminates, still owned by the original local join. */
 interface ScopeAgentContributionReceivingContinuation {
+  readonly routeRevision: number
   readonly selection: ScopeAgentContributionSelection
   readonly entry: ScopeContributionEntry
   readonly receiving: ScopeAgentContributionReceiving
@@ -1140,6 +1159,45 @@ interface ScopeAgentJoinReadRequest {
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+}
+```
+
+```ts type-equiv
+/** Replace only the route of an existing native read binding at its observed management cursor. */
+interface ScopeAgentUpdateRouteRequest {
+  readonly agentId: SessionId
+  readonly expectedBindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly ownerAddress: string
+}
+```
+
+```ts type-equiv
+/** Recover one joint operation's original read without adopting a later manual binding. */
+interface ScopeAgentUpdateJoinReadRouteRequest {
+  readonly agentId: SessionId
+  readonly adoptionId: ScopeAgentJoinReadId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly ownerAddress: string
+}
+```
+
+```ts type-equiv
+/** Route persistence does not attest owner availability or renew authorization. */
+interface ScopeAgentUpdateRouteResult {
+  readonly status: 'updated' | 'ended' | 'superseded'
+}
+```
+
+```ts type-equiv
+/** Durable route intent preserves the exact subscription, binding, and execution permission. */
+interface ScopeAgentRouteEvent {
+  readonly version: 1
+  readonly agentId: SessionId
+  readonly bindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly previousOwnerAddress: string
+  readonly subscription: ScopeSubscription & { readonly state: 'active'; readonly routeRevision: number }
 }
 ```
 
@@ -3159,6 +3217,13 @@ Local management and peer reads share durable authority, without exposing Task r
 async ensureSubscription(plan: ScopeSubscription): Promise<ScopeSubscription>
 
 /**
+ * Apply a consumer's durable route intent without creating or reopening a subscription.
+ * @param plan - unchanged receiver and grant identities plus a monotonic route revision.
+ * @returns the retained subscription; terminal and newer route revisions win over delayed retries.
+ */
+async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision: number }): Promise<ScopeSubscription>
+
+/**
  * Stop a local subscription and reject its delayed responses.
  * @param request - local receiving identity.
  * @returns after durable local withdrawal, without changing the owner's read grant.
@@ -3330,6 +3395,20 @@ adoptJoinRead(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadRes
 cancelJoinRead(request: ScopeAgentCancelJoinReadRequest): Promise<ScopeAgentJoinReadResult>
 
 /**
+ * Replace the connection address of one existing live read without changing its permission.
+ * @param request - exact binding and read-state cursor observed before route consent.
+ * @returns unchanged scheduling permission with the durably selected owner address.
+ */
+@Remote('updateRoute') async updateRoute(request: ScopeAgentUpdateRouteRequest): Promise<ScopeAgentBindingStatus>
+
+/**
+ * Recover the route owned by a joint operation, including an existing cold Session.
+ * @param request - original adoption and a fixed current read-state comparison.
+ * @returns updated only while that operation still owns the unchanged read permission.
+ */
+updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<ScopeAgentUpdateRouteResult>
+
+/**
  * Bind one live ordinary Session after stopping its previous automatic activity; unsubmitted user claims are retained.
  * @param request - Session, pinned invitation, and optional explicit automatic policy.
  * @returns persisted local state; binding does not attest a model request or adoption.
@@ -3403,6 +3482,14 @@ Actual file-tool observations become durable original reports, then the existing
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>
+
+/**
+ * Persist an explicitly confirmed address for the same contribution without renewing collection permission.
+ * Cold Sessions, expired permission, and pending cancellation retain their original state and retry work.
+ * @param request - original capture, previously observed address, and the same entry with only its address changed.
+ * @returns committed local state; peer confirmation and explicitly selected joint reading recover asynchronously.
+ */
+@Remote('recoverRoute') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>
 
 /**
  * Stop future collection immediately and retain any owner cancellation until it is confirmed.

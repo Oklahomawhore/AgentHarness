@@ -72,6 +72,8 @@ defineAcpSnapshotSuite({
 
 `normalizeSessionSnapshot` 在规范化路径并擦除系统提示文本与工具 schema 后，会保留完整 Session header 与事件 payload，但从已提交 fixture 中省略顶层 `seq`/`time` envelope；它还会规范化嵌入式 stream clock 与历史 packed-row 的 `seq0`/`time0` envelope、catalog child 创建时钟，以及原生 scope 激活的数值时钟。未预留激活仍保留 `null`；策略间隔与邀请到期时间保持不变。事件顺序与来源事件引用保持不变。Replay 只在内存中合成顶层 envelope，而运行时持久化仍写入完整日志。多 Session 比较会先通过严格的构建期静态 Session 格式目录校验预期日志与收集日志，再进行身份脱敏与规范化；来源文件名不能改变格式校验。保留的历史 replay 输入不是原生当前格式 writer 输出的比较基准：结构迁移保留请求含义，但可以产生不同的事件布局。归一化保留意外的 request-header 字段（包括 `system`），使回归保持可见。无版本的协议适配器单元测试 fixture 不属于已发布 Session 格式语料。[当前写入器格式](../../../docs/session-format-status.zh.md)的 fixture 每个事件占一行；保留的 v0/v1 fixture 可以使用规范 packed row。[临时仓库迁移器](../../../scripts/migrate-packed-session-fixtures.ts)（`pnpm run migrate:packed-session-fixtures`）会改写更旧的历史布局，由其[移除提案](../../../.agents/notes/proposed/process/2026-07-26-remove-packed-session-fixture-migrator.zh.md)负责删除该迁移器。
 
+类型化身份发现识别版本 1 的 `scope-agent-context/route` 事件中的本地订阅 generation，并保留其跨日志的相等关系。邀请与捕获来源的 generation、路由版本、管理游标和无关 UUID 文本仍作为比较证据。
+
 Spill 场景通过真实本地 provider 保存到私有临时根目录。夹具适配器提供固定长度的逻辑定位符，并仅将本次运行已保存的定位符映射回实际文件以供检索，在不写入共享逻辑路径的情况下保留预览预算。已知的快照 spill 路径会规范化为稳定的定位信息 token，包括 JSON 省略通知中带引号、使用 JSON 转义 Windows 分隔符的路径。刷新提取会保留匹配路径的序列化写法，以便进行字面替换。规范化只改变定位信息：保存字节数与省略计数仍作为比较证据。
 
 保留历史输入的场景保持规范 Session 文件不变，并继续选择它们进行回放；固定历史版本的目录中没有更新的规范同角色文件。其精确的规范化原生当前格式输出单独记录在父会话的 `writer.expected.jsonl` 和子会话的 `writer.<ordinal>.expected.jsonl` 中；这些是输出比较基准，而非 replay 代际。保留历史输入的 SDK 场景使用 `notifications.current.expected.jsonl` 记录当前协议输出。比较既不将当前事件反向投影为历史格式，也不剥除结构差异。独立迁移测试验证正式转换，而不把原生 writer 布局当作其预期事件序列。

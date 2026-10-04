@@ -46,7 +46,7 @@ The [configuration catalog](../../../docs/config-catalog.md) owns accepted range
 
 ### Explicit binding and permission
 
-The authenticated local `scopeAgentContext` Remote exposes `bind`, `bindLocal`, `pause`, `resume`, `leave`, `leaveLocalTask`, and `status`. It exposes no raw transport or wait endpoint. Host plugins can call the same service directly:
+The authenticated local `scopeAgentContext` Remote exposes `bind`, `bindLocal`, `pause`, `resume`, `leave`, `leaveLocalTask`, `updateRoute`, and `status`. It exposes no raw transport or wait endpoint. Host plugins can call the same service directly:
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
@@ -80,6 +80,8 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 Every management mutation compares `expectedBindingId` before changing state; bind accepts null only for an unbound Session. Delayed bind and resume also recheck the exact Agent instance and binding before committing. A replacement bind retains its prior binding until the new subscription is ready. An unadopted late subscription is ended. If an RPC reply is lost, read status before retrying: a committed binding remains queryable, and a stale conditional retry is rejected. Mutation responses have no Session watermark and must not overwrite a newer Client projection.
 
+`updateRoute` compares the current binding and `readStateSeq` before changing an owner address. The address must use direct IP/TCP with a nonzero port and the same owner PeerId. The original grant, subscription, binding, automatic policy, and consumed budget remain unchanged; an active automatic turn is not cancelled. Route recovery neither proves reachability nor renews permission. An ended subscription cannot recover. Invalid addresses report `scope-agent/invalid-route`.
+
 `bindLocal` requires the current Task ID, Task binding ID, binding epoch, and observed scheduling binding. It grants execution only; file capture remains independently authorized. `automatic: null` keeps passive Task reads. `leaveLocalTask` first stops owned automatic work, then conditionally clears the exact current Task epoch and its captures. A stale local scheduling binding can be discarded with `leave` only when no Task assignment remains.
 
 Management failures carry structured Remote codes, including `scope-agent/stale-binding`, `scope-agent/not-live`, and `scope-agent/terminal-subscription`; clients discriminate by code and details rather than diagnostic text. Known revoked, expired, left, or missing subscriptions cannot resume. Pause and leave remain available for the exact binding when a local Task assignment conflicts.
@@ -97,6 +99,8 @@ Pause, leave, replacement binding, and consumer disposal cancel an active turn s
 Restoring a live Session preserves binding and exact message history but pauses automatic permission. Pending pulses are removed without refunding reservations. Restoration does not recreate cold Agents, replay an activation, or recompute historical text; the next live request still performs an online read.
 
 The Host-only joint-join methods reserve an exact passive read plan in the source Session before creating a subscription. `readStateSeq` compares reading management events; ordinary messages do not change it. An adoption ID retains its original invitation, comparison cursor, and subscription and binding IDs. Retry cannot replace a later manual binding or reopen a cancelled operation. Adoption adds no automatic permission.
+
+The Session records and flushes a route intent before Access changes its receiver record. A failed Access write remains recoverable from that intent before the next read or watch; stale replies from the previous route are rejected. `updateJoinReadRoute` applies the same rule to the original joint adoption, including a cold stored Session without starting an Agent. The adoption plan stays immutable. A fixed read-state comparison prevents a delayed recovery from overriding later manual reading controls, including an address that changed away and back.
 
 `cancelJoinRead` records pending cancellation before waiting outside the management queue for any already-started subscription creation and ending that subscription. Stopping contribution preserves an adopted read; complete departure withdraws only the binding owned by that operation. Cold cancellation exclusively opens the existing Session log without starting an Agent. A missing log, competing writer, invalid transition, or failed durability checkpoint rejects cancellation so the caller retains its pending intent.
 

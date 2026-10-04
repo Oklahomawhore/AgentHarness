@@ -47,6 +47,8 @@ export interface ScopeReadGrant {
 
 /** Explicit receiver intent; active means locally enabled, not remotely verified. */
 export interface ScopeSubscription {
+  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
+  readonly routeRevision?: number
   readonly id: ScopeSubscriptionId
   readonly generation: ScopeGeneration
   readonly invitation: ScopeInvitation

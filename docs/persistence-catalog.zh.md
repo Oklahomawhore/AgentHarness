@@ -706,7 +706,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentEvaluation](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:236`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:269`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextjoin-read--log-only"></a>
 
@@ -717,7 +717,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'scope-agent-context/join-read': ScopeAgentJoinReadEvent
 ```
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:234`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:265`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextrequest--log-only"></a>
 
@@ -730,7 +730,20 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentRequestEvidence](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:238`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:271`](../packages/collaboration/scope-agent-context/src/types.ts)
+
+<a id="scope-agent-contextroute--log-only"></a>
+
+#### `scope-agent-context/route` — log-only
+
+```ts persistence-catalog
+/** Durable same-grant address change; scheduling permission and receiver identity remain unchanged. */
+'scope-agent-context/route': ScopeAgentRouteEvent
+```
+
+类型： [ScopeAgentRouteEvent](subsystems/development-room.zh.md)
+
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:267`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextstate--log-only"></a>
 
@@ -743,7 +756,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentBindingStatus](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:232`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:263`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 ### `session/*`
 

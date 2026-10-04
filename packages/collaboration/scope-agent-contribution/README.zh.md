@@ -24,7 +24,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在提供 Agent、文件工具、Session 持久化、存储及 [scope 访问](../scope-access/README.zh.md)的 `dsh` profile 中挂载。挂载不授予任何许可。经过认证的 `scopeAgentContributions` Remote 向[协作界面](../../client/ui-emergence-center/README.zh.md)提供独立所有者的 `request`/`status`、本机所有者的 `requestLocal`/`localStatus`，共用的 `stop`，以及联合加入的 `leaveJoin`。
+在提供 Agent、文件工具、Session 持久化、存储及 [scope 访问](../scope-access/README.zh.md)的 `dsh` profile 中挂载。挂载不授予任何许可。经过认证的 `scopeAgentContributions` Remote 向[协作界面](../../client/ui-emergence-center/README.zh.md)提供独立所有者的 `request`/`status`/`recoverRoute`、本机所有者的 `requestLocal`/`localStatus`，共用的 `stop`，以及联合加入的 `leaveJoin`。
 
 ### 最小配置
 
@@ -58,7 +58,11 @@ kind: "package-reference"
 
 停止分享保留已经采用的读取，并取消尚未采用的读取。`leaveJoin` 持久终结所选贡献及这次加入持有的读取绑定，不移除后来手工建立的绑定。贡献终结后，每个 Session 至多保留一条持久读取后续工作。结算前，停止或 `leaveJoin` 可选择该工作，新贡献同意需等待。清理后，通过独立读取控件退出保留的读取绑定。
 
-停止和 Agent 卸载会停止采集，并保留终结工作直到所有者确认。本地 Task 清除或换绑也会结束旧采集。重启等待应用就绪后终结保留许可，绝不恢复采集。持久样本原样重试；尚未保存的完成记录无法抵御进程死亡。独立贡献地址变化需要显式恢复路由；联合读取邀请保留原地址。
+调用 `recoverRoute` 时提供原入口、界面展示的采集身份和路由版本，以及此前展示的地址。只允许修改同一 peer 的直接 TCP 地址；地址变回旧值，也不会使旧命令重新有效。丢失回复后的精确重试保留已提交结果。之后的停止或离开会使尚在排队的路由修改失效，并立即停止采集。根目录、授权、额度、样本、回执、取消意图和未完成工具记录保持不变。冷 Session 或过期入口仍可恢复终结，无需启动 Agent 或检查文件系统。已有采集的 `request` 重试要求地址相同。
+
+恢复联合读取时，明确附带已观察的读取状态序号。持久重试固定该序号，保留原采用身份、绑定、订阅、策略和已用额度。之后的读取操作会使路由更新失效；刷新后重新确认。停止贡献时可以恢复已采用的读取，完整离开则只取消。省略读取同意时仅修改贡献路由。独立保留的读取后续工作在结算前也接受原入口和路由比较。
+
+停止和 Agent 卸载会停止采集，并保留终结工作直到所有者确认。本地 Task 清除或换绑也会结束旧采集。重启等待应用就绪后终结保留许可，绝不恢复采集。持久样本原样重试；尚未保存的完成记录无法抵御进程死亡。
 
 -----
 

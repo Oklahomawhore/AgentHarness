@@ -22,6 +22,19 @@ export interface ScopeAgentContributionRequest {
   readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor }
 }
 
+/** Update only the original capture's owner address, including retained termination for a cold Session. */
+export interface ScopeAgentContributionRecoverRouteRequest {
+  readonly agentId: SessionId
+  readonly expectedCapture: ScopeAgentContributionSelection
+  /** Previously displayed address; an already adopted identical new address is also accepted. */
+  readonly expectedOwnerAddress: string
+  /** Monotonic route command revision shown with the original capture or continuation. */
+  readonly expectedRouteRevision: number
+  readonly entry: ScopeContributionEntry
+  /** Explicitly recover the original joint read binding against this observed management state. */
+  readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor }
+}
+
 /** Local Task assignment shown by the Host, including its exact durable epoch. */
 export type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionGrant,
   'taskId' | 'bindingId' | 'expectedBindingEpoch'>
@@ -73,6 +86,7 @@ export interface ScopeAgentContributionReceiving {
 
 /** Read work retained after contribution terminates, still owned by the original local join. */
 export interface ScopeAgentContributionReceivingContinuation {
+  readonly routeRevision: number
   readonly selection: ScopeAgentContributionSelection
   readonly entry: ScopeContributionEntry
   readonly receiving: ScopeAgentContributionReceiving
@@ -81,6 +95,7 @@ export interface ScopeAgentContributionReceivingContinuation {
 
 /** Durable source consent and pending work; contains no captured tool content. */
 export interface ScopeAgentContributionCapture {
+  readonly routeRevision: number
   readonly selection: ScopeAgentContributionSelection
   readonly proposal: ScopeContributionProposal
   readonly roots: readonly string[]
@@ -123,6 +138,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'scope-agent-contribution/invalid-permission': { readonly agentId: SessionId }
     'scope-agent-contribution/unavailable': { readonly agentId: SessionId }
     'scope-agent-contribution/superseded': { readonly agentId: SessionId }
+    'scope-agent-contribution/stale-route': { readonly agentId: SessionId }
   }
 }
 

@@ -54,6 +54,7 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'scope-agent-context/evaluation',
   'scope-agent-context/join-read',
   'scope-agent-context/request',
+  'scope-agent-context/route',
   'scope-agent-context/state',
   'session-log-deepseek/delivery-accepted',
   'session/end-seed',

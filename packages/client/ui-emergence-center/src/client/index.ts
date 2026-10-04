@@ -90,6 +90,7 @@ export function apply(ctx: Context): void {
   const nativeContributions = createNativeContributionDirectory({
     status: async request => unwrap(await ctx.remote.scopeAgentContributions.status(request)),
     request: async request => unwrap(await ctx.remote.scopeAgentContributions.request(request)),
+    recoverRoute: async request => unwrap(await ctx.remote.scopeAgentContributions.recoverRoute(request)),
     leaveJoin: async request => unwrap(await ctx.remote.scopeAgentContributions.leaveJoin(request)),
     stop: async request => unwrap(await ctx.remote.scopeAgentContributions.stop(request)),
   }, (error) => { console.error('[ui-emergence-center] native contribution management failed:', error) })
@@ -110,6 +111,7 @@ export function apply(ctx: Context): void {
   const nativeContributionActions: NativeContributionActions = {
     readNativeContribution: (agentId) => { void nativeContributions.directory.refresh(agentId) },
     requestNativeContribution: request => nativeContributions.request(request),
+    recoverNativeContributionRoute: request => nativeContributions.recoverRoute(request),
     stopNativeContribution: request => nativeContributions.stop(request),
     leaveNativeJoin: request => nativeContributions.leaveJoin(request),
     previewNativeContribution: async text => unwrap(await ctx.remote.scopeAccess.previewContributionText({ text })),

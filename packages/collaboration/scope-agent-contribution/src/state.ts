@@ -17,10 +17,25 @@ export interface NativeReceiving extends ScopeAgentContributionReceiving {
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly leaveAdopted: boolean
   readonly intent?: 'adopt' | 'cancel-pending' | 'leave' | undefined
+  readonly routeRecovery?: { readonly ownerAddress: string; readonly expectedReadStateSeq: SessionSeqCursor } | undefined
+}
+
+/** Last committed route command; exact retry never changes its retained read consent. */
+export interface NativeRouteCommand {
+  readonly expectedRouteRevision: number
+  readonly expectedOwnerAddress: string
+  readonly ownerAddress: string
+  readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor } | undefined
+}
+
+/** Durable address generation; absent fields belong to an unchanged historical route. */
+export interface NativeRouteState {
+  readonly routeRevision?: number | undefined
+  readonly lastRoute?: NativeRouteCommand | undefined
 }
 
 /** Immutable local file selection and original consent retained after owner activation. */
-export interface NativeCapture extends ContributionRecord {
+export interface NativeCapture extends ContributionRecord, NativeRouteState {
   readonly roots: readonly string[]
   readonly rootUrls: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
@@ -30,7 +45,7 @@ export interface NativeCapture extends ContributionRecord {
 }
 
 /** Detached read work has no file permission; its original live Agent is checked separately. */
-export interface NativeReceivingContinuation {
+export interface NativeReceivingContinuation extends NativeRouteState {
   readonly proposal: NativeCapture['proposal']
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
@@ -70,15 +85,33 @@ export function nativeDigest(value: unknown): string {
 
 const sequence = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeq)
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
+const routeState = {
+  routeRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  lastRoute: z.object({
+    expectedRouteRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    expectedOwnerAddress: z.string().min(1).max(2048), ownerAddress: z.string().min(1).max(2048),
+    receive: z.object({
+      expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
+    }).strict().optional(),
+  }).strict().optional(),
+}
+function consistentRoute(value: NativeRouteState & { readonly entry: ScopeContributionEntry }): boolean {
+  if (value.lastRoute === undefined) return (value.routeRevision ?? 0) === 0
+  return value.routeRevision === value.lastRoute.expectedRouteRevision + 1 && value.lastRoute.ownerAddress === value.entry.ownerAddress
+}
 const receivingSchema = z.object({
   adoptionId: z.uuid().transform(value => value as NativeReceiving['adoptionId']),
   expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
   state: z.enum(['waiting', 'adopting', 'active', 'ended', 'superseded', 'failed']),
   invitation: invitationSchema.nullable(), leaveAdopted: z.boolean(),
   intent: z.enum(['adopt', 'cancel-pending', 'leave']).optional(),
+  routeRecovery: z.object({ ownerAddress: z.string().min(1).max(2048),
+    expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
+  }).strict().optional(),
 }).strict().refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
   { message: 'receiving departure intent disagrees' })
 const captureSchema = contributionRecordSchema.safeExtend({
+  ...routeState,
   roots: z.array(z.string().min(1)).min(1), rootUrls: z.array(z.string().startsWith('file:')).min(1),
   tools: z.array(z.enum(['write', 'edit'])).min(1).max(2),
   entry: contributionEntrySchema, limits: contributionLimitsSchema,
@@ -89,11 +122,13 @@ const captureSchema = contributionRecordSchema.safeExtend({
   const grant = capture.invitation?.grant
   const receiving = capture.receiving
   const read = receiving?.invitation
-  if ((capture.entry.kind === 'scope-join-entry') !== (receiving !== undefined)
+  if (!consistentRoute(capture)
+    || (capture.entry.kind === 'scope-join-entry') !== (receiving !== undefined)
     || (receiving !== undefined && ((receiving.state === 'adopting' || receiving.state === 'active') && read == null))
     || (read != null && (read.taskId !== capture.entry.taskId || read.ownerPeerId !== capture.entry.ownerPeerId
       || read.recipientPeerId !== capture.proposal.contributorPeerId || read.expiresAt > capture.limits.expiresAt
       || (grant !== undefined && read.expiresAt !== grant.expiresAt)))
+    || (receiving?.routeRecovery !== undefined && receiving.routeRecovery.ownerAddress !== capture.entry.ownerAddress)
     || capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
     || new Set(capture.tools).size !== capture.tools.length || source.kind !== 'tool-observations'
     || JSON.stringify(source.tools) !== JSON.stringify(tools) || source.name !== 'session-work'
@@ -111,10 +146,12 @@ const sampleSchema: z.ZodType<NativeSample> = z.object({
   sample: peerContributionSampleSchema, receipt: peerContributionAdmissionReceiptSchema.optional(),
 }).strict()
 const continuationSchema = z.object({
+  ...routeState,
   proposal: contributionRecordSchema.shape.proposal, entry: contributionEntrySchema, limits: contributionLimitsSchema,
   receiving: receivingSchema,
-}).strict().refine(value => value.entry.kind === 'scope-join-entry' && value.proposal.source.kind === 'tool-observations'
+}).strict().refine(value => consistentRoute(value) && value.entry.kind === 'scope-join-entry' && value.proposal.source.kind === 'tool-observations'
   && value.receiving.intent !== undefined
+  && (value.receiving.routeRecovery === undefined || value.receiving.routeRecovery.ownerAddress === value.entry.ownerAddress)
   && (value.receiving.invitation === null ? value.receiving.intent !== 'adopt'
     : value.receiving.invitation.ownerPeerId === value.entry.ownerPeerId
       && value.receiving.invitation.taskId === value.entry.taskId

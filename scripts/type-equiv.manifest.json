@@ -3306,6 +3306,31 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionReceivingContinuation",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentUpdateRouteRequest",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentUpdateJoinReadRouteRequest",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentUpdateRouteResult",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRouteEvent",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionRecoverRouteRequest",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     }
   ]
 }

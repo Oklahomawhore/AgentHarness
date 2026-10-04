@@ -1,4 +1,4 @@
-/** Direct TCP address parsing shared by the fixed and settings-backed providers. */
+/** Direct TCP address parsing for transport providers and consumers. */
 import { peerIdFromString } from '@libp2p/peer-id'
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'

@@ -27,6 +27,55 @@ describe('session snapshot identity redaction', () => {
     expect(redactSessionSnapshotIds([output!])).toEqual([output])
   })
 
+  it('preserves local route subscription relationships while comparing authority and revision fields', () => {
+    const logs = (generation: string, nextGeneration = generation): string[] => {
+      const route = (subscriptionGeneration: string, routeRevision: number) => ({
+        type: 'scope-agent-context/route',
+        data: {
+          version: 1, agentId: parentId, bindingId: approvalId, expectedReadStateSeq: 19,
+          previousOwnerAddress: '/ip4/127.0.0.1/tcp/1',
+          subscription: {
+            id: runId, generation: subscriptionGeneration, state: 'active', routeRevision,
+            invitation: { generation: proseUuid, expiresAt: 4_000_000_000_000 },
+          },
+        },
+      })
+      return [
+        [{ type: 'session', id: parentId }, route(generation, 1), route(nextGeneration, 2)]
+          .map(record => JSON.stringify(record)).join('\n'),
+        [
+          { type: 'session', id: childId },
+          { type: 'example', data: { echoed: generation, text: `unrelated ${proseUuid}` } },
+        ].map(record => JSON.stringify(record)).join('\n'),
+      ]
+    }
+    const redacted = redactSessionSnapshotIds(logs(messageId))
+    expect(redacted).toEqual(redactSessionSnapshotIds(logs(otherId)))
+    expect(redacted).not.toEqual(redactSessionSnapshotIds(logs(messageId, otherId)))
+    expect(redacted[0]?.match(/"generation":"{{id:1}}"/g)).toHaveLength(2)
+    expect(redacted[1]).toContain('"echoed":"{{id:1}}"')
+    expect(redacted[0]).toContain(`"generation":"${proseUuid}"`)
+    expect(redacted[1]).toContain(`unrelated ${proseUuid}`)
+    expect(redacted[0]).toContain('"expectedReadStateSeq":19')
+    expect(redacted[0]).toContain('"routeRevision":1')
+    expect(redacted[0]).toContain('"routeRevision":2')
+    expect(redactSessionSnapshotIds(redacted)).toEqual(redacted)
+  })
+
+  it('does not discover arbitrary generation fields or unrecognized route versions', () => {
+    const source = [
+      { type: 'session', id: parentId },
+      { type: 'scope-agent-context/route', data: { version: 2, subscription: { generation: messageId } } },
+      { type: 'scope-agent-context/route', data: { version: 1, generation: approvalId } },
+      { type: 'scope-agent-context/state', data: { version: 1, subscription: { generation: runId } } },
+      { type: 'example', data: { source: { generation: otherId }, text: proseUuid } },
+    ].map(record => JSON.stringify(record)).join('\n')
+    const [redacted] = redactSessionSnapshotIds([source])
+    for (const generation of [messageId, approvalId, runId, otherId, proseUuid]) {
+      expect(redacted).toContain(generation)
+    }
+  })
+
   it('preserves typed relationships across parent and child logs', () => {
     const parent = [
       JSON.stringify({ type: 'session', id: parentId, createdAt: 1, cwd: '/tmp/work' }),

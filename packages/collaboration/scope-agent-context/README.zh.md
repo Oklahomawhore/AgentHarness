@@ -46,7 +46,7 @@ kind: "package-reference"
 
 ### 显式绑定与许可
 
-经过认证的本地 `scopeAgentContext` Remote 提供 `bind`、`bindLocal`、`pause`、`resume`、`leave`、`leaveLocalTask` 和 `status`，不公开原始传输或等待接口。Host 插件可直接调用同一服务：
+经过认证的本地 `scopeAgentContext` Remote 提供 `bind`、`bindLocal`、`pause`、`resume`、`leave`、`leaveLocalTask`、`updateRoute` 和 `status`，不公开原始传输或等待接口。Host 插件可直接调用同一服务：
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
@@ -80,6 +80,8 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 每个管理修改操作都会先比较 `expectedBindingId`；bind 仅在未绑定时接受 null。延迟的 bind 和 resume 在提交前还会复核准确的 Agent 实例与绑定。替换绑定会保留原绑定，直到新订阅准备完成；未被采用的迟到订阅会结束。RPC 回复丢失后应先读取 status：已经提交的绑定仍可查询，使用旧条件重试会被拒绝。修改响应不带 Session watermark，不能覆盖 Client 已收到的较新投影。
 
+`updateRoute` 在修改所有者地址前比较当前绑定和 `readStateSeq`。地址必须使用非零端口的直连 IP/TCP，并指向相同的所有者 PeerId。原授权、订阅、绑定、自动策略及已用额度保持不变；正在运行的自动轮次不会被取消。恢复地址不证明网络可达，也不续期授权。已终结的订阅不能恢复。无效地址返回 `scope-agent/invalid-route`。
+
 `bindLocal` 要求当前 Task ID、Task binding ID、绑定代际和已观察到的调度绑定。它只授予执行许可，文件采集仍需独立授权。`automatic: null` 保留被动 Task 读取。`leaveLocalTask` 先停止自有自动工作，再有条件地清除精确匹配的当前 Task 代际及其采集。只有 Task 分配已不存在时，才可用 `leave` 丢弃遗留的本地调度绑定。
 
 管理失败携带结构化 Remote code，包括 `scope-agent/stale-binding`、`scope-agent/not-live` 和 `scope-agent/terminal-subscription`；客户端按 code 与 details 判断，不解析诊断文本。已知撤销、过期、退出或缺失的订阅不能恢复。本地 Task assignment 冲突时，仍可对准确绑定执行暂停与退出。
@@ -97,6 +99,8 @@ backend 声明使用精确投影比较或接收方证据比较。重新在线授
 恢复运行中的 Session 会保留绑定和精确消息历史，但暂停自动执行许可。待处理触发消息会被删除，预留次数不退还。恢复不会创建未运行的 Agent、重放启动动作或重新计算历史文本；下一次实时请求仍需在线读取。
 
 仅 Host 可用的联合加入方法先在来源 Session 中预留精确的被动读取计划，再创建订阅。`readStateSeq` 比较读取管理事件，普通消息不会改变它。采用 ID 保留原邀请、比较游标以及订阅和绑定 ID。重试不能替换后来手动选择的绑定，也不能重新打开已取消的操作。采用读取不会增加自动执行许可。
+
+Session 先记录并落盘地址变更意图，再由 Access 修改接收记录。若 Access 写入失败，下一次读取或监听会先根据该意图补完；旧地址的迟到响应不会被采用。`updateJoinReadRoute` 对原联合采用操作执行相同规则，也可更新冷存储 Session 而不启动 Agent。采用计划保持不可变。固定的读取状态比较可阻止迟到恢复覆盖后来手动调整的读取状态，包括地址改走后又改回原值的情况。
 
 `cancelJoinRead` 先记录待处理申请的取消终态，再在管理队列外等待已开始的订阅创建并终结该订阅。停止贡献会保留已采用的读取，完整退出只撤回该操作拥有的绑定。冷会话取消独占打开已有 Session 日志，不启动 Agent。日志缺失、写入者冲突、非法状态迁移或持久化检查点失败都会使取消报错，调用方须保留待处理意图。
 

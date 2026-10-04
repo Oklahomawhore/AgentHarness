@@ -22,7 +22,7 @@ function fixture(initial: NativeScopeSnapshot = { phase: 'ready', pending: false
     useNativeTasks: () => ({ tasks: [], read: true }), useNativeParticipants: () => ({ read: true }),
     readNativeLocalContribution: vi.fn(), checkoutNativeLocalTask: vi.fn(),
     requestNativeLocalContribution: vi.fn(), stopNativeLocalContribution: vi.fn(),
-    readNativeContribution: vi.fn(), requestNativeContribution: vi.fn(),
+    recoverNativeContributionRoute: vi.fn(), readNativeContribution: vi.fn(), requestNativeContribution: vi.fn(),
     stopNativeContribution: vi.fn(), leaveNativeJoin: vi.fn(), previewNativeContribution: vi.fn(),
     useNativeScope: <T,>(select: (value: NativeScopeSnapshot) => T): T => select(useSyncExternalStore(
       listener => source.subscribe(listener), () => source.getSnapshot())),
@@ -226,5 +226,25 @@ describe('current Session collaboration action', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.invitation']).value).toBe('')
     expect(screen.queryByText(zh['native.saved'])).toBeNull()
+  })
+})
+
+describe('read route recovery controls', () => {
+  it('submits the displayed binding and read-state cursor without changing automatic permission', async () => {
+    const current = observation({ ...bound, mode: 'paused', usedBudget: 1, automatic: {
+      goal: 'Maintain the client', activationLimit: 3, maxStepsPerTurn: 2, minIntervalMs: 1000,
+    } }, 7)
+    const f = fixture({ phase: 'ready', pending: false, issue: null, observation: current })
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    fireEvent.change(screen.getByLabelText(zh['native.route.new']), { target: { value: ' /ip4/127.0.0.1/tcp/4568/p2p/owner-peer ' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.apply'] }))
+    await waitFor(() => { expect(f.action).toHaveBeenCalledExactlyOnceWith({ kind: 'updateRoute', request: {
+      expectedBindingId: bound.binding!.id, expectedReadStateSeq: current.readStateSeq,
+      ownerAddress: '/ip4/127.0.0.1/tcp/4568/p2p/owner-peer',
+    } }) })
+    act(() => { f.source.set({ phase: 'ready', pending: false, issue: null, observation: observation(current.state, 8) }) })
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    expect(screen.getByLabelText<HTMLInputElement>(zh['native.route.new']).value).toBe('')
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] }).disabled).toBe(true)
   })
 })

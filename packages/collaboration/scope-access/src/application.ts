@@ -189,7 +189,7 @@ export class ContributionApplications {
     if (record.decision === 'expired' && record.grant === null) return { status: 'expired' }
     const read = record.readInvitation === undefined ? undefined
       : await this.owner.reconcileRead(record.readInvitation, record.decision !== 'approved')
-    const readFields = read === undefined ? {} : { readInvitation: read.invitation,
+    const readFields = read === undefined ? {} : { readInvitation: { ...read.invitation, ownerAddress: address },
       readState: read.state === 'revoked' ? 'revoked' as const : read.invitation.expiresAt <= Date.now() ? 'expired' as const : 'active' as const }
     let retained = this.authority(record)
     if (record.decision === 'approved') {

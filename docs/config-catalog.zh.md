@@ -2361,7 +2361,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-access/src/index.ts:44`](../packages/collaboration/scope-access/src/index.ts)
+来源： [`packages/collaboration/scope-access/src/index.ts:45`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 
@@ -2381,7 +2381,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-agent-context/src/index.ts:38`](../packages/collaboration/scope-agent-context/src/index.ts)
+来源： [`packages/collaboration/scope-agent-context/src/index.ts:41`](../packages/collaboration/scope-agent-context/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-contribution"></a>
 
@@ -2403,7 +2403,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-agent-contribution/src/index.ts:45`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+来源： [`packages/collaboration/scope-agent-contribution/src/index.ts:46`](../packages/collaboration/scope-agent-contribution/src/index.ts)
 
 <a id="deepseek-aidsh-scope-transportlibp2p"></a>
 

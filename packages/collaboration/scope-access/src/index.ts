@@ -9,10 +9,11 @@ import type {} from '@deepseek-ai/dsh-development-room'
 import type {} from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentParticipantId, DevelopmentTaskContextView, DevelopmentTaskId, DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import type {} from '@deepseek-ai/dsh-development-task-context/backend'
+import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import type { ScopePeerId, ScopeTransportRequest } from '@deepseek-ai/dsh-scope-transport/types'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { invitationSchema, projectionDigest, projectionSchema } from './schema.ts'
+import { invitationSchema, sameReadGrant, projectionDigest, projectionSchema } from './schema.ts'
 import { ContributionAccess } from './contribution.ts'
 import { ContributionApplications } from './application.ts'
 import type { ApplicationRecord } from './application-schema.ts'
@@ -263,7 +264,7 @@ export default class ScopeAccessService extends TypertRemoteService {
       const existing = domain.table('subscriptions').get(plan.id)
       if (plan.state !== 'active') throw new Error('scope-access: a receiving plan must start active')
       if (existing !== undefined) {
-        if (existing.generation !== plan.generation || !isDeepStrictEqual(existing.invitation, plan.invitation)) {
+        if (existing.generation !== plan.generation || !sameReadGrant(existing.invitation, plan.invitation)) {
           throw new Error('scope-access: receiving identity belongs to another plan')
         }
         if (existing.state === 'active' && existing.invitation.expiresAt <= Date.now()) {
@@ -280,6 +281,43 @@ export default class ScopeAccessService extends TypertRemoteService {
       if (domain.table('subscriptions').size >= this.config.maxSubscriptions) throw new Error('scope-access: subscription capacity reached')
       await domain.table('subscriptions').put(plan.id, plan)
       return plan
+    })
+  }
+
+  /**
+   * Apply a consumer's durable route intent without creating or reopening a subscription.
+   * @param plan - unchanged receiver and grant identities plus a monotonic route revision.
+   * @returns the retained subscription; terminal and newer route revisions win over delayed retries.
+   */
+  async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision: number }): Promise<ScopeSubscription> {
+    directAddress(plan.invitation.ownerAddress, plan.invitation.ownerPeerId)
+    return await this.enqueue(async (domain) => {
+      const current = domain.table('subscriptions').get(plan.id)
+      if (current === undefined) throw new Error('scope-access: route recovery requires an existing subscription')
+      if (current.generation !== plan.generation || !sameReadGrant(current.invitation, plan.invitation)) {
+        throw new Error('scope-access: route recovery changes receiving authority')
+      }
+      if (current.state !== 'active') return current
+      if (current.invitation.expiresAt <= Date.now()) {
+        const expired = { ...current, state: 'expired' as const }
+        await domain.table('subscriptions').put(expired.id, expired)
+        this.requests.delete(expired.id)
+        this.stopWaiting(expired.id)
+        return expired
+      }
+      const revision = current.routeRevision ?? 0
+      if (plan.routeRevision < revision) return current
+      if (plan.routeRevision === revision) {
+        if (plan.invitation.ownerAddress !== current.invitation.ownerAddress) {
+          throw new Error('scope-access: route revision already selects another address')
+        }
+        return current
+      }
+      const next = { ...current, invitation: plan.invitation, routeRevision: plan.routeRevision }
+      await domain.table('subscriptions').put(next.id, next)
+      this.requests.delete(next.id)
+      this.stopWaiting(next.id)
+      return next
     })
   }
 
@@ -536,7 +574,7 @@ export default class ScopeAccessService extends TypertRemoteService {
         signal.throwIfAborted()
         const current = currentDomain.table('subscriptions').get(id)
         if (current === undefined) return { status: 'left' }
-        if (current.generation !== subscription.generation) return { status: 'unavailable' }
+        if (current.generation !== subscription.generation || (current.routeRevision ?? 0) !== (subscription.routeRevision ?? 0)) return { status: 'unavailable' }
         if (current.state !== 'active') return { status: current.state }
         if (subscription.invitation.expiresAt <= Date.now()) {
           await currentDomain.table('subscriptions').put(id, { ...current, state: 'expired' })
@@ -655,17 +693,17 @@ export default class ScopeAccessService extends TypertRemoteService {
         signal.throwIfAborted()
         const current = currentDomain.table('subscriptions').get(id)
         if (current === undefined) return { status: 'left' }
-        if (current.generation !== subscription.generation) return { status: 'unavailable' }
+        if (current.generation !== subscription.generation || (current.routeRevision ?? 0) !== (subscription.routeRevision ?? 0)) return { status: 'unavailable' }
         if (current.state !== 'active') return { status: current.state }
         if (this.requests.get(id) !== request.requestId) return { status: 'unavailable' }
         if (subscription.invitation.expiresAt <= Date.now()) {
-          await currentDomain.table('subscriptions').put(id, { ...subscription, state: 'expired' })
+          await currentDomain.table('subscriptions').put(id, { ...current, state: 'expired' })
           this.stopWaiting(id)
           return { status: 'expired' }
         }
         if (response.result.status === 'denied' || response.result.status === 'unavailable') return { status: 'unavailable' }
         if (response.result.status !== 'active') {
-          await currentDomain.table('subscriptions').put(id, { ...subscription, state: response.result.status })
+          await currentDomain.table('subscriptions').put(id, { ...current, state: response.result.status })
           this.stopWaiting(id)
           return { status: response.result.status }
         }
@@ -751,7 +789,7 @@ export default class ScopeAccessService extends TypertRemoteService {
   private authorize(domain: ScopeAccessDomain, request: ReadRequest, peerId: ScopePeerId): ScopeReadGrant | 'denied' | 'revoked' | 'expired' {
     const grant = domain.table('grants').get(request.invitation.grantId)
     if (grant === undefined || peerId !== grant.invitation.recipientPeerId || grant.invitation.ownerPeerId !== this.peerId
-      || !isDeepStrictEqual(grant.invitation, request.invitation)) return 'denied'
+      || !sameReadGrant(grant.invitation, request.invitation)) return 'denied'
     if (grant.state === 'revoked') return 'revoked'
     if (grant.invitation.expiresAt <= Date.now()) return 'expired'
     return grant

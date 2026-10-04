@@ -14,7 +14,8 @@ afterEach(cleanup)
 const t = makeTranslate(zh)
 function fixture(value: ScopeAgentContributionStatus = emptyStatus) {
   const actions: NativeContributionActions = {
-    readNativeContribution: vi.fn(), requestNativeContribution: vi.fn(async () => {}),
+    recoverNativeContributionRoute: vi.fn(async () => {}), readNativeContribution: vi.fn(),
+    requestNativeContribution: vi.fn(async () => {}),
     stopNativeContribution: vi.fn(async () => {}), leaveNativeJoin: vi.fn(async () => {}),
     previewNativeContribution: vi.fn(async (): Promise<ScopeContributionTransfer> => applicationEntry),
   }
@@ -280,7 +281,7 @@ describe('joint termination and receiving continuation', () => {
 
   it('keeps failed receiving cleanup available after capture removal without claiming contributions remain pending', async () => {
     const continuation: NonNullable<ScopeAgentContributionStatus['receivingContinuation']> = {
-      selection: capture.selection, entry: joinEntry, intent: 'cancel-pending',
+      routeRevision: 0, selection: capture.selection, entry: joinEntry, intent: 'cancel-pending',
       receiving: { ...jointReceiving, state: 'failed' },
     }
     const value: ScopeAgentContributionStatus = { ...emptyStatus, revision: 2, receivingContinuation: continuation }
@@ -318,5 +319,92 @@ describe('joint termination and receiving continuation', () => {
       entry={{ status: 'ready', pending: false, value: emptyStatus }} />)
     expect(screen.queryByRole('button', { name: zh['native.join.leave'] })).toBeNull()
     expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
+  })
+})
+
+describe('native contribution route recovery', () => {
+  it('recovers an expired ending capture without collecting new file permission', async () => {
+    const ending = { ...capture, entry: { ...capture.entry, expiresAt: 1 }, state: 'ending' as const }
+    const f = fixture({ ...capturedStatus, eligibility: 'not-live', capture: ending })
+    const replacement = { ...ending.entry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(replacement)
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    change(zh['native.route.paste'], 'recovered original entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    await screen.findByText(replacement.ownerAddress)
+    expect(screen.queryByRole('checkbox', { name: zh['native.share.consent'] })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.apply'] }))
+    await waitFor(() => { expect(f.actions.recoverNativeContributionRoute).toHaveBeenCalledExactlyOnceWith({
+      agentId, expectedCapture: ending.selection, expectedRouteRevision: 0,
+      expectedOwnerAddress: ending.entry.ownerAddress, entry: replacement,
+    }) })
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    expect(f.actions.stopNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('rejects changed permission and discards a late preview after the displayed route changes', async () => {
+    const f = fixture(capturedStatus)
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValueOnce({ ...capture.entry,
+      ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer', expiresAt: capture.entry.expiresAt + 1 })
+    change(zh['native.route.paste'], 'different expiry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    await screen.findByText(zh['native.route.invalid'])
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] }).disabled).toBe(true)
+    const pending = Promise.withResolvers<ScopeContributionTransfer>()
+    vi.mocked(f.actions.previewNativeContribution).mockReturnValueOnce(pending.promise)
+    change(zh['native.route.paste'], 'old delayed route')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    const changed = { ...capturedStatus, capture: { ...capture, entry: { ...capture.entry,
+      ownerAddress: '/ip4/127.0.0.1/tcp/3/p2p/owner-peer' } } }
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false, value: changed }} />)
+    await act(async () => {
+      pending.resolve({ ...capture.entry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }); await pending.promise
+    })
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.route.paste']).value).toBe('')
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] }).disabled).toBe(true)
+    expect(f.actions.recoverNativeContributionRoute).not.toHaveBeenCalled()
+  })
+})
+
+describe('joint route read-state freshness', () => {
+  it('confirms the existing joint address again with the latest reading state', async () => {
+    const joint = { ...joinEntry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }
+    const current = { ...capture, routeRevision: 1, entry: joint, receiving: jointReceiving }
+    const f = fixture({ ...capturedStatus, capture: current })
+    f.rerender(<NativeContributionPanel {...f.props}
+      scope={{ ...f.props.scope, observation: observation({ ...bound, agentId, mode: 'paused' }, 7) }} />)
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(joint)
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    change(zh['native.route.paste'], 'original joint entry with its already recovered address')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    const save = screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] })
+    await waitFor(() => { expect(save.disabled).toBe(false) })
+    fireEvent.click(save)
+    await waitFor(() => { expect(f.actions.recoverNativeContributionRoute).toHaveBeenCalledExactlyOnceWith({
+      agentId, expectedCapture: current.selection, expectedRouteRevision: 1, expectedOwnerAddress: joint.ownerAddress,
+      entry: joint, receive: { expectedReadStateSeq: 7 },
+    }) })
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('holds a checked joint route while reading state refreshes and clears it on a newer management cursor', async () => {
+    const joint = { ...capture.entry, kind: 'scope-join-entry' as const, sourceKind: 'tool-observations' as const }
+    const f = fixture({ ...capturedStatus, capture: { ...capture, entry: joint, receiving: jointReceiving } })
+    const replacement = { ...joint, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(replacement)
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    change(zh['native.route.paste'], 'original joint entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    await screen.findByText(replacement.ownerAddress)
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.props.scope, phase: 'loading' }} />)
+    const save = screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] })
+    expect(save.disabled).toBe(true)
+    fireEvent.click(save)
+    expect(f.actions.recoverNativeContributionRoute).not.toHaveBeenCalled()
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.props.scope, observation: observation({ ...state, agentId }, 2) }} />)
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.route.paste']).value).toBe('')
   })
 })

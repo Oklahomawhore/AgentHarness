@@ -17,7 +17,9 @@ const subscriptionId = z.uuid().transform(value => value as ScopeSubscriptionId)
 const grant: z.ZodType<ScopeReadGrant> = z.object({ invitation: invitationSchema, state: z.enum(['active', 'revoked']) }).strict()
 const subscription: z.ZodType<ScopeSubscription> = z.object({
   id: subscriptionId, generation, invitation: invitationSchema, state: z.enum(['active', 'left', 'revoked', 'expired']),
-}).strict()
+  routeRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict().transform(({ routeRevision, ...subscription }) =>
+  routeRevision === undefined ? subscription : { ...subscription, routeRevision })
 
 /** Read-only peer request; recipient routing comes exclusively from the owner's stored grant. */
 export const readRequestSchema = z.object({

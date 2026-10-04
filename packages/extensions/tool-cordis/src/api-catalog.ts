@@ -2161,6 +2161,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the exact existing subscription, or the newly persisted one; expiry and terminal states remain terminal.',
       },
       {
+        signature: 'async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision: number }): Promise<ScopeSubscription>',
+        description: 'Apply a consumer\'s durable route intent without creating or reopening a subscription.',
+        parameters: [{ name: 'plan', description: 'unchanged receiver and grant identities plus a monotonic route revision.' }],
+        returns: 'the retained subscription; terminal and newer route revisions win over delayed retries.',
+      },
+      {
         signature: '@Remote(\'leave\') async leave(request: { readonly subscriptionId: ScopeSubscriptionId }): Promise<void>',
         description: 'Stop a local subscription and reject its delayed responses.',
         parameters: [{ name: 'request', description: 'local receiving identity.' }],
@@ -2306,6 +2312,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'retained adoption outcome after local cancellation and owned subscription cleanup.',
       },
       {
+        signature: '@Remote(\'updateRoute\') async updateRoute(request: ScopeAgentUpdateRouteRequest): Promise<ScopeAgentBindingStatus>',
+        description: 'Replace the connection address of one existing live read without changing its permission.',
+        parameters: [{ name: 'request', description: 'exact binding and read-state cursor observed before route consent.' }],
+        returns: 'unchanged scheduling permission with the durably selected owner address.',
+      },
+      {
+        signature: 'updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<ScopeAgentUpdateRouteResult>',
+        description: 'Recover the route owned by a joint operation, including an existing cold Session.',
+        parameters: [{ name: 'request', description: 'original adoption and a fixed current read-state comparison.' }],
+        returns: 'updated only while that operation still owns the unchanged read permission.',
+      },
+      {
         signature: '@Remote(\'bind\') async bind(request: ScopeAgentBindRequest): Promise<ScopeAgentBindingStatus>',
         description: 'Bind one live ordinary Session after stopping its previous automatic activity; unsubmitted user claims are retained.',
         parameters: [{ name: 'request', description: 'Session, pinned invitation, and optional explicit automatic policy.' }],
@@ -2365,6 +2383,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Persist one Session\'s explicit file permission and request automatic activation of an equal or narrower owner approval.',
         parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, local files, tools, and accepted limits.' }],
         returns: 'durable local intent; later changed notifications describe owner reconciliation.',
+      },
+      {
+        signature: '@Remote(\'recoverRoute\') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>',
+        description: 'Persist an explicitly confirmed address for the same contribution without renewing collection permission. Cold Sessions, expired permission, and pending cancellation retain their original state and retry work.',
+        parameters: [{ name: 'request', description: 'original capture, previously observed address, and the same entry with only its address changed.' }],
+        returns: 'committed local state; peer confirmation and explicitly selected joint reading recover asynchronously.',
       },
       {
         signature: '@Remote(\'stop\') stop(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>',
@@ -6879,7 +6903,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionCapture',
-    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
+    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
   },
   {
     name: 'ScopeAgentContributionReceiving',
@@ -6887,7 +6911,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionReceivingContinuation',
-    declaration: 'export interface ScopeAgentContributionReceivingContinuation {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly entry: ScopeContributionEntry;\n    readonly receiving: ScopeAgentContributionReceiving;\n    readonly intent: \'adopt\' | \'cancel-pending\' | \'leave\';\n}',
+    declaration: 'export interface ScopeAgentContributionReceivingContinuation {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly entry: ScopeContributionEntry;\n    readonly receiving: ScopeAgentContributionReceiving;\n    readonly intent: \'adopt\' | \'cancel-pending\' | \'leave\';\n}',
+  },
+  {
+    name: 'ScopeAgentContributionRecoverRouteRequest',
+    declaration: 'export interface ScopeAgentContributionRecoverRouteRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection;\n    readonly expectedOwnerAddress: string;\n    readonly expectedRouteRevision: number;\n    readonly entry: ScopeContributionEntry;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n    };\n}',
   },
   {
     name: 'ScopeAgentContributionRequest',
@@ -6964,6 +6992,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeAgentSubscriptionState',
     declaration: 'export type ScopeAgentSubscriptionState = \'unbound\' | \'active\' | \'left\' | \'revoked\' | \'expired\' | \'missing\';',
+  },
+  {
+    name: 'ScopeAgentUpdateJoinReadRouteRequest',
+    declaration: 'export interface ScopeAgentUpdateJoinReadRouteRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly ownerAddress: string;\n}',
+  },
+  {
+    name: 'ScopeAgentUpdateRouteRequest',
+    declaration: 'export interface ScopeAgentUpdateRouteRequest {\n    readonly agentId: SessionId;\n    readonly expectedBindingId: ScopeAgentBindingId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly ownerAddress: string;\n}',
+  },
+  {
+    name: 'ScopeAgentUpdateRouteResult',
+    declaration: 'export interface ScopeAgentUpdateRouteResult {\n    readonly status: \'updated\' | \'ended\' | \'superseded\';\n}',
   },
   {
     name: 'ScopeChangeCursor',
@@ -7123,7 +7163,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeSubscription',
-    declaration: 'export interface ScopeSubscription {\n    readonly id: ScopeSubscriptionId;\n    readonly generation: ScopeGeneration;\n    readonly invitation: ScopeInvitation;\n    readonly state: \'active\' | \'left\' | \'revoked\' | \'expired\';\n}',
+    declaration: 'export interface ScopeSubscription {\n    readonly routeRevision?: number;\n    readonly id: ScopeSubscriptionId;\n    readonly generation: ScopeGeneration;\n    readonly invitation: ScopeInvitation;\n    readonly state: \'active\' | \'left\' | \'revoked\' | \'expired\';\n}',
   },
   {
     name: 'ScopeSubscriptionId',

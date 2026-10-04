@@ -65,7 +65,7 @@ export async function cleanup(): Promise<void> {
 }
 
 export async function host(id: string, pool = new MemoryMediaPool(), overrides: Partial<Config> = {},
-  taskEvents: readonly DevelopmentTaskLogEntry[] = []) {
+  taskEvents: readonly DevelopmentTaskLogEntry[] = [], transportPeerId: ScopePeerId = peer(id)) {
   const ctx = new Context()
   contexts.push(ctx)
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
@@ -87,7 +87,7 @@ export async function host(id: string, pool = new MemoryMediaPool(), overrides: 
   const backendFork = ctx.plugin(TextBackend)
   await backendFork
   const backend = ctx.developmentTaskContextBackend
-  const transport = new ControlledTransport(ctx, peer(id))
+  const transport = new ControlledTransport(ctx, transportPeerId)
   const access = new ScopeAccess(ctx, Object.assign({}, config, overrides))
   const createTask = async (objective = 'Shared canary') => await tasks.create({
     origin: { kind: 'root' }, objective, scope: 'One explicit project', createdBy: participantId,

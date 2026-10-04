@@ -54,6 +54,8 @@ The header provides the only Task-creation entry. Root creation requires a saved
 
 Browser acceptance covers identity confirmation, the single creation entry, Root/Fork/Merge context inheritance, explicit publication, per-session Agent guidance, badge geometry, readable graph-node sizing, and the absence of lifecycle controls.
 
+Native recovery controls update the displayed original capture or read binding. Contribution recovery previews the same application entry with a different owner address; it preserves file permission and pending withdrawal even for a cold Session or expired entry. Joint recovery also carries the displayed read-state comparison. The separate read-route form retains the original subscription, automatic policy, and consumed budget. Host durability and fresh status determine the result; saving a route does not confirm connectivity or model adoption.
+
 ## Model Experience
 
 Indirectly, through operations that delegate model-visible context admission to `dsh-development-task-context`, `dsh-agentharness-bridge`, `dsh-claude-scope`, or `dsh-scope-agent-context`. Explicit native automatic permission can start bounded turns while the Agent is idle; passive receiving does not.

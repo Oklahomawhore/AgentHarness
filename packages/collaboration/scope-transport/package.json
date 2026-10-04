@@ -15,6 +15,7 @@
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./libp2p": { "types": "./lib/types/libp2p.d.ts", "default": "./lib/types/libp2p.js" },
     "./libp2p-settings": { "types": "./lib/types/libp2p-settings.d.ts", "default": "./lib/types/libp2p-settings.js" },
+    "./address": { "types": "./lib/types/address.d.ts", "default": "./lib/types/address.js" },
     "./types": { "types": "./lib/types/types.d.ts", "default": "./lib/types/types.js" },
     "./src/*": "./src/*",
     "./package.json": "./package.json"

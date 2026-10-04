@@ -36,6 +36,9 @@
       "path": "../scope-access"
     },
     {
+      "path": "../scope-transport"
+    },
+    {
       "path": "../development-task"
     },
     {

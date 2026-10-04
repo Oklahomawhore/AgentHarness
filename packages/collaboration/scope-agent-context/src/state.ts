@@ -1,6 +1,7 @@
 /** Replay validation and the whole-state native scope projection. */
 
 import { z } from 'zod'
+import { foldRoute, routeEventSchema } from './route.ts'
 import { foldJoinRead, joinReadEventSchema } from './join-read.ts'
 import { localContextTargetSchema } from '@deepseek-ai/dsh-development-task-context/local'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -71,6 +72,7 @@ export const scopeAgentProjection = {
   wire: { viewSchema: stateSchema, view: state => state },
   init: header => initialState(header.id),
   apply: (state, event) => {
+    if (event.type === 'scope-agent-context/route') return foldRoute(state, routeEventSchema.parse(event.data))
     if (event.type === 'scope-agent-context/join-read') return foldJoinRead(state, joinReadEventSchema.parse(event.data))
     if (event.type === 'turn/end') {
       const paused = state.mode === 'enabled' && event.data.reason.kind !== 'completed'

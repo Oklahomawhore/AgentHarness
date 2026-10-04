@@ -57,9 +57,9 @@ async function mountReceiver(receiver: Awaited<ReturnType<typeof host>>, directo
   return adapter
 }
 
-async function fixture() {
+async function fixture(ownerId?: string) {
   const suffix = randomUUID()
-  const a = await host(`join-owner-${suffix}`)
+  const a = await host(`join-owner-${suffix}`, undefined, {}, [], peer(ownerId ?? `join-owner-${suffix}`))
   const b = await host(`join-reader-${suffix}`)
   const directory = await mkdtemp(join(tmpdir(), 'scope-join-access-'))
   directories.push(directory)
@@ -175,4 +175,138 @@ it('recovers an adopted Session cold and leaves only its original durable subscr
   expect(joinReadHistory(final).bindingId).toBeNull()
   expect(final.snapshotEvents().filter(event => event.type === 'scope-agent-context/join-read')
     .map(event => event.data.phase)).toEqual(['planned', 'adopted', 'ended'])
+})
+
+const routeOwner = '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy'
+const newAddress = `/ip4/127.0.0.1/tcp/2/p2p/${routeOwner}`
+
+it('logs and replays a route-only change without replacing subscription, adoption, policy, or budget', async () => {
+  const { b, handle, request, adapter } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const initial = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (initial.eligibility === 'not-live' || initial.state.binding === null) throw new Error('expected binding')
+  await b.ctx.scopeAgentContext.resume({ agentId: handle.agent.id, expectedBindingId: initial.state.binding.id,
+    automatic: { goal: 'Review changed scope', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 } })
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await handle.agent.whenIdle()
+  await b.ctx.scopeAgentContext.pause({ agentId: handle.agent.id, expectedBindingId: initial.state.binding.id })
+  const before = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (before.eligibility === 'not-live' || before.state.binding === null) throw new Error('expected binding')
+  expect(before.state.usedBudget).toBe(1)
+  const route = { agentId: handle.agent.id, expectedBindingId: before.state.binding.id,
+    expectedReadStateSeq: before.readStateSeq, ownerAddress: newAddress }
+  const updated = await b.ctx.scopeAgentContext.updateRoute(route)
+  expect(updated).toEqual({ ...before.state,
+    binding: { ...before.state.binding, invitation: { ...request.invitation, ownerAddress: newAddress } } })
+  expect(await b.ctx.scopeAgentContext.updateRoute(route)).toEqual(updated)
+  expect((await b.access.list()).subscriptions).toHaveLength(1)
+  expect(joinReadHistory(await readStored(b, handle.agent.id)).records.get(request.adoptionId)?.plan?.subscription.invitation)
+    .toEqual(request.invitation)
+  const history = joinReadHistory(await readStored(b, handle.agent.id))
+  expect(history.routes.get(before.state.binding.id)?.event.subscription.invitation.ownerAddress).toBe(newAddress)
+  handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Use recovered route' }] }))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+  await handle.agent.whenIdle()
+  expect(contextText(adapter.requests[1]!)).toContain('AUTHORIZED_OWNER_CANARY')
+  await b.ctx.scopeAgentContext.cancelJoinRead({ agentId: handle.agent.id, adoptionId: request.adoptionId, leaveAdopted: true })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute({ ...route, adoptionId: request.adoptionId })).toEqual({ status: 'ended' })
+  expect((await b.access.list()).subscriptions[0]?.state).toBe('left')
+})
+
+it('does not reuse route consent after a manual policy change', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const status = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (status.eligibility === 'not-live' || status.state.binding === null) throw new Error('expected binding')
+  const recovery = { agentId: handle.agent.id, adoptionId: request.adoptionId,
+    expectedReadStateSeq: status.readStateSeq, ownerAddress: newAddress }
+  await b.ctx.scopeAgentContext.pause({ agentId: handle.agent.id, expectedBindingId: status.state.binding.id })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute(recovery)).toEqual({ status: 'superseded' })
+  expect((await b.access.list()).subscriptions[0]?.invitation).toEqual(request.invitation)
+})
+
+it('reconciles a durable route after Access storage fails without a second route event', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const expectedReadStateSeq = await readCursor(b, handle.agent.id)
+  const recovery = { agentId: handle.agent.id, adoptionId: request.adoptionId, expectedReadStateSeq, ownerAddress: newAddress }
+  b.pool.failNextWrites = 1
+  await expect(b.ctx.scopeAgentContext.updateJoinReadRoute(recovery)).rejects.toThrow('injected write failure')
+  expect((await b.access.list()).subscriptions[0]?.invitation.ownerAddress).toBe(request.invitation.ownerAddress)
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute(recovery)).toEqual({ status: 'updated' })
+  expect(handle.agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/route')).toHaveLength(1)
+  expect((await b.access.list()).subscriptions[0]?.invitation.ownerAddress).toBe(newAddress)
+})
+
+it('finishes a pending original adoption at its new route while retaining the initial plan', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  vi.spyOn(b.access, 'ensureSubscription').mockRejectedValueOnce(new Error('temporary storage unavailable'))
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead(request)).rejects.toThrow('temporary storage unavailable')
+  const rebased = { ...request, invitation: { ...request.invitation, ownerAddress: newAddress } }
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(rebased)).toEqual({ status: 'adopted' })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute({ agentId: handle.agent.id, adoptionId: request.adoptionId,
+    expectedReadStateSeq: request.expectedReadStateSeq, ownerAddress: newAddress })).toEqual({ status: 'updated' })
+  expect(joinReadHistory(handle.agent.session).records.get(request.adoptionId)?.plan?.subscription.invitation).toEqual(request.invitation)
+  expect((await b.access.list()).subscriptions[0]?.invitation.ownerAddress).toBe(newAddress)
+})
+
+it('recovers a cold existing read route without starting an Agent and cancellation still owns the original subscription', async () => {
+  const { b, directory, readerName, request, handle } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const expectedReadStateSeq = await readCursor(b, handle.agent.id)
+  const [original] = (await b.access.list()).subscriptions
+  if (original === undefined) throw new Error('missing subscription')
+  await b.ctx.fiber.dispose()
+  const restored = await host(readerName, b.pool)
+  await mountReceiver(restored, directory)
+  expect(await restored.ctx.scopeAgentContext.updateJoinReadRoute({ agentId: handle.agent.id, adoptionId: request.adoptionId,
+    expectedReadStateSeq, ownerAddress: newAddress })).toEqual({ status: 'updated' })
+  expect(restored.ctx.agents.get(handle.agent.id)).toBeUndefined()
+  expect((await restored.access.list()).subscriptions).toEqual([{ ...original, routeRevision: 1,
+    invitation: { ...original.invitation, ownerAddress: newAddress } }])
+  expect(await restored.ctx.scopeAgentContext.cancelJoinRead({ agentId: handle.agent.id, adoptionId: request.adoptionId,
+    leaveAdopted: true })).toEqual({ status: 'ended' })
+  expect((await restored.access.list()).subscriptions[0]?.state).toBe('left')
+})
+
+it('does not change Access before route intent flush and lets leave defeat the failed intent', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const expectedReadStateSeq = await readCursor(b, handle.agent.id)
+  const route = { agentId: handle.agent.id, adoptionId: request.adoptionId, expectedReadStateSeq, ownerAddress: newAddress }
+  const flush = vi.spyOn(b.ctx.sessions, 'flush').mockRejectedValueOnce(new Error('route checkpoint failed'))
+  await expect(b.ctx.scopeAgentContext.updateJoinReadRoute(route)).rejects.toThrow('route checkpoint failed')
+  flush.mockRestore()
+  expect((await b.access.list()).subscriptions[0]?.invitation.ownerAddress).toBe(request.invitation.ownerAddress)
+  expect(await b.ctx.scopeAgentContext.cancelJoinRead({ agentId: handle.agent.id, adoptionId: request.adoptionId,
+    leaveAdopted: true })).toEqual({ status: 'ended' })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute(route)).toEqual({ status: 'ended' })
+  expect((await b.access.list()).subscriptions[0]?.state).toBe('left')
+})
+
+it('rejects a stale native route cursor after the same binding moves A to B to A', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const stale = { agentId: handle.agent.id, adoptionId: request.adoptionId,
+    expectedReadStateSeq: await readCursor(b, handle.agent.id), ownerAddress: newAddress }
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute(stale)).toEqual({ status: 'updated' })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute({ ...stale,
+    expectedReadStateSeq: await readCursor(b, handle.agent.id), ownerAddress: request.invitation.ownerAddress })).toEqual({ status: 'updated' })
+  expect(await b.ctx.scopeAgentContext.updateJoinReadRoute(stale)).toEqual({ status: 'superseded' })
+  const [current] = (await b.access.list()).subscriptions
+  expect(current?.routeRevision).toBe(2)
+  expect(current?.invitation.ownerAddress).toBe(request.invitation.ownerAddress)
+  expect(joinReadHistory(await readStored(b, handle.agent.id)).routes.size).toBe(1)
+})
+
+it('reports invalid user routes with a typed error and leaves the invitation unchanged', async () => {
+  const { b, handle, request } = await fixture(routeOwner)
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  const current = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (current.eligibility === 'not-live' || current.state.binding === null) throw new Error('expected binding')
+  await expect(b.ctx.scopeAgentContext.updateRoute({ agentId: handle.agent.id, expectedBindingId: current.state.binding.id,
+    expectedReadStateSeq: current.readStateSeq, ownerAddress: newAddress.replace('/tcp/2/', '/tcp/0/') }))
+    .rejects.toMatchObject({ code: 'scope-agent/invalid-route' })
+  expect((await b.access.list()).subscriptions[0]?.invitation).toEqual(request.invitation)
+  expect(handle.agent.session.snapshotEvents().some(event => event.type === 'scope-agent-context/route')).toBe(false)
 })

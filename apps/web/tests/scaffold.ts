@@ -410,6 +410,8 @@ export interface LaunchOptions {
   remoteAuthority?: string
   /** Boot a fixture-owned harness home containing preexisting state. */
   harnessHome?: string
+  /** Caller-owned domain storage retained across Host restarts; the caller removes it after every Host closes. */
+  storageRoot?: string
   /** Share one settings document across independent Hosts without sharing their databases or descriptor leases. */
   settingsPath?: string
   /** Detect only a fixture Cursor installation and manual-only Doubao, without reading user clients or PATH. */
@@ -582,10 +584,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // the seeded-session scenarios navigate by content search, and these e2e
     // runs are the assembled coverage for the opt-in search path.
     { id: 'session-query-sqlite', config: { path: ':memory:', openAt: 'first-search' } },
-    // storage-json's yml root is anchored to the real $DSH_HOME; pin the row
-    // to an absolute temp root (removed with the workspace at close) so tests
-    // never write the user's harness home.
-    { id: 'storage-json', config: { root: join(workspaceCwd, '.dsh-storages') } },
+    // Default storage belongs to this workspace; an explicit root belongs to the restart scenario.
+    { id: 'storage-json', config: { root: options.storageRoot ?? join(workspaceCwd, '.dsh-storages') } },
     // Skill discovery is model-visible input. Pin every host-level root inside
     // the owned temp world so ~/.dsh, ~/.agents, and a bundled-root env setting
     // cannot change replay requests or conversation goldens. Project roots stay

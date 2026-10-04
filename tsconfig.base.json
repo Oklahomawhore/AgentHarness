@@ -127,6 +127,7 @@
       "@deepseek-ai/dsh-development-task-context/semantic": ["./packages/collaboration/development-task-context/src/semantic.ts"],
       "@deepseek-ai/dsh-claude-scope/command": ["./packages/collaboration/claude-scope/src/command.ts"],
       "@deepseek-ai/dsh-claude-scope/types": ["./packages/collaboration/claude-scope/src/types.ts"],
+      "@deepseek-ai/dsh-scope-transport/address": ["./packages/collaboration/scope-transport/src/address.ts"],
       "@deepseek-ai/dsh-scope-transport/types": ["./packages/collaboration/scope-transport/src/types.ts"],
       "@deepseek-ai/dsh-scope-transport/libp2p": ["./packages/collaboration/scope-transport/src/libp2p.ts"],
       "@deepseek-ai/dsh-scope-transport/libp2p-settings": ["./packages/collaboration/scope-transport/src/libp2p-settings.ts"],

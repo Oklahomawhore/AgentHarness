@@ -13,17 +13,20 @@ import { readLocalTaskContext, localContextSnapshotMessage, localContextWithdraw
 import { createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import type {} from '@deepseek-ai/dsh-scope-access'
-import { invitationSchema } from '@deepseek-ai/dsh-scope-access/schema'
+import { invitationSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeChangeCursor, ScopeRetrieveResult, ScopeSubscription } from '@deepseek-ai/dsh-scope-access/types'
+import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type { AgentCancelCause, SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
-import { policySchema, scopeAgentProjection } from './state.ts'
+import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { joinReadEventSchema, joinReadHistory } from './join-read.ts'
+import { routeEventSchema } from './route.ts'
 import { withJoinSession } from './join-session.ts'
-import type { ScopeAgentJoinReadId, ScopeAgentJoinReadRequest, ScopeAgentCancelJoinReadRequest, ScopeAgentJoinReadResult, ScopeAgentJoinReadEvent, ScopeAgentActivationId, ScopeAgentAutomaticPolicy, ScopeAgentBindRequest, ScopeAgentBindLocalRequest, ScopeAgentLeaveLocalTaskRequest, ScopeAgentLocalTaskTarget, ScopeAgentLocalBinding, ScopeAgentReadProjection, ScopeAgentBindingId, ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentEvaluation, ScopeAgentPauseReason, ScopeAgentResumeRequest, ScopeAgentStatusResult, ScopeAgentSubscriptionState } from './types.ts'
+import type { ScopeAgentRouteEvent, ScopeAgentUpdateRouteRequest, ScopeAgentUpdateJoinReadRouteRequest, ScopeAgentUpdateRouteResult, ScopeAgentJoinReadId, ScopeAgentJoinReadRequest, ScopeAgentCancelJoinReadRequest, ScopeAgentJoinReadResult, ScopeAgentJoinReadEvent, ScopeAgentActivationId, ScopeAgentAutomaticPolicy, ScopeAgentBindRequest, ScopeAgentBindLocalRequest, ScopeAgentLeaveLocalTaskRequest, ScopeAgentLocalTaskTarget, ScopeAgentLocalBinding, ScopeAgentReadProjection, ScopeAgentBindingId, ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentEvaluation, ScopeAgentPauseReason, ScopeAgentResumeRequest, ScopeAgentStatusResult, ScopeAgentSubscriptionState } from './types.ts'
 
 export type * from './types.ts'
 
@@ -260,8 +263,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         let prior = history.records.get(request.adoptionId)
         if (prior !== undefined) {
           if (prior.plan !== null && (prior.plan.expectedReadStateSeq !== request.expectedReadStateSeq
-          || !isDeepStrictEqual(prior.plan.subscription.invitation, invitation))) {
+          || !sameReadGrant(prior.plan.subscription.invitation, invitation))) {
             throw new Error('scope-agent-context: adoption retry changes original inputs')
+          }
+          if (prior.plan !== null && prior.plan.subscription.invitation.ownerAddress !== invitation.ownerAddress) {
+            directAddress(invitation.ownerAddress, invitation.ownerPeerId)
           }
           await writer.flush()
           return prior
@@ -339,7 +345,17 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         const adopted: ScopeAgentJoinReadEvent = { ...current, phase: 'adopted' }
         this.unflushedBindings.add(current.plan.bindingId)
         writer.session.append('scope-agent-context/join-read', adopted)
+        let initialRoute: ScopeAgentRouteEvent | undefined
+        if (invitation.ownerAddress !== current.plan.subscription.invitation.ownerAddress) {
+          directAddress(invitation.ownerAddress, invitation.ownerPeerId)
+          initialRoute = { version: 1, agentId: request.agentId, bindingId: current.plan.bindingId,
+            expectedReadStateSeq: joinReadHistory(writer.session).readStateSeq,
+            previousOwnerAddress: current.plan.subscription.invitation.ownerAddress,
+            subscription: { ...current.plan.subscription, invitation, routeRevision: 1 } }
+          writer.session.append('scope-agent-context/route', routeEventSchema.parse(initialRoute))
+        }
         await writer.flush()
+        if (initialRoute !== undefined) await this.ctx.scopeAccess.updateSubscriptionRoute(initialRoute.subscription)
         this.unflushedBindings.delete(current.plan.bindingId)
         return await this.joinAdoptedResult(runtime, adopted)
       }))
@@ -410,6 +426,138 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       }))
   }
 
+  /**
+   * Replace the connection address of one existing live read without changing its permission.
+   * @param request - exact binding and read-state cursor observed before route consent.
+   * @returns unchanged scheduling permission with the durably selected owner address.
+   */
+  @Remote('updateRoute')
+  async updateRoute(request: ScopeAgentUpdateRouteRequest): Promise<ScopeAgentBindingStatus> {
+    const runtime = this.requireRuntime(request.agentId)
+    this.requireExpected(runtime, request.expectedBindingId)
+    const binding = this.state(runtime).binding
+    if (binding === null || binding.kind === 'local-task') throw new RemoteError('scope-agent/task-conflict', 'Route recovery requires a remote read.', { agentId: request.agentId })
+    try { directAddress(request.ownerAddress, binding.invitation.ownerPeerId) } catch {
+      throw new RemoteError('scope-agent/invalid-route', 'The address must select the same owner through direct IP/TCP.', { agentId: request.agentId })
+    }
+    const result = await this.track(this.changeRoute(request))
+    if (this.ctx.agents.get(request.agentId) !== runtime.agent) throw new RemoteError('scope-agent/not-live', 'The Agent is no longer live.', { agentId: request.agentId })
+    this.requireExpected(runtime, request.expectedBindingId)
+    if (result.status !== 'updated') throw new RemoteError('scope-agent/superseded', 'The read route change was superseded.', { agentId: request.agentId })
+    return this.state(runtime)
+  }
+
+  /**
+   * Recover the route owned by a joint operation, including an existing cold Session.
+   * @param request - original adoption and a fixed current read-state comparison.
+   * @returns updated only while that operation still owns the unchanged read permission.
+   */
+  updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<ScopeAgentUpdateRouteResult> {
+    return this.track(this.changeRoute(request))
+  }
+
+  private changeRoute(request: ScopeAgentUpdateRouteRequest | ScopeAgentUpdateJoinReadRouteRequest): Promise<ScopeAgentUpdateRouteResult> {
+    const runtime = 'expectedBindingId' in request ? this.requireRuntime(request.agentId) : undefined
+    const management = runtime === undefined ? undefined : { runtime, command: runtime.commandEpoch }
+    return this.joinQueue(request.agentId, () => withJoinSession(this.ctx, request.agentId,
+      this.lifetime.signal, async (writer): Promise<ScopeAgentUpdateRouteResult> => {
+        const history = joinReadHistory(writer.session)
+        const adoption = 'adoptionId' in request ? history.records.get(request.adoptionId) : undefined
+        if ('adoptionId' in request && adoption?.phase !== 'adopted') {
+          return { status: adoption?.phase === 'superseded' ? 'superseded' : 'ended' }
+        }
+        const bindingId = 'expectedBindingId' in request ? request.expectedBindingId : adoption?.plan?.bindingId
+        if (bindingId === undefined || history.bindingId !== bindingId) return { status: history.bindingId === null ? 'ended' : 'superseded' }
+        const state = this.replayState(writer.session)
+        const binding = state.binding
+        if (binding === null || binding.kind === 'local-task' || binding.id !== bindingId) return { status: 'superseded' }
+        directAddress(request.ownerAddress, binding.invitation.ownerPeerId)
+        const latest = history.routes.get(bindingId)
+        const retry = latest?.seq === history.readStateSeq && latest.event.expectedReadStateSeq === request.expectedReadStateSeq
+          && latest.event.subscription.invitation.ownerAddress === request.ownerAddress
+        // An unacknowledged first adoption may already have installed this exact route.
+        const latestChange = writer.session.snapshotEvents().find(event => event.seq === history.readStateSeq)
+        const routePredecessor = latest === undefined ? undefined
+          : writer.session.snapshotEvents().find(event => event.seq === latest.event.expectedReadStateSeq)
+        const ownAdoption = adoption?.phase === 'adopted' && adoption.plan.expectedReadStateSeq === request.expectedReadStateSeq
+          && binding.invitation.ownerAddress === request.ownerAddress
+          && ((latestChange?.type === 'scope-agent-context/join-read' && latestChange.data.adoptionId === adoption.adoptionId)
+            || (latest?.seq === history.readStateSeq && latest.event.subscription.routeRevision === 1
+              && routePredecessor?.type === 'scope-agent-context/join-read' && routePredecessor.data.phase === 'adopted'
+              && routePredecessor.data.adoptionId === adoption.adoptionId))
+        if (!retry && !ownAdoption && history.readStateSeq !== request.expectedReadStateSeq) return { status: 'superseded' }
+        const subscription = (await this.ctx.scopeAccess.list()).subscriptions.find(item => item.id === binding.subscriptionId)
+        if (subscription === undefined || subscription.state !== 'active') return { status: 'ended' }
+        if (!sameReadGrant(binding.invitation, subscription.invitation)) throw new Error('scope-agent-context: read subscription changed authority')
+        if (subscription.invitation.expiresAt <= Date.now()) {
+          await this.ctx.scopeAccess.updateSubscriptionRoute({ ...subscription, routeRevision: subscription.routeRevision ?? 0 })
+          return { status: 'ended' }
+        }
+        if (management !== undefined) this.requireCommand(management.runtime, management.command)
+        const fresh = joinReadHistory(writer.session)
+        if (fresh.readStateSeq !== history.readStateSeq || fresh.bindingId !== bindingId) return { status: 'superseded' }
+        if (ownAdoption && latest !== undefined) {
+          await writer.flush()
+          const updated = await this.ctx.scopeAccess.updateSubscriptionRoute(latest.event.subscription)
+          return { status: updated.state === 'active' ? 'updated' : 'ended' }
+        }
+        if (binding.invitation.ownerAddress === request.ownerAddress && latest === undefined) { await writer.flush(); return { status: 'updated' } }
+        let route = retry ? latest.event : undefined
+        if (route === undefined) {
+          route = { version: 1, agentId: request.agentId, bindingId, expectedReadStateSeq: history.readStateSeq,
+            previousOwnerAddress: binding.invitation.ownerAddress,
+            subscription: { ...subscription, state: 'active', invitation: { ...binding.invitation, ownerAddress: request.ownerAddress },
+              routeRevision: (latest?.event.subscription.routeRevision ?? 0) + 1 } }
+          this.unflushedBindings.add(bindingId)
+          writer.session.append('scope-agent-context/route', routeEventSchema.parse(route))
+          this.interruptRoute(request.agentId, bindingId)
+        }
+        await writer.flush()
+        this.unflushedBindings.delete(bindingId)
+        const current = joinReadHistory(writer.session)
+        if (current.bindingId !== bindingId) return { status: current.bindingId === null ? 'ended' : 'superseded' }
+        const updated = await this.ctx.scopeAccess.updateSubscriptionRoute(route.subscription)
+        const after = joinReadHistory(writer.session)
+        if (after.bindingId !== bindingId) return { status: after.bindingId === null ? 'ended' : 'superseded' }
+        if (updated.state !== 'active') return { status: 'ended' }
+        if (updated.routeRevision !== route.subscription.routeRevision || updated.invitation.ownerAddress !== request.ownerAddress) return { status: 'superseded' }
+        const runtime = this.runtimes.get(request.agentId)
+        if (runtime?.agent.session === writer.session) {
+          runtime.dirty = true; runtime.changeVersion++
+          this.startWatch(runtime)
+          this.schedule(runtime)
+        }
+        return { status: 'updated' }
+      }))
+  }
+
+  private replayState(session: Session): ScopeAgentBindingStatus {
+    return session.snapshotEvents().reduce((state, event) => scopeAgentProjection.apply(state, event), initialState(session.id))
+  }
+
+  private interruptRoute(agentId: SessionId, bindingId: ScopeAgentBindingId): void {
+    const runtime = this.runtimes.get(agentId)
+    if (runtime === undefined || this.state(runtime).binding?.id !== bindingId) return
+    runtime.watching = undefined
+    runtime.bindingAbort.abort(new Error('scope-agent-context: read route changed'))
+    runtime.bindingAbort = new AbortController()
+  }
+
+  private reconcileRoute(runtime: Runtime): Promise<void> {
+    const binding = this.state(runtime).binding
+    if (binding === null || binding.kind === 'local-task' || !joinReadHistory(runtime.agent.session).routes.has(binding.id)) return Promise.resolve()
+    return this.joinQueue(runtime.agent.id, () => withJoinSession(this.ctx, runtime.agent.id, this.lifetime.signal, async (writer) => {
+      const history = joinReadHistory(writer.session)
+      const route = history.routes.get(binding.id)
+      if (history.bindingId !== binding.id || route === undefined) return
+      await writer.flush()
+      this.unflushedBindings.delete(binding.id)
+      const latest = joinReadHistory(writer.session)
+      if (latest.bindingId !== binding.id) return
+      await this.ctx.scopeAccess.updateSubscriptionRoute(route.event.subscription)
+    }))
+  }
+
   private joinKey(agentId: SessionId, adoptionId: ScopeAgentJoinReadId): string {
     return JSON.stringify([agentId, adoptionId])
   }
@@ -419,7 +567,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const planned = record.plan.subscription
     const stored = (await this.ctx.scopeAccess.list()).subscriptions.find(item => item.id === planned.id)
     if (stored === undefined) return
-    if (stored.generation !== planned.generation || !isDeepStrictEqual(stored.invitation, planned.invitation)) {
+    if (stored.generation !== planned.generation || !sameReadGrant(stored.invitation, planned.invitation)) {
       throw new Error('scope-agent-context: owned join subscription changed identity')
     }
     if (stored.state === 'active') await this.ctx.scopeAccess.leave({ subscriptionId: stored.id })
@@ -1019,6 +1167,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const operation = this.ctx.agents.withoutInitiator(async () => {
       let cursor: ScopeChangeCursor | undefined
       while (!signal.aborted) {
+        await this.reconcileRoute(runtime)
+        signal.throwIfAborted()
         const result = await this.ctx.scopeAccess.waitForChange(binding.subscriptionId, cursor, signal)
         signal.throwIfAborted()
         if (this.state(runtime).binding?.id !== binding.id) return
@@ -1036,9 +1186,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       }
     })
     void this.track(operation).then(() => {
-      if (runtime.watching === binding.id) runtime.watching = undefined
+      if (!signal.aborted && runtime.watching === binding.id) runtime.watching = undefined
     }, () => {
-      if (runtime.watching === binding.id) runtime.watching = undefined
+      if (!signal.aborted && runtime.watching === binding.id) runtime.watching = undefined
       if (signal.aborted) return
       this.pauseRuntime(runtime, 'failed')
       this.withdrawIdle(runtime, 'failed')
@@ -1075,10 +1225,14 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   private read(runtime: Runtime, signal: AbortSignal): Promise<ScopeReadResult> {
     const binding = this.state(runtime).binding
     if (binding === null) return Promise.resolve({ status: 'left' })
-    if (this.unflushedBindings.has(binding.id)) return Promise.resolve({ status: 'unavailable' })
+    if (this.unflushedBindings.has(binding.id) && !joinReadHistory(runtime.agent.session).routes.has(binding.id)) return Promise.resolve({ status: 'unavailable' })
     const read = runtime.readTail.catch(() => {}).then(async () => { // Each request caller handles its own failure.
       signal.throwIfAborted()
-      if (binding.kind !== 'local-task') return await this.ctx.scopeAccess.retrieve(binding.subscriptionId, signal)
+      if (binding.kind !== 'local-task') {
+        await this.reconcileRoute(runtime)
+        signal.throwIfAborted()
+        return await this.ctx.scopeAccess.retrieve(binding.subscriptionId, signal)
+      }
       if (!this.localAdmissionAvailable(runtime) || runtime.localAdmissionSignal === undefined) throw new Error('scope-agent-context: local admission consumer changed')
       return await readLocalTaskContext(this.ctx, binding.target, this.config.maxContextBytes,
         AbortSignal.any([signal, runtime.localAdmissionSignal]))
@@ -1213,18 +1367,23 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         return this.withoutFacts(runtime, decision, messages, external, state.binding === null ? 'left' : 'conflict')
       }
       const capturedVersion = runtime.changeVersion
-      const readSignal = AbortSignal.any([signal, this.lifetime.signal, runtime.bindingAbort.signal])
+      const routeSignal = runtime.bindingAbort.signal
+      const readSignal = AbortSignal.any([signal, this.lifetime.signal, routeSignal])
       let result: ScopeReadResult
       try { result = await this.read(runtime, readSignal) } catch {
         signal.throwIfAborted()
         if (this.lifetime.signal.aborted) { this.requeue(runtime, external); return { kind: 'reject' } }
-        if (this.state(runtime).binding?.id !== state.binding.id) continue
+        if (routeSignal !== runtime.bindingAbort.signal) continue
+        const currentBinding = this.state(runtime).binding
+        if (currentBinding?.id !== state.binding.id
+          || (state.binding.kind !== 'local-task' && currentBinding.kind !== 'local-task'
+            && currentBinding.invitation.ownerAddress !== state.binding.invitation.ownerAddress)) continue
         this.pauseRuntime(runtime, 'failed')
         return this.withoutFacts(runtime, decision, messages, external, 'failed')
       }
       signal.throwIfAborted()
       if (this.lifetime.signal.aborted || this.ctx.agents.get(runtime.agent.id) !== runtime.agent) { this.requeue(runtime, external); return { kind: 'reject' } }
-      if (this.state(runtime).binding?.id !== state.binding.id) continue
+      if (this.state(runtime).binding?.id !== state.binding.id || routeSignal !== runtime.bindingAbort.signal) continue
       if (validPulse && (this.state(runtime).mode !== 'enabled' || this.state(runtime).pendingActivation === null)) continue
       if (this.conflictingTask(runtime)) continue
       if (runtime.terminal !== undefined) result = { status: runtime.terminal }

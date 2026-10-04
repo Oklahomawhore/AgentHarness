@@ -130,6 +130,12 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
   'scope-owner-participation': {
     expectedFinalResponse: 'Both source captures ended; historical evidence remains.',
   },
+  'scope-route-recovery': {
+    afterTurnEvaluations: [
+      { turn: 2, taskRevision: 4, decision: 'suppress-unchanged' },
+      { turn: 2, taskRevision: 5, decision: 'suppress-unchanged' },
+    ],
+  },
   'scope-context-live': {
     afterTurnEvaluations: [
       { turn: 2, taskRevision: 4, decision: 'suppress-unchanged' },

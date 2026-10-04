@@ -2,7 +2,7 @@
 import type {
   RemoteResult, ScopeAgentAutomaticPolicy, ScopeAgentBindRequest, ScopeAgentBindingId,
   ScopeAgentBindLocalRequest, ScopeAgentLeaveLocalTaskRequest, ScopeAgentLocalTaskTarget,
-  ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentResumeRequest, ScopeAgentStatusResult,
+  ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentResumeRequest, ScopeAgentStatusResult, ScopeAgentUpdateRouteRequest,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
@@ -13,6 +13,7 @@ export interface NativeScopePort {
   readonly bindLocal: (request: ScopeAgentBindLocalRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
   readonly leaveLocalTask: (request: ScopeAgentLeaveLocalTaskRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
   readonly bind: (request: ScopeAgentBindRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
+  readonly updateRoute: (request: ScopeAgentUpdateRouteRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
   readonly pause: (request: ScopeAgentBindingRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
   readonly resume: (request: ScopeAgentResumeRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
   readonly leave: (request: ScopeAgentBindingRequest) => Promise<RemoteResult<ScopeAgentBindingStatus>>
@@ -28,6 +29,7 @@ export interface NativeScopeSnapshot {
 
 /** Explicit local action whose binding expectation belongs to the displayed form. */
 export type NativeScopeAction =
+  | { readonly kind: 'updateRoute'; readonly request: Omit<ScopeAgentUpdateRouteRequest, 'agentId'> }
   | { readonly kind: 'bind'; readonly request: Omit<ScopeAgentBindRequest, 'agentId'> }
   | { readonly kind: 'bindLocal'; readonly request: Omit<ScopeAgentBindLocalRequest, 'agentId'> }
   | { readonly kind: 'leaveLocalTask'; readonly request: Omit<ScopeAgentLeaveLocalTaskRequest, 'agentId'> }
@@ -181,12 +183,17 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
       if ((observed.state.binding?.id ?? null) !== expected) {
         publish({ ...snapshot, issue: 'scope-agent/stale-binding' }); refresh(); return false
       }
+      if (action.kind === 'updateRoute' && (observed.readStateSeq !== action.request.expectedReadStateSeq
+        || observed.state.binding === null || observed.state.binding.kind === 'local-task' || observed.subscriptionState !== 'active'
+        || observed.state.mode === 'left')) {
+        publish({ ...snapshot, issue: 'scope-agent/stale-binding' }); refresh(); return false
+      }
       const localAction = action.kind === 'bindLocal' || action.kind === 'leaveLocalTask'
       if (localAction && !sameLocalTarget(observed.localTask, action.request)) {
         publish({ ...snapshot, issue: 'scope-agent/stale-task' }); refresh(); return false
       }
       if (action.kind === 'bind' && observed.localTask !== null) return false
-      if (action.kind !== 'leave' && action.kind !== 'pause' && action.kind !== 'leaveLocalTask'
+      if (action.kind !== 'leave' && action.kind !== 'pause' && action.kind !== 'leaveLocalTask' && action.kind !== 'updateRoute'
         && observed.eligibility !== 'eligible' && !(localAction && observed.eligibility === 'task-conflict')) return false
       const token = Symbol()
       mutation = token
@@ -196,12 +203,13 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
       revision++
       publish({ ...snapshot, pending: true, issue: null })
       try {
-        const result = action.kind === 'bind' ? await deps.port.bind({ ...action.request, agentId: deps.agentId })
-          : action.kind === 'bindLocal' ? await deps.port.bindLocal({ ...action.request, agentId: deps.agentId })
-            : action.kind === 'leaveLocalTask' ? await deps.port.leaveLocalTask({ ...action.request, agentId: deps.agentId })
-              : action.kind === 'resume' ? await deps.port.resume({ agentId: deps.agentId,
-                expectedBindingId: action.expectedBindingId, automatic: action.automatic })
-                : await deps.port[action.kind]({ agentId: deps.agentId, expectedBindingId: action.expectedBindingId })
+        const result = action.kind === 'updateRoute' ? await deps.port.updateRoute({ ...action.request, agentId: deps.agentId })
+          : action.kind === 'bind' ? await deps.port.bind({ ...action.request, agentId: deps.agentId })
+            : action.kind === 'bindLocal' ? await deps.port.bindLocal({ ...action.request, agentId: deps.agentId })
+              : action.kind === 'leaveLocalTask' ? await deps.port.leaveLocalTask({ ...action.request, agentId: deps.agentId })
+                : action.kind === 'resume' ? await deps.port.resume({ agentId: deps.agentId,
+                  expectedBindingId: action.expectedBindingId, automatic: action.automatic })
+                  : await deps.port[action.kind]({ agentId: deps.agentId, expectedBindingId: action.expectedBindingId })
         if (!current()) return false
         if (!result.ok) {
           publish({ ...snapshot, issue: result.error.code.startsWith('scope-agent/') ? result.error.code : 'unknown' })

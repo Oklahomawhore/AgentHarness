@@ -9,6 +9,7 @@ import {
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { NativeReadRoute } from './NativeReadRoute.tsx'
 import { NativeContributionPanel, type NativeContributionActions } from './NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
 import type { DevelopmentTaskDirectory } from './task-directory.ts'
@@ -53,6 +54,7 @@ function parseInvitation(text: string): ScopeInvitation | undefined {
 /** Map stable RPC codes to localized recovery instructions, never raw Host messages. */
 function issueKey(issue: string): EmergenceCenterKey {
   switch (issue) {
+    case 'scope-agent/invalid-route': return 'native.route.invalidAddress'
     case 'scope-agent/stale-task': case 'scope-agent/stale-binding': case 'scope-agent/superseded': return 'native.error.changed'
     case 'scope-agent/not-live': return 'native.eligibility.not-live'
     case 'scope-agent/ineligible': return 'native.error.ineligible'
@@ -74,7 +76,8 @@ export function NativeScopeAction(props: NativeScopeActionProps) {
 
 function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeLocalContributions, useNativeTasks, useNativeParticipants,
   refreshNativeScope, actNativeScope,
-  readNativeContribution, requestNativeContribution, stopNativeContribution, leaveNativeJoin, previewNativeContribution,
+  readNativeContribution, requestNativeContribution, stopNativeContribution, leaveNativeJoin,
+  previewNativeContribution, recoverNativeContributionRoute,
   readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution, t, ...runtime
 }: NativeScopeActionProps) {
   const snapshot = useNativeScope(value => value)
@@ -208,6 +211,10 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             <Button disabled={!ready} onClick={() => { void act({ kind: 'leave', expectedBindingId: bound.id }) }}>{t('native.leave')}</Button>
           </div>
           <p className={css.hint}>{t('native.pauseHint')}</p>
+          {!terminal && mode !== 'left' && observation !== null && observation.eligibility !== 'not-live' && <NativeReadRoute
+            key={`${bound.id}/${bound.invitation.ownerAddress}/${observation.readStateSeq}`}
+            current={bound.invitation.ownerAddress} ready={ready} t={t} update={ownerAddress => act({ kind: 'updateRoute',
+              request: { expectedBindingId: bound.id, expectedReadStateSeq: observation.readStateSeq, ownerAddress } })} />}
         </>}
         {(!bound || (mode !== 'enabled' && !terminal)) && <form className={css.form} onSubmit={(event) => {
           event.preventDefault()
@@ -244,7 +251,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} scope={snapshot} t={t}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}
-          previewNativeContribution={previewNativeContribution} />
+          previewNativeContribution={previewNativeContribution} recoverNativeContributionRoute={recoverNativeContributionRoute} />
       </>}
       {snapshot.issue !== null && <p ref={error} tabIndex={-1} className={css.notice} role="alert">{t(issueKey(snapshot.issue))}</p>}
       <div className={css.footer}><Button disabled={snapshot.pending} size="sm" onClick={refreshNativeScope}>{t('native.refresh')}</Button>

@@ -11,7 +11,8 @@ function fixture(overrides: Partial<NativeScopePort> = {}) {
   const connection = observable<{ id: number } | undefined>({ id: 1 })
   const resets = observable(0)
   const assignments = observable(0)
-  const port: NativeScopePort = { bindLocal: vi.fn(async () => ok(bound)), leaveLocalTask: vi.fn(async () => ok(state)),
+  const port: NativeScopePort = { updateRoute: vi.fn(async () => ok(bound)), bindLocal: vi.fn(async () => ok(bound)),
+    leaveLocalTask: vi.fn(async () => ok(state)),
     status: vi.fn(async () => ok(observation())), bind: vi.fn(async () => ok(bound)),
     pause: vi.fn(async () => ok(bound)), resume: vi.fn(async () => ok(bound)), leave: vi.fn(async () => ok(state)), ...overrides }
   const source = createNativeScopeSource({ agentId: state.agentId, port, projection, session, connection,
@@ -159,4 +160,31 @@ describe('native scope source', () => {
     } finally { held.resolve(ok(bound)); stop() }
   })
 
+})
+
+describe('existing read route recovery', () => {
+  it('rejects a stale read-state cursor and keeps a sent route mutation locked across reconnect', async () => {
+    const current = observation({ ...bound, mode: 'paused', usedBudget: 1, automatic: {
+      goal: 'Maintain the client', activationLimit: 3, maxStepsPerTurn: 2, minIntervalMs: 1000,
+    } }, 7)
+    const pending = Promise.withResolvers<RemoteResult<ScopeAgentBindingStatus>>()
+    const f = fixture({ status: vi.fn(async () => ok(current)), updateRoute: vi.fn(() => pending.promise) })
+    const dispose = f.source.subscribe(vi.fn())
+    const request = { expectedBindingId: bound.binding!.id, expectedReadStateSeq: current.readStateSeq,
+      ownerAddress: '/ip4/127.0.0.1/tcp/4568/p2p/owner-peer' }
+    try {
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      expect(await f.source.act({ kind: 'updateRoute', request: { ...request, expectedReadStateSeq: observation().readStateSeq } })).toBe(false)
+      expect(f.port.updateRoute).not.toHaveBeenCalled()
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      const sent = f.source.act({ kind: 'updateRoute', request })
+      f.connection.set({ id: 2 })
+      expect(await f.source.act({ kind: 'updateRoute', request })).toBe(false)
+      expect(f.port.updateRoute).toHaveBeenCalledExactlyOnceWith({ ...request, agentId: state.agentId })
+      expect(f.port.bind).not.toHaveBeenCalled()
+      expect(f.port.resume).not.toHaveBeenCalled()
+      pending.resolve(ok(current.state)); expect(await sent).toBe(false)
+      await vi.waitFor(() => { expect(f.source.getSnapshot()).toMatchObject({ phase: 'ready', pending: false }) })
+    } finally { dispose() }
+  })
 })

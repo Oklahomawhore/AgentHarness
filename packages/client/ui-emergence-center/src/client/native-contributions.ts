@@ -1,7 +1,7 @@
 /** Native source management with exact capture checks and durable-state rereads. */
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionSelection, ScopeAgentContributionStatus,
-  ScopeAgentContributionStopRequest,
+  ScopeAgentContributionStopRequest, ScopeAgentContributionRecoverRouteRequest,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createContributionDirectory, type ContributionDirectory } from './contribution-directory.ts'
@@ -11,6 +11,7 @@ export interface NativeContributionPort {
   readonly status: (request: { agentId: SessionId }) => Promise<ScopeAgentContributionStatus>
   readonly request: (request: ScopeAgentContributionRequest) => Promise<ScopeAgentContributionStatus>
   readonly leaveJoin: (request: ScopeAgentContributionStopRequest) => Promise<ScopeAgentContributionStatus>
+  readonly recoverRoute: (request: ScopeAgentContributionRecoverRouteRequest) => Promise<ScopeAgentContributionStatus>
   readonly stop: (request: ScopeAgentContributionStopRequest) => Promise<ScopeAgentContributionStatus>
 }
 
@@ -18,6 +19,7 @@ export interface NativeContributionPort {
 export interface NativeContributionDirectory {
   readonly directory: ContributionDirectory<SessionId, ScopeAgentContributionStatus>
   request(request: ScopeAgentContributionRequest): Promise<void>
+  recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<void>
   stop(request: ScopeAgentContributionStopRequest): Promise<void>
   leaveJoin(request: ScopeAgentContributionStopRequest): Promise<void>
   changed(agentId: SessionId, revision: number): void
@@ -57,6 +59,15 @@ export function createNativeContributionDirectory(
     async request(request) {
       if (!allowed(request.agentId, request.expectedCapture, false)) return
       await directory.mutate(request.agentId, () => port.request(request))
+    },
+    async recoverRoute(request) {
+      if (!allowed(request.agentId, request.expectedCapture, true)) return
+      const status = directory.getSnapshot()[request.agentId]?.value
+      const current = status?.capture ?? status?.receivingContinuation
+      if (current?.entry.ownerAddress !== request.expectedOwnerAddress || current.routeRevision !== request.expectedRouteRevision) {
+        directory.invalidate(request.agentId); return
+      }
+      await directory.mutate(request.agentId, () => port.recoverRoute(request))
     },
     async stop(request) {
       if (!allowed(request.agentId, request.expectedCapture, true)) return

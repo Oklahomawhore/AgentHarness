@@ -24,7 +24,7 @@ Share permitted writes and edits from an existing native Agent with its owner-lo
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount in a `dsh` profile providing Agents, file tools, Session persistence, storage, and [scope access](../scope-access/README.md). Mounting grants no permission. The authenticated `scopeAgentContributions` Remote exposes independent-owner `request`/`status`, owner-local `requestLocal`/`localStatus`, shared `stop`, and joint `leaveJoin` to the [Collaboration UI](../../client/ui-emergence-center/README.md).
+Mount in a `dsh` profile providing Agents, file tools, Session persistence, storage, and [scope access](../scope-access/README.md). Mounting grants no permission. The authenticated `scopeAgentContributions` Remote exposes independent-owner `request`/`status`/`recoverRoute`, owner-local `requestLocal`/`localStatus`, shared `stop`, and joint `leaveJoin` to the [Collaboration UI](../../client/ui-emergence-center/README.md).
 
 ### Minimal configuration
 
@@ -58,7 +58,11 @@ Management compares the displayed capture identity; read status after uncertain 
 
 Stop preserves already adopted reading and cancels pending adoption. `leaveJoin` durably ends the selected contribution and only the read binding owned by that join; it cannot remove a later manual binding. Contribution termination retains unresolved reading as one durable continuation per Session. Stop or `leaveJoin` can select that continuation until it settles; new contribution consent waits. After cleanup, use the independent reading controls to leave any retained read binding.
 
-Stop and Agent disposal stop collection and retain termination work until the owner confirms it. A local Task clear or rebind also ends its old capture. Restart waits for application readiness, then ends retained permission without resuming collection. Persisted samples retry unchanged; unsaved completions cannot survive process death. Independent contribution address changes require explicit route recovery; the joint read invitation retains its original address.
+Use `recoverRoute` with the original entry, displayed capture and route revision, and previously displayed address. Only the direct TCP address for the same peer may change; an address returning to its previous value does not make an old command current. Exact lost-reply retries retain the committed outcome. A later Stop or leave supersedes a queued route change while stopping collection immediately. Roots, grant, limits, samples, receipts, cancellation, and unfinished tool completions remain unchanged. A cold Session or expired entry can recover termination without starting an Agent or checking its filesystem. Existing-capture `request` retries require the same address.
+
+For joint reading, explicitly include the observed read-state sequence with route recovery. The durable retry retains that sequence and the original adoption, binding, subscription, policy, and used budget. A later read action supersedes the route update; refresh and confirm again. Stopping contribution can recover its already adopted reading, while full leave only cancels. Omitting read consent changes contribution routing alone. A detached receiving continuation accepts the same entry and route comparison until it settles.
+
+Stop and Agent disposal stop collection and retain termination work until the owner confirms it. A local Task clear or rebind also ends its old capture. Restart waits for application readiness, then ends retained permission without resuming collection. Persisted samples retry unchanged; unsaved completions cannot survive process death.
 
 -----
 

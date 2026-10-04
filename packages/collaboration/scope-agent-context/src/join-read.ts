@@ -1,11 +1,12 @@
 /** Durable joint-join ownership and exact local read-state comparison. */
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
+import { routeEventSchema } from './route.ts'
 import type { Session, SessionSeqCursor } from '@deepseek-ai/dsh-session'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { invitationSchema } from '@deepseek-ai/dsh-scope-access/schema'
+import { invitationSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeGeneration, ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentJoinReadEvent, ScopeAgentJoinReadId, ScopeAgentJoinReadPlan } from './types.ts'
+import type { ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentJoinReadEvent, ScopeAgentJoinReadId, ScopeAgentJoinReadPlan, ScopeAgentRouteEvent, ScopeAgentBinding } from './types.ts'
 
 const cursor = z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor)
 const planSchema: z.ZodType<ScopeAgentJoinReadPlan> = z.object({
@@ -51,6 +52,7 @@ export interface JoinReadHistory {
   readonly records: ReadonlyMap<ScopeAgentJoinReadId, ScopeAgentJoinReadEvent>
   readonly readStateSeq: SessionSeqCursor
   readonly bindingId: ScopeAgentBindingId | null
+  readonly routes: ReadonlyMap<ScopeAgentBindingId, { readonly event: ScopeAgentRouteEvent; readonly seq: SessionSeqCursor }>
 }
 
 /**
@@ -60,13 +62,31 @@ export interface JoinReadHistory {
  */
 export function joinReadHistory(session: Session): JoinReadHistory {
   const records = new Map<ScopeAgentJoinReadId, ScopeAgentJoinReadEvent>()
+  const routes = new Map<ScopeAgentBindingId, { event: ScopeAgentRouteEvent; seq: SessionSeqCursor }>()
+  let binding: ScopeAgentBinding | null = null
   let readStateSeq: SessionSeqCursor = -1
   let bindingId: ScopeAgentBindingId | null = null
   for (const event of session.snapshotEvents()) {
     if (event.type === 'scope-agent-context/state') {
       if (event.data.agentId !== session.id) throw new Error('scope-agent-context: read state belongs to another Session')
       readStateSeq = event.seq
-      bindingId = event.data.binding?.id ?? null
+      binding = event.data.binding
+      bindingId = binding?.id ?? null
+      continue
+    }
+    if (event.type === 'scope-agent-context/route') {
+      const data = routeEventSchema.parse(event.data)
+      const previous = routes.get(data.bindingId)
+      if (data.agentId !== session.id || data.expectedReadStateSeq !== readStateSeq || binding === null
+        || binding.kind === 'local-task' || binding.id !== data.bindingId || binding.subscriptionId !== data.subscription.id
+        || binding.invitation.ownerAddress !== data.previousOwnerAddress
+        || !sameReadGrant(binding.invitation, data.subscription.invitation)
+        || data.subscription.routeRevision !== (previous?.event.subscription.routeRevision ?? 0) + 1) {
+        throw new Error('scope-agent-context: route intent lacks its exact preceding read state')
+      }
+      routes.set(data.bindingId, { event: data, seq: event.seq })
+      binding = { ...binding, invitation: data.subscription.invitation }
+      readStateSeq = event.seq
       continue
     }
     if (event.type !== 'scope-agent-context/join-read') continue
@@ -83,6 +103,7 @@ export function joinReadHistory(session: Session): JoinReadHistory {
         throw new Error('scope-agent-context: adoption does not match its pending plan')
       }
       bindingId = data.plan.bindingId
+      binding = { id: bindingId, subscriptionId: data.plan.subscription.id, invitation: data.plan.subscription.invitation }
       readStateSeq = event.seq
     } else {
       if ((prior === undefined && data.plan !== null)
@@ -95,10 +116,11 @@ export function joinReadHistory(session: Session): JoinReadHistory {
       }
       if (data.leaveAdopted && data.plan !== null && bindingId === data.plan.bindingId) {
         bindingId = null
+        binding = null
         readStateSeq = event.seq
       }
     }
     records.set(data.adoptionId, data)
   }
-  return { records, readStateSeq, bindingId }
+  return { records, readStateSeq, bindingId, routes }
 }

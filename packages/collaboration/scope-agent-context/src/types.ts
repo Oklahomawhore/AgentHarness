@@ -18,6 +18,37 @@ export interface ScopeAgentJoinReadRequest {
   readonly invitation: ScopeInvitation
 }
 
+/** Replace only the route of an existing native read binding at its observed management cursor. */
+export interface ScopeAgentUpdateRouteRequest {
+  readonly agentId: SessionId
+  readonly expectedBindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly ownerAddress: string
+}
+
+/** Recover one joint operation's original read without adopting a later manual binding. */
+export interface ScopeAgentUpdateJoinReadRouteRequest {
+  readonly agentId: SessionId
+  readonly adoptionId: ScopeAgentJoinReadId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly ownerAddress: string
+}
+
+/** Route persistence does not attest owner availability or renew authorization. */
+export interface ScopeAgentUpdateRouteResult {
+  readonly status: 'updated' | 'ended' | 'superseded'
+}
+
+/** Durable route intent preserves the exact subscription, binding, and execution permission. */
+export interface ScopeAgentRouteEvent {
+  readonly version: 1
+  readonly agentId: SessionId
+  readonly bindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly previousOwnerAddress: string
+  readonly subscription: ScopeSubscription & { readonly state: 'active'; readonly routeRevision: number }
+}
+
 /** Cancel pending adoption, optionally leaving only the binding this operation actually adopted. */
 export interface ScopeAgentCancelJoinReadRequest {
   readonly agentId: SessionId
@@ -232,6 +263,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'scope-agent-context/state': ScopeAgentBindingStatus
     /** Durable joint adoption plan, atomic passive binding, or irreversible cancellation. */
     'scope-agent-context/join-read': ScopeAgentJoinReadEvent
+    /** Durable same-grant address change; scheduling permission and receiver identity remain unchanged. */
+    'scope-agent-context/route': ScopeAgentRouteEvent
     /** Exact online decision; suppression consumes neither a pulse nor a reservation. */
     'scope-agent-context/evaluation': ScopeAgentEvaluation
     /** Dispatch-time association to actual model input; completion is derived from subsequent assistant and turn events. */
@@ -251,6 +284,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
+    'scope-agent/invalid-route': { readonly agentId: SessionId }
     'scope-agent/not-live': { readonly agentId: SessionId }
     'scope-agent/ineligible': { readonly agentId: SessionId; readonly reason: 'delegated' | 'fork' }
     'scope-agent/task-conflict': { readonly agentId: SessionId }
