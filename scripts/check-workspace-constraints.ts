@@ -61,7 +61,11 @@ const standardReleaseMemberDirectory = /^(?:packages\/(?!experimental\/)[^/]+\/[
 const desktopApplicationDirectory = 'apps/desktop'
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
-  '@deepseek-ai/dsh': ['lib/*.js'],
+  '@deepseek-ai/dsh': [
+    'lib/*.js',
+    'config/examples/scope-context/deadlines.cordis.yml',
+    'config/examples/scope-context/semantic.cordis.yml',
+  ],
   '@deepseek-ai/dsh-desktop-host': [
     'lib/index.js',
     'config/desktop.cordis.patch.yml',

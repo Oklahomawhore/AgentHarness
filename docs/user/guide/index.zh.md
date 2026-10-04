@@ -39,7 +39,7 @@ Task 的 Agent 区域区分四种状态：**已配置**表示客户端有 AgentH
 
 ## 4. 连接节点
 
-独立所有者可按[跨设备协作指南](collaboration-network.zh.md)配置直连监听并邀请一个 Session，无需加入受信集群。
+独立所有者可按[跨设备协作指南](collaboration-network.zh.md)配置直连监听并邀请一个 Session，无需加入受信集群。所有者可选择启用[语义摘要](collaboration-semantic.zh.md)，按接收者职责整理上下文。
 
 全新安装会产生独立的协作凭据。加入已有集群时，通过私密渠道获取密钥并运行 `agentharness cluster join --secret-stdin`。`agentharness cluster status` 会报告集群身份和节点。处于同一 IPv4 multicast 网络的节点可以自动发现彼此；无法使用 multicast 时可配置显式 Mesh peer。HMAC 认证消息，但局域网传输没有加密，因此应使用可信网络。
 

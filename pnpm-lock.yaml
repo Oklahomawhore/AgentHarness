@@ -202,6 +202,9 @@ importers:
       '@deepseek-ai/dsh-cordis-client-runner':
         specifier: workspace:^
         version: link:../../packages/extensions/cordis-client-runner
+      '@deepseek-ai/dsh-development-task-context':
+        specifier: workspace:^
+        version: link:../../packages/collaboration/development-task-context
       '@deepseek-ai/dsh-fs-local':
         specifier: workspace:^
         version: link:../../packages/fs/fs-local
@@ -259,6 +262,9 @@ importers:
       '@deepseek-ai/dsh-sdk-minimal':
         specifier: workspace:^
         version: link:../../packages/bundle/sdk-minimal
+      '@deepseek-ai/dsh-session-persistence-jsonl':
+        specifier: workspace:^
+        version: link:../../packages/session/session-persistence-jsonl
       '@deepseek-ai/dsh-session-projection':
         specifier: workspace:^
         version: link:../../packages/session/session-projection
@@ -461,9 +467,6 @@ importers:
       '@deepseek-ai/dsh-session-log-deepseek':
         specifier: workspace:^
         version: link:../../packages/session/session-log-deepseek
-      '@deepseek-ai/dsh-session-persistence-jsonl':
-        specifier: workspace:^
-        version: link:../../packages/session/session-persistence-jsonl
       '@deepseek-ai/dsh-session-query':
         specifier: workspace:^
         version: link:../../packages/session-query/session-query

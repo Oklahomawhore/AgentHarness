@@ -1,11 +1,14 @@
 /** Experimental-package publication and dependency constraints. */
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   checkDshFamilyVersion,
   checkExperimentalDependencyIsolation,
   checkExperimentalManifest,
+  checkWorkspaceManifest,
   expectedDshPackageFiles,
+  type PackageManifest,
   type WorkspaceManifest,
 } from './check-workspace-constraints.ts'
 
@@ -140,6 +143,32 @@ describe('package payload constraints', () => {
       'lib/index.js',
       'cordis.patch.yml',
       'lib/types/**/*.d.ts',
+    ])
+  })
+})
+
+describe('CLI publication assets', () => {
+  const cli: WorkspaceManifest = {
+    dir: 'apps/cli',
+    manifest: JSON.parse(readFileSync(new URL('../apps/cli/package.json', import.meta.url), 'utf8')) as PackageManifest,
+  }
+  const files = [
+    'lib/*.js',
+    'config/examples/scope-context/deadlines.cordis.yml',
+    'config/examples/scope-context/semantic.cordis.yml',
+  ]
+
+  it('publishes the CLI runtime and the two selected scope-context overlays', () => {
+    expect(checkWorkspaceManifest({ ...cli, manifest: { ...cli.manifest, files } })).toEqual([])
+  })
+
+  it.each<[string, string[]]>([
+    ['an extra asset', [...files, 'config/examples/scope-context/extra.cordis.yml']],
+    ['a directory glob', ['lib/*.js', 'config/examples/scope-context/*.yml']],
+    ['a missing overlay', files.slice(0, 2)],
+  ])('rejects %s in the CLI publication list', (_name, invalidFiles) => {
+    expect(checkWorkspaceManifest({ ...cli, manifest: { ...cli.manifest, files: invalidFiles } })).toEqual([
+      `apps/cli/package.json: @deepseek-ai/dsh: package.json files must be ${JSON.stringify(files)}`,
     ])
   })
 })
