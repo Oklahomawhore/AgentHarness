@@ -3304,6 +3304,16 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentAutomaticJoinReadPlan",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "JoinReadTransition",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentJoinReadEvent",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
     },

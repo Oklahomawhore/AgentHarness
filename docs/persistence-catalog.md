@@ -704,7 +704,7 @@ Source: [`packages/schedule/schedule/src/types.ts:219`](../packages/schedule/sch
 
 Types: [ScopeAgentEvaluation](subsystems/development-room.md)
 
-Source: [`packages/collaboration/scope-agent-context/src/types.ts:269`](../packages/collaboration/scope-agent-context/src/types.ts)
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:279`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextjoin-read--log-only"></a>
 
@@ -715,7 +715,7 @@ Source: [`packages/collaboration/scope-agent-context/src/types.ts:269`](../packa
 'scope-agent-context/join-read': ScopeAgentJoinReadEvent
 ```
 
-Source: [`packages/collaboration/scope-agent-context/src/types.ts:265`](../packages/collaboration/scope-agent-context/src/types.ts)
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:275`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextrequest--log-only"></a>
 
@@ -728,7 +728,7 @@ Source: [`packages/collaboration/scope-agent-context/src/types.ts:265`](../packa
 
 Types: [ScopeAgentRequestEvidence](subsystems/development-room.md)
 
-Source: [`packages/collaboration/scope-agent-context/src/types.ts:271`](../packages/collaboration/scope-agent-context/src/types.ts)
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:281`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextroute--log-only"></a>
 
@@ -741,7 +741,7 @@ Source: [`packages/collaboration/scope-agent-context/src/types.ts:271`](../packa
 
 Types: [ScopeAgentRouteEvent](subsystems/development-room.md)
 
-Source: [`packages/collaboration/scope-agent-context/src/types.ts:267`](../packages/collaboration/scope-agent-context/src/types.ts)
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:277`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextstate--log-only"></a>
 
@@ -754,7 +754,7 @@ Source: [`packages/collaboration/scope-agent-context/src/types.ts:267`](../packa
 
 Types: [ScopeAgentBindingStatus](subsystems/development-room.md)
 
-Source: [`packages/collaboration/scope-agent-context/src/types.ts:263`](../packages/collaboration/scope-agent-context/src/types.ts)
+Source: [`packages/collaboration/scope-agent-context/src/types.ts:273`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 ### `session/*`
 

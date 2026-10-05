@@ -5,7 +5,7 @@ import type {
   ScopeContributionEntry, ScopeContributionInvitation, ScopeContributionLimits, ScopeContributionProposal, ScopeInvitation,
 } from '@deepseek-ai/dsh-scope-access/types'
 import type {} from '@deepseek-ai/dsh-typert-protocol'
-import type { ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
+import type { ScopeAgentAutomaticPolicy, ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
 
 /** One source capture identity, never reused after termination. */
 export type ScopeAgentContributionSelection = Pick<ScopeContributionProposal, 'captureId' | 'captureGeneration'>
@@ -18,8 +18,12 @@ export interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
-  /** Explicit passive receiving consent for a joint entry, against the originally observed unbound read state. */
-  readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor }
+  /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
+  readonly receive?: {
+    readonly expectedReadStateSeq: SessionSeqCursor
+    /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
+    readonly automatic?: ScopeAgentAutomaticPolicy
+  }
 }
 
 /** Update only the original capture's owner address, including retained termination for a cold Session. */
@@ -71,7 +75,7 @@ export interface ScopeAgentLocalContributionStatus {
   readonly capture: ScopeAgentLocalContributionCapture | null
 }
 
-/** Stop the selected sharing and cancel pending read adoption; preserve already adopted reading. */
+/** Stop sharing and pending read/automatic adoption; preserve already adopted reading and its execution policy. */
 export interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection
@@ -79,6 +83,8 @@ export interface ScopeAgentContributionStopRequest {
 
 /** Local adoption of a joint entry's separate read permission; active describes a retained local binding. */
 export interface ScopeAgentContributionReceiving {
+  /** Original local consent; current mode and consumed budget belong to scopeAgentContext status. */
+  readonly automatic?: ScopeAgentAutomaticPolicy
   readonly adoptionId: ScopeAgentJoinReadId
   readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
   readonly invitation: ScopeInvitation | null

@@ -301,3 +301,21 @@ describe('joint departure with real Loader and exclusive JSONL persistence', () 
     expect(left).toEqual([])
   })
 })
+
+it('retains v2 permission in cold cancellation without constructing or running an Agent', async () => {
+  const { ctx, persist, read, left, subscriptions } = await fixture()
+  const original = prepared()
+  const automatic = { goal: 'Review updates', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 }
+  const plan = { ...original.plan, version: 2 as const, plan: { ...original.plan.plan, automatic } }
+  adopted(original.session, plan)
+  subscriptions.set(plan.plan.subscription.id, plan.plan.subscription)
+  await persist(original.session)
+  const request = { agentId: original.session.id, adoptionId: plan.adoptionId, leaveAdopted: false }
+  expect(await ctx.scopeAgentContext.cancelJoinRead(request)).toEqual({ status: 'adopted' })
+  expect(await ctx.scopeAgentContext.cancelJoinRead({ ...request, leaveAdopted: true })).toEqual({ status: 'ended' })
+  expect(ctx.agents.get(original.session.id)).toBeUndefined()
+  expect(left).toEqual([plan.plan.subscription.id])
+  const history = joinReadHistory((await read(original.session.id)).session)
+  expect(history.bindingId).toBeNull()
+  expect(history.records.get(plan.adoptionId)).toMatchObject({ version: 2, phase: 'ended', plan: { automatic } })
+})

@@ -14,6 +14,7 @@ import { ContributionGrantSummary, contributionErrorKey } from './contribution-u
 import type { EmergenceCenterKey } from './locales.ts'
 import { NativeContributionRoute } from './NativeContributionRoute.tsx'
 import { NativeContributionPermission } from './NativeContributionPermission.tsx'
+import { automaticPolicy, NativeAutomaticPermission, type NativeAutomaticDraft } from './NativeAutomaticPermission.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Local management callbacks supplied by the apply-owned directory. */
@@ -51,7 +52,15 @@ function JoinReceiving({ receiving, intent, ready, leave, t }: PropsLocale<'emer
   return <div data-native-join-status>
     <p role="status" className={css.state}>{t(confirming ? 'native.join.confirming' : `native.join.state.${receiving.state}`)}</p>
     {confirming && receiving.state === 'failed' && <p className={css.notice}>{t('native.join.retryHint')}</p>}
-    <p className={css.hint}>{t('native.join.passiveHint')}</p>
+    {receiving.automatic === undefined ? <p className={css.hint}>{t('native.join.passiveHint')}</p> : <>
+      <p className={css.hint}>{t('native.join.automaticCaptured', {
+        goal: receiving.automatic.goal, limit: receiving.automatic.activationLimit,
+      })}</p>
+      <dl className={css.details}>
+        <dt>{t('native.steps')}</dt><dd>{receiving.automatic.maxStepsPerTurn}</dd>
+        <dt>{t('native.interval')}</dt><dd>{receiving.automatic.minIntervalMs / 1000}</dd>
+      </dl>
+    </>}
     {receiving.invitation !== null && <p className={css.hint}>{t('native.join.responsibility', { value: receiving.invitation.responsibility })}</p>}
     <Button disabled={!ready} onClick={leave}>{t('native.join.leave')}</Button>
     <p className={css.hint}>{t('native.join.leaveHint')}</p>
@@ -68,7 +77,7 @@ function stopHint(state: ScopeAgentContributionReceiving['state']): EmergenceCen
 }
 
 /**
- * Confirm file permission and, for a joint entry, passive receiving for the current unbound Session.
+ * Confirm file permission and joint receiving, with optional finite automatic work for the current unbound Session.
  * @param props - current Session, authoritative management observation, and actions.
  * @returns source permission form and recoverable pending state.
  */
@@ -99,7 +108,13 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const [samples, setSamples] = useState('')
   const [bytes, setBytes] = useState('')
   const [consent, setConsent] = useState(false)
-  const [readConsent, setReadConsent] = useState<{ text: string; seq: SessionSeqCursor } | null>(null)
+  const [readConsent, setReadConsent] = useState<{ entry: ScopeContributionEntry; seq: SessionSeqCursor } | null>(null)
+  const [automaticDraft, setAutomaticDraft] = useState<NativeAutomaticDraft>({ goal: '', extra: '', steps: '', interval: '' })
+  const [automaticConsent, setAutomaticConsent] = useState<{
+    entry: ScopeContributionEntry
+    seq: SessionSeqCursor
+    used: number
+  } | null>(null)
   useEffect(() => {
     readNativeContribution(agentId)
     return () => { previewRevision.current++ }
@@ -112,7 +127,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   useEffect(() => {
     if (!occupied) return
     previewRevision.current++
-    setPreview(undefined); setProbe(undefined); setPreviewing(false); setReadConsent(null); setConsent(false)
+    setPreview(undefined); setProbe(undefined); setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
   }, [occupied])
   const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
@@ -120,21 +135,31 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const joint = preview?.kind === 'scope-join-entry'
   const observation = scope.observation
   const readState = observation?.eligibility === 'eligible' ? observation : null
-  const canReceive = scope.phase === 'ready' && !scope.pending && readState !== null
+  const canReceive = scope.phase === 'ready' && !scope.pending && readState !== null && readState.agentId === agentId
     && readState.localTask === null && readState.state.binding === null && readState.subscriptionState === 'unbound'
-  const readConfirmed = readConsent !== null && readConsent.text === text && canReceive
+  const readConfirmed = readConsent !== null && readConsent.entry === preview && canReceive
     && readConsent.seq === readState.readStateSeq
+  const used = readState?.state.usedBudget ?? 0
+  const automaticConfirmed = automaticConsent !== null && readConfirmed && automaticConsent.entry === preview
+    && automaticConsent.seq === readState.readStateSeq && automaticConsent.used === used
+  const policy = automaticPolicy(automaticDraft, used)
+  useEffect(() => {
+    if (automaticConsent === null || (automaticConsent.entry === preview
+      && automaticConsent.seq === readState?.readStateSeq && automaticConsent.used === used)) return
+    setAutomaticConsent(null); setReadConsent(null)
+  }, [automaticConsent, preview, readState?.readStateSeq, used])
   const selectedRoots = [...new Set(roots.split('\n').map(value => value.trim()).filter(Boolean))]
   const tools: ('write' | 'edit')[] = [...(write ? ['write' as const] : []), ...(edit ? ['edit' as const] : [])]
   const expiresAt = Date.now() + Number(hours) * 3_600_000
   const limitsValid = [hours, samples, bytes].every(value => value.trim() !== '' && Number.isSafeInteger(Number(value)) && Number(value) > 0)
     && Number.isSafeInteger(expiresAt)
   const canRequest = eligible && capture === null && continuation === undefined && consent && preview !== undefined && tools.length > 0
-    && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || readConfirmed)
+    && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || (readConfirmed
+      && (automaticConsent === null || (automaticConfirmed && policy !== undefined))))
   const verify = async (): Promise<void> => {
     const revision = ++previewRevision.current
     setPreviewing(true); setInvalid(false); setPreview(undefined); setProbe(undefined)
-    setReadConsent(null); setConsent(false)
+    setReadConsent(null); setConsent(false); setAutomaticConsent(null)
     let result: ScopeContributionTransfer
     try { result = await previewNativeContribution(text) }
     catch {
@@ -178,12 +203,13 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
         if (!canRequest) return
         void perform(() => requestNativeContribution({ agentId, expectedCapture: null, entry: preview, roots: selectedRoots, tools,
           limits: { expiresAt, maxSamples: Number(samples), maxSampleBytes: Number(bytes) },
-          ...(joint && readConsent !== null ? { receive: { expectedReadStateSeq: readConsent.seq } } : {}) }))
+          ...(joint && readConsent !== null ? { receive: { expectedReadStateSeq: readConsent.seq,
+            ...(automaticConfirmed && policy !== undefined ? { automatic: policy } : {}) } } : {}) }))
       }}>
         <label className={css.field} htmlFor={`${id}-entry`}>{t('contribution.application.paste')}
           <textarea id={`${id}-entry`} rows={3} value={text} disabled={!eligible} onChange={(event) => {
             previewRevision.current++; setText(event.target.value); setPreview(undefined); setInvalid(false); setProbe(undefined)
-            setPreviewing(false); setReadConsent(null); setConsent(false)
+            setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
           }} /></label>
         <Button disabled={!eligible || previewing || !text.trim()} onClick={() => { void verify() }}>{t('native.share.verify')}</Button>
         {previewing && <p role="status" className={css.hint}>{t('native.share.verifying')}</p>}
@@ -199,7 +225,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             {!canReceive && <p role="status" className={css.notice}>{t('native.join.unboundRequired')}</p>}
             <label className={css.consent}><input type="checkbox" checked={readConfirmed} disabled={!eligible || !canReceive}
               onChange={(event) => {
-                setReadConsent(event.target.checked && readState !== null ? { text, seq: readState.readStateSeq } : null)
+                setReadConsent(event.target.checked && readState !== null ? { entry: preview, seq: readState.readStateSeq } : null)
+                if (!event.target.checked) setAutomaticConsent(null)
               }} />
             {t('native.join.readConsent')}</label>
           </>}
@@ -208,6 +235,18 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
               setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
             }} />
+          {joint && <div data-native-join-automatic className={css.form}>
+            <label className={css.consent}><input type="checkbox" checked={automaticConfirmed} disabled={!eligible || !readConfirmed}
+              onChange={(event) => {
+                setAutomaticConsent(event.target.checked && readState !== null
+                  ? { entry: preview, seq: readState.readStateSeq, used } : null)
+              }} />{t('native.join.automaticConsent')}</label>
+            {automaticConsent !== null && <>
+              <NativeAutomaticPermission id={`${id}-join`} draft={automaticDraft} used={used}
+                disabled={!eligible || !readConfirmed} change={setAutomaticDraft} t={t} />
+              <p className={css.hint}>{t('native.automaticHint')}</p>
+            </>}
+          </div>}
           <Button type="submit" variant="primary" disabled={!canRequest}>{t(joint ? 'native.join.request' : 'native.share.request')}</Button>
         </>}
       </form>}

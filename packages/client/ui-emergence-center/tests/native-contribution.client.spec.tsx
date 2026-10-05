@@ -183,6 +183,8 @@ describe('native joint joining', () => {
     vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(joinEntry)
     await consentFields()
     expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(screen.queryByLabelText(zh['native.goal'])).toBeNull()
     fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
     expect(joinSubmit().disabled).toBe(true)
     fireEvent.click(readConsent())
@@ -192,6 +194,15 @@ describe('native joint joining', () => {
     const sent = vi.mocked(f.actions.requestNativeContribution).mock.calls.at(0)?.[0]
     expect(sent).toEqual({ agentId, expectedCapture: null, entry: joinEntry, roots: ['/project', '/project/docs'], tools: ['write'],
       limits: { expiresAt: sent?.limits.expiresAt, maxSamples: 8, maxSampleBytes: 4096 }, receive: { expectedReadStateSeq: 1 } })
+    const approvedInvitation = { ...invitation, responsibility: 'Maintain owner-side database migrations.' }
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false,
+      value: { ...capturedStatus, capture: { ...capture, entry: joinEntry, state: 'active', collecting: true,
+        receiving: { ...jointReceiving, state: 'active', invitation: approvedInvitation }, receivingIntent: 'adopt' } } }} />)
+    expect(screen.getByText(t('native.join.responsibility', { value: approvedInvitation.responsibility }))).toBeTruthy()
+    expect(screen.getByText(zh['native.join.passiveHint'])).toBeTruthy()
+    expect(screen.queryByLabelText(zh['native.goal'])).toBeNull()
+    expect(sent?.receive).toEqual({ expectedReadStateSeq: 1 })
+    expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce()
     expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
   })
 
@@ -253,6 +264,196 @@ describe('native joint joining', () => {
   )
 })
 
+const automaticConsent = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.join.automaticConsent'] })
+const automaticPermission = { goal: 'Keep the shared interface current.', activationLimit: 5, maxStepsPerTurn: 4, minIntervalMs: 1500 }
+function automaticFields(): void {
+  change(zh['native.goal'], ` ${automaticPermission.goal} `)
+  change(zh['native.extra'], '2')
+  change(zh['native.steps'], '4')
+  change(zh['native.interval'], '1.5')
+}
+async function automaticJoinForm(usedBudget = 3) {
+  const f = fixture()
+  const scope = { ...f.props.scope, observation: observation({ ...state, agentId, usedBudget }) }
+  f.rerender(<NativeContributionPanel {...f.props} scope={scope} />)
+  vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(joinEntry)
+  await consentFields()
+  fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
+  fireEvent.click(readConsent())
+  return { ...f, scope }
+}
+
+describe('optional automatic permission with joint joining', () => {
+  it('sends one application with the confirmed lifetime limit and never follows approval with another request', async () => {
+    const f = await automaticJoinForm()
+    expect(automaticConsent().checked).toBe(false)
+    expect(screen.queryByLabelText(zh['native.goal'])).toBeNull()
+    fireEvent.click(automaticConsent())
+    expect(joinSubmit().disabled).toBe(true)
+    automaticFields()
+    expect(joinSubmit().disabled).toBe(false)
+    fireEvent.click(joinSubmit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    const sent = vi.mocked(f.actions.requestNativeContribution).mock.calls.at(0)?.[0]
+    expect(sent?.receive).toEqual({ expectedReadStateSeq: 1, automatic: automaticPermission })
+    expect(sent?.entry).toEqual(joinEntry)
+    const value = { ...capturedStatus, capture: { ...capture, entry: joinEntry,
+      receiving: { ...jointReceiving, automatic: automaticPermission } } }
+    f.rerender(<NativeContributionPanel {...f.props} scope={f.scope}
+      entry={{ status: 'ready', pending: false, value }} />)
+    expect(screen.getByText(t('native.join.automaticCaptured', {
+      goal: automaticPermission.goal, limit: automaticPermission.activationLimit,
+    }))).toBeTruthy()
+    const approvedInvitation = { ...invitation, responsibility: 'Maintain owner-side database migrations.' }
+    expect(approvedInvitation.responsibility).not.toBe(automaticPermission.goal)
+    f.rerender(<NativeContributionPanel {...f.props} scope={f.scope}
+      entry={{ status: 'ready', pending: false, value: { ...value, capture: { ...value.capture,
+        state: 'active', collecting: true,
+        receiving: { ...value.capture.receiving, state: 'active', invitation: approvedInvitation } } } }} />)
+    expect(screen.getByText(zh['native.join.state.active'])).toBeTruthy()
+    expect(screen.getByText(t('native.join.responsibility', { value: approvedInvitation.responsibility }))).toBeTruthy()
+    expect(screen.getByText(t('native.join.automaticCaptured', {
+      goal: automaticPermission.goal, limit: automaticPermission.activationLimit,
+    }))).toBeTruthy()
+    expect(sent?.receive).toEqual({ expectedReadStateSeq: 1, automatic: automaticPermission })
+    expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce()
+    expect(f.actions.stopNativeContribution).not.toHaveBeenCalled()
+    expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
+  })
+
+  it('removes the optional policy from the application when the user turns it off', async () => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields(); fireEvent.click(automaticConsent())
+    expect(screen.queryByLabelText(zh['native.goal'])).toBeNull()
+    expect(joinSubmit().disabled).toBe(false)
+    fireEvent.click(joinSubmit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls.at(0)?.[0].receive).toEqual({ expectedReadStateSeq: 1 })
+  })
+
+  it.each([
+    ['native.goal', ''], ['native.extra', '0'], ['native.extra', '1.5'],
+    ['native.extra', String(Number.MAX_SAFE_INTEGER)], ['native.steps', '0'], ['native.interval', '-1'],
+  ] as const)('does not submit automatic permission with %s=%s', async (key, value) => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields()
+    change(zh[key], value)
+    expect(joinSubmit().disabled).toBe(true)
+    fireEvent.click(joinSubmit())
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('requires fresh consent after read-state ABA and includes only the newly confirmed lifetime allowance', async () => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields()
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.scope,
+      observation: observation({ ...bound, agentId, usedBudget: 3 }, 2) }} />)
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(joinSubmit().disabled).toBe(true)
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.scope,
+      observation: observation({ ...state, agentId, usedBudget: 4 }, 3) }} />)
+    fireEvent.click(joinSubmit())
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    fireEvent.click(readConsent())
+    expect(automaticConsent().checked).toBe(false)
+    fireEvent.click(automaticConsent())
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.goal']).value.trim()).toBe(automaticPermission.goal)
+    fireEvent.click(joinSubmit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls.at(0)?.[0].receive).toEqual({
+      expectedReadStateSeq: 3, automatic: { ...automaticPermission, activationLimit: 6 },
+    })
+  })
+
+  it('invalidates automatic consent if confirmed lifetime usage changes without a new displayed read cursor', async () => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields()
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.scope,
+      observation: observation({ ...state, agentId, usedBudget: 4 }) }} />)
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(joinSubmit().disabled).toBe(true)
+    fireEvent.click(joinSubmit())
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('discards automatic consent for a rechecked entry and for another Session', async () => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields()
+    change(zh['contribution.application.paste'], 'replacement entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(applicationEntry.ownerPeerId)
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(screen.queryByLabelText(zh['native.goal'])).toBeNull()
+    fireEvent.click(readConsent()); fireEvent.click(automaticConsent())
+    const otherAgent = 'another-native-session' as typeof agentId
+    f.rerender(<NativeContributionPanel {...f.props} agentId={otherAgent}
+      scope={{ ...f.scope, observation: observation({ ...state, agentId: otherAgent, usedBudget: 7 }) }}
+      entry={{ status: 'ready', pending: false, value: { ...emptyStatus, agentId: otherAgent } }} />)
+    fireEvent.click(screen.getByText(zh['native.share.title']))
+    await consentFields()
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    fireEvent.click(readConsent()); fireEvent.click(automaticConsent())
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.goal']).value).toBe('')
+    expect(joinSubmit().disabled).toBe(true)
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('blocks uncertain reading status and single-flights the complete policy before pending status arrives', async () => {
+    const f = await automaticJoinForm()
+    fireEvent.click(automaticConsent()); automaticFields()
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.scope, phase: 'loading' }} />)
+    expect(joinSubmit().disabled).toBe(true)
+    fireEvent.click(joinSubmit())
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    f.rerender(<NativeContributionPanel {...f.props} scope={f.scope} />)
+    const pending = Promise.withResolvers<undefined>()
+    vi.mocked(f.actions.requestNativeContribution).mockReturnValueOnce(pending.promise)
+    fireEvent.click(joinSubmit()); fireEvent.click(joinSubmit())
+    expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce()
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls.at(0)?.[0].receive).toEqual({
+      expectedReadStateSeq: 1, automatic: automaticPermission,
+    })
+    await act(async () => { pending.resolve(undefined); await pending.promise })
+  })
+
+  it.each(['waiting', 'active'] as const)('shows original %s permission without treating it as the current execution state', async (receivingState) => {
+    const f = fixture({ ...capturedStatus, capture: { ...capture, entry: joinEntry,
+      receiving: { ...jointReceiving, state: receivingState, automatic: automaticPermission, invitation }, receivingIntent: 'adopt' } })
+    f.rerender(<NativeContributionPanel {...f.props} scope={{ ...f.props.scope, observation: observation({ ...bound,
+      agentId, mode: 'paused', pauseReason: 'user', usedBudget: 4, automatic: { ...automaticPermission, goal: 'A later goal.' } }) }} />)
+    expect(screen.getByText(t('native.join.automaticCaptured', {
+      goal: automaticPermission.goal, limit: automaticPermission.activationLimit,
+    }))).toBeTruthy()
+    expect(screen.queryByText(zh['native.join.passiveHint'])).toBeNull()
+    expect(screen.queryByText(zh['native.mode.enabled'])).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh[receivingState === 'waiting' ? 'native.join.cancelPending' : 'native.share.stop'] }))
+    await waitFor(() => {
+      expect(f.actions.stopNativeContribution).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })
+    })
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
+  })
+
+  it('keeps the originally captured policy visible during read-only cleanup after sharing ends', async () => {
+    const f = fixture({ ...emptyStatus, receivingContinuation: { routeRevision: 0, selection: capture.selection,
+      entry: joinEntry, intent: 'leave', receiving: { ...jointReceiving, state: 'failed', automatic: automaticPermission } } })
+    expect(screen.getByText(zh['native.join.continuation'])).toBeTruthy()
+    expect(screen.getByText(zh['native.join.confirming'])).toBeTruthy()
+    expect(screen.getByText(t('native.join.automaticCaptured', {
+      goal: automaticPermission.goal, limit: automaticPermission.activationLimit,
+    }))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: zh['native.join.request'] })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.join.leave'] }))
+    await waitFor(() => {
+      expect(f.actions.leaveNativeJoin).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })
+    })
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+})
 
 describe('joint termination and receiving continuation', () => {
   it('describes pending cancellation separately from stopping already connected reading', () => {

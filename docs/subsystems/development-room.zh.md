@@ -1030,8 +1030,12 @@ interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
-  /** Explicit passive receiving consent for a joint entry, against the originally observed unbound read state. */
-  readonly receive?: { readonly expectedReadStateSeq: SessionSeqCursor }
+  /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
+  readonly receive?: {
+    readonly expectedReadStateSeq: SessionSeqCursor
+    /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
+    readonly automatic?: ScopeAgentAutomaticPolicy
+  }
 }
 ```
 
@@ -1051,7 +1055,7 @@ interface ScopeAgentContributionRecoverRouteRequest {
 ```
 
 ```ts type-equiv
-/** Stop the selected sharing and cancel pending read adoption; preserve already adopted reading. */
+/** Stop sharing and pending read/automatic adoption; preserve already adopted reading and its execution policy. */
 interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection
@@ -1097,6 +1101,8 @@ interface ScopeAgentContributionStatus {
 ```ts type-equiv
 /** Local adoption of a joint entry's separate read permission; active describes a retained local binding. */
 interface ScopeAgentContributionReceiving {
+  /** Original local consent; current mode and consumed budget belong to scopeAgentContext status. */
+  readonly automatic?: ScopeAgentAutomaticPolicy
   readonly adoptionId: ScopeAgentJoinReadId
   readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
   readonly invitation: ScopeInvitation | null
@@ -1159,6 +1165,8 @@ interface ScopeAgentJoinReadRequest {
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Explicit permission from this Session's user; absence preserves passive adoption. */
+  readonly automatic?: ScopeAgentAutomaticPolicy
 }
 ```
 
@@ -1227,16 +1235,28 @@ interface ScopeAgentJoinReadPlan {
 ```
 
 ```ts type-equiv
-/** Non-ignorable local read adoption history; an adopted event atomically installs its passive binding. */
+/** Original joint plan with an explicit finite execution permission from the receiving Session's user. */
+interface ScopeAgentAutomaticJoinReadPlan extends ScopeAgentJoinReadPlan {
+  readonly automatic: ScopeAgentAutomaticPolicy
+}
+```
+
+```ts type-equiv
+type JoinReadTransition<Plan> =
+  | { readonly phase: 'planned'; readonly plan: Plan }
+  | { readonly phase: 'adopted'; readonly plan: Plan }
+  | { readonly phase: 'ended'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
+  | { readonly phase: 'superseded'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
+```
+
+```ts type-equiv
+/** Non-ignorable adoption history; version 1 is passive, version 2 atomically installs explicit automatic permission. */
 type ScopeAgentJoinReadEvent = {
-  readonly version: 1
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
 } & (
-  | { readonly phase: 'planned'; readonly plan: ScopeAgentJoinReadPlan }
-  | { readonly phase: 'adopted'; readonly plan: ScopeAgentJoinReadPlan }
-  | { readonly phase: 'ended'; readonly plan: ScopeAgentJoinReadPlan | null; readonly leaveAdopted: boolean }
-  | { readonly phase: 'superseded'; readonly plan: ScopeAgentJoinReadPlan | null; readonly leaveAdopted: boolean }
+  | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
+  | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
 )
 ```
 
@@ -3403,8 +3423,8 @@ Explicit management is local authenticated RPC; remote content never starts work
 
 ```ts cordis-catalog
 /**
- * Adopt a source-owned joint read plan once, with passive permission and no implicit automatic budget.
- * @param request - live Session, original operation, exact read-state cursor, and pinned owner invitation.
+ * Adopt a source-owned joint read plan once, using only the receiving Session's explicit automatic permission.
+ * @param request - live Session, original operation, exact read-state cursor, invitation, and optional local execution policy.
  * @returns the original adopted, ended, or superseded outcome after Session durability.
  */
 adoptJoinRead(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadResult>

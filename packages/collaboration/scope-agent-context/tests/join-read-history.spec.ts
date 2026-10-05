@@ -11,12 +11,12 @@ const invitation = invitationSchema.parse({ version: 1, ownerPeerId: 'owner', re
   ownerAddress: '/ip4/127.0.0.1/tcp/1/p2p/owner', taskId: 'task-one', grantId: randomUUID(), generation: randomUUID(),
   expiresAt: 4_000_000_000_000, responsibility: 'Review reported changes' })
 
-function planned(session: Session): Extract<ScopeAgentJoinReadEvent, { phase: 'planned' | 'adopted' }> {
+function planned(session: Session): Extract<ScopeAgentJoinReadEvent, { version: 1; phase: 'planned' | 'adopted' }> {
   const value = joinReadEventSchema.parse({ version: 1, agentId: session.id, adoptionId: randomUUID(), phase: 'planned',
     plan: { expectedReadStateSeq: -1, bindingId: randomUUID(), subscription: {
       id: randomUUID(), generation: randomUUID(), invitation, state: 'active',
     } } })
-  if (value.phase !== 'planned') throw new Error('fixture plan must be pending')
+  if (value.version !== 1 || value.phase !== 'planned') throw new Error('fixture plan must be pending and passive')
   return value
 }
 function create() { return Session.create(SessionId(randomUUID())) }
@@ -116,5 +116,60 @@ describe('durable joint read adoption history', () => {
     session.append('scope-agent-context/state', initialState(session.id))
     expect(joinReadHistory(session).records.size).toBe(0)
     expect(replay(session)).toEqual(initialState(session.id))
+  })
+})
+
+const automatic = { goal: 'Review authorized updates', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 }
+
+function automaticPlan(session: Session) {
+  const original = planned(session)
+  return { ...original, version: 2 as const, plan: { ...original.plan, automatic } }
+}
+
+describe('explicit automatic joint adoption records', () => {
+  it('keeps passive v1 strict and requires an explicit policy in v2', () => {
+    const plan = planned(create())
+    expect(joinReadEventSchema.safeParse({ ...plan, plan: { ...plan.plan, automatic } }).success).toBe(false)
+    expect(joinReadEventSchema.safeParse({ ...plan, version: 2 }).success).toBe(false)
+    expect(joinReadEventSchema.parse(automaticPlan(create())).version).toBe(2)
+  })
+
+  it('adopts binding and policy atomically while retaining lifetime budget', () => {
+    const session = create()
+    const state = session.append('scope-agent-context/state', { ...initialState(session.id), usedBudget: 1 })
+    const value = automaticPlan(session)
+    const plan = { ...value, plan: { ...value.plan, expectedReadStateSeq: state.seq } }
+    session.append('scope-agent-context/join-read', plan)
+    expect(replay(session)).toMatchObject({ binding: null, automatic: null, usedBudget: 1 })
+    session.append('scope-agent-context/join-read', { ...plan, phase: 'adopted' })
+    expect(joinReadHistory(session).bindingId).toBe(plan.plan.bindingId)
+    expect(replay(session)).toMatchObject({ mode: 'enabled', automatic, usedBudget: 1,
+      binding: { id: plan.plan.bindingId }, pendingActivation: null })
+  })
+
+  it('rejects changing accepted automatic permission at adoption', () => {
+    const session = create()
+    const plan = automaticPlan(session)
+    session.append('scope-agent-context/join-read', plan)
+    session.append('scope-agent-context/join-read', { ...plan, phase: 'adopted',
+      plan: { ...plan.plan, automatic: { ...automatic, activationLimit: 3 } } })
+    expect(() => joinReadHistory(session)).toThrow('pending plan')
+  })
+
+  it('rejects switching a pending passive record to automatic', () => {
+    const session = create()
+    const plan = planned(session)
+    session.append('scope-agent-context/join-read', plan)
+    session.append('scope-agent-context/join-read', { ...plan, version: 2, phase: 'adopted',
+      plan: { ...plan.plan, automatic } })
+    expect(() => joinReadHistory(session)).toThrow('original event version')
+  })
+
+  it('rejects an automatic plan that grants no remaining lifetime activation', () => {
+    const session = create()
+    const state = session.append('scope-agent-context/state', { ...initialState(session.id), usedBudget: 2 })
+    const value = automaticPlan(session)
+    session.append('scope-agent-context/join-read', { ...value, plan: { ...value.plan, expectedReadStateSeq: state.seq } })
+    expect(() => joinReadHistory(session)).toThrow('remaining lifetime budget')
   })
 })

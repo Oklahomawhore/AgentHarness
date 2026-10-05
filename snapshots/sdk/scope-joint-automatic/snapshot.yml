@@ -1,0 +1,13 @@
+version: 1
+scenario: scope-joint-automatic
+profile: sdk
+composition: sdk-scope-joint-automatic
+recording: authored
+header:
+  class: scope-joint-automatic
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+workspace:
+  final: true

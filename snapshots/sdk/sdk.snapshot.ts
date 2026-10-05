@@ -126,6 +126,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-joint-automatic': {
+    expectedFinalResponse: 'Original automatic permission remained paused until this read connection was left.',
+  },
   'scope-owner-idle': {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],

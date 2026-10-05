@@ -27,7 +27,11 @@ const B_CODE = 'export const REMOTE_NATIVE_retryCount = 3;\n'
 const B_CODE_UPDATED = 'export const REMOTE_NATIVE_retryCount = 5;\n'
 const B_CODE_PAUSED = 'export const REMOTE_NATIVE_retryCount = 7;\n'
 const LOCAL_CONSENT = '我允许将上述目录中所选文件操作的内容分享到这个目标，直到到期或我停止分享。'
-const READ_CONSENT = '我允许此会话在工作时接收整个目标的共享上下文；不允许因此自动开始新工作。'
+const READ_CONSENT = '我允许此会话在工作时接收整个目标的共享上下文；本项本身不允许自动开始新工作。'
+const AUTOMATIC_CONSENT = '我允许本会话在我的职责内，按以下目标和额度自动响应共享变化；所有者批准加入后生效'
+const REMOTE_GOAL = '在我负责的客户端范围核对共享接口，不改文件。'
+const OWNER_RESPONSIBILITY = '协调双方的重试实现。'
+const REMOTE_POLICY = { goal: REMOTE_GOAL, activationLimit: 3, maxStepsPerTurn: 2, minIntervalMs: 0 }
 const REMOTE_CONSENT = '我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。'
 const DESKTOP = { width: 1440, height: 1000 }
 const MOBILE = { width: 390, height: 844 }
@@ -76,7 +80,7 @@ async function permission(form: Locator, root: string, consent: string): Promise
   await form.getByRole('checkbox', { name: consent, exact: true }).check()
 }
 async function captureStage(page: Page, workspace: string, stage: string,
-  replacements: readonly (readonly [string, string])[] = [], surface = LOCAL): Promise<void> {
+  replacements: readonly (readonly [string, string])[] = [], surface = LOCAL, snapshots = SNAPSHOTS): Promise<void> {
   const shots = process.env.DSH_CONTRIBUTION_SCOPE_SHOTS
   if (shots !== undefined) await mkdir(shots, { recursive: true })
   for (const viewport of [DESKTOP, MOBILE]) {
@@ -87,11 +91,11 @@ async function captureStage(page: Page, workspace: string, stage: string,
     }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await page.locator(PANEL).evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-    if (shots !== undefined) await page.screenshot({ path: join(shots, `${stage}-${String(viewport.width)}.png`), fullPage: true })
+    if (shots !== undefined) await page.screenshot({ path: join(shots, `${snapshots === SNAPSHOTS ? '' : 'join-automatic-'}${stage}-${String(viewport.width)}.png`), fullPage: true })
   }
   await page.setViewportSize(DESKTOP)
   const aria = await captureStableAria(page, surface, workspace, { replacements: [...replacements] })
-  await compareOrRefreshGolden(join(SNAPSHOTS, `${stage}.expected.md`), aria, MODE)
+  await compareOrRefreshGolden(join(snapshots, `${stage}.expected.md`), aria, MODE)
 }
 function assertReconstructed(host: WebScaffold, id: SessionId, request: readonly Message[],
   kind: 'development-task-context' | 'scope-agent-context'): void {
@@ -101,7 +105,13 @@ function assertReconstructed(host: WebScaffold, id: SessionId, request: readonly
   expect(context(detached.deriveMessages(), kind)).toEqual(context(request, kind))
 }
 
-describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote native collaboration', () => {
+describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owner-local and remote native collaboration (join automatic: %s)', (automaticJoin) => {
+  const snapshots = automaticJoin ? join(import.meta.dirname, 'snapshots/native-joint-automatic') : SNAPSHOTS
+  async function capture(page: Page, workspace: string, stage: string,
+    replacements: readonly (readonly [string, string])[] = [], surface = LOCAL): Promise<void> {
+    if (automaticJoin && surface === LOCAL) return
+    await captureStage(page, workspace, stage, replacements, surface, snapshots)
+  }
   let owner: WebScaffold | undefined
   let remote: WebScaffold | undefined
   let browser: Browser | undefined
@@ -119,9 +129,11 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     const ownerReplay: ReplayOverrideDoc = [response('OWNER_READY'), writeResponse('owner', A_CODE), response('OWNER_WORK_DONE'),
       response('OWNER_ADOPTED_REMOTE'), response('OWNER_AUTO_INITIAL'), response('OWNER_AUTO_UPDATED'),
       response('OWNER_PAUSED_READ'), response('OWNER_AUTO_RESUMED'), response('OWNER_REMOTE_WITHDRAWN'), response('OWNER_WITHDRAWN')].map(chunks => ({ kind: 'chunks', chunks }))
-    const remoteReplay: ReplayOverrideDoc = [response('REMOTE_READY'), writeResponse('remote', B_CODE), response('REMOTE_WORK_DONE'),
+    const remoteReplay: ReplayOverrideDoc = [response('REMOTE_READY'),
+      ...(automaticJoin ? [response('REMOTE_JOIN_AUTO')] : []), writeResponse('remote', B_CODE), response('REMOTE_WORK_DONE'),
       writeResponse('remote', B_CODE_UPDATED, 2), response('REMOTE_SECOND_DONE'),
-      writeResponse('remote', B_CODE_PAUSED, 3), response('REMOTE_THIRD_DONE'), response('REMOTE_STOPPED_READ'), response('REMOTE_READ_LEFT')].map(chunks => ({ kind: 'chunks', chunks }))
+      writeResponse('remote', B_CODE_PAUSED, 3), response('REMOTE_THIRD_DONE'),
+      ...(automaticJoin ? [response('REMOTE_RESUMED_AFTER_STOP')] : []), response('REMOTE_STOPPED_READ'), response('REMOTE_READ_LEFT')].map(chunks => ({ kind: 'chunks', chunks }))
     await writeFile(ownerOverride, JSON.stringify(ownerReplay))
     await writeFile(remoteOverride, JSON.stringify(remoteReplay))
     owner = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
@@ -140,7 +152,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
       await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
       await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
     }
-    if (MODE === 'refresh') await mkdir(SNAPSHOTS, { recursive: true })
+    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
   }, 120_000)
   afterAll(async () => {
     const failures: unknown[] = []
@@ -162,6 +174,8 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     if (ownerAddress === undefined) throw new Error('Owner has no direct address')
     const aId = await prompt(a, ownerPage, 'OWNER_READY')
     const bId = await prompt(b, remotePage, 'REMOTE_READY')
+    const originalRemote = b.ctx.agents.get(bId)
+    if (originalRemote === undefined) throw new Error('Original remote Agent is absent')
     await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
     const center = ownerPage.locator('[data-emergence-center]')
     await center.getByLabel('协作显示名').fill('目标发起者')
@@ -181,13 +195,13 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     await aPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
     const local = ownerPage.locator(LOCAL)
     await local.getByRole('combobox', { name: '本机目标', exact: true }).selectOption({ label: OBJECTIVE })
-    await captureStage(ownerPage, a.workspaceCwd, 'unconnected')
+    await capture(ownerPage, a.workspaceCwd, 'unconnected')
     await local.getByRole('button', { name: '连接当前会话', exact: true }).click()
     await local.getByText(`已连接：${OBJECTIVE}`, { exact: true }).waitFor()
     expect((await a.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture).toBeNull()
     expect(ownerRequests).toHaveLength(1)
     expect(await local.getByRole('checkbox', { name: '允许此会话为当前目标开始有限自动工作', exact: true }).isChecked()).toBe(false)
-    await captureStage(ownerPage, a.workspaceCwd, 'connected')
+    await capture(ownerPage, a.workspaceCwd, 'connected')
     const aRoot = join(a.workspaceCwd, 'owner-native/project')
     await permission(local, aRoot, LOCAL_CONSENT)
     await local.getByRole('button', { name: '允许并开始分享', exact: true }).click()
@@ -198,7 +212,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(aCapture.collecting).toBe(true)
     const replacements: (readonly [string, string])[] = [[task.id, '{{taskId}}'],
       [await ownerPage.evaluate(value => new Date(value).toLocaleString(), aCapture.grant.expiresAt), '{{permissionExpiresLocal}}']]
-    await captureStage(ownerPage, a.workspaceCwd, 'active', replacements)
+    await capture(ownerPage, a.workspaceCwd, 'active', replacements)
 
     await ownerPage.keyboard.press('Escape')
     await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
@@ -224,20 +238,38 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
     expect(await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).isDisabled()).toBe(true)
     await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
+    const joinAutomatic = sharing.locator('[data-native-join-automatic]')
+    expect(await joinAutomatic.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
+    expect(await joinAutomatic.getByLabel('本地协作目标', { exact: true }).count()).toBe(0)
+    if (automaticJoin) {
+      await joinAutomatic.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).check()
+      expect(await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).isDisabled()).toBe(true)
+      await joinAutomatic.getByLabel('本地协作目标', { exact: true }).fill(REMOTE_GOAL)
+      await joinAutomatic.getByLabel('允许新增的自动启动次数', { exact: true }).fill('3')
+      await joinAutomatic.getByLabel('每轮最多步数', { exact: true }).fill('2')
+      await joinAutomatic.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    }
     await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
     await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
     const pending = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture
     if (pending === null) throw new Error('Remote source consent was not saved')
     expect(pending.entry.kind).toBe('scope-join-entry')
     expect(pending.receiving?.state).toBe('waiting')
+    expect(pending.receiving?.automatic).toEqual(automaticJoin ? REMOTE_POLICY : undefined)
+    expect(remoteRequests).toHaveLength(1)
     const jointReplacements: (readonly [string, string])[] = [[task.id, '{{taskId}}'], [ownerAddress, '{{ownerAddress}}'],
       [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'], [entryText, '{{joinEntry}}'],
       [await remotePage.evaluate(value => new Date(value).toLocaleString(), pending.limits.expiresAt), '{{permissionExpiresLocal}}']]
-    await captureStage(remotePage, b.workspaceCwd, 'joint-pending', jointReplacements, REMOTE)
+    await capture(remotePage, b.workspaceCwd, 'joint-pending', jointReplacements, REMOTE)
     await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
     expect(await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).isDisabled()).toBe(true)
-    await applications.getByLabel('该会话的协作职责', { exact: true }).fill('协调双方的重试实现。')
-    await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+    await applications.getByLabel('该会话的协作职责', { exact: true }).fill(OWNER_RESPONSIBILITY)
+    if (automaticJoin) {
+      const [joined] = await Promise.all([b.whenTurnSettled(30_000),
+        applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()])
+      expect(joined).toBe(bId)
+      await remotePage.getByText('REMOTE_JOIN_AUTO', { exact: true }).waitFor()
+    } else await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
     await applications.getByText('读取仍获授权；贡献结束不会自动撤销读取权限。', { exact: true }).waitFor()
     await sharing.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
     await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
@@ -246,10 +278,33 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(remoteActive.capture?.receiving?.invitation?.recipientPeerId).toBe(bIdentity.peerId)
     const readStatus = await b.ctx.scopeAgentContext.status({ agentId: bId })
     if (readStatus.eligibility !== 'eligible') throw new Error('Remote Agent is not eligible')
-    expect(readStatus.state).toMatchObject({ mode: 'passive', automatic: null, usedBudget: 0 })
+    expect(b.ctx.agents.get(bId)).toBe(originalRemote)
+    expect(remoteActive.capture?.receiving?.invitation?.responsibility).toBe(OWNER_RESPONSIBILITY)
+    expect(remoteActive.capture?.receiving?.automatic).toEqual(automaticJoin ? REMOTE_POLICY : undefined)
+    expect(readStatus.state).toMatchObject(automaticJoin
+      ? { mode: 'enabled', automatic: REMOTE_POLICY, usedBudget: 1 }
+      : { mode: 'passive', automatic: null, usedBudget: 0 })
     expect(readStatus.state.binding?.kind).not.toBe('local-task')
-    expect(remoteRequests).toHaveLength(1)
-    await captureStage(remotePage, b.workspaceCwd, 'joint-active', jointReplacements, REMOTE)
+    expect(remoteRequests).toHaveLength(automaticJoin ? 2 : 1)
+    if (automaticJoin) {
+      const automaticRequest = remoteRequests[1]
+      if (automaticRequest === undefined) throw new Error('Joined automatic request missing')
+      const pulse = automaticRequest.filter(message => message.source.kind === 'scope-agent-pulse')
+      expect(pulse).toHaveLength(1)
+      expect(textOf(pulse)).toContain(REMOTE_GOAL)
+      expect(textOf(pulse)).not.toContain(OWNER_RESPONSIBILITY)
+      expect(context(automaticRequest, 'scope-agent-context')).toHaveLength(1)
+      assertReconstructed(b, bId, automaticRequest, 'scope-agent-context')
+    }
+    await capture(remotePage, b.workspaceCwd, 'joint-active', jointReplacements, REMOTE)
+    if (automaticJoin) {
+      await bPanel.getByRole('button', { name: '暂停自动协作', exact: true }).click()
+      const pausedJoined = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      if (pausedJoined.eligibility !== 'eligible') throw new Error('Joined Agent stopped being eligible')
+      expect(pausedJoined.state).toMatchObject({ mode: 'paused', automatic: REMOTE_POLICY, usedBudget: 1, pauseReason: 'user' })
+      expect(pausedJoined.state.binding).toEqual(readStatus.state.binding)
+      expect((await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture?.collecting).toBe(true)
+    }
     await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
 
     expect(await prompt(a, ownerPage, 'OWNER_WORK_DONE')).toBe(aId)
@@ -260,7 +315,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(localPublication?.localToolObservation).toMatchObject({ tool: 'Write', reportedStatus: 'success', fields: { path: 'owner.ts' } })
     expect(localPublication?.localContribution?.grant).toEqual(aCapture.grant)
     expect(await prompt(b, remotePage, 'REMOTE_WORK_DONE')).toBe(bId)
-    const bFirst = remoteRequests[1]
+    const bFirst = remoteRequests[automaticJoin ? 2 : 1]
     if (bFirst === undefined) throw new Error('Remote first work request missing')
     expect(textOf(context(bFirst, 'scope-agent-context'))).toContain(A_CODE.trim())
     expect(textOf(context(bFirst, 'scope-agent-context'))).not.toContain(B_CODE.trim())
@@ -276,7 +331,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(textOf(context(aAdopted, 'development-task-context'))).toContain(B_CODE.trim())
     expect(textOf(context(aAdopted, 'development-task-context'))).toContain(bIdentity.peerId)
     assertReconstructed(a, aId, aAdopted, 'development-task-context')
-    const bLast = remoteRequests[2]
+    const bLast = remoteRequests[automaticJoin ? 3 : 2]
     if (bLast === undefined) throw new Error('Remote final work request missing')
     assertReconstructed(b, bId, bLast, 'scope-agent-context')
 
@@ -296,7 +351,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     if (enabled.eligibility === 'not-live') throw new Error('Owner Agent stopped being live')
     expect(enabled.state).toMatchObject({ mode: 'enabled', usedBudget: 1, automatic: { activationLimit: 4 } })
     expect(enabled.state.binding).toMatchObject({ kind: 'local-task', target: { taskId: task.id, taskBindingId: aCapture.grant.bindingId } })
-    await captureStage(ownerPage, a.workspaceCwd, 'automatic', replacements)
+    await capture(ownerPage, a.workspaceCwd, 'automatic', replacements)
 
     const [changedAutomatic, remoteChanged] = await Promise.all([a.whenTurnSettled(30_000),
       prompt(b, remotePage, 'REMOTE_SECOND_DONE')])
@@ -321,7 +376,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     expect(paused.localTask).toEqual(enabled.localTask)
     expect((await a.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture)
       .toMatchObject({ selection: aCapture.selection, collecting: true })
-    await captureStage(ownerPage, a.workspaceCwd, 'paused', replacements)
+    await capture(ownerPage, a.workspaceCwd, 'paused', replacements)
     expect(await prompt(b, remotePage, 'REMOTE_THIRD_DONE')).toBe(bId)
     await expect.poll(() => a.ctx.developmentTasks.get({ taskId: task.id }).context
       .filter(item => item.peerToolObservation !== undefined).length).toBe(3)
@@ -359,9 +414,31 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     const readingAfterStop = await b.ctx.scopeAgentContext.status({ agentId: bId })
     if (readingAfterStop.eligibility !== 'eligible') throw new Error('Original remote Agent disappeared')
     expect(readingAfterStop.state.binding).toEqual(readStatus.state.binding)
-    expect(readingAfterStop.state.mode).toBe('passive')
+    expect(readingAfterStop.state).toMatchObject(automaticJoin
+      ? { mode: 'paused', automatic: REMOTE_POLICY, usedBudget: 1, pauseReason: 'user' }
+      : { mode: 'passive', automatic: null, usedBudget: 0 })
     expect(await sharing.getByRole('button', { name: '退出此次协作', exact: true }).count()).toBe(0)
-    await captureStage(remotePage, b.workspaceCwd, 'joint-sharing-stopped', jointReplacements, REMOTE)
+    await capture(remotePage, b.workspaceCwd, 'joint-sharing-stopped', jointReplacements, REMOTE)
+    if (automaticJoin) {
+      const [resumedRead] = await Promise.all([b.whenTurnSettled(30_000),
+        bPanel.getByRole('button', { name: '恢复自动工作（剩余 2 次）', exact: true }).click()])
+      expect(resumedRead).toBe(bId)
+      await remotePage.getByText('REMOTE_RESUMED_AFTER_STOP', { exact: true }).waitFor()
+      const resumedReadStatus = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      if (resumedReadStatus.eligibility !== 'eligible') throw new Error('Stopped source lost its read connection')
+      expect(resumedReadStatus.state).toMatchObject({ mode: 'enabled', automatic: REMOTE_POLICY, usedBudget: 2 })
+      expect(resumedReadStatus.state.binding).toEqual(readStatus.state.binding)
+      expect((await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+      const resumedRequest = remoteRequests[8]
+      if (resumedRequest === undefined) throw new Error('Automatic read after sharing stop missing')
+      expect(textOf(context(resumedRequest, 'scope-agent-context'))).toContain(A_CODE.trim())
+      expect(resumedRequest.some(message => message.source.kind === 'scope-agent-pulse')).toBe(true)
+      await capture(remotePage, b.workspaceCwd, 'joint-auto-resumed', jointReplacements, REMOTE)
+      await bPanel.getByRole('button', { name: '暂停自动协作', exact: true }).click()
+      const pausedAfterStop = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      if (pausedAfterStop.eligibility !== 'eligible') throw new Error('Stopped source lost its original Agent')
+      expect(pausedAfterStop.state).toMatchObject({ mode: 'paused', usedBudget: 2, pauseReason: 'user' })
+    }
     await ownerPage.keyboard.press('Escape')
     await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
     if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
@@ -370,7 +447,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     await applications.getByText('读取仍获授权；贡献结束不会自动撤销读取权限。', { exact: true }).waitFor()
     await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
     expect(await prompt(b, remotePage, 'REMOTE_STOPPED_READ')).toBe(bId)
-    const stoppedRead = remoteRequests[7]
+    const stoppedRead = remoteRequests[automaticJoin ? 9 : 7]
     if (stoppedRead === undefined) throw new Error('Reading after contribution-only stop missing')
     expect(textOf(context(stoppedRead, 'scope-agent-context'))).toContain(A_CODE.trim())
     expect(textOf(context(stoppedRead, 'scope-agent-context'))).not.toContain(B_CODE_PAUSED.trim())
@@ -392,13 +469,17 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
       const value = await b.ctx.scopeAgentContext.status({ agentId: bId })
       return value.eligibility === 'eligible' ? value.state.mode : null
     }).toBe('left')
-    await captureStage(remotePage, b.workspaceCwd, 'joint-read-left', jointReplacements, REMOTE)
+    await capture(remotePage, b.workspaceCwd, 'joint-read-left', jointReplacements, REMOTE)
     expect(await prompt(b, remotePage, 'REMOTE_READ_LEFT')).toBe(bId)
-    const bWithdrawn = remoteRequests[8]
+    const bWithdrawn = remoteRequests[automaticJoin ? 10 : 8]
     if (bWithdrawn === undefined) throw new Error('Remote request after independent read leave missing')
     expect(textOf(context(bWithdrawn, 'scope-agent-context'))).not.toContain(A_CODE.trim())
     expect(textOf(context(bWithdrawn, 'scope-agent-context'))).not.toContain(B_CODE_PAUSED.trim())
     assertReconstructed(b, bId, bWithdrawn, 'scope-agent-context')
+    const remoteLeft = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (remoteLeft.eligibility !== 'eligible') throw new Error('Remote Agent disappeared after reading leave')
+    expect(remoteLeft.state).toMatchObject({ mode: 'left', pendingActivation: null, usedBudget: automaticJoin ? 2 : 0 })
+    expect(b.ctx.agents.get(bId)).toBe(originalRemote)
     await panel(ownerPage)
     await automatic.getByRole('button', { name: '退出本地目标', exact: true }).click()
     await local.getByRole('button', { name: '连接当前会话', exact: true }).waitFor()
@@ -409,7 +490,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
     if (left.eligibility === 'not-live') throw new Error('Owner Agent stopped being live')
     expect(left.localTask).toBeNull()
     expect(left.state).toMatchObject({ mode: 'left', pendingActivation: null, usedBudget: 3 })
-    await captureStage(ownerPage, a.workspaceCwd, 'stopped', replacements)
+    await capture(ownerPage, a.workspaceCwd, 'stopped', replacements)
     expect(await prompt(a, ownerPage, 'OWNER_WITHDRAWN')).toBe(aId)
     const aWithdrawn = ownerRequests[9]
     if (aWithdrawn === undefined) throw new Error('Owner withdrawal request missing')
@@ -428,14 +509,24 @@ describe.skipIf(process.platform === 'win32')('web e2e: owner-local and remote n
       const diskEvents = await readPersistedEvents(host, id)
       expect(diskEvents).toEqual(agent.session.snapshotEvents())
       expect(JSON.stringify(diskEvents)).toContain(canary)
+      if (host === b) {
+        const adopted = diskEvents.filter(event => event.type === 'scope-agent-context/join-read' && event.data.phase === 'adopted')
+        expect(adopted).toHaveLength(1)
+        expect(adopted[0]?.data).toMatchObject({ version: automaticJoin ? 2 : 1, adoptionId: pending.receiving?.adoptionId })
+        if (automaticJoin) expect(adopted[0]?.data).toMatchObject({ plan: { automatic: REMOTE_POLICY } })
+        expect(diskEvents.filter(event => event.type === 'scope-agent-context/request')).toHaveLength(automaticJoin ? 2 : 0)
+      }
       const restored = Session.create(id, structuredClone([...diskEvents]), agent.session.header)
       expect(context(restored.deriveMessages(), kind)).toEqual(context(request, kind))
     }
     expect(ownerRequests).toHaveLength(10)
-    expect(remoteRequests).toHaveLength(9)
+    expect(remoteRequests).toHaveLength(automaticJoin ? 11 : 9)
     expect(b.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
-    await assertFixtureInventory(SNAPSHOTS, ['unconnected.expected.md', 'connected.expected.md', 'active.expected.md', 'automatic.expected.md', 'paused.expected.md', 'stopped.expected.md',
+    await assertFixtureInventory(snapshots, automaticJoin ? [
+      'joint-pending.expected.md', 'joint-active.expected.md', 'joint-sharing-stopped.expected.md',
+      'joint-auto-resumed.expected.md', 'joint-read-left.expected.md',
+    ] : ['unconnected.expected.md', 'connected.expected.md', 'active.expected.md', 'automatic.expected.md', 'paused.expected.md', 'stopped.expected.md',
       'joint-pending.expected.md', 'joint-active.expected.md', 'joint-sharing-stopped.expected.md', 'joint-read-left.expected.md'])
   }, 180_000)
 })

@@ -2,14 +2,15 @@
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { routeEventSchema } from './route.ts'
+import { policySchema } from './policy.ts'
 import type { Session, SessionSeqCursor } from '@deepseek-ai/dsh-session'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { invitationSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeGeneration, ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentJoinReadEvent, ScopeAgentJoinReadId, ScopeAgentJoinReadPlan, ScopeAgentRouteEvent, ScopeAgentBinding } from './types.ts'
+import type { ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentJoinReadEvent, ScopeAgentJoinReadId, ScopeAgentRouteEvent, ScopeAgentBinding } from './types.ts'
 
 const cursor = z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor)
-const planSchema: z.ZodType<ScopeAgentJoinReadPlan> = z.object({
+const planSchema = z.object({
   expectedReadStateSeq: cursor,
   subscription: z.object({
     id: z.uuid().transform(value => value as ScopeSubscriptionId),
@@ -25,6 +26,10 @@ const common = { version: z.literal(1), agentId: z.string().min(1).transform(Ses
 export const joinReadEventSchema: z.ZodType<ScopeAgentJoinReadEvent> = z.union([
   z.object({ ...common, phase: z.enum(['planned', 'adopted']), plan: planSchema }).strict(),
   z.object({ ...common, phase: z.enum(['ended', 'superseded']), plan: planSchema.nullable(), leaveAdopted: z.boolean() }).strict(),
+  z.object({ ...common, version: z.literal(2), phase: z.enum(['planned', 'adopted']),
+    plan: planSchema.extend({ automatic: policySchema }) }).strict(),
+  z.object({ ...common, version: z.literal(2), phase: z.enum(['ended', 'superseded']),
+    plan: planSchema.extend({ automatic: policySchema }).nullable(), leaveAdopted: z.boolean() }).strict(),
 ])
 
 /**
@@ -37,8 +42,9 @@ export function foldJoinRead(state: ScopeAgentBindingStatus, event: ScopeAgentJo
   if (event.agentId !== state.agentId) throw new Error('scope-agent-context: adoption belongs to another Session')
   if (event.phase === 'adopted') {
     const { subscription, bindingId } = event.plan
+    const automatic = event.version === 2 ? event.plan.automatic : null
     return { ...state, version: 1, binding: { id: bindingId, subscriptionId: subscription.id, invitation: subscription.invitation },
-      automatic: null, mode: 'passive', pauseReason: null, pendingActivation: null }
+      automatic, mode: automatic === null ? 'passive' : 'enabled', pauseReason: null, pendingActivation: null }
   }
   if ((event.phase === 'ended' || event.phase === 'superseded') && event.leaveAdopted
     && event.plan !== null && state.binding?.id === event.plan.bindingId) {
@@ -66,9 +72,11 @@ export function joinReadHistory(session: Session): JoinReadHistory {
   let binding: ScopeAgentBinding | null = null
   let readStateSeq: SessionSeqCursor = -1
   let bindingId: ScopeAgentBindingId | null = null
+  let usedBudget = 0
   for (const event of session.snapshotEvents()) {
     if (event.type === 'scope-agent-context/state') {
       if (event.data.agentId !== session.id) throw new Error('scope-agent-context: read state belongs to another Session')
+      usedBudget = event.data.usedBudget
       readStateSeq = event.seq
       binding = event.data.binding
       bindingId = binding?.id ?? null
@@ -93,6 +101,13 @@ export function joinReadHistory(session: Session): JoinReadHistory {
     const data = joinReadEventSchema.parse(event.data)
     if (data.agentId !== session.id) throw new Error('scope-agent-context: adoption belongs to another Session')
     const prior = records.get(data.adoptionId)
+    if ((data.phase === 'planned' || data.phase === 'adopted') && data.version === 2
+      && data.plan.automatic.activationLimit <= usedBudget) {
+      throw new Error('scope-agent-context: automatic adoption has no remaining lifetime budget')
+    }
+    if (prior !== undefined && prior.version !== data.version) {
+      throw new Error('scope-agent-context: adoption changed its original event version')
+    }
     if (data.phase === 'planned') {
       if (prior !== undefined || data.plan.expectedReadStateSeq !== readStateSeq || bindingId !== null) {
         throw new Error('scope-agent-context: adoption plan lacks its original unbound read state')

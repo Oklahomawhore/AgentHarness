@@ -19,6 +19,7 @@ import type { ScopeAgentJoinReadId } from '../src/types.ts'
 const directories: string[] = []
 const releases: (() => void)[] = []
 afterEach(async () => {
+  vi.useRealTimers()
   for (const release of releases.splice(0)) release()
   try { await cleanup() } finally {
     await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
@@ -310,3 +311,320 @@ it('reports invalid user routes with a typed error and leaves the invitation unc
   expect((await b.access.list()).subscriptions[0]?.invitation).toEqual(request.invitation)
   expect(handle.agent.session.snapshotEvents().some(event => event.type === 'scope-agent-context/route')).toBe(false)
 })
+
+const automatic = { goal: 'Review authorized updates', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 }
+
+function consumerEntry(value: Awaited<ReturnType<typeof fixture>>) {
+  const entry = [...value.b.ctx.loader.entries()].find(item => item.options.name === 'cordis:fixture-consumer')
+  if (entry === undefined) throw new Error('missing real Loader consumer entry')
+  return entry
+}
+
+async function reloadConsumer(value: Awaited<ReturnType<typeof fixture>>) {
+  const entry = consumerEntry(value)
+  await entry.update({ disabled: true })
+  await entry.update({ disabled: false })
+  await value.b.ctx.loader.await()
+}
+
+it('automatically reads once from an atomic durable adoption and does not undo a later pause on retry', async () => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const request = { ...value.request, automatic }
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await handle.agent.whenIdle()
+  expect(contextText(adapter.requests[0]!)).toContain('AUTHORIZED_OWNER_CANARY')
+  const status = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (status.eligibility === 'not-live' || status.state.binding === null) throw new Error('missing adopted binding')
+  expect(status.state).toMatchObject({ automatic, usedBudget: 1 })
+  await b.ctx.scopeAgentContext.pause({ agentId: handle.agent.id, expectedBindingId: status.state.binding.id })
+  const paused = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  expect(await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })).toEqual(paused)
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead({ ...request, automatic: { ...automatic, activationLimit: 3 } }))
+    .rejects.toThrow('changes original inputs')
+  const events = (await readStored(b, handle.agent.id)).snapshotEvents()
+    .filter(event => event.type === 'scope-agent-context/join-read')
+  expect(events.map(event => [event.data.version, event.data.phase])).toEqual([[2, 'planned'], [2, 'adopted']])
+  expect(adapter.requests).toHaveLength(1)
+})
+
+it('does not reserve or dispatch automatic work before the adopted checkpoint completes', async () => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  const remove = b.ctx.on('session/flush', async (session) => {
+    if (session.id !== handle.agent.id || joinReadHistory(session).records.get(value.request.adoptionId)?.phase !== 'adopted') return
+    entered.resolve(undefined)
+    await release.promise
+  }, { global: true })
+  const adopting = b.ctx.scopeAgentContext.adoptJoinRead({ ...value.request, automatic })
+  try {
+    await entered.promise
+    vi.useFakeTimers()
+    try {
+      // Advance the owned scheduler interval while the durability participant remains blocked.
+      await vi.advanceTimersByTimeAsync(100)
+      const status = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+      if (status.eligibility === 'not-live') throw new Error('Agent must remain live')
+      expect(status.state.usedBudget).toBe(0)
+      expect(status.state.pendingActivation).toBeNull()
+      expect(adapter.requests).toHaveLength(0)
+    } finally { vi.useRealTimers() }
+  } finally { release.resolve(undefined); remove() }
+  expect(await adopting).toEqual({ status: 'adopted' })
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await handle.agent.whenIdle()
+})
+
+it('cancels an automatic plan while subscription creation is in flight without enabling it', async () => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  const ensure = b.access.ensureSubscription.bind(b.access)
+  vi.spyOn(b.access, 'ensureSubscription').mockImplementation(async (plan) => {
+    entered.resolve(undefined)
+    await release.promise
+    return await ensure(plan)
+  })
+  const request = { ...value.request, automatic }
+  const adopting = b.ctx.scopeAgentContext.adoptJoinRead(request)
+  await entered.promise
+  const cancelling = b.ctx.scopeAgentContext.cancelJoinRead({ agentId: handle.agent.id,
+    adoptionId: request.adoptionId, leaveAdopted: true })
+  await expect.poll(() => joinReadHistory(handle.agent.session).records.get(request.adoptionId)?.phase).toBe('ended')
+  release.resolve(undefined)
+  expect(await cancelling).toEqual({ status: 'ended' })
+  expect(await adopting).toEqual({ status: 'ended' })
+  expect((await b.access.list()).subscriptions.map(item => item.state)).toEqual(['left'])
+  expect(adapter.requests).toHaveLength(0)
+  expect(joinReadHistory(await readStored(b, handle.agent.id)).records.get(request.adoptionId))
+    .toMatchObject({ version: 2, phase: 'ended', plan: { automatic } })
+})
+
+it.each(['consumer-reload', 'agent-replacement'] as const)('invalidates a pending automatic plan after %s', async (change) => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const ensure = vi.spyOn(b.access, 'ensureSubscription').mockRejectedValueOnce(new Error('controlled creation failure'))
+  const request = { ...value.request, automatic }
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead(request)).rejects.toThrow('controlled creation failure')
+  expect(joinReadHistory(handle.agent.session).records.get(request.adoptionId)?.phase).toBe('planned')
+  let replacement: Awaited<ReturnType<typeof b.ctx.agents.resume>> | undefined
+  if (change === 'consumer-reload') await reloadConsumer(value)
+  else {
+    await handle.dispose()
+    replacement = await b.ctx.agents.resume({ resumeSessionId: request.agentId,
+      agentOptions: { provider: 'join-test', model: 'join-test' } })
+  }
+  try {
+    expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'superseded' })
+    expect(ensure).toHaveBeenCalledTimes(1)
+    expect((await b.access.list()).subscriptions).toHaveLength(0)
+    expect(adapter.requests).toHaveLength(0)
+  } finally { await replacement?.dispose() }
+})
+
+it('keeps an already adopted automatic binding paused after consumer reload and exact retry', async () => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const request = { ...value.request, automatic }
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await handle.agent.whenIdle()
+  await reloadConsumer(value)
+  const restored = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (restored.eligibility === 'not-live') throw new Error('Agent must remain live')
+  expect(restored.state).toMatchObject({ mode: 'paused', pauseReason: 'restored', usedBudget: 1, automatic })
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  expect(await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })).toEqual(restored)
+  expect(adapter.requests).toHaveLength(1)
+})
+
+it('treats automatic limits as lifetime totals while allowing an exhausted adopted operation to retry', async () => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const request = { ...value.request, automatic: { ...automatic, activationLimit: 1 } }
+  await b.ctx.scopeAgentContext.adoptJoinRead(request)
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await handle.agent.whenIdle()
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  const before = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (before.eligibility === 'not-live' || before.state.binding === null) throw new Error('missing adopted binding')
+  expect(before.state.usedBudget).toBe(1)
+  await b.ctx.scopeAgentContext.leave({ agentId: handle.agent.id, expectedBindingId: before.state.binding.id })
+  const next = { ...request, adoptionId: randomUUID() as ScopeAgentJoinReadId,
+    expectedReadStateSeq: await readCursor(b, handle.agent.id) }
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead(next)).rejects.toThrow('absolute activation budget')
+  expect(joinReadHistory(handle.agent.session).records.has(next.adoptionId)).toBe(false)
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead({ ...next, automatic })).toEqual({ status: 'adopted' })
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+  await handle.agent.whenIdle()
+  const final = await b.ctx.scopeAgentContext.status({ agentId: handle.agent.id })
+  if (final.eligibility === 'not-live') throw new Error('Agent must remain live')
+  expect(final.state.usedBudget).toBe(2)
+})
+
+
+const pendingLifecycles = (['ensure', 'planned-flush', 'adopted-flush'] as const)
+  .flatMap(stage => (['consumer-reload', 'agent-replacement'] as const).map(change => ({ stage, change })))
+
+it.each(pendingLifecycles)('does not transfer automatic permission through $change during $stage', async ({ stage, change }) => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const request = { ...value.request, automatic }
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  let held = false
+  const ensure = b.access.ensureSubscription.bind(b.access)
+  const ensured = vi.spyOn(b.access, 'ensureSubscription').mockImplementation(async (plan) => {
+    const subscription = await ensure(plan)
+    if (stage === 'ensure' && !held) {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return subscription
+  })
+  const remove = b.ctx.on('session/flush', async (session) => {
+    if (held || session.id !== request.agentId || stage === 'ensure') return
+    const phase = joinReadHistory(session).records.get(request.adoptionId)?.phase
+    if (phase !== (stage === 'planned-flush' ? 'planned' : 'adopted')) return
+    held = true
+    entered.resolve(undefined)
+    await release.promise
+  }, { global: true })
+  const adopting = b.ctx.scopeAgentContext.adoptJoinRead(request).then(
+    result => ({ kind: 'result' as const, result }), (error: unknown) => ({ kind: 'error' as const, error: String(error) }),
+  )
+  let replacement: Awaited<ReturnType<typeof b.ctx.agents.resume>> | undefined
+  try {
+    await entered.promise
+    const entry = consumerEntry(value)
+    const stopping = change === 'consumer-reload' ? entry.update({ disabled: true }) : handle.dispose()
+    try {
+      await vi.waitFor(() => {
+        if (change === 'consumer-reload') expect(b.ctx.get('scopeAgentContext')).toBeUndefined()
+        else expect(b.ctx.agents.get(request.agentId)).toBeUndefined()
+      })
+      expect(adapter.requests).toHaveLength(0)
+    } finally { release.resolve(undefined) }
+    await stopping
+    const settled = await adopting
+    if (settled.kind === 'result') expect(settled.result.status).not.toBe('adopted')
+    if (change === 'consumer-reload') {
+      await entry.update({ disabled: false })
+      await b.ctx.loader.await()
+    } else {
+      replacement = await b.ctx.agents.resume({ resumeSessionId: request.agentId,
+        agentOptions: { provider: 'join-test', model: 'join-test' } })
+    }
+    const result = await b.ctx.scopeAgentContext.adoptJoinRead(request)
+    const history = joinReadHistory(await readStored(b, request.agentId))
+    if (stage === 'adopted-flush') {
+      expect(result).toEqual({ status: 'adopted' })
+      const status = await b.ctx.scopeAgentContext.status({ agentId: request.agentId })
+      if (status.eligibility === 'not-live') throw new Error('replacement Agent must be live')
+      expect(status.state).toMatchObject({ mode: 'paused', pauseReason: 'restored', automatic, usedBudget: 0 })
+      expect(history.records.get(request.adoptionId)?.phase).toBe('adopted')
+    } else {
+      expect(result).toEqual({ status: 'superseded' })
+      expect(history.records.get(request.adoptionId)?.phase).toBe('superseded')
+      expect((await b.access.list()).subscriptions.every(subscription => subscription.state === 'left')).toBe(true)
+      expect(ensured).toHaveBeenCalledTimes(stage === 'ensure' ? 1 : 0)
+    }
+    expect(adapter.requests).toHaveLength(0)
+  } finally {
+    release.resolve(undefined)
+    remove()
+    await adopting
+    await replacement?.dispose()
+  }
+})
+
+it.each([false, true])('retries a failed adopted checkpoint without replacing the binding or later pause: %s', async (pause) => {
+  const value = await fixture()
+  const { b, handle, adapter } = value
+  const request = { ...value.request, automatic }
+  const failure = new Error('controlled adopted checkpoint failure')
+  let failed = false
+  const remove = b.ctx.on('session/flush', (session) => {
+    if (failed || session.id !== request.agentId
+      || joinReadHistory(session).records.get(request.adoptionId)?.phase !== 'adopted') return
+    failed = true
+    throw failure
+  }, { global: true })
+  try {
+    await expect(b.ctx.scopeAgentContext.adoptJoinRead(request)).rejects.toBe(failure)
+    const before = await b.ctx.scopeAgentContext.status({ agentId: request.agentId })
+    if (before.eligibility === 'not-live' || before.state.binding === null) throw new Error('expected original binding')
+    expect(before.state.usedBudget).toBe(0)
+    expect(adapter.requests).toHaveLength(0)
+    if (pause) await b.ctx.scopeAgentContext.pause({ agentId: request.agentId, expectedBindingId: before.state.binding.id })
+    const paused = await b.ctx.scopeAgentContext.status({ agentId: request.agentId })
+    expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+    if (pause) {
+      expect(await b.ctx.scopeAgentContext.status({ agentId: request.agentId })).toEqual(paused)
+      expect(adapter.requests).toHaveLength(0)
+    } else {
+      await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+      await handle.agent.whenIdle()
+      expect(contextText(adapter.requests[0]!)).toContain('AUTHORIZED_OWNER_CANARY')
+    }
+    expect((await b.access.list()).subscriptions).toHaveLength(1)
+    const records = (await readStored(b, request.agentId)).snapshotEvents()
+      .filter(event => event.type === 'scope-agent-context/join-read')
+    expect(records.map(event => [event.data.version, event.data.phase])).toEqual([[2, 'planned'], [2, 'adopted']])
+    expect(joinReadHistory(handle.agent.session).bindingId).toBe(before.state.binding.id)
+  } finally { remove() }
+})
+
+it.each(['enabled', 'paused', 'changed-policy'] as const)(
+  'finishes a failed adopted checkpoint when Stop preserves the read, retaining %s permission', async (permission) => {
+    const value = await fixture()
+    const { b, handle, adapter } = value
+    const request = { ...value.request, automatic }
+    const failure = new Error('controlled adopted checkpoint failure before Stop')
+    let failed = false
+    const remove = b.ctx.on('session/flush', (session) => {
+      if (failed || session.id !== request.agentId
+        || joinReadHistory(session).records.get(request.adoptionId)?.phase !== 'adopted') return
+      failed = true
+      throw failure
+    }, { global: true })
+    try {
+      await expect(b.ctx.scopeAgentContext.adoptJoinRead(request)).rejects.toBe(failure)
+      const adopted = await b.ctx.scopeAgentContext.status({ agentId: request.agentId })
+      if (adopted.eligibility === 'not-live' || adopted.state.binding === null) throw new Error('expected adopted binding')
+      const bindingId = adopted.state.binding.id
+      const changed = { ...automatic, goal: 'Use the later locally approved goal', activationLimit: 3 }
+      if (permission === 'paused') await b.ctx.scopeAgentContext.pause({ agentId: request.agentId, expectedBindingId: bindingId })
+      if (permission === 'changed-policy') await b.ctx.scopeAgentContext.resume({ agentId: request.agentId,
+        expectedBindingId: bindingId, automatic: changed })
+      expect(adapter.requests).toHaveLength(0)
+      expect(await b.ctx.scopeAgentContext.cancelJoinRead({ agentId: request.agentId,
+        adoptionId: request.adoptionId, leaveAdopted: false })).toEqual({ status: 'adopted' })
+      if (permission === 'paused') {
+        handle.agent.followup(createUserMessage({ source: { kind: 'user' },
+          content: [{ type: 'text', text: 'Read manually after keeping the subscription' }] }))
+      }
+      await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+      await handle.agent.whenIdle()
+      expect(contextText(adapter.requests[0]!)).toContain('AUTHORIZED_OWNER_CANARY')
+      const status = await b.ctx.scopeAgentContext.status({ agentId: request.agentId })
+      if (status.eligibility === 'not-live') throw new Error('Agent must remain live')
+      expect(status.state).toMatchObject({ mode: permission === 'paused' ? 'paused' : 'enabled',
+        automatic: permission === 'changed-policy' ? changed : automatic,
+        usedBudget: permission === 'paused' ? 0 : 1, binding: { id: bindingId } })
+      expect((await b.access.list()).subscriptions.map(subscription => subscription.state)).toEqual(['active'])
+      expect((await readStored(b, request.agentId)).snapshotEvents()
+        .filter(event => event.type === 'scope-agent-context/join-read').map(event => event.data.phase))
+        .toEqual(['planned', 'adopted'])
+    } finally { remove() }
+  },
+)
