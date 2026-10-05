@@ -4,7 +4,7 @@
 
 改动 `packages/` 前，请先阅读本文。Cordis 基础知识见[入门](cordis-primer.zh.md)或[教程](cordis-tutorial/index.zh.md)。
 
-建议使用 agent（智能体）探索代码库与架构。
+AgentHarness [协作原则](whitepaper.zh.md#human-responsibility)保留参与者的职责和本地权限。
 
 ## Cordis
 

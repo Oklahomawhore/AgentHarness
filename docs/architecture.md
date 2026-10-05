@@ -4,7 +4,7 @@ English | [中文](architecture.zh.md)
 
 Read this before changing `packages/`. For Cordis basics, start with the [primer](cordis-primer.md) or [tutorial](cordis-tutorial/index.md).
 
-We recommend an agent for exploring the codebase and architecture.
+AgentHarness [collaboration principles](whitepaper.md#human-responsibility) preserve participants’ responsibilities and local authority.
 
 ## Cordis
 
