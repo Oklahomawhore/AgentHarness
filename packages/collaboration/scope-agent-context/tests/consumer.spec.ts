@@ -747,6 +747,90 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect((await state(ctx, agent.id)).usedBudget).toBe(1)
   })
 
+  it.each(['unavailable', 'revoked', 'expired', 'left', 'read-error', 'oversized', 'recovered'] as const)(
+    'ends an automatic tool continuation after %s without spending another request', async (failure) => {
+      const { ctx, agent, adapter, access } = await fixture()
+      adapter.toolCalls = 3
+      ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
+        parameters: {}, execute: async () => {
+          if (failure === 'read-error') {
+            vi.spyOn(access, 'retrieve').mockRejectedValue(new Error('controlled read failure'))
+          } else if (failure === 'oversized') {
+            access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
+          } else if (failure === 'recovered') {
+            access.change({ status: 'unavailable' })
+            await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+            access.result = { status: 'active', projection: projection('Recovered current facts', 2) }
+          } else access.result = { status: failure }
+          return [{ type: 'text', text: 'Connection observation retained' }]
+        } }))
+      await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+      await expect.poll(() => adapter.requests.length).toBeGreaterThanOrEqual(1)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
+      expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1, pendingActivation: null })
+      expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toBeNull()
+      expect(agent.session.snapshotEvents().some(event => event.type === 'user/message'
+        && event.data.source.kind === 'scope-agent-context' && event.data.source.form === 'withdrawn')).toBe(true)
+    })
+
+  it.each(['unavailable', 'revoked', 'read-error', 'oversized', 'recovered'] as const)(
+    'keeps newly claimed human input when an automatic tool continuation encounters %s', async (failure) => {
+      const { ctx, agent, adapter, access } = await fixture()
+      adapter.toolCalls = 1
+      const human = user('Continue my own work after the connection change')
+      ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
+        parameters: {}, execute: async () => {
+          if (failure === 'read-error') vi.spyOn(access, 'retrieve').mockRejectedValue(new Error('controlled read failure'))
+          else if (failure === 'oversized') access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
+          else if (failure === 'recovered') {
+            access.change({ status: 'unavailable' })
+            await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+            access.result = { status: 'active', projection: projection('Recovered current facts', 2) }
+          } else access.result = { status: failure }
+          agent.inbox.append('next-step', human)
+          return [{ type: 'text', text: 'Connection observation retained' }]
+        } }))
+      await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+      await requests(adapter, 2)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(2)
+      expect(text(adapter.requests[1]!)).toContain('Continue my own work after the connection change')
+      expect(text(adapter.requests[1]!)).not.toContain('API state one')
+      expect(text(adapter.requests[1]!)).toContain(failure === 'recovered' ? 'Recovered current facts' : 'No current shared scope facts')
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === human.id)).toHaveLength(1)
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request')).toHaveLength(1)
+      expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1 })
+    })
+
+  it.each([false, true])('rechecks a watcher pause during the automatic continuation read with human input=%s', async (withHuman) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const reading = barrier()
+    adapter.toolCalls = 1
+    ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Wait for the next owner read',
+      parameters: {}, execute: async () => {
+        access.readGate = reading.promise
+        if (withHuman) agent.inbox.append('next-step', user('Continue my own work after the paused read'))
+        return [{ type: 'text', text: 'Tool result before the paused read' }]
+      } }))
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await expect.poll(() => access.reads).toBe(3)
+    access.change({ status: 'unavailable' })
+    await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+    reading.resolve(undefined)
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(withHuman ? 2 : 1)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request')).toHaveLength(1)
+    expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1 })
+    if (withHuman) {
+      expect(text(adapter.requests[1]!)).toContain('Continue my own work after the paused read')
+      expect(text(adapter.requests[1]!)).toContain('No current shared scope facts')
+      expect(text(adapter.requests[1]!)).not.toContain('API state one')
+    }
+  })
+
   it('pauses blocked current coverage before reserving and withdraws older current facts', async () => {
     const { ctx, agent, adapter, access } = await fixture()
     access.result = { status: 'active', projection: evidenceProjection('Old fact must disappear', 1, 'one') }

@@ -107,6 +107,8 @@ interface SdkAssertions {
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
   expectedFinalResponse?: string
+  /** Explicit terminal reasons for scenarios that intentionally block an automatic turn. */
+  expectedTurnReasons?: readonly ('completed' | 'blocked')[]
   /** Environment overrides passed to the runtime subprocess. */
   environment?: Readonly<Record<string, string>>
   /** A separate DSH SDK child whose persisted session joins the evidence. */
@@ -127,6 +129,10 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-automatic-withdrawal': {
+    expectedFinalResponse: 'Ordinary local work continues without the revoked shared facts.',
+    expectedTurnReasons: ['completed', 'blocked', 'completed'],
+  },
   'scope-semantic-idle': {
     expectedFinalResponse: 'Semantic idle evidence verified; the Task was left without renewing automatic permission.',
   },
@@ -879,7 +885,11 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         if (parent === undefined || expected === undefined) throw new Error(`${scenario.name}: no primary session log`)
         const turnEnds = records(parent.content).filter(record => record.type === 'turn/end')
         expect(turnEnds, `${scenario.name}: completed turns`).toHaveLength(turnActions(expected).length)
-        for (const turnEnd of turnEnds) expect(turnEnd).toMatchObject({ data: { reason: { kind: 'completed' } } })
+        const reasons = assertions.expectedTurnReasons ?? turnEnds.map(() => 'completed')
+        expect(reasons, `${scenario.name}: expected turn reasons`).toHaveLength(turnEnds.length)
+        for (const [index, turnEnd] of turnEnds.entries()) {
+          expect(turnEnd).toMatchObject({ data: { reason: { kind: reasons[index] } } })
+        }
       }
 
       let expectedContents = separateWriter && !refreshing

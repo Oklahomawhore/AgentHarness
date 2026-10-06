@@ -1,0 +1,13 @@
+version: 1
+scenario: scope-automatic-withdrawal
+profile: sdk
+composition: sdk-scope-automatic-withdrawal
+recording: authored
+header:
+  class: scope-automatic-withdrawal
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+workspace:
+  final: true

@@ -193,7 +193,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       if (this.state(runtime).binding?.kind === 'local-task') {
         if (!this.localAdmissionAvailable(runtime)) {
           this.pauseRuntime(runtime, 'unavailable')
-          return this.withoutFacts(runtime, decision, decision.messages, claimed.filter(message => message.source.kind !== 'scope-agent-pulse'), 'unavailable')
+          return this.withoutFacts(runtime, decision, decision.messages, claimed.filter(message => message.source.kind !== 'scope-agent-pulse'), payload.turn, 'unavailable')
         }
         return decision
       }
@@ -1395,6 +1395,12 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       messages = messages.filter(message => message.source.kind !== 'scope-agent-pulse' || isValidPulse(message))
       if (pulses.length > 0 && !validPulse && external.length === 0) return { kind: 'reject' }
       if (validPulse) runtime.activeTurn = turn
+      if (runtime.activeTurn === turn && (state.mode !== 'enabled' || state.pendingActivation === null)) {
+        if (external.length === 0) return this.withoutFacts(runtime, decision, messages, external, turn,
+          runtime.terminal ?? (state.pauseReason === 'unavailable' ? 'unavailable' : 'failed'))
+        runtime.activeTurn = undefined
+        runtime.unsubmittedInputs = []
+      }
       if (runtime.activeTurn === turn) runtime.unsubmittedInputs = external
       if (runtime.activeTurn === turn && state.automatic !== null && step > state.automatic.maxStepsPerTurn) {
         this.pauseRuntime(runtime, 'step-limit')
@@ -1404,7 +1410,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       if (state.binding === null || this.conflictingTask(runtime)) {
         if (state.binding !== null) this.pauseRuntime(runtime, 'conflict')
         if (state.binding === null && visibleContext(runtime.agent).length === 0 && !validPulse) return { ...decision, messages }
-        return this.withoutFacts(runtime, decision, messages, external, state.binding === null ? 'left' : 'conflict')
+        return this.withoutFacts(runtime, decision, messages, external, turn, state.binding === null ? 'left' : 'conflict')
       }
       const capturedVersion = runtime.changeVersion
       const routeSignal = runtime.bindingAbort.signal
@@ -1419,32 +1425,31 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           || (state.binding.kind !== 'local-task' && currentBinding.kind !== 'local-task'
             && currentBinding.invitation.ownerAddress !== state.binding.invitation.ownerAddress)) continue
         this.pauseRuntime(runtime, 'failed')
-        return this.withoutFacts(runtime, decision, messages, external, 'failed')
+        return this.withoutFacts(runtime, decision, messages, external, turn, 'failed')
       }
       signal.throwIfAborted()
       if (this.lifetime.signal.aborted || this.ctx.agents.get(runtime.agent.id) !== runtime.agent) { this.requeue(runtime, external); return { kind: 'reject' } }
       if (this.state(runtime).binding?.id !== state.binding.id || routeSignal !== runtime.bindingAbort.signal) continue
-      if (validPulse && (this.state(runtime).mode !== 'enabled' || this.state(runtime).pendingActivation === null)) continue
+      if ((validPulse || runtime.activeTurn === turn)
+        && (this.state(runtime).mode !== 'enabled' || this.state(runtime).pendingActivation === null)) continue
       if (this.conflictingTask(runtime)) continue
       if (runtime.terminal !== undefined) result = { status: runtime.terminal }
       if (result.status === 'active' && !('kind' in result.projection) && result.projection.expiresAt <= Date.now()) result = { status: 'expired' }
       if (result.status !== 'active') {
         if (result.status !== 'unavailable') runtime.terminal = result.status
         this.pauseRuntime(runtime, result.status === 'unavailable' ? 'unavailable' : 'terminal')
-        return this.withoutFacts(runtime, decision, messages, external, result.status)
+        return this.withoutFacts(runtime, decision, messages, external, turn, result.status)
       }
       const automatic = runtime.activeTurn === turn
       if (blocksCurrentCoverage(result.projection, automatic)) {
         this.evaluate(runtime, 'blocked-current', result.projection, null)
         this.pauseRuntime(runtime, 'coverage')
-        const withdrawn = this.withoutFacts(runtime, decision, messages, external, 'failed')
-        // Tool continuations still belong to the automatic turn after its pulse has been consumed.
-        return automatic && external.length === 0 ? { kind: 'reject' } : withdrawn
+        return this.withoutFacts(runtime, decision, messages, external, turn, 'failed')
       }
       let message: UserMessage
       try { message = this.contextMessage(state.binding, result.projection) } catch {
         this.pauseRuntime(runtime, 'failed')
-        return this.withoutFacts(runtime, decision, messages, external, 'failed')
+        return this.withoutFacts(runtime, decision, messages, external, turn, 'failed')
       }
       runtime.dirty = runtime.changeVersion !== capturedVersion
       if (validPulse && state.pendingActivation !== null && this.completed(runtime, result.projection)) {
@@ -1464,13 +1469,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     }
   }
 
-  private withoutFacts(runtime: Runtime, decision: Extract<PreStepDecision, { kind: 'enter' }>, messages: readonly UserMessage[], external: readonly UserMessage[], reason: WithdrawalReason): PreStepDecision {
+  private withoutFacts(runtime: Runtime, decision: Extract<PreStepDecision, { kind: 'enter' }>, messages: readonly UserMessage[], external: readonly UserMessage[], turn: number, reason: WithdrawalReason): PreStepDecision {
     const hadPulse = messages.some(message => message.source.kind === 'scope-agent-pulse')
     const remaining = messages.filter(message => message.source.kind !== 'scope-agent-pulse')
     const pending = this.state(runtime).binding?.kind === 'local-task'
       ? replaceLocalTaskContext(runtime.agent, localContextWithdrawalMessage(reason))
       : replaceContext(runtime.agent, withdrawalMessage(reason))
-    if (hadPulse && external.length === 0) return { kind: 'reject' }
+    if ((hadPulse || runtime.activeTurn === turn) && external.length === 0) return { kind: 'reject' }
     runtime.activeTurn = undefined
     runtime.unsubmittedInputs = []
     return { ...decision, messages: pending === undefined ? remaining : [...remaining, pending] }

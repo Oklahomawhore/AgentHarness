@@ -740,7 +740,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +759,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +778,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,7 +1109,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-owner-idle": "scope-owner-idle-current-evidence",
@@ -1132,7 +1132,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         root = Path(temporary).resolve()
         prepared = prepare("prepare", root)
         assert isinstance(prepared, dict)
-        if scenario == "scope-joint-automatic":
+        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal"}:
             shutil.copytree(repository / "snapshots/sdk" / scenario / "workspace", root, dirs_exist_ok=True)
         home = root / ".dsh"
         with DeepSeekHarness(
@@ -1161,6 +1161,13 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     "Inspect the reported failed Write without assuming success.",
                     "Continue after the owner revokes the tool contribution.",
                 )]
+            elif scenario == "scope-automatic-withdrawal":
+                first, last, observed = run_finite_scope_turns(
+                    harness, session,
+                    first_prompt="Retain my existing local responsibility before joining any shared scope.",
+                    last_prompt="Continue my ordinary local work after the owner has revoked shared reading.",
+                    expected_automatic_reason="blocked",
+                )
             elif scenario == "scope-semantic-idle":
                 first, last, observed = run_finite_scope_turns(
                     harness, session,
@@ -1206,6 +1213,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             if set(audits) != {"scope-semantic-idle-audit"}:
                 raise AssertionError("semantic idle run must retain its separate auxiliary audit")
             result = semantic_idle_snapshot_result(records, first, last, observed, audits["scope-semantic-idle-audit"])
+        elif scenario == "scope-automatic-withdrawal":
+            result = automatic_withdrawal_snapshot_result(records, first, last, observed)
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            sentinel = "permission-sentinel.txt"
+            if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
+                raise AssertionError("revoked automatic work changed the read-only workspace file")
         elif scenario == "scope-owner-idle":
             result = owner_idle_snapshot_result(records, first, last, observed)
         elif scenario == "scope-joint-automatic":
@@ -1329,9 +1342,9 @@ def native_scope_snapshot_result(
 
 def run_finite_scope_turns(
     harness: DeepSeekHarness, session: Session, *, first_prompt: str, last_prompt: str,
-    coverage_revision: int | None = None, completed_turn: int = 2,
+    coverage_revision: int | None = None, completed_turn: int = 2, expected_automatic_reason: str = "completed",
 ) -> tuple[RunResult, RunResult, list[dict[str, object]]]:
-    """Wait for automatic completion and an optional coverage pause before the final user request."""
+    """Wait for the expected automatic terminal reason and optional coverage pause before user work."""
     with harness.client.subscribe_session_notifications(session.id) as subscription:
         deadline = threading.Timer(110, harness.close)
         deadline.start()
@@ -1350,8 +1363,8 @@ def run_finite_scope_turns(
                     continue
                 observed.append(event)
                 if event.get("type") == "turn/end" and event["data"]["turn"] == completed_turn:
-                    if event["data"]["reason"] != {"kind": "completed"}:
-                        raise AssertionError("scope automatic turn did not complete")
+                    if event["data"]["reason"] != {"kind": expected_automatic_reason}:
+                        raise AssertionError("scope automatic turn ended with an unexpected reason")
                     completed = True
                 if coverage_revision is not None:
                     data = event.get("data", {})
@@ -1450,6 +1463,44 @@ def semantic_idle_snapshot_result(
             "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
             "auditResultVersion": 2, "realModelCalls": 0, "withdrawnSources": 4,
             "wirePreservesExactEvidence": True}
+
+
+def automatic_withdrawal_snapshot_result(
+    records: list[dict[str, object]], first: RunResult, last: RunResult, observed: list[dict[str, object]],
+) -> dict[str, object]:
+    """Check revocation after an actual tool and identical automatic request evidence over the Python wire."""
+    requests = [event["data"] for event in records if event.get("type") == "scope-agent-context/request"]
+    wire_requests = [event["data"] for event in observed if event.get("type") == "scope-agent-context/request"]
+    if [(item["turn"], item["step"]) for item in requests] != [(2, 1)] or wire_requests != requests:
+        raise AssertionError("revocation must stop further automatic requests and preserve the one actual request")
+    ends = [event["data"] for event in records if event.get("type") == "turn/end"]
+    if [(item["turn"], item["reason"]["kind"]) for item in ends] != [(1, "completed"), (2, "blocked"), (3, "completed")]:
+        raise AssertionError("only the automatic continuation must be blocked; ordinary turns must complete")
+    wire_ends = [event["data"] for event in observed if event.get("type") == "turn/end"]
+    if not any(item == ends[1] for item in wire_ends):
+        raise AssertionError("Python notifications omitted the blocked automatic turn")
+    outcomes = [event["data"] for event in records if event.get("type") == "tool/result"]
+    if len(outcomes) != 1 or outcomes[0]["message"]["content"][0]["isError"]:
+        raise AssertionError("the actual authorized file read must finish before the automatic continuation is blocked")
+    users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
+    pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
+    if len(users) != 2 or len(pulses) != 1:
+        raise AssertionError("revocation must not fabricate ordinary input or renew the automatic pulse")
+    state = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"][-1]
+    if state["mode"] != "paused" or state["pauseReason"] != "terminal" or state["usedBudget"] != 1:
+        raise AssertionError("revocation must preserve the consumed allowance and terminal pause")
+    contexts = [event["data"]["source"] for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "scope-agent-context"]
+    if contexts[-1] != {"kind": "scope-agent-context", "version": 1, "form": "withdrawn", "reason": "revoked"}:
+        raise AssertionError("the ordinary request must receive withdrawal instead of the old snapshot")
+    if first.finish_reason != "completed" or last.finish_reason != "completed":
+        raise AssertionError("ordinary work must remain available after automatic authority ends")
+    return {"first": {"text": first.final_response, "finishReason": first.finish_reason},
+            "last": {"text": last.final_response, "finishReason": last.finish_reason},
+            "automaticRequests": len(requests), "automaticTurnReason": ends[1]["reason"]["kind"],
+            "automaticPulses": len(pulses), "ordinaryInputs": len(users), "allowedRead": True,
+            "mode": state["mode"], "pauseReason": state["pauseReason"], "usedBudget": state["usedBudget"],
+            "finalContext": contexts[-1], "wirePreservesAutomaticRequestAndBlock": True}
 
 
 def joint_automatic_snapshot_result(
