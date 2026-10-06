@@ -617,6 +617,12 @@ The backend input identifies a captured Task revision, recipient binding interva
 Source: [`packages/collaboration/development-task-context/src/types.ts`](../../packages/collaboration/development-task-context/src/types.ts)
 
 ```ts type-equiv
+/** Exact owner-authorized source interval of the recipient's original joint capture. */
+type DevelopmentTaskContextPeerCapture = Pick<DevelopmentTaskPeerContributionGrant,
+  'ownerPeerId' | 'contributorPeerId' | 'taskId' | 'grantId' | 'generation' | 'captureId' | 'captureGeneration'>
+```
+
+```ts type-equiv
 /** Durable identity of the task-bound event that began one binding interval. */
 interface DevelopmentTaskBindingEpoch {
   readonly nodeId: DevelopmentNodeId
@@ -647,6 +653,8 @@ interface DevelopmentTaskContextInput {
     readonly participantId: DevelopmentParticipantId
     /** Routing inputs only; the consumer owns authorization and delivery identity. */
     readonly sessionLabel?: string
+    /** Original joint capture verified by the consumer; omission identifies authorship, not retained model memory. */
+    readonly peerCapture?: DevelopmentTaskContextPeerCapture
   }
   /** Maximum UTF-8 bytes of the complete model-visible text, including framing. */
   readonly maxContextBytes: number
@@ -823,6 +831,47 @@ Presence remains a transient lease outside durable logs. Room creation, join, an
 [Scope access](../../packages/collaboration/scope-access/README.md) authorizes and computes a single Root Task projection on its owner; [transport](../../packages/collaboration/scope-transport/README.md) authenticates device identity. Receivers retain invitations and exact projections without replicating Task or Room logs.
 
 ```ts type-equiv
+/** Immutable original source selected by a joint receiving operation, never inferred from its peer. */
+type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, 'captureId' | 'captureGeneration'>
+```
+
+```ts type-equiv
+interface ScopeSubscriptionFields {
+  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
+  readonly routeRevision?: number
+  readonly id: ScopeSubscriptionId
+  readonly generation: ScopeGeneration
+  readonly invitation: ScopeInvitation
+  readonly state: 'active' | 'left' | 'revoked' | 'expired'
+}
+```
+
+```ts type-equiv
+/** Historical or manual receiving intent without a source-association claim. */
+interface ScopePlainSubscription extends ScopeSubscriptionFields {
+  readonly version?: never
+  readonly originalCapture?: never
+}
+```
+
+```ts type-equiv
+/** Joint receiving intent whose original capture cannot change across retries or route recovery. */
+interface ScopeCaptureSubscription extends ScopeSubscriptionFields {
+  readonly version: 2
+  readonly originalCapture: ScopeOriginalCapture
+}
+```
+
+```ts type-equiv
+/** Exact owner-verified original source included in both projection attribution and its digest. */
+interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {
+  readonly version: 3
+  readonly activation: DevelopmentTaskContextActivation
+  readonly peerCapture: DevelopmentTaskContextPeerCapture
+}
+```
+
+```ts type-equiv
 /** Owner-issued read authorization identity, never reused after revocation. */
 type ScopeGrantId = Branded<'ScopeGrantId'>
 ```
@@ -866,15 +915,8 @@ interface ScopeReadGrant {
 ```
 
 ```ts type-equiv
-/** Explicit receiver intent; active means locally enabled, not remotely verified. */
-interface ScopeSubscription {
-  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
-  readonly routeRevision?: number
-  readonly id: ScopeSubscriptionId
-  readonly generation: ScopeGeneration
-  readonly invitation: ScopeInvitation
-  readonly state: 'active' | 'left' | 'revoked' | 'expired'
-}
+/** Active means locally enabled, not remotely verified; only version 2 identifies the original joint source. */
+type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription
 ```
 
 ```ts type-equiv
@@ -1008,8 +1050,8 @@ interface ScopeAccessCurrentProjection extends ScopeAccessProjectionContent {
 ```
 
 ```ts type-equiv
-/** Strict legacy replay and current owner-produced projections. */
-type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection
+/** Strict historical replay and current owner-produced projections, including explicit joint-source attribution. */
+type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection
 ```
 
 ## Native file-work contribution
@@ -1153,6 +1195,27 @@ interface ScopeTransportLimits {
 ```
 
 ```ts type-equiv
+/** Durable route intent preserves the exact subscription, binding, and execution permission. */
+interface ScopeAgentRouteFields {
+  readonly agentId: SessionId
+  readonly bindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly previousOwnerAddress: string
+}
+```
+
+```ts type-equiv
+/** Exact source identity is carried only by the original joint subscription and its immutable plan. */
+type ScopeAgentCaptureJoinReadPlan = {
+  readonly subscription: ScopeCaptureSubscription & { readonly state: 'active' }
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+} & (
+  | (Omit<ScopeAgentJoinReadPlan, 'subscription'> & { readonly kind: 'scope' })
+  | (Omit<ScopeAgentCompositeJoinReadPlan, 'subscription'> & { readonly kind: 'local-task-scope' })
+)
+```
+
+```ts type-equiv
 /** One native-session binding interval, independent of a remote grant's lifetime. */
 type ScopeAgentBindingId = Branded<'ScopeAgentBindingId'>
 ```
@@ -1169,6 +1232,8 @@ interface ScopeAgentJoinReadRequest {
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Original source-owned capture; omitted historical operations retain their original full read. */
+  readonly originalCapture?: ScopeOriginalCapture
   /** Exact existing local responsibility retained by this additional read permission. */
   readonly localTask?: ScopeAgentLocalTaskTarget
   /** Explicit permission from this Session's user; absence preserves passive adoption. */
@@ -1204,15 +1269,11 @@ interface ScopeAgentUpdateRouteResult {
 ```
 
 ```ts type-equiv
-/** Durable route intent preserves the exact subscription, binding, and execution permission. */
-interface ScopeAgentRouteEvent {
-  readonly version: 1
-  readonly agentId: SessionId
-  readonly bindingId: ScopeAgentBindingId
-  readonly expectedReadStateSeq: SessionSeqCursor
-  readonly previousOwnerAddress: string
-  readonly subscription: ScopeSubscription & { readonly state: 'active'; readonly routeRevision: number }
-}
+/** Same-authority route intent preserves a legacy subscription or its original capture association. */
+type ScopeAgentRouteEvent = ScopeAgentRouteFields & (
+  | { readonly version: 1; readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active'; readonly routeRevision: number } }
+  | { readonly version: 2; readonly subscription: ScopeCaptureSubscription & { readonly state: 'active'; readonly routeRevision: number } }
+)
 ```
 
 ```ts type-equiv
@@ -1235,7 +1296,7 @@ interface ScopeAgentJoinReadResult {
 /** Original durable operation inputs and receiver identities; retries cannot replace them. */
 interface ScopeAgentJoinReadPlan {
   readonly expectedReadStateSeq: SessionSeqCursor
-  readonly subscription: ScopeSubscription & { readonly state: 'active' }
+  readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active' }
   readonly bindingId: ScopeAgentBindingId
 }
 ```
@@ -1256,7 +1317,7 @@ type JoinReadTransition<Plan> =
 ```
 
 ```ts type-equiv
-/** Non-ignorable adoption history: passive v1, explicit automatic v2, and retained local responsibility v3. */
+/** Non-ignorable adoption history retains passive v1, automatic v2, composite v3, and exact-capture v4 plans. */
 type ScopeAgentJoinReadEvent = {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
@@ -1264,6 +1325,7 @@ type ScopeAgentJoinReadEvent = {
   | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
   | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
   | ({ readonly version: 3 } & JoinReadTransition<ScopeAgentCompositeJoinReadPlan>)
+  | ({ readonly version: 4 } & JoinReadTransition<ScopeAgentCaptureJoinReadPlan>)
 )
 ```
 
@@ -1330,6 +1392,8 @@ interface ScopeAgentRemoteBinding {
   readonly id: ScopeAgentBindingId
   readonly subscriptionId: ScopeSubscriptionId
   readonly invitation: ScopeInvitation
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
 }
 ```
 
@@ -1359,6 +1423,8 @@ interface ScopeAgentCompositeBinding {
   readonly subscriptionId: ScopeSubscriptionId
   readonly invitation: ScopeInvitation
   readonly retainedLocal: ScopeAgentRetainedLocal
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
 }
 ```
 
@@ -1404,7 +1470,7 @@ type ScopeAgentPauseReason = 'user' | 'restored' | 'cancelled' | 'turn-ended' | 
 ```ts type-equiv
 /** Whole durable scheduling state. It records reservations, never model adoption. */
 interface ScopeAgentBindingStatus {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly agentId: SessionId
   readonly binding: ScopeAgentBinding | null
   readonly automatic: ScopeAgentAutomaticPolicy | null
@@ -1457,7 +1523,8 @@ type ScopeAgentStatusResult =
 ```ts type-equiv
 /** Logged native context is sufficient to reconstruct the exact request without a network read. */
 type ScopeAgentContextSource =
-  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessProjection }
+  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: Exclude<ScopeAccessProjection, ScopeAccessCaptureProjection> }
+  | { readonly kind: 'scope-agent-context'; readonly version: 2; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessCaptureProjection }
   | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'withdrawn'; readonly reason: 'left' | 'revoked' | 'expired' | 'unavailable' | 'conflict' | 'failed' }
 ```
 
@@ -1479,7 +1546,7 @@ type ScopeAgentGoalDigest = Branded<'ScopeAgentGoalDigest'>
 ```ts type-equiv
 /** Online scheduling decision with the exact projection that was evaluated. */
 interface ScopeAgentEvaluation {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly decision: 'activate' | 'suppress-unchanged' | 'blocked-current' | 'suppress-reserved'
   readonly bindingId: ScopeAgentBindingId
   readonly goalDigest: ScopeAgentGoalDigest
@@ -1493,7 +1560,7 @@ interface ScopeAgentEvaluation {
 ```ts type-equiv
 /** Actual loop-built frozen request containing the authorized pulse and exact logged scope snapshot. */
 interface ScopeAgentRequestEvidence {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly turn: number
   readonly step: number
   readonly bindingId: ScopeAgentBindingId
@@ -1501,7 +1568,7 @@ interface ScopeAgentRequestEvidence {
   readonly goalDigest: ScopeAgentGoalDigest
   readonly projection: ScopeAgentReadProjection
   readonly contextSeq: SessionSeq
-  /** Required for version 3; contextSeq identifies its remote snapshot. */
+  /** Required for combined projections in versions 3 and 4; contextSeq identifies the remote snapshot. */
   readonly localContextSeq?: SessionSeq
   readonly maxContextBytes: number
 }

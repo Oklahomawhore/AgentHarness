@@ -393,8 +393,8 @@ it.each([false, true])('adopts a joint scope (reusable: %s), retains local captu
   const restoredSession = Session.create(f.agent.id, structuredClone([...disk]), f.agent.session.header)
   expect(restoredSession.deriveMessages()).toEqual(f.agent.session.deriveMessages())
   expect(disk.filter(event => event.type === 'scope-agent-context/join-read'))
-    .toMatchObject([{ data: { version: 3, phase: 'planned' } }, { data: { version: 3, phase: 'adopted' } },
-      { data: { version: 3, phase: 'ended', leaveAdopted: true } }])
+    .toMatchObject([{ data: { version: 4, phase: 'planned' } }, { data: { version: 4, phase: 'adopted' } },
+      { data: { version: 4, phase: 'ended', leaveAdopted: true } }])
 })
 
 it('rejects a changed local epoch before recording joint consent', async () => {

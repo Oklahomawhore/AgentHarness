@@ -16,6 +16,8 @@ import type { ScopeAgentContributionReceiving } from './types.ts'
 
 /** Original local receiving/execution consent and independently recoverable departure intent. */
 export interface NativeReceiving extends ScopeAgentContributionReceiving {
+  /** Version 2 associates new consent with its original capture; absent historical markers are never upgraded. */
+  readonly version?: 2
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly leaveAdopted: boolean
   readonly intent?: 'adopt' | 'cancel-pending' | 'leave' | undefined
@@ -105,7 +107,7 @@ const localTaskSchema = z.strictObject({
   taskId: z.string().min(1), taskBindingId: z.string().min(1),
   expectedBindingEpoch: z.strictObject({ nodeId: z.string().min(1), seq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
 }).transform(value => value as ScopeAgentLocalTaskTarget)
-const receivingSchema = z.object({
+const receivingFields = {
   localTask: localTaskSchema.optional(),
   automatic: scopeAgentAutomaticPolicySchema.optional(),
   adoptionId: z.uuid().transform(value => value as NativeReceiving['adoptionId']),
@@ -116,7 +118,11 @@ const receivingSchema = z.object({
   routeRecovery: z.object({ ownerAddress: z.string().min(1).max(2048),
     expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
   }).strict().optional(),
-}).strict().refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
+}
+const receivingSchema = z.union([
+  z.object(receivingFields).strict(),
+  z.object({ ...receivingFields, version: z.literal(2) }).strict(),
+]).refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
   { message: 'receiving departure intent disagrees' })
   .transform(({ automatic, localTask, ...receiving }) => ({ ...receiving,
     ...(automatic === undefined ? {} : { automatic }), ...(localTask === undefined ? {} : { localTask }),

@@ -272,8 +272,13 @@ it('recovers the original joint read binding after a lost route reply and uses t
   expect(after.state.usedBudget).toBe(before.state.usedBudget)
   expect((await f.source.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
   expect((await stored(f.source, f.agent.id)).capture?.receiving?.routeRecovery).toBeUndefined()
+  await f.owner.ctx.developmentTasks.publishContext({ taskId: f.task.id, participantId: f.task.createdBy, text: 'OWNER_ROUTE_FACT' })
   await run(f.source, f.agent)
-  expect(requestText(f.source.adapter.requests.at(-1)!)).toContain('JOIN_ROUTE_RESTORED')
+  const request = f.source.adapter.requests.at(-1)!
+  expect(requestText(request)).toContain('OWNER_ROUTE_FACT')
+  const scope = request.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+  expect(JSON.stringify(scope)).not.toContain('JOIN_ROUTE_RESTORED')
+  expect(scope).toMatchObject([{ source: { version: 2, projection: { version: 3 } } }])
 })
 
 it('recovers detached receiving through its original entry without recreating contribution permission', async () => {

@@ -366,7 +366,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             captureGeneration: randomUUID() as NativeCapture['proposal']['captureGeneration'],
             source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') } },
           roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
-          ...(request.receive === undefined ? {} : { receiving: { adoptionId: randomUUID() as ScopeAgentJoinReadId,
+          ...(request.receive === undefined ? {} : { receiving: { version: 2 as const, adoptionId: randomUUID() as ScopeAgentJoinReadId,
             expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const,
             ...(request.receive.localTask === undefined ? {} : { localTask: request.receive.localTask }),
             ...(automatic === undefined ? {} : { automatic }) } }) }
@@ -1039,6 +1039,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const result = receiving.state === 'active' && route !== undefined ? { status: 'adopted' as const }
           : await receiver.adoptJoinRead({ agentId: id, adoptionId: receiving.adoptionId,
             expectedReadStateSeq: receiving.expectedReadStateSeq, invitation,
+            ...(receiving.version !== 2 ? {} : { originalCapture: { captureId: selected.proposal.captureId,
+              captureGeneration: selected.proposal.captureGeneration } }),
             ...(receiving.localTask === undefined ? {} : { localTask: receiving.localTask }),
             ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) })
         signal.throwIfAborted()

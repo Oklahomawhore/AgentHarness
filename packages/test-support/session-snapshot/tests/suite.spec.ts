@@ -496,6 +496,17 @@ describe('writerSnapshotName', () => {
       .toEqual(['session.v1.jsonl'])
   })
 
+  it('names only the explicitly selected expectation revision and keeps it out of Session selection', () => {
+    expect(writerSnapshotName(0, 2)).toBe('writer.r2.expected.jsonl')
+    expect(writerSnapshotName(2, 12)).toBe('writer.2.r12.expected.jsonl')
+    expect(sessionFixtureNames(['session.v3.jsonl', writerSnapshotName(0), writerSnapshotName(0, 2)]))
+      .toEqual(['session.v3.jsonl'])
+  })
+
+  it.each([0, 1, -1, 2.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid writer revision %s', (revision) => {
+    expect(() => writerSnapshotName(0, revision)).toThrow('writer snapshot revision must be a safe integer of at least 2')
+  })
+
   it.each([-1, -0, 0.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid role %s', (index) => {
     expect(() => writerSnapshotName(index)).toThrow('writer snapshot index must be a non-negative safe integer')
   })

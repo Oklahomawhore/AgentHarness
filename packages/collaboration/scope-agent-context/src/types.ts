@@ -3,7 +3,7 @@
 import type { DevelopmentTaskLocalContextProjection, DevelopmentTaskLocalContextTarget } from '@deepseek-ai/dsh-development-task-context/types'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
-import type { ScopeAccessProjection, ScopeInvitation, ScopeSubscription, ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
+import type { ScopeAccessProjection, ScopeInvitation, ScopeSubscription, ScopeSubscriptionId, ScopeOriginalCapture, ScopeCaptureSubscription, ScopeAccessCaptureProjection } from '@deepseek-ai/dsh-scope-access/types'
 
 /** One native-session binding interval, independent of a remote grant's lifetime. */
 export type ScopeAgentBindingId = Branded<'ScopeAgentBindingId'>
@@ -16,6 +16,8 @@ export interface ScopeAgentJoinReadRequest {
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Original source-owned capture; omitted historical operations retain their original full read. */
+  readonly originalCapture?: ScopeOriginalCapture
   /** Exact existing local responsibility retained by this additional read permission. */
   readonly localTask?: ScopeAgentLocalTaskTarget
   /** Explicit permission from this Session's user; absence preserves passive adoption. */
@@ -44,14 +46,18 @@ export interface ScopeAgentUpdateRouteResult {
 }
 
 /** Durable route intent preserves the exact subscription, binding, and execution permission. */
-export interface ScopeAgentRouteEvent {
-  readonly version: 1
+interface ScopeAgentRouteFields {
   readonly agentId: SessionId
   readonly bindingId: ScopeAgentBindingId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly previousOwnerAddress: string
-  readonly subscription: ScopeSubscription & { readonly state: 'active'; readonly routeRevision: number }
 }
+
+/** Same-authority route intent preserves a legacy subscription or its original capture association. */
+export type ScopeAgentRouteEvent = ScopeAgentRouteFields & (
+  | { readonly version: 1; readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active'; readonly routeRevision: number } }
+  | { readonly version: 2; readonly subscription: ScopeCaptureSubscription & { readonly state: 'active'; readonly routeRevision: number } }
+)
 
 /** Cancel pending adoption, optionally leaving only the binding this operation actually adopted. */
 export interface ScopeAgentCancelJoinReadRequest {
@@ -68,7 +74,7 @@ export interface ScopeAgentJoinReadResult {
 /** Original durable operation inputs and receiver identities; retries cannot replace them. */
 export interface ScopeAgentJoinReadPlan {
   readonly expectedReadStateSeq: SessionSeqCursor
-  readonly subscription: ScopeSubscription & { readonly state: 'active' }
+  readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active' }
   readonly bindingId: ScopeAgentBindingId
 }
 
@@ -83,7 +89,7 @@ type JoinReadTransition<Plan> =
   | { readonly phase: 'ended'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
   | { readonly phase: 'superseded'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
 
-/** Non-ignorable adoption history: passive v1, explicit automatic v2, and retained local responsibility v3. */
+/** Non-ignorable adoption history retains passive v1, automatic v2, composite v3, and exact-capture v4 plans. */
 export type ScopeAgentJoinReadEvent = {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
@@ -91,6 +97,7 @@ export type ScopeAgentJoinReadEvent = {
   | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
   | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
   | ({ readonly version: 3 } & JoinReadTransition<ScopeAgentCompositeJoinReadPlan>)
+  | ({ readonly version: 4 } & JoinReadTransition<ScopeAgentCaptureJoinReadPlan>)
 )
 
 /** One durably reserved automatic activation. */
@@ -143,6 +150,8 @@ export interface ScopeAgentRemoteBinding {
   readonly id: ScopeAgentBindingId
   readonly subscriptionId: ScopeSubscriptionId
   readonly invitation: ScopeInvitation
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
 }
 
 /** Scheduling permission for an existing owner-local Task assignment. */
@@ -166,6 +175,8 @@ export interface ScopeAgentCompositeBinding {
   readonly subscriptionId: ScopeSubscriptionId
   readonly invitation: ScopeInvitation
   readonly retainedLocal: ScopeAgentRetainedLocal
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
 }
 
 /** One execution interval owns one policy and either or both explicitly selected information sources. */
@@ -191,6 +202,15 @@ export interface ScopeAgentCompositeJoinReadPlan extends ScopeAgentJoinReadPlan 
   readonly automatic: ScopeAgentAutomaticPolicy | null
 }
 
+/** Exact source identity is carried only by the original joint subscription and its immutable plan. */
+export type ScopeAgentCaptureJoinReadPlan = {
+  readonly subscription: ScopeCaptureSubscription & { readonly state: 'active' }
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+} & (
+  | (Omit<ScopeAgentJoinReadPlan, 'subscription'> & { readonly kind: 'scope' })
+  | (Omit<ScopeAgentCompositeJoinReadPlan, 'subscription'> & { readonly kind: 'local-task-scope' })
+)
+
 /** Exact local or remote projection used by the shared scheduler. */
 export type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection | ScopeAgentCompositeProjection
 
@@ -199,7 +219,7 @@ export type ScopeAgentPauseReason = 'user' | 'restored' | 'cancelled' | 'turn-en
 
 /** Whole durable scheduling state. It records reservations, never model adoption. */
 export interface ScopeAgentBindingStatus {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly agentId: SessionId
   readonly binding: ScopeAgentBinding | null
   readonly automatic: ScopeAgentAutomaticPolicy | null
@@ -242,7 +262,8 @@ export type ScopeAgentStatusResult =
 
 /** Logged native context is sufficient to reconstruct the exact request without a network read. */
 export type ScopeAgentContextSource =
-  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessProjection }
+  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: Exclude<ScopeAccessProjection, ScopeAccessCaptureProjection> }
+  | { readonly kind: 'scope-agent-context'; readonly version: 2; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessCaptureProjection }
   | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'withdrawn'; readonly reason: 'left' | 'revoked' | 'expired' | 'unavailable' | 'conflict' | 'failed' }
 
 /** Locally authorized scheduling input; remote facts are fetched separately at admission. */
@@ -258,7 +279,7 @@ export type ScopeAgentGoalDigest = Branded<'ScopeAgentGoalDigest'>
 
 /** Online scheduling decision with the exact projection that was evaluated. */
 export interface ScopeAgentEvaluation {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly decision: 'activate' | 'suppress-unchanged' | 'blocked-current' | 'suppress-reserved'
   readonly bindingId: ScopeAgentBindingId
   readonly goalDigest: ScopeAgentGoalDigest
@@ -270,7 +291,7 @@ export interface ScopeAgentEvaluation {
 
 /** Actual loop-built frozen request containing the authorized pulse and exact logged scope snapshot. */
 export interface ScopeAgentRequestEvidence {
-  readonly version: 1 | 2 | 3
+  readonly version: 1 | 2 | 3 | 4
   readonly turn: number
   readonly step: number
   readonly bindingId: ScopeAgentBindingId
@@ -278,7 +299,7 @@ export interface ScopeAgentRequestEvidence {
   readonly goalDigest: ScopeAgentGoalDigest
   readonly projection: ScopeAgentReadProjection
   readonly contextSeq: SessionSeq
-  /** Required for version 3; contextSeq identifies its remote snapshot. */
+  /** Required for combined projections in versions 3 and 4; contextSeq identifies the remote snapshot. */
   readonly localContextSeq?: SessionSeq
   readonly maxContextBytes: number
 }

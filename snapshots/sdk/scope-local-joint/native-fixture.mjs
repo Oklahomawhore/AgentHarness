@@ -246,7 +246,7 @@ export async function apply(ctx) {
       assert.equal(exact.data.turn, currentTurn)
       assert.equal(exact.data.step, currentStep)
       if (currentTurn !== 2) {
-        assert.equal(exact.data.version, 3)
+        assert.equal(exact.data.version, 4)
         assert.equal(exact.data.projection.kind, 'local-task-scope')
         assert.notEqual(exact.data.contextSeq, exact.data.localContextSeq)
         assert.deepEqual(activeAgent.session.eventAt(exact.data.contextSeq).data, remote)

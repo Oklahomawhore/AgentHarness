@@ -11,3 +11,4 @@ replay:
   override: true
 workspace:
   final: true
+writer: separate

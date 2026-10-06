@@ -13,6 +13,7 @@ import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, host, peer } from '../../scope-access/tests/helpers.ts'
 import ScopeAgentContext from '../src/index.ts'
+import { originalCaptureSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import { joinReadHistory } from '../src/join-read.ts'
 import type { ScopeAgentJoinReadId } from '../src/types.ts'
 
@@ -628,3 +629,15 @@ it.each(['enabled', 'paused', 'changed-policy'] as const)(
     } finally { remove() }
   },
 )
+
+it('does not upgrade an original unassociated adoption when retried with a capture identity', async () => {
+  const { b, request } = await fixture()
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  const subscriptions = (await b.access.list()).subscriptions
+  expect(subscriptions).toHaveLength(1)
+  expect(subscriptions[0]?.version).toBeUndefined()
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead({ ...request,
+    originalCapture: originalCaptureSchema.parse({ captureId: randomUUID(), captureGeneration: randomUUID() }) }))
+    .rejects.toThrow('retry changes original inputs')
+  expect((await b.access.list()).subscriptions).toEqual(subscriptions)
+})

@@ -22,11 +22,12 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
+import { evidenceVersion } from './projection.ts'
 import { blocksCurrentCoverage } from './coverage.ts'
 import { currentScopeAgentActivity } from './activity.ts'
 import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { hasLocal, readComposite, compositeProjection } from './composite.ts'
-import { joinReadEventSchema, joinReadHistory, departedState } from './join-read.ts'
+import { joinReadEventSchema, joinReadHistory, departedState, joinCompositePlan, joinUsesLiveConsent } from './join-read.ts'
 import { routeEventSchema } from './route.ts'
 import { withJoinSession } from './join-session.ts'
 import type { ScopeAgentRouteEvent, ScopeAgentUpdateRouteRequest, ScopeAgentUpdateJoinReadRouteRequest, ScopeAgentUpdateRouteResult, ScopeAgentJoinReadId, ScopeAgentJoinReadRequest, ScopeAgentCancelJoinReadRequest, ScopeAgentJoinReadResult, ScopeAgentJoinReadEvent, ScopeAgentActivationId, ScopeAgentAutomaticPolicy, ScopeAgentBindRequest, ScopeAgentBindLocalRequest, ScopeAgentLeaveLocalTaskRequest, ScopeAgentLocalTaskTarget, ScopeAgentLocalBinding, ScopeAgentCompositeBinding, ScopeAgentReadProjection, ScopeAgentBindingId, ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentEvaluation, ScopeAgentPauseReason, ScopeAgentResumeRequest, ScopeAgentStatusResult, ScopeAgentSubscriptionState } from './types.ts'
@@ -154,12 +155,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           if (state.mode === 'enabled' && reservation !== null && (pulse || evidence.activeTurn === runtime.activeTurn)
             && context !== undefined && projection !== undefined && step?.type === 'step/start'
             && runtime.activeTurn === step.data.turn && state.pendingActivation !== null) {
-            runtime.agent.session.append('scope-agent-context/request', { version: 'kind' in projection
-              ? projection.kind === 'local-task-scope' ? 3 : 2 : 1,
-            turn: step.data.turn, step: step.data.step, bindingId: reservation.bindingId,
-            activationId: state.pendingActivation.id, goalDigest: reservation.goalDigest,
-            projection, contextSeq: context.seq, maxContextBytes: this.config.maxContextBytes,
-            ...(binding?.kind === 'local-task-scope' && localContext !== undefined ? { localContextSeq: localContext.seq } : {}) })
+            runtime.agent.session.append('scope-agent-context/request', { version: evidenceVersion(projection),
+              turn: step.data.turn, step: step.data.step, bindingId: reservation.bindingId,
+              activationId: state.pendingActivation.id, goalDigest: reservation.goalDigest,
+              projection, contextSeq: context.seq, maxContextBytes: this.config.maxContextBytes,
+              ...(binding?.kind === 'local-task-scope' && localContext !== undefined ? { localContextSeq: localContext.seq } : {}) })
           }
         }
       }
@@ -302,16 +302,19 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         const history = joinReadHistory(writer.session)
         let prior = history.records.get(request.adoptionId)
         if (prior !== undefined) {
+          const local = joinCompositePlan(prior)
           if (prior.plan !== null && (prior.plan.expectedReadStateSeq !== request.expectedReadStateSeq
           || !sameReadGrant(prior.plan.subscription.invitation, invitation)
           || !isDeepStrictEqual(prior.version !== 1 ? prior.plan.automatic ?? undefined : undefined, automatic)
-          || !isDeepStrictEqual(prior.version === 3 ? this.publicLocalTarget(prior.plan.target) : undefined, request.localTask))) {
+          || !isDeepStrictEqual(local === undefined ? undefined : this.publicLocalTarget(local.target), request.localTask)
+          || !isDeepStrictEqual(prior.plan.subscription.version === 2 ? prior.plan.subscription.originalCapture : undefined,
+            request.originalCapture))) {
             throw new Error('scope-agent-context: adoption retry changes original inputs')
           }
           if (prior.plan !== null && prior.plan.subscription.invitation.ownerAddress !== invitation.ownerAddress) {
             directAddress(invitation.ownerAddress, invitation.ownerPeerId)
           }
-          if (prior.phase === 'planned' && prior.version !== 1
+          if (prior.phase === 'planned' && joinUsesLiveConsent(prior)
             && runtime.automaticJoins.get(request.adoptionId) !== command) {
             prior = { ...prior, phase: 'superseded', leaveAdopted: false }
             writer.session.append('scope-agent-context/join-read', prior)
@@ -332,26 +335,33 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           const fields = { expectedReadStateSeq: request.expectedReadStateSeq, bindingId: randomUUID() as ScopeAgentBindingId,
             subscription: { id: randomUUID() as ScopeSubscription['id'], generation: randomUUID() as ScopeSubscription['generation'],
               invitation, state: 'active' as const } }
-          prior = target !== null
-            ? { version: 3, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned',
-              plan: { ...fields, expectedBindingId: history.bindingId, target,
-                retainedLocal: { bindingId: randomUUID() as ScopeAgentBindingId, automatic: this.state(runtime).automatic },
-                automatic: automatic ?? null } }
-            : automatic === undefined
-              ? { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: fields }
-              : { version: 2, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: { ...fields, automatic } }
+          prior = request.originalCapture !== undefined
+            ? joinReadEventSchema.parse({ version: 4, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned',
+              plan: { ...fields, subscription: { ...fields.subscription, version: 2, originalCapture: request.originalCapture },
+                automatic: automatic ?? null, ...(target === null ? { kind: 'scope' } : { kind: 'local-task-scope',
+                  expectedBindingId: history.bindingId, target,
+                  retainedLocal: { bindingId: randomUUID() as ScopeAgentBindingId, automatic: this.state(runtime).automatic } }) } })
+            : target !== null
+              ? { version: 3, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned',
+                plan: { ...fields, expectedBindingId: history.bindingId, target,
+                  retainedLocal: { bindingId: randomUUID() as ScopeAgentBindingId, automatic: this.state(runtime).automatic },
+                  automatic: automatic ?? null } }
+              : automatic === undefined
+                ? { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: fields }
+                : { version: 2, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: { ...fields, automatic } }
           if (automatic !== undefined || target !== null) runtime.automaticJoins.set(request.adoptionId, command)
         }
         writer.session.append('scope-agent-context/join-read', joinReadEventSchema.parse(prior))
-        if (prior.phase === 'planned' && prior.version === 3) { this.stopBinding(runtime); this.startWatch(runtime) }
+        if (prior.phase === 'planned' && joinCompositePlan(prior) !== undefined) { this.stopBinding(runtime); this.startWatch(runtime) }
         await writer.flush()
         return prior
       }))
     if (plan.phase === 'ended' || plan.phase === 'superseded') {
       return await this.cancelJoinRead({ agentId: request.agentId, adoptionId: request.adoptionId, leaveAdopted: plan.leaveAdopted })
     }
-    if (plan.phase === 'planned' && plan.version === 3 && this.isCommand(runtime, command)
-      && (this.state(runtime).binding?.id ?? null) === plan.plan.expectedBindingId) {
+    const localPlan = joinCompositePlan(plan)
+    if (plan.phase === 'planned' && localPlan !== undefined && this.isCommand(runtime, command)
+      && (this.state(runtime).binding?.id ?? null) === localPlan.expectedBindingId) {
       this.stopBinding(runtime)
       this.startWatch(runtime)
       await runtime.cancelledActivity
@@ -394,13 +404,15 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           await writer.flush()
           return { status: 'ended' }
         }
+        const composite = joinCompositePlan(current)
         const valid = this.isCommand(runtime, command) && this.runtimes.get(request.agentId) === runtime
         && history.readStateSeq === current.plan.expectedReadStateSeq
-        && history.bindingId === (current.version === 3 ? current.plan.expectedBindingId : null)
+        && history.bindingId === (composite?.expectedBindingId ?? null)
         && this.eligibility(runtime) === 'eligible'
-        && (current.version === 3 ? this.currentLocalTarget(runtime, current.plan.target) : !this.hasTask(runtime))
-        && (current.version === 1 || (runtime.automaticJoins.get(request.adoptionId) === command
-          && (current.plan.automatic === null || current.plan.automatic.activationLimit > this.state(runtime).usedBudget)))
+        && (composite !== undefined ? this.currentLocalTarget(runtime, composite.target) : !this.hasTask(runtime))
+        && (!joinUsesLiveConsent(current) || (runtime.automaticJoins.get(request.adoptionId) === command
+          && (current.version === 1 || current.plan.automatic === null
+            || current.plan.automatic.activationLimit > this.state(runtime).usedBudget)))
         if (!valid || subscription.state !== 'active') {
           const terminal: Extract<ScopeAgentJoinReadEvent, { phase: 'ended' | 'superseded' }> = {
             ...current, phase: subscription.state === 'active' ? 'superseded' : 'ended', leaveAdopted: false,
@@ -418,10 +430,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         let initialRoute: ScopeAgentRouteEvent | undefined
         if (invitation.ownerAddress !== current.plan.subscription.invitation.ownerAddress) {
           directAddress(invitation.ownerAddress, invitation.ownerPeerId)
-          initialRoute = { version: 1, agentId: request.agentId, bindingId: current.plan.bindingId,
+          initialRoute = routeEventSchema.parse({ version: current.plan.subscription.version === 2 ? 2 : 1,
+            agentId: request.agentId, bindingId: current.plan.bindingId,
             expectedReadStateSeq: joinReadHistory(writer.session).readStateSeq,
             previousOwnerAddress: current.plan.subscription.invitation.ownerAddress,
-            subscription: { ...current.plan.subscription, invitation, routeRevision: 1 } }
+            subscription: { ...current.plan.subscription, invitation, routeRevision: 1 } })
           writer.session.append('scope-agent-context/route', routeEventSchema.parse(initialRoute))
         }
         await writer.flush()
@@ -571,7 +584,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         if (!retry && !ownAdoption && history.readStateSeq !== request.expectedReadStateSeq) return { status: 'superseded' }
         const subscription = (await this.ctx.scopeAccess.list()).subscriptions.find(item => item.id === binding.subscriptionId)
         if (subscription === undefined || subscription.state !== 'active') return { status: 'ended' }
-        if (!sameReadGrant(binding.invitation, subscription.invitation)) throw new Error('scope-agent-context: read subscription changed authority')
+        if (!sameReadGrant(binding.invitation, subscription.invitation)
+          || !isDeepStrictEqual(binding.originalCapture, subscription.version === 2 ? subscription.originalCapture : undefined)) throw new Error('scope-agent-context: read subscription changed authority')
         if (subscription.invitation.expiresAt <= Date.now()) {
           await this.ctx.scopeAccess.updateSubscriptionRoute({ ...subscription, routeRevision: subscription.routeRevision ?? 0 })
           return { status: 'ended' }
@@ -587,10 +601,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         if (binding.invitation.ownerAddress === request.ownerAddress && latest === undefined) { await writer.flush(); return { status: 'updated' } }
         let route = retry ? latest.event : undefined
         if (route === undefined) {
-          route = { version: 1, agentId: request.agentId, bindingId, expectedReadStateSeq: history.readStateSeq,
+          route = routeEventSchema.parse({ version: subscription.version === 2 ? 2 : 1, agentId: request.agentId, bindingId,
+            expectedReadStateSeq: history.readStateSeq,
             previousOwnerAddress: binding.invitation.ownerAddress,
             subscription: { ...subscription, state: 'active', invitation: { ...binding.invitation, ownerAddress: request.ownerAddress },
-              routeRevision: (latest?.event.subscription.routeRevision ?? 0) + 1 } }
+              routeRevision: (latest?.event.subscription.routeRevision ?? 0) + 1 } })
           this.unflushedBindings.add(bindingId)
           writer.session.append('scope-agent-context/route', routeEventSchema.parse(route))
           this.interruptRoute(request.agentId, bindingId)
@@ -650,7 +665,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const planned = record.plan.subscription
     const stored = (await this.ctx.scopeAccess.list()).subscriptions.find(item => item.id === planned.id)
     if (stored === undefined) return
-    if (stored.generation !== planned.generation || !sameReadGrant(stored.invitation, planned.invitation)) {
+    if (stored.generation !== planned.generation || !sameReadGrant(stored.invitation, planned.invitation)
+      || !isDeepStrictEqual(stored.version === 2 ? stored.originalCapture : undefined,
+        planned.version === 2 ? planned.originalCapture : undefined)) {
       throw new Error('scope-agent-context: owned join subscription changed identity')
     }
     if (stored.state === 'active') await this.ctx.scopeAccess.leave({ subscriptionId: stored.id })
@@ -989,6 +1006,10 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (runtime.terminal !== undefined) return runtime.terminal
     const subscription = subscriptions.find(item => item.id === binding.subscriptionId)
     if (subscription === undefined) return 'missing'
+    if (!sameReadGrant(subscription.invitation, binding.invitation)
+      || !isDeepStrictEqual(binding.originalCapture, subscription.version === 2 ? subscription.originalCapture : undefined)) {
+      throw new Error('scope-agent-context: read subscription changed authority')
+    }
     if (subscription.state !== 'active') return subscription.state
     return binding.invitation.expiresAt <= Date.now() ? 'expired' : 'active'
   }
@@ -1000,7 +1021,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   private write(runtime: Runtime, state: ScopeAgentBindingStatus): void {
-    runtime.agent.session.append('scope-agent-context/state', { ...state, version: state.binding?.kind === 'local-task-scope' ? 3 : state.binding?.kind === 'local-task' ? 2 : 1 })
+    runtime.agent.session.append('scope-agent-context/state', { ...state, version: state.binding !== null && state.binding.kind !== 'local-task' && state.binding.originalCapture !== undefined
+      ? 4 : state.binding?.kind === 'local-task-scope' ? 3 : state.binding?.kind === 'local-task' ? 2 : 1 })
   }
 
   private attach(agent: Agent): Runtime {
@@ -1401,7 +1423,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const last = evidence.lastEvaluation
     if (decision !== 'activate' && last?.decision === decision && last.bindingId === state.binding.id
       && last.goalDigest === goal && last.projection.projectionId === projection.projectionId) return
-    runtime.agent.session.append('scope-agent-context/evaluation', { version: 'kind' in projection ? projection.kind === 'local-task-scope' ? 3 : 2 : 1, decision,
+    runtime.agent.session.append('scope-agent-context/evaluation', { version: evidenceVersion(projection), decision,
       bindingId: state.binding.id, goalDigest: goal, projection, maxContextBytes: this.config.maxContextBytes, activationId,
       baseline: evidence.completed === null ? null
         : { requestSeq: evidence.completed.requestSeq, turnEndSeq: evidence.completed.turnEndSeq } })

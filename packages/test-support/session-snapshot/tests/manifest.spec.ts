@@ -51,6 +51,12 @@ describe('snapshot manifest', () => {
     expect(writesCurrentSessionFixtures(retained, 'refresh')).toBe(false)
   })
 
+  it('selects an explicit writer expectation revision without changing the Session format', () => {
+    const manifest = parseSnapshotManifest('version: 1\nprofile: sdk\nwriter: separate\nwriterRevision: 2\n')
+    expect(manifest).toEqual({ version: 1, profile: 'sdk', writer: 'separate', writerRevision: 2 })
+    expect(writesCurrentSessionFixtures(manifest, 'refresh')).toBe(false)
+  })
+
   it('keeps same-format SDK replay input immutable and selects a separate native writer oracle', () => {
     const manifest = parseSnapshotManifest('version: 1\nprofile: sdk\nwriter: separate\n')
     expect(manifest).toEqual({ version: 1, profile: 'sdk', writer: 'separate' })
@@ -174,6 +180,11 @@ describe('snapshot manifest', () => {
 
   it.each([
     ['', 'manifest must be a mapping'],
+    ['version: 1\nprofile: sdk\nwriterRevision: 2\n', 'manifest.writerRevision requires writer: separate'],
+    ...['0', '1', '-2', '2.5', 'true', 'null', '9007199254740992'].map(value => [
+      `version: 1\nprofile: sdk\nwriter: separate\nwriterRevision: ${value}\n`,
+      'manifest.writerRevision must be a safe integer of at least 2',
+    ]),
     ['version: 1\nprofile: sdk\nwriter: current\n', 'manifest.writer must equal separate when present'],
     ['version: 1\nprofile: sdk\nwriter: true\n', 'manifest.writer must equal separate when present'],
     ['version: 1\nprofile: headless\nwriter: separate\n', 'manifest.writer is only valid for an owning current-format SDK scenario'],

@@ -7,7 +7,9 @@ import type {
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionGeneration,
   DevelopmentTaskPeerContributionReceipt, DevelopmentTaskPeerContributionResult, DevelopmentTaskContributionEndReason,
 } from '@deepseek-ai/dsh-development-task/types'
-import type { DevelopmentTaskContextActivation, DevelopmentTaskContextProjection } from '@deepseek-ai/dsh-development-task-context/types'
+import type {
+  DevelopmentTaskContextActivation, DevelopmentTaskContextProjection, DevelopmentTaskContextPeerCapture,
+} from '@deepseek-ai/dsh-development-task-context/types'
 import type { ScopePeerId, ScopeTransportIdentity } from '@deepseek-ai/dsh-scope-transport/types'
 
 /** Owner-issued read authorization identity, never reused after revocation. */
@@ -45,8 +47,10 @@ export interface ScopeReadGrant {
   readonly state: 'active' | 'revoked'
 }
 
-/** Explicit receiver intent; active means locally enabled, not remotely verified. */
-export interface ScopeSubscription {
+/** Immutable original source selected by a joint receiving operation, never inferred from its peer. */
+export type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, 'captureId' | 'captureGeneration'>
+
+interface ScopeSubscriptionFields {
   /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
   readonly routeRevision?: number
   readonly id: ScopeSubscriptionId
@@ -54,6 +58,21 @@ export interface ScopeSubscription {
   readonly invitation: ScopeInvitation
   readonly state: 'active' | 'left' | 'revoked' | 'expired'
 }
+
+/** Historical or manual receiving intent without a source-association claim. */
+export interface ScopePlainSubscription extends ScopeSubscriptionFields {
+  readonly version?: never
+  readonly originalCapture?: never
+}
+
+/** Joint receiving intent whose original capture cannot change across retries or route recovery. */
+export interface ScopeCaptureSubscription extends ScopeSubscriptionFields {
+  readonly version: 2
+  readonly originalCapture: ScopeOriginalCapture
+}
+
+/** Active means locally enabled, not remotely verified; only version 2 identifies the original joint source. */
+export type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription
 
 /** Local owner inputs; responsibility routes context but does not narrow read permission. */
 export interface ScopeInviteRequest {
@@ -90,8 +109,15 @@ export interface ScopeAccessCurrentProjection extends ScopeAccessProjectionConte
   readonly activation: DevelopmentTaskContextActivation
 }
 
-/** Strict legacy replay and current owner-produced projections. */
-export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection
+/** Exact owner-verified original source included in both projection attribution and its digest. */
+export interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {
+  readonly version: 3
+  readonly activation: DevelopmentTaskContextActivation
+  readonly peerCapture: DevelopmentTaskContextPeerCapture
+}
+
+/** Strict historical replay and current owner-produced projections, including explicit joint-source attribution. */
+export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection
 
 /** Online authorization outcome; unavailable never permits reuse of an earlier projection. */
 export type ScopeRetrieveResult =

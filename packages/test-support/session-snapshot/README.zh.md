@@ -78,6 +78,8 @@ Spill 场景通过真实本地 provider 保存到私有临时根目录。夹具�
 
 拥有当前格式输入的 SDK 场景可声明 `writer: separate`，用于不可变回放输入与当前原生输出在行为上不同、但不涉及 Session 格式迁移的情况。该声明不能与 `sessionFormat` 或借用的 Session 引用并用；manifest 解析器拒绝不支持的 profile 和取值。它复用历史场景的独立输出比较基准，在 record 与 refresh 期间保留所选输入，不把当前格式输入归为历史迁移覆盖。[决策记录](../../../.agents/notes/implemented/testing/2026-10-06-separate-current-writer-oracles.zh.md)说明此区分。
 
+当前 SDK 场景在声明 `writer: separate` 时，可选择 `writerRevision: 2` 或更大的安全整数，保留早先的输出比较基准不变。修订 2 选择 `writer.r2.expected.jsonl` 与 `writer.<ordinal>.r2.expected.jsonl`；省略时选择无修订编号的 writer 文件名。选择必须明确指定，不扫描最高修订。Writer 修订标识输出预期，不是 Session 格式代际。
+
 保留历史输入的场景保持规范 Session 文件不变，并继续选择它们进行回放；固定历史版本的目录中没有更新的规范同角色文件。其精确的规范化原生当前格式输出单独记录在父会话的 `writer.expected.jsonl` 和子会话的 `writer.<ordinal>.expected.jsonl` 中；这些是输出比较基准，而非 replay 代际。保留历史输入的 SDK 场景使用 `notifications.current.expected.jsonl` 记录当前协议输出。比较既不将当前事件反向投影为历史格式，也不剥除结构差异。独立迁移测试验证正式转换，而不把原生 writer 布局当作其预期事件序列。
 
 ### 录制、回放与刷新

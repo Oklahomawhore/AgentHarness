@@ -2,7 +2,7 @@
 
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
 import DevelopmentTaskContextBackend from './backend.ts'
-import { isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
+import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type {
   DevelopmentTaskContextInput,
   DevelopmentTaskContextOmission,
@@ -41,7 +41,7 @@ interface PublicationCandidate {
 
 /** Selects complete original publications; it performs no semantic inference or summarization. */
 export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
-  readonly identity = { id: 'text', revision: '7' }
+  readonly identity = { id: 'text', revision: '8' }
 
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   override async compute(input: DevelopmentTaskContextInput): Promise<DevelopmentTaskContextProjection> {
@@ -83,7 +83,7 @@ export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskCo
     const omissions = (): DevelopmentTaskContextOmission[] => candidates.filter(item => !included.has(item)).map(item => ({
       source: item.source,
       reason: item.withdrawn ? 'withdrawn' : item.superseded ? 'superseded'
-        : !isTerminalPublication(item.publication) && item.publication.publishedBy === input.recipient.participantId
+        : isSelfPublished(item.publication, input.recipient)
           ? 'self-published' : 'budget',
     }))
     const render = (): string => {
@@ -113,7 +113,7 @@ export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskCo
     for (const candidate of candidates) {
       if (candidate.withdrawn || candidate.superseded) continue
       const terminal = isTerminalPublication(candidate.publication)
-      if (!terminal && candidate.publication.publishedBy === input.recipient.participantId) continue
+      if (isSelfPublished(candidate.publication, input.recipient)) continue
       const existing = candidate.toolChain === undefined ? undefined : toolGroups.get(candidate.toolChain)
       if (existing !== undefined) {
         existing.candidates.push(candidate)

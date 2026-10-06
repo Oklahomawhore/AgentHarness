@@ -2359,7 +2359,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-access/src/index.ts:49`](../packages/collaboration/scope-access/src/index.ts)
+Source: [`packages/collaboration/scope-access/src/index.ts:51`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 
@@ -2379,7 +2379,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-context/src/index.ts:45`](../packages/collaboration/scope-agent-context/src/index.ts)
+Source: [`packages/collaboration/scope-agent-context/src/index.ts:46`](../packages/collaboration/scope-agent-context/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-contribution"></a>
 

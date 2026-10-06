@@ -123,6 +123,8 @@ export interface SnapshotManifest {
   sessionFormat?: SnapshotSessionFormatManifest
   /** Owning SDK replay keeps current-format input immutable and compares a separate native writer oracle. */
   writer?: 'separate'
+  /** Explicit native writer expectation revision, independent of the physical Session format. */
+  writerRevision?: number
 }
 
 /**
@@ -233,6 +235,7 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       'session',
       'sessionFormat',
       'writer',
+      'writerRevision',
     ], 'manifest')
     if (root.version !== 1) throw new Error('manifest.version must equal 1')
     const scenario = root.scenario === undefined ? undefined : name(root.scenario, 'manifest.scenario')
@@ -426,6 +429,13 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       }
     }
 
+    if (root.writerRevision !== undefined) {
+      if (root.writer !== 'separate') throw new Error('manifest.writerRevision requires writer: separate')
+      if (!Number.isSafeInteger(root.writerRevision) || Number(root.writerRevision) < 2) {
+        throw new Error('manifest.writerRevision must be a safe integer of at least 2')
+      }
+    }
+
     return {
       version: 1,
       ...(scenario === undefined ? {} : { scenario }),
@@ -442,6 +452,7 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       ...(session === undefined ? {} : { session }),
       ...(sessionFormat === undefined ? {} : { sessionFormat }),
       ...(root.writer === 'separate' ? { writer: 'separate' as const } : {}),
+      ...(root.writerRevision === undefined ? {} : { writerRevision: Number(root.writerRevision) }),
     }
   } catch (error) {
     /* v8 ignore next -- every parser and validator above throws Error instances. */

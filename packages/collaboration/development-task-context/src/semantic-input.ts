@@ -1,7 +1,7 @@
 /** Deterministic evidence selection and attribution around recipient-directed model output. */
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
-import { isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
+import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection, DevelopmentTaskContextOmission,
   DevelopmentTaskContextSourceRef, DevelopmentTaskContextEvidenceId } from './types.ts'
 import { semanticDigest, semanticJson, semanticReplySchema, semanticCapturedInputSchema,
@@ -26,7 +26,7 @@ export interface SemanticSource {
 /** Captured evidence retained independently of the model's relevance decisions. */
 export interface SemanticInput {
   readonly task: Pick<DevelopmentTaskContextInput['view']['task'], 'id' | 'revision' | 'objective' | 'scope'> & { readonly origin: unknown }
-  readonly recipient: DevelopmentTaskContextInput['recipient']
+  readonly recipient: Pick<DevelopmentTaskContextInput['recipient'], 'participantId' | 'sessionLabel'>
   readonly inherited: readonly { readonly parent: DevelopmentTaskParentRef; readonly objective: string; readonly scope: string }[]
   readonly sources: readonly SemanticSource[]
   readonly mandatory: readonly unknown[]
@@ -75,7 +75,7 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
             chain: sample?.chain, observation: sample?.observation }) })
         continue
       }
-      if (publication.publishedBy === input.recipient.participantId) {
+      if (isSelfPublished(publication, input.recipient)) {
         omitted.push({ source, reason: 'self-published' }); continue
       }
       const tool = publication.peerToolObservation ?? publication.localToolObservation
@@ -101,7 +101,9 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
   collect(task.context, { taskId: task.id, revision: task.revision }, false)
   for (const inherited of input.view.inherited?.sources ?? []) collect(inherited.context, inherited.parent, true)
   return { task: { id: task.id, revision: task.revision, objective: task.objective, scope: task.scope, origin: task.origin },
-    recipient: input.recipient, inherited: input.view.inherited?.sources.map(value => ({ parent: value.parent,
+    recipient: { participantId: input.recipient.participantId,
+      ...(input.recipient.sessionLabel === undefined ? {} : { sessionLabel: input.recipient.sessionLabel }) },
+    inherited: input.view.inherited?.sources.map(value => ({ parent: value.parent,
       objective: value.objective, scope: value.scope })) ?? [], sources, mandatory, selected, omitted }
 }
 

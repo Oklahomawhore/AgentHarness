@@ -543,8 +543,9 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
       if (host === b) {
         const adopted = diskEvents.filter(event => event.type === 'scope-agent-context/join-read' && event.data.phase === 'adopted')
         expect(adopted).toHaveLength(1)
-        expect(adopted[0]?.data).toMatchObject({ version: automaticJoin ? 2 : 1, adoptionId: pending.receiving?.adoptionId })
-        if (automaticJoin) expect(adopted[0]?.data).toMatchObject({ plan: { automatic: REMOTE_POLICY } })
+        expect(adopted[0]?.data).toMatchObject({ version: 4, adoptionId: pending.receiving?.adoptionId,
+          plan: { kind: 'scope', automatic: automaticJoin ? REMOTE_POLICY : null,
+            subscription: { version: 2, originalCapture: pending.selection } } })
         expect(diskEvents.filter(event => event.type === 'scope-agent-context/request')).toHaveLength(automaticJoin ? 2 : 0)
       }
       const restored = Session.create(id, structuredClone([...diskEvents]), agent.session.header)

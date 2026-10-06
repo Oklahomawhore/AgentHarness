@@ -87,6 +87,8 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 `bind` 和 `adoptJoinRead` 必须显式传入带精确分配代际的 `localTask`，才能保留已有本地职责。组合绑定只有一份当前自动策略和一个全生命周期预留计数。原本地自动许可独立保留，不会授予远端变化触发权。离开远端后恢复新的本地绑定区间，原策略处于暂停状态；原先无策略则保持被动。Task、分配代际、历史、文件权限和本地采集保留。离开本地 Task 前须先离开远端 scope。
 
+带有来源关联的联合采用通过 version-4 计划与绑定记录原始采集。所属 Session 在读取重试、停止贡献和路由恢复期间保留它；手动绑定不会从读取邀请推断该关联。后来的手动绑定或退出不能继承此前的关联。owner 验证关联后才返回 version-3 采集投影；[scope access](../scope-access/README.zh.md)负责该验证。这允许按精确来源省略工具报告，不授予执行许可，也不声称模型记得被省略的内容。
+
 组合准入只经过一次 Task consumer。系统先计入完整远端消息及 framing，再用剩余字节计算本地投影；随后重新在线核验远端授权，并同步复核本地分配、provider、修订和过期时间。两份精确消息共用总预算。远端失败时撤回远端事实，普通用户工作仍获得当前本地上下文；自动续步停止。自动请求证据保存双方投影及两条已提交消息序号，任一来源变化均会使已完成比较失效。
 
 管理失败携带结构化 Remote code，包括 `scope-agent/stale-binding`、`scope-agent/not-live` 和 `scope-agent/terminal-subscription`；客户端按 code 与 details 判断，不解析诊断文本。已知撤销、过期、退出或缺失的订阅不能恢复。本地 Task assignment 冲突时，仍可对准确绑定执行暂停与退出。
@@ -123,7 +125,7 @@ Session 先记录并落盘地址变更意图，再由 Access 修改接收记录�
 
 不透明且经过授权的变化游标把绑定标记为待更新。忙碌 Agent 不接收注入或 steering 消息，其下一次自然 pre-step 会读取当前权限。空闲自动绑定合并变化，同一时刻仅拥有一次预取，在短 `runMaintenance` 内预留启动次数，并排入本地目标触发消息。pre-step 再次独立读取，并在等待后检查准确的 Agent 和绑定。新通知不会阻止已捕获读取的提交，而是为后续请求保留待更新标记。
 
-本地 Task 变化、终结通知、backend 替换及最近的来源到期时间会使同一调度器重新读取。接收 Agent 自己发布的普通工具观察不会单独唤醒它，显式发布和终结通知仍会触发处理。实际 Task admission consumer 拥有唯一注入点；卸载它会中止自有自动工作，替换后的 consumer 不继承自动许可。本地状态及请求证据使用第 2 版，组合绑定与双输入证据使用第 3 版；旧版事件保留严格解析。
+本地 Task 变化、终结通知、backend 替换及最近的来源到期时间会使同一调度器重新读取。接收 Agent 在本地 Task 上发布的普通 owner-local 工具观察不会单独唤醒它，显式发布和终结通知仍会触发处理。实际 Task admission consumer 拥有唯一注入点；卸载它会中止自有自动工作，替换后的 consumer 不继承自动许可。无来源关联的本地状态及请求证据使用第 2 版，组合绑定与双输入证据使用第 3 版。带采集关联的状态、采用、评估与请求证据使用第 4 版；来源快照和路由意图使用第 2 版。旧版事件保留严格解析，不能接受新增关联投影。
 
 完整状态 Session 事件拥有绑定和累计预留次数。精确上下文消息携带订阅、绑定、grant、peer、Task revision、backend identity、projection identity 和来源覆盖信息。首条消息经正常 Loop admission 进入受保护的 system head 之后。后续投影替换自有的可见节点，同时保留历史事件。终态或不可用读取撤回当前上下文，不会授权自动轮次。
 

@@ -2,12 +2,13 @@
 
 import { z } from 'zod'
 import { policySchema } from './policy.ts'
+import { legacyProjectionSchema, captureProjectionSchema } from './projection.ts'
 import { foldRoute, routeEventSchema } from './route.ts'
 import { foldJoinRead, joinReadEventSchema } from './join-read.ts'
 import { localContextTargetSchema } from '@deepseek-ai/dsh-development-task-context/local'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
-import { invitationSchema, projectionSchema } from '@deepseek-ai/dsh-scope-access/schema'
+import { invitationSchema, originalCaptureSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
 import type { ScopeAgentActivationId, ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentPulseSource } from './types.ts'
 
@@ -24,22 +25,27 @@ const schedulingFields = {
   usedBudget: natural, lastActivationAt: natural.nullable(),
   pendingActivation: z.object({ id: activationId, bindingId }).strict().nullable(),
 }
-const remoteState = z.object({ ...schedulingFields, version: z.literal(1),
-  binding: z.object({ id: bindingId, subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId),
-    invitation: invitationSchema }).strict().nullable() }).strict()
+const remoteBindingSchema = z.object({ id: bindingId, subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId),
+  invitation: invitationSchema }).strict()
+const remoteState = z.object({ ...schedulingFields, version: z.literal(1), binding: remoteBindingSchema.nullable() }).strict()
 const retainedLocalSchema = z.object({ bindingId, automatic: policySchema.nullable() }).strict()
 
 const localState = z.object({ ...schedulingFields, version: z.literal(2),
   binding: z.object({ kind: z.literal('local-task'), id: bindingId, target: localContextTargetSchema }).strict() }).strict()
 
-const compositeState = z.object({ ...schedulingFields, version: z.literal(3),
-  binding: z.object({ kind: z.literal('local-task-scope'), id: bindingId, target: localContextTargetSchema,
-    subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), invitation: invitationSchema,
-    retainedLocal: retainedLocalSchema }).strict() }).strict()
+const compositeBindingSchema = z.object({ kind: z.literal('local-task-scope'), id: bindingId, target: localContextTargetSchema,
+  subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), invitation: invitationSchema,
+  retainedLocal: retainedLocalSchema }).strict()
+const compositeState = z.object({ ...schedulingFields, version: z.literal(3), binding: compositeBindingSchema }).strict()
+const captureState = z.object({ ...schedulingFields, version: z.literal(4), binding: z.union([
+  remoteBindingSchema.extend({ originalCapture: originalCaptureSchema }),
+  compositeBindingSchema.extend({ originalCapture: originalCaptureSchema }),
+]) }).strict()
 
-/** Whole-state parser retains prior readers and requires explicit combined authority in version 3. */
-export const stateSchema: z.ZodType<ScopeAgentBindingStatus> = z.discriminatedUnion('version', [remoteState, localState, compositeState]).superRefine((state, ctx) => {
-  if ((state.version === 3 && state.binding.id === state.binding.retainedLocal.bindingId)
+/** Whole-state parser preserves historical fields and requires exact original capture identity in version 4. */
+export const stateSchema: z.ZodType<ScopeAgentBindingStatus> = z.discriminatedUnion('version', [remoteState, localState, compositeState, captureState]).superRefine((state, ctx) => {
+  if ((state.binding !== null && 'kind' in state.binding && state.binding.kind === 'local-task-scope'
+      && state.binding.id === state.binding.retainedLocal.bindingId)
     || (state.mode === 'left') !== (state.binding === null)
     || (state.mode === 'enabled' && state.automatic === null)
     || (state.pendingActivation !== null && (state.binding?.id !== state.pendingActivation.bindingId
@@ -49,9 +55,11 @@ export const stateSchema: z.ZodType<ScopeAgentBindingStatus> = z.discriminatedUn
 })
 
 /** Exact received projection or an explicit current-context withdrawal. */
-export const contextSourceSchema: z.ZodType<ScopeAgentContextSource> = z.discriminatedUnion('form', [
+export const contextSourceSchema: z.ZodType<ScopeAgentContextSource> = z.union([
   z.object({ kind: z.literal('scope-agent-context'), version: z.literal(1), form: z.literal('snapshot'), bindingId,
-    subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), projection: projectionSchema }).strict(),
+    subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), projection: legacyProjectionSchema }).strict(),
+  z.object({ kind: z.literal('scope-agent-context'), version: z.literal(2), form: z.literal('snapshot'), bindingId,
+    subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), projection: captureProjectionSchema }).strict(),
   z.object({ kind: z.literal('scope-agent-context'), version: z.literal(1), form: z.literal('withdrawn'),
     reason: z.enum(['left', 'revoked', 'expired', 'unavailable', 'conflict', 'failed']) }).strict(),
 ])

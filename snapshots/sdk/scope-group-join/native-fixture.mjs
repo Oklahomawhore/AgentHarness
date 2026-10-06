@@ -247,7 +247,7 @@ export async function apply(ctx) {
       assert.equal(c.adapter.requests.length, 2, 'passive C joining must not start another request')
     } else if ((turn === 4 || turn === 5) && step === 1) {
       const activation = agent.session.snapshotEvents().findLast(event => event.type === 'scope-agent-context/evaluation' && event.data.decision === 'activate').data
-      assert.equal(activation.version, 3)
+      assert.equal(activation.version, 4)
       assert.equal(activation.activationId, state().pendingActivation.id)
       assert.ok(activation.projection.remote.text.includes(`C_SHARED_V${turn - 3}`), 'the independent C update must precede B activation, not only its later request')
       if (turn === 5) assert.ok(!activation.projection.remote.text.includes('C_SHARED_V1'))
@@ -333,7 +333,7 @@ export async function apply(ctx) {
       assert.equal(exact.data.turn, currentTurn)
       assert.equal(exact.data.step, currentStep)
       if (currentTurn !== 2) {
-        assert.equal(exact.data.version, 3)
+        assert.equal(exact.data.version, 4)
         assert.notEqual(exact.data.contextSeq, exact.data.localContextSeq)
         assert.deepEqual(activeAgent.session.eventAt(exact.data.contextSeq).data, remote)
         assert.deepEqual(activeAgent.session.eventAt(exact.data.localContextSeq).data, local)

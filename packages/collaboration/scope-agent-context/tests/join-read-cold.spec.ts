@@ -107,7 +107,7 @@ function prepared() {
   const plan = joinReadEventSchema.parse({ version: 1, agentId: session.id, adoptionId: randomUUID(), phase: 'planned', plan: {
     expectedReadStateSeq: -1, bindingId: randomUUID(), subscription: { id: randomUUID(), generation: randomUUID(), invitation, state: 'active' },
   } })
-  if (plan.phase !== 'planned') throw new Error('expected pending plan')
+  if (plan.version !== 1 || plan.phase !== 'planned') throw new Error('expected original passive pending plan')
   return { session, plan }
 }
 function adopted(session: Session, plan: Extract<ScopeAgentJoinReadEvent, { phase: 'planned' | 'adopted' }>) {

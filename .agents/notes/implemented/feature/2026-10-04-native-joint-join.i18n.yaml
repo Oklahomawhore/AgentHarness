@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-04-native-joint-join.md
-2026-10-04-native-joint-join.md: 79405b8603b1580c856a03d3e2bb4f4662f974e9
-2026-10-04-native-joint-join.zh.md: 5b532f6702517245efa787e45907b1ee83b4a4d7
+2026-10-04-native-joint-join.md: afd5aea40053d3ae280b18c0f212a20cd9749c05
+2026-10-04-native-joint-join.zh.md: ea5dd63b216023feda8d2f03d2c5b749820eac4a

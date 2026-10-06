@@ -3456,6 +3456,46 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentCompositeJoinReadPlan",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskContextPeerCapture",
+      "source": "packages/collaboration/development-task-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeOriginalCapture",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeSubscriptionFields",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopePlainSubscription",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeCaptureSubscription",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAccessCaptureProjection",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRouteFields",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCaptureJoinReadPlan",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
     }
   ]
 }

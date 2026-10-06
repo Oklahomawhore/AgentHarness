@@ -143,6 +143,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
   },
+  'scope-capture-self-omission': {
+    expectedFinalResponse: 'B left the shared goal; its original local work and the other members remain.',
+  },
   'scope-group-join': {
     expectedFinalResponse: 'B left the shared goal; C remains joined and B local work is saved.',
   },
@@ -880,9 +883,14 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       let files = await fixtureFiles(scenario)
       const replayContents = await Promise.all(files.map(file => readFile(file, 'utf8')))
       if (!recording && !refreshing) {
-        const writerFiles = (await readdir(scenarioDir)).filter(name => /^writer(?:\.[1-9]\d*)?\.expected\.jsonl$/u.test(name)).sort()
+        const suffix = scenario.manifest.writerRevision === undefined ? '.expected.jsonl'
+          : `.r${scenario.manifest.writerRevision}.expected.jsonl`
+        const writerFiles = (await readdir(scenarioDir))
+          .filter(name => /^writer(?:\.[1-9]\d*)?(?:\.r[1-9]\d*)?\.expected\.jsonl$/u.test(name))
+          .filter(name => name.endsWith(suffix) && (scenario.manifest.writerRevision !== undefined || !name.includes('.r')))
+          .sort()
         expect(writerFiles, 'native writer oracle inventory').toEqual(separateWriter
-          ? files.map((_, index) => writerSnapshotName(index)).sort() : [])
+          ? files.map((_, index) => writerSnapshotName(index, scenario.manifest.writerRevision)).sort() : [])
       }
       const { results, notifications, observedMethods, logs, initialWorkspace, finalWorkspace, cwd } = await runScenario(scenario)
       const ordered = orderLogs(
@@ -906,7 +914,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       }
 
       let expectedContents = separateWriter && !refreshing
-        ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index)), 'utf8')))
+        ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index, scenario.manifest.writerRevision)), 'utf8')))
         : replayContents
 
       if (recording) {
@@ -936,7 +944,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
 
       if (writesSessionFixtures || refreshing && separateWriter) {
         const outputFiles = ordered.map((log, index) => join(scenarioDir, separateWriter
-          ? writerSnapshotName(index)
+          ? writerSnapshotName(index, scenario.manifest.writerRevision)
           : sessionFixtureName(index, sessionHeaderVersion(log.content, `harvested Session ${index}`))))
         await Promise.all(expectedContents.map((stable, index) => writeFile(outputFiles[index] as string, stable)))
         files = outputFiles
@@ -954,7 +962,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         expect(await Promise.all((await fixtureFiles(scenario)).map(file => readFile(file, 'utf8'))),
           'independent replay input remains unchanged').toEqual(replayContents)
         for (const [index, content] of expectedContents.entries()) {
-          expect(sessionHeaderVersion(content, writerSnapshotName(index))).toBe(SESSION_FORMAT_VERSION)
+          expect(sessionHeaderVersion(content, writerSnapshotName(index, scenario.manifest.writerRevision))).toBe(SESSION_FORMAT_VERSION)
         }
       }
 

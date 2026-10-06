@@ -12,7 +12,9 @@ A recorded provider response can remain valid replay input while a changed backe
 
 The [snapshot manifest](../../../../packages/test-support/session-snapshot/README.md) permits owning SDK scenarios to select a separate current-writer oracle. The original canonical Session remains replay input. Actual native output is compared with the complete normalized writer expectation, and protocol notifications have their own current expectation. TypeScript and Python consume the same declaration. Historical format retention remains a distinct declaration with its existing corpus restrictions.
 
-This applies to facts and semantic backend scenarios whose current production identities differ from recorded inputs. New output expectations come from actual keyless execution and retain identity differences for review. No provider identity is forged, no comparison field is erased, and no Session-format version is invented for a behavioral change.
+When a committed writer oracle also needs preservation, an explicit `writerRevision` selects a separate numbered output expectation. It does not advance the canonical Session-format generation or select a file by recency. The unnumbered expectation remains intact, and the chosen revision compares the full current output.
+
+This applies to backend scenarios whose current production identities differ from recorded inputs. New output expectations come from actual keyless execution and retain identity differences for review. No provider identity is forged, no comparison field is erased, and no Session-format version is invented for a behavioral change.
 
 ## Alternatives considered
 

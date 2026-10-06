@@ -5611,11 +5611,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContextInput',
-    declaration: 'export interface DevelopmentTaskContextInput {\n    readonly view: DevelopmentTaskContextView;\n    readonly recipient: {\n        readonly participantId: DevelopmentParticipantId;\n        readonly sessionLabel?: string;\n    };\n    readonly maxContextBytes: number;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface DevelopmentTaskContextInput {\n    readonly view: DevelopmentTaskContextView;\n    readonly recipient: {\n        readonly participantId: DevelopmentParticipantId;\n        readonly sessionLabel?: string;\n        readonly peerCapture?: DevelopmentTaskContextPeerCapture;\n    };\n    readonly maxContextBytes: number;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'DevelopmentTaskContextOmission',
     declaration: 'export interface DevelopmentTaskContextOmission {\n    readonly source: DevelopmentTaskContextSourceRef;\n    readonly reason: \'self-published\' | \'budget\' | \'unsupported\' | \'superseded\' | \'withdrawn\' | \'recipient-irrelevant\';\n}',
+  },
+  {
+    name: 'DevelopmentTaskContextPeerCapture',
+    declaration: 'export type DevelopmentTaskContextPeerCapture = Pick<DevelopmentTaskPeerContributionGrant, \'ownerPeerId\' | \'contributorPeerId\' | \'taskId\' | \'grantId\' | \'generation\' | \'captureId\' | \'captureGeneration\'>;',
   },
   {
     name: 'DevelopmentTaskContextProjection',
@@ -6886,6 +6890,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScheduledToolPreparation = {\n    kind: \'dispatch\';\n    exec: ToolRunContext;\n} | {\n    kind: \'post-result\';\n    exec: ToolRunContext;\n    result: ToolExecutionResult;\n} | {\n    kind: \'final-result\';\n    exec: ToolRunContext;\n    result: ToolExecutionResult;\n};',
   },
   {
+    name: 'ScopeAccessCaptureProjection',
+    declaration: 'export interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {\n    readonly version: 3;\n    readonly activation: DevelopmentTaskContextActivation;\n    readonly peerCapture: DevelopmentTaskContextPeerCapture;\n}',
+  },
+  {
     name: 'ScopeAccessCurrentProjection',
     declaration: 'export interface ScopeAccessCurrentProjection extends ScopeAccessProjectionContent {\n    readonly version: 2;\n    readonly activation: DevelopmentTaskContextActivation;\n}',
   },
@@ -6903,7 +6911,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAccessProjection',
-    declaration: 'export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection;',
+    declaration: 'export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection;',
   },
   {
     name: 'ScopeAccessProjectionContent',
@@ -6951,7 +6959,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentBindingStatus',
-    declaration: 'export interface ScopeAgentBindingStatus {\n    readonly version: 1 | 2 | 3;\n    readonly agentId: SessionId;\n    readonly binding: ScopeAgentBinding | null;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n    readonly mode: \'passive\' | \'enabled\' | \'paused\' | \'left\';\n    readonly pauseReason: ScopeAgentPauseReason | null;\n    readonly usedBudget: number;\n    readonly lastActivationAt: number | null;\n    readonly pendingActivation: {\n        readonly id: ScopeAgentActivationId;\n        readonly bindingId: ScopeAgentBindingId;\n    } | null;\n}',
+    declaration: 'export interface ScopeAgentBindingStatus {\n    readonly version: 1 | 2 | 3 | 4;\n    readonly agentId: SessionId;\n    readonly binding: ScopeAgentBinding | null;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n    readonly mode: \'passive\' | \'enabled\' | \'paused\' | \'left\';\n    readonly pauseReason: ScopeAgentPauseReason | null;\n    readonly usedBudget: number;\n    readonly lastActivationAt: number | null;\n    readonly pendingActivation: {\n        readonly id: ScopeAgentActivationId;\n        readonly bindingId: ScopeAgentBindingId;\n    } | null;\n}',
   },
   {
     name: 'ScopeAgentBindLocalRequest',
@@ -6967,7 +6975,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentCompositeBinding',
-    declaration: 'export interface ScopeAgentCompositeBinding {\n    readonly kind: \'local-task-scope\';\n    readonly id: ScopeAgentBindingId;\n    readonly target: DevelopmentTaskLocalContextTarget;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly retainedLocal: ScopeAgentRetainedLocal;\n}',
+    declaration: 'export interface ScopeAgentCompositeBinding {\n    readonly kind: \'local-task-scope\';\n    readonly id: ScopeAgentBindingId;\n    readonly target: DevelopmentTaskLocalContextTarget;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly retainedLocal: ScopeAgentRetainedLocal;\n    readonly originalCapture?: ScopeOriginalCapture;\n}',
   },
   {
     name: 'ScopeAgentCompositeProjection',
@@ -7007,7 +7015,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentEvaluation',
-    declaration: 'export interface ScopeAgentEvaluation {\n    readonly version: 1 | 2 | 3;\n    readonly decision: \'activate\' | \'suppress-unchanged\' | \'blocked-current\' | \'suppress-reserved\';\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly projection: ScopeAgentReadProjection;\n    readonly maxContextBytes: number;\n    readonly activationId: ScopeAgentActivationId | null;\n    readonly baseline: {\n        readonly requestSeq: SessionSeq;\n        readonly turnEndSeq: SessionSeq;\n    } | null;\n}',
+    declaration: 'export interface ScopeAgentEvaluation {\n    readonly version: 1 | 2 | 3 | 4;\n    readonly decision: \'activate\' | \'suppress-unchanged\' | \'blocked-current\' | \'suppress-reserved\';\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly projection: ScopeAgentReadProjection;\n    readonly maxContextBytes: number;\n    readonly activationId: ScopeAgentActivationId | null;\n    readonly baseline: {\n        readonly requestSeq: SessionSeq;\n        readonly turnEndSeq: SessionSeq;\n    } | null;\n}',
   },
   {
     name: 'ScopeAgentGoalDigest',
@@ -7019,7 +7027,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentJoinReadRequest',
-    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n    readonly localTask?: ScopeAgentLocalTaskTarget;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n}',
+    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n    readonly originalCapture?: ScopeOriginalCapture;\n    readonly localTask?: ScopeAgentLocalTaskTarget;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n}',
   },
   {
     name: 'ScopeAgentJoinReadResult',
@@ -7063,7 +7071,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentRemoteBinding',
-    declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n}',
+    declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly originalCapture?: ScopeOriginalCapture;\n}',
   },
   {
     name: 'ScopeAgentResumeRequest',
@@ -7092,6 +7100,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeAgentUpdateRouteResult',
     declaration: 'export interface ScopeAgentUpdateRouteResult {\n    readonly status: \'updated\' | \'ended\' | \'superseded\';\n}',
+  },
+  {
+    name: 'ScopeCaptureSubscription',
+    declaration: 'export interface ScopeCaptureSubscription extends ScopeSubscriptionFields {\n    readonly version: 2;\n    readonly originalCapture: ScopeOriginalCapture;\n}',
   },
   {
     name: 'ScopeChangeCursor',
@@ -7286,8 +7298,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeKey = object;',
   },
   {
+    name: 'ScopeOriginalCapture',
+    declaration: 'export type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, \'captureId\' | \'captureGeneration\'>;',
+  },
+  {
     name: 'ScopePeerId',
     declaration: 'export type ScopePeerId = Branded<\'ScopePeerId\'>;',
+  },
+  {
+    name: 'ScopePlainSubscription',
+    declaration: 'export interface ScopePlainSubscription extends ScopeSubscriptionFields {\n    readonly version?: never;\n    readonly originalCapture?: never;\n}',
   },
   {
     name: 'ScopeProjectionId',
@@ -7307,7 +7327,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeSubscription',
-    declaration: 'export interface ScopeSubscription {\n    readonly routeRevision?: number;\n    readonly id: ScopeSubscriptionId;\n    readonly generation: ScopeGeneration;\n    readonly invitation: ScopeInvitation;\n    readonly state: \'active\' | \'left\' | \'revoked\' | \'expired\';\n}',
+    declaration: 'export type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription;',
   },
   {
     name: 'ScopeSubscriptionId',
