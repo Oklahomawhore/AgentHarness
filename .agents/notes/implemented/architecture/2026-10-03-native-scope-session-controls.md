@@ -20,6 +20,8 @@ The Client source treats mutation returns as operation completion, then refreshe
 
 [Chat](../../../../packages/client/ui-chat/README.md) omits only the exact owned `scope-agent-context` and `scope-agent-pulse` source kinds from its message nodes. Their durable events and model inputs remain unchanged. Ordinary user input, other context, assistant work, and approvals retain their presentation. An automatic turn without visible work contributes no empty message bubble. The existing Trajectory view retains snapshot, pulse, withdrawal and replacement history with source metadata. Header actions select that Session's View while preserving the composer draft.
 
+Mode headings distinguish passive reading from a pause of granted automatic work. A binding without automatic permission keeps “Update while I work” after a recorded read issue. Historical read reasons do not establish the latest request outcome or current connectivity.
+
 ## Alternatives considered
 
 **A separate picker of all Sessions.** Cold history cannot establish live eligibility. The current Session action makes the receiving identity explicit and uses a read-only Host check.

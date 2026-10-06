@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
-  ScopeInvitation, ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus, ScopeAgentBindingStatus,
+  ScopeInvitation, ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   Button, IconLinkOutline14, IconChevronDownOutline14, IconCloseOutline16,
@@ -20,6 +20,7 @@ import type { ParticipantDirectory } from './participant-directory.ts'
 import type { ContributionDirectory } from './contribution-directory.ts'
 import type { NativeScopeAction, NativeScopeSource } from './native-scopes.ts'
 import type { EmergenceCenterKey } from './locales.ts'
+import { nativePauseKey } from './native-scope-copy.ts'
 import { automaticPolicy, NativeAutomaticPermission } from './NativeAutomaticPermission.tsx'
 import css from './NativeScopeAction.module.css'
 
@@ -66,13 +67,6 @@ function issueKey(issue: string): EmergenceCenterKey {
     case 'scope-agent/budget-exhausted': return 'native.error.budget'
     default: return 'native.error.unknown'
   }
-}
-
-const passivePauseKeys: Record<NonNullable<ScopeAgentBindingStatus['pauseReason']>, EmergenceCenterKey> = {
-  user: 'native.passiveHint', restored: 'native.passiveHint', cancelled: 'native.passiveHint',
-  'turn-ended': 'native.passiveHint', 'step-limit': 'native.passiveHint', budget: 'native.passiveHint',
-  conflict: 'native.read.conflict', unavailable: 'native.read.unavailable', terminal: 'native.pause.terminal',
-  failed: 'native.read.failed', coverage: 'native.read.coverage',
 }
 
 /**
@@ -151,7 +145,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const policy = automaticPolicy({ goal, extra, steps, interval }, state?.usedBudget ?? 0)
   const editable = ready && eligible && !terminal
   const mode = state?.mode ?? 'left'
-  const label = snapshot.phase === 'ready' ? t(`native.mode.${mode}`) : t(`native.phase.${snapshot.phase}`)
+  const displayMode = mode === 'paused' && state?.automatic === null ? 'passive' : mode
+  const label = snapshot.phase === 'ready' ? t(`native.mode.${displayMode}`) : t(`native.phase.${snapshot.phase}`)
   const localStatus = localContribution?.value
   const localBound = localStatus?.assignment != null || localStatus?.capture != null
   const localLabel = localContribution?.status !== 'ready' ? t('contribution.loading')
@@ -203,8 +198,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
         <p className={css.state} role="status">{state?.binding?.kind === 'local-task' ? t('native.mode.left') : label}</p>
-        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(state.automatic === null
-          ? passivePauseKeys[state.pauseReason] : `native.pause.${state.pauseReason}`)}</p>}
+        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(nativePauseKey(state.pauseReason, state.automatic))}</p>}
         {state !== undefined && state.binding?.kind !== 'local-task' && <p className={css.budget}>{state.automatic === null
           ? t('native.used', { used: state.usedBudget })
           : t('native.budget', { used: state.usedBudget, limit: state.automatic.activationLimit, steps: state.automatic.maxStepsPerTurn })}</p>}

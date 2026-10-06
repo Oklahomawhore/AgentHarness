@@ -1,0 +1,32 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - status: 工作时更新
+  - paragraph: 已记录共享上下文不可用；正常工作时仍会重新核验。
+  - paragraph: 累计已用 0 次自动启动额度
+  - term: 共享 Task
+  - definition: {{taskId}}
+  - term: 来源设备
+  - definition: {{ownerPeerId}}
+  - term: 邀请中的职责
+  - definition: 继续当前实现并采用所有者的共享说明。
+  - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - button "离开共享上下文"
+  - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 更新所有者连接地址
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "允许自动协作"
+    - text: 允许自动协作
+  - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
+  - button "确认启用自动协作" [disabled]
+  - group: 分享本会话的文件工作
+  - button "重新读取状态"
+  - button "查看来源"

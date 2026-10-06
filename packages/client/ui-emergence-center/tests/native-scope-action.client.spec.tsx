@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useSyncExternalStore } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { NativeScopeAction, type NativeScopeActionProps } from '../src/client/NativeScopeAction.tsx'
@@ -290,15 +290,37 @@ describe('current Session collaboration action', () => {
 })
 
 describe('passive receiving failures', () => {
+  it.each([localExecution, compositeExecution])('keeps a passive $binding.kind header free of automatic permission', (execution) => {
+    const current = { ...execution, mode: 'paused' as const, pauseReason: 'unavailable' as const, automatic: null }
+    const f = fixture(localSnapshot(current))
+    f.rerender(<NativeScopeAction {...f.props} useNativeLocalContributions={select => select({
+      [state.agentId]: { status: 'ready', pending: false, value: localStatus },
+    })} />)
+    expect(screen.getByRole('button', { name: zh['native.trigger'] }).textContent).toContain(zh['native.mode.passive'])
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.remote'] }))
+    const panel = within(screen.getByRole('dialog', { name: zh['native.title'] }))
+    expect(panel.getByRole('status').textContent).toBe(zh[execution.binding?.kind === 'local-task'
+      ? 'native.mode.left' : 'native.mode.passive'])
+    expect(panel.queryByText(zh['native.mode.paused'])).toBeNull()
+    expect(f.action).not.toHaveBeenCalled()
+  })
+
   it.each(['failed', 'unavailable', 'coverage', 'conflict'] as const)('reports %s without implying automatic authority', (reason) => {
     const current = { ...bound, mode: 'paused' as const, pauseReason: reason, automatic: null }
     const f = fixture({ phase: 'ready', pending: false, issue: null, observation: observation(current) })
+    const trigger = screen.getByRole('button', { name: zh['native.trigger'] })
+    const panel = within(screen.getByRole('dialog', { name: zh['native.title'] }))
+    expect(trigger.textContent).toContain(zh['native.mode.passive'])
+    expect(panel.getByRole('status').textContent).toBe(zh['native.mode.passive'])
+    expect(screen.queryByText(zh['native.mode.paused'])).toBeNull()
     expect(screen.getByText(zh[`native.read.${reason}`])).toBeTruthy()
     expect(screen.queryByText(zh[`native.pause.${reason}`])).toBeNull()
     expect(f.action).not.toHaveBeenCalled()
     act(() => { f.source.set({ phase: 'ready', pending: false, issue: null, observation: observation({ ...current,
       automatic: { goal: 'Maintain the existing task', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 },
     }) }) })
+    expect(trigger.textContent).toContain(zh['native.mode.paused'])
+    expect(panel.getByRole('status').textContent).toBe(zh['native.mode.paused'])
     expect(screen.getByText(zh[`native.pause.${reason}`])).toBeTruthy()
     expect(screen.queryByText(zh[`native.read.${reason}`])).toBeNull()
   })

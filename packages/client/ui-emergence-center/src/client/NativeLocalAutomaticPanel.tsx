@@ -5,6 +5,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { automaticPolicy, NativeAutomaticPermission, type NativeAutomaticDraft } from './NativeAutomaticPermission.tsx'
 import { sameLocalTarget, type NativeScopeAction, type NativeScopeSnapshot } from './native-scopes.ts'
+import { nativePauseKey } from './native-scope-copy.ts'
 import css from './NativeScopeAction.module.css'
 
 /**
@@ -36,6 +37,7 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
     && (state?.binding === null || state?.binding?.kind === 'local-task')
   const enabled = composite === null && matched && state?.mode === 'enabled'
   const currentPolicy = matched ? composite === null ? state?.automatic : composite.retainedLocal.automatic : null
+  const paused = matched && currentPolicy != null && (composite !== null || state?.mode === 'paused')
   const used = state?.usedBudget ?? 0
   const policy = automaticPolicy(draft, used)
   const expectedBindingId = state?.binding?.id ?? null
@@ -45,9 +47,10 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
     try { await act(action) } finally { busy.current = false }
   }
   return <section className={css.form} data-native-local-automatic>
-    <p role="status" className={css.state}>{t(!ready ? `native.phase.${snapshot.phase === 'ready' ? 'loading' : snapshot.phase}` : enabled ? 'native.mode.enabled'
-      : matched && (composite !== null ? currentPolicy !== null : state?.mode === 'paused') ? 'native.mode.paused' : 'native.mode.passive')}</p>
-    {composite === null && matched && state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
+    <p role="status" className={css.state}>{t(!ready ? `native.phase.${snapshot.phase === 'ready' ? 'loading' : snapshot.phase}`
+      : enabled ? 'native.mode.enabled' : paused ? 'native.mode.paused' : 'native.mode.passive')}</p>
+    {composite === null && matched && state?.pauseReason != null
+      && <p className={css.hint}>{t(nativePauseKey(state.pauseReason, state.automatic))}</p>}
     <p className={css.budget}>{currentPolicy == null ? t('native.used', { used })
       : t('native.budget', { used, limit: currentPolicy.activationLimit, steps: currentPolicy.maxStepsPerTurn })}</p>
     {currentPolicy != null && <p className={css.goal}>{t('native.currentGoal', { goal: currentPolicy.goal })}</p>}

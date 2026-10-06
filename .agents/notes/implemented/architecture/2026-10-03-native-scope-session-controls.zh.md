@@ -20,6 +20,8 @@ Client 状态源将 mutation 返回视为操作完成，然后重新读取权威
 
 [Chat](../../../../packages/client/ui-chat/README.zh.md) 仅不发布明确自有的 `scope-agent-context`、`scope-agent-pulse` 消息节点，其持久事件和模型输入保持完整。普通用户输入、其他 context、助手工作和审批保留各自展示。没有可见工作的自动轮次不产生空消息气泡。既有 Trajectory 保留 snapshot、pulse、withdrawal 和 replacement 历史及来源元数据。标题栏操作切换当前 Session 的 View，并保留输入草稿。
 
+模式标题区分被动读取与已授权自动工作的暂停。绑定没有自动许可时，记录读取问题后仍显示“工作时更新”。历史读取原因不代表最近请求的结果或当前连通性。
+
 ## 考虑过的替代方案
 
 **独立列出所有 Session 供选择。** 历史记录不能证明 Agent 存活。当前 Session 入口明确接收对象，并通过 Host 只读检查确认资格。

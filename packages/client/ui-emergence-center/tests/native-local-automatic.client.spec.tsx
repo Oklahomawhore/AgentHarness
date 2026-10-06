@@ -34,6 +34,21 @@ function SubmitBeforeEffects() {
 }
 
 describe('owner-local automatic permission', () => {
+  it('keeps a recorded local read issue separate from automatic permission', () => {
+    const current = { ...localExecution, mode: 'paused' as const, pauseReason: 'coverage' as const, automatic: null }
+    const f = fixture(localSnapshot(current))
+    expect(screen.getByText(zh['native.mode.passive'])).toBeTruthy()
+    expect(screen.queryByText(zh['native.mode.paused'])).toBeNull()
+    expect(screen.queryByText(zh['native.pause.coverage'])).toBeNull()
+    expect(screen.getByText(zh['native.read.coverage'])).toBeTruthy()
+    expect(f.actScope).not.toHaveBeenCalled()
+    f.rerender(<NativeLocalContributionPanel {...f.props}
+      scope={localSnapshot({ ...current, automatic: localExecution.automatic })} />)
+    expect(screen.getByText(zh['native.mode.paused'])).toBeTruthy()
+    expect(screen.getByText(zh['native.pause.coverage'])).toBeTruthy()
+    expect(screen.queryByText(zh['native.read.coverage'])).toBeNull()
+  })
+
   it('retains the original local policy while shared-scope controls own the current automatic interval', () => {
     const f = fixture(localSnapshot(compositeExecution))
     expect(screen.getByText(makeTranslate(zh)('native.currentGoal', { goal: localExecution.automatic!.goal }))).not.toBeNull()
