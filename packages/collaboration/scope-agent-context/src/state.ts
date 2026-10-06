@@ -27,12 +27,20 @@ const schedulingFields = {
 const remoteState = z.object({ ...schedulingFields, version: z.literal(1),
   binding: z.object({ id: bindingId, subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId),
     invitation: invitationSchema }).strict().nullable() }).strict()
+const retainedLocalSchema = z.object({ bindingId, automatic: policySchema.nullable() }).strict()
+
 const localState = z.object({ ...schedulingFields, version: z.literal(2),
   binding: z.object({ kind: z.literal('local-task'), id: bindingId, target: localContextTargetSchema }).strict() }).strict()
 
-/** Whole-state parser preserves remote version 1 and admits only explicit local version 2. */
-export const stateSchema: z.ZodType<ScopeAgentBindingStatus> = z.discriminatedUnion('version', [remoteState, localState]).superRefine((state, ctx) => {
-  if ((state.mode === 'left') !== (state.binding === null)
+const compositeState = z.object({ ...schedulingFields, version: z.literal(3),
+  binding: z.object({ kind: z.literal('local-task-scope'), id: bindingId, target: localContextTargetSchema,
+    subscriptionId: z.uuid().transform(value => value as ScopeSubscriptionId), invitation: invitationSchema,
+    retainedLocal: retainedLocalSchema }).strict() }).strict()
+
+/** Whole-state parser retains prior readers and requires explicit combined authority in version 3. */
+export const stateSchema: z.ZodType<ScopeAgentBindingStatus> = z.discriminatedUnion('version', [remoteState, localState, compositeState]).superRefine((state, ctx) => {
+  if ((state.version === 3 && state.binding.id === state.binding.retainedLocal.bindingId)
+    || (state.mode === 'left') !== (state.binding === null)
     || (state.mode === 'enabled' && state.automatic === null)
     || (state.pendingActivation !== null && (state.binding?.id !== state.pendingActivation.bindingId
       || state.automatic === null || state.usedBudget === 0))) {

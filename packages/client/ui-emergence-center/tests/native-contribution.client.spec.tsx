@@ -7,7 +7,7 @@ import type {
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { NativeContributionPanel, type NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
-import { localExecution, localSnapshot } from './native-local-automatic-fixture.client.ts'
+import { localExecution, localObservation, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { bound, invitation, observation, state } from './native-scope-fixture.client.ts'
 import type { ContributionEntry } from '../src/client/contribution-directory.ts'
 import { zh } from '../src/client/locales.ts'
@@ -37,7 +37,8 @@ async function consentFields(): Promise<void> {
   fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
   await screen.findByText(applicationEntry.ownerPeerId)
   change(zh['contribution.roots'], ' /project\n/project/docs\n/project ')
-  fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.write'] }))
+  const write = screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.write'] })
+  if (!write.checked) fireEvent.click(write)
   change(zh['contribution.hours'], '1')
   change(zh['contribution.maxSamples'], '8')
   change(zh['contribution.maxBytes'], '4096')
@@ -179,7 +180,7 @@ const jointReceiving = {
 } satisfies NonNullable<ScopeAgentContributionCapture['receiving']>
 
 describe('native joint joining', () => {
-  it('permits a separate file contribution while retaining the local Task and rejects joint receiving for that same Session', async () => {
+  it('keeps contribution-only separate and adds joint receiving only with explicit retained-local consent', async () => {
     const f = fixture()
     const scope = localSnapshot({ ...localExecution, agentId })
     f.rerender(<NativeContributionPanel {...f.props} scope={scope} />)
@@ -194,13 +195,43 @@ describe('native joint joining', () => {
     vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(joinEntry)
     await consentFields()
     fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
-    expect(readConsent().disabled).toBe(true)
+    expect(readConsent().disabled).toBe(false)
+    expect(readConsent().checked).toBe(false)
     expect(automaticConsent().disabled).toBe(true)
     expect(joinSubmit().disabled).toBe(true)
-    expect(screen.getByText(zh['native.join.unboundRequired'])).not.toBeNull()
+    fireEvent.click(readConsent())
+    expect(automaticConsent().checked).toBe(false)
     fireEvent.click(joinSubmit())
-    expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce()
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledTimes(2) })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[1]?.[0].receive).toEqual({
+      expectedReadStateSeq: 10, localTask: target,
+    })
     expect(scope.observation).toEqual(localSnapshot({ ...localExecution, agentId }).observation)
+  })
+
+  it('renews retained-local read and automatic consent after an epoch change while keeping the local goal draft', async () => {
+    const f = fixture()
+    const scope = localSnapshot({ ...localExecution, agentId })
+    f.rerender(<NativeContributionPanel {...f.props} scope={scope} />)
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(joinEntry)
+    await consentFields()
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
+    fireEvent.click(readConsent()); fireEvent.click(automaticConsent())
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.goal']).value).toBe(localExecution.automatic!.goal)
+    const changed = { ...target, expectedBindingEpoch: { ...target.expectedBindingEpoch, seq: 77 } }
+    const next = { ...scope, observation: localObservation({ ...localExecution, agentId }, changed) }
+    f.rerender(<NativeContributionPanel {...f.props} scope={next} />)
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(joinSubmit().disabled).toBe(true)
+    fireEvent.click(readConsent())
+    expect(automaticConsent().checked).toBe(false)
+    fireEvent.click(joinSubmit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0].receive).toEqual({
+      expectedReadStateSeq: 10, localTask: changed,
+    })
+    expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
   })
 
   it('requires two explicit permissions and sends the original reading watermark without automatic execution', async () => {

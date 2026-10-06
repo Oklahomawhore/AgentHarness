@@ -8,7 +8,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Connect a live native Agent session to its owner-local Root Task or an independently authorized remote read scope. Every admitted request checks current authorization and receives exact logged context; busy changes wait for a natural request boundary. Explicit automatic permission can start a limited number of idle turns for a local goal. Remote notifications contain no facts, and mounting the package alone starts no work.
+Connect a live native Agent session to its owner-local Root Task, an independently authorized remote read scope, or both explicitly selected sources. Every admitted request checks current authorization and receives exact logged context; busy changes wait for a natural request boundary. Explicit automatic permission can start a limited number of idle turns for a local goal. Remote notifications contain no facts, and mounting the package alone starts no work.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ Connect a live native Agent session to its owner-local Root Task or an independe
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this consumer in a `dsh` profile that already provides native Agents, Session projections, and [scope access](../scope-access/README.md). Remote bindings own fresh receiver subscriptions and cannot coexist with a local Task assignment. Local scheduling additionally requires the Task context consumer and backend. Delegated, forked, and cold Agents cannot bind.
+Mount this consumer in a `dsh` profile that already provides native Agents, Session projections, and [scope access](../scope-access/README.md). Remote bindings own fresh receiver subscriptions. A combined binding retains an explicitly selected current local Root Task assignment and adds one remote subscription. Local scheduling additionally requires the Task context consumer and backend. Delegated, forked, and cold Agents cannot bind.
 
 ### Minimal configuration
 
@@ -38,7 +38,7 @@ Mount this consumer in a `dsh` profile that already provides native Agents, Sess
 
 | Field | Default | Meaning |
 |---|---|---|
-| `maxContextBytes` | Required | Complete UTF-8 context text including framing; at least 512 bytes. |
+| `maxContextBytes` | Required | Total UTF-8 bytes of all managed context messages including framing; at least 512 bytes. |
 | `coalesceMs` | Required | Delay that combines pending changes before an idle activation attempt. |
 | `retryDelayMs` | Required | Delay before rechecking an unavailable owner; automatic permission remains paused. |
 
@@ -61,6 +61,7 @@ const current = await ctx.scopeAgentContext.status({ agentId })
 if (current.eligibility !== 'eligible') throw new Error('Session cannot receive a scope')
 const bound = await ctx.scopeAgentContext.bind({
   agentId, invitation, automatic: null, expectedBindingId: current.state.binding?.id ?? null,
+  ...(current.localTask === null ? {} : { localTask: current.localTask }),
 })
 if (bound.binding === null) throw new Error('Binding was not retained')
 const expectedBindingId = bound.binding.id
@@ -78,17 +79,21 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 `status` reads an already live Agent without creating or restoring it. It distinguishes eligible, delegated, forked, conflicting, and not-live Sessions. Its `state` and `activity` share the `asOfSeq` Session-log position. Existing Session control streams expose scheduling state through `scopeAgentContext` and text-free recorded activity through `scopeAgentEvidence`. Status restricts activity to the current eligible binding and local goal: the actual request retained by the current turn, the latest successful completion, and the latest evaluation. It clears activity when automatic permission or the eligible target is absent. Restored history remains history and does not renew permission; completion attests the recorded turn, not output quality. `localTask` identifies the current owner-local Task epoch. Local bindings have `subscriptionState: unbound`; remote `active` records local intent, not current owner authorization or model adoption.
 
-Every management mutation compares `expectedBindingId` before changing state; bind accepts null only for an unbound Session. Delayed bind and resume also recheck the exact Agent instance and binding before committing. A replacement bind retains its prior binding until the new subscription is ready. An unadopted late subscription is ended. If an RPC reply is lost, read status before retrying: a committed binding remains queryable, and a stale conditional retry is rejected. Mutation responses have no Session watermark and must not overwrite a newer Client projection.
+Every management mutation compares `expectedBindingId` before changing state; bind accepts null only when no scheduling binding exists, including a Session with a local Task assignment. Delayed bind and resume also recheck the exact Agent instance and binding before committing. A replacement bind retains its prior binding until the new subscription is ready. An unadopted late subscription is ended. If an RPC reply is lost, read status before retrying: a committed binding remains queryable, and a stale conditional retry is rejected. Mutation responses have no Session watermark and must not overwrite a newer Client projection.
 
 `updateRoute` compares the current binding and `readStateSeq` before changing an owner address. The address must use direct IP/TCP with a nonzero port and the same owner PeerId. The original grant, subscription, binding, automatic policy, and consumed budget remain unchanged; an active automatic turn is not cancelled. Route recovery neither proves reachability nor renews permission. An ended subscription cannot recover. Invalid addresses report `scope-agent/invalid-route`.
 
 `bindLocal` requires the current Task ID, Task binding ID, binding epoch, and observed scheduling binding. It grants execution only; file capture remains independently authorized. `automatic: null` keeps passive Task reads. `leaveLocalTask` first stops owned automatic work, then conditionally clears the exact current Task epoch and its captures. A stale local scheduling binding can be discarded with `leave` only when no Task assignment remains.
 
+`bind` and `adoptJoinRead` require `localTask` with the exact assignment epoch to retain existing local responsibility. The combined interval has one explicit automatic policy and one lifetime reservation count. Prior local automatic permission is retained separately and never authorizes remote triggers. Leaving the remote scope restores a new local interval with the prior policy paused, or passive when no policy existed; the Task, epoch, history, file permissions, and local captures remain. Local Task departure requires leaving the remote scope first.
+
+Combined admission runs through the Task consumer once. It allocates the remote message and framing first, computes the local projection with the remaining bytes, checks remote authorization online again, then synchronously rechecks local assignment, provider, revision, and expiry. It retains both exact messages under the total budget. Remote failure withdraws remote facts while ordinary user work receives fresh local context; automatic continuation stops. Both projections and both committed message sequence numbers establish automatic request evidence, and changes to either source invalidate the completed comparison.
+
 Management failures carry structured Remote codes, including `scope-agent/stale-binding`, `scope-agent/not-live`, and `scope-agent/terminal-subscription`; clients discriminate by code and details rather than diagnostic text. Known revoked, expired, left, or missing subscriptions cannot resume. Pause and leave remain available for the exact binding when a local Task assignment conflicts.
 
 `automatic: null` permits passive request-time reads only. `activationLimit` is an absolute lifetime reservation limit for this Session, not an allowance added by each resume. Cancelled reservations remain consumed; leave, rebind, and restart retain `usedBudget`. Resuming an exhausted policy requires an explicitly larger absolute limit. The local goal supplies the automatic pulse; remote text cannot grant execution permission.
 
-`pause` stops automatic scheduling and removes only this consumer’s queued pulses. Ordinary user requests can still receive current authorized context. `leave` removes local receive authority and ends its subscription. Agent cancellation stops active running or maintenance work; while an idle network prefetch is outside an Agent activity, use `pause` to stop future automatic execution. A normal idle Agent cancel does not disable this policy.
+`pause` stops automatic scheduling and removes only this consumer’s queued pulses. Ordinary user requests can still receive current authorized context. `leave` ends remote receiving and its subscription; a combined binding retains local Task receiving with the prior automatic policy paused. Agent cancellation stops active running or maintenance work; while an idle network prefetch is outside an Agent activity, use `pause` to stop future automatic execution. A normal idle Agent cancel does not disable this policy.
 
 An automatic goal establishes a comparison baseline only after its actual model request contains the exact logged scope snapshot and its whole turn completes successfully. Ordinary user requests, prefetches, queued pulses, failed requests, and cancelled turns do not establish this baseline. A new binding or changed local goal requires its own completed automatic turn.
 
@@ -104,7 +109,7 @@ Restoring a live Session preserves binding and exact message history but pauses 
 
 The Host-only joint-join methods reserve an exact read plan in the source Session before creating a subscription. `readStateSeq` compares reading management events; ordinary messages do not change it. An adoption ID retains its original invitation, comparison cursor, subscription and binding IDs, and optional explicit automatic policy. Omission keeps passive receiving. Automatic adoption records the binding and policy together and starts scheduling only after the Session checkpoint succeeds. The policy uses the existing lifetime reservation count, without resetting or extending it. A pending automatic plan belongs to the original live Agent and consumer instance; a replacement terminates it. Retry cannot replace later manual decisions, resume a paused binding, or reopen a cancelled operation.
 
-The Session records and flushes a route intent before Access changes its receiver record. A failed Access write remains recoverable from that intent before the next read or watch; stale replies from the previous route are rejected. `updateJoinReadRoute` applies the same rule to the original joint adoption, including a cold stored Session without starting an Agent. The adoption plan stays immutable. A fixed read-state comparison prevents a delayed recovery from overriding later manual reading controls, including an address that changed away and back.
+The Session records and flushes a route intent before Access changes its receiver record. A failed Access write remains recoverable from that intent before the next read or watch; stale replies from the previous route are rejected. `updateJoinReadRoute` applies the same rule to the original joint adoption, including a cold stored Session without starting an Agent. The adoption plan stays immutable. A combined plan atomically pauses the original local policy and clears its pending pulse while retaining the original binding and policy; failed or cancelled plans leave that local policy paused until explicit resume. It stops its owned automatic activity; external adoption waits for that activity to retire before installation. Ordinary turns may adopt directly. An automatic turn cannot replace its own receiving permission; that call rejects to avoid waiting for itself. Explicit pause, rebind, or leave supersedes the pending plan. A fixed read-state comparison prevents a delayed recovery from overriding later manual reading controls, including an address that changed away and back.
 
 `cancelJoinRead` records pending cancellation before waiting outside the management queue for any already-started subscription creation and ending that subscription. Stopping contribution preserves adopted reading and its automatic permission; complete departure withdraws only the binding owned by that operation. Cold cancellation exclusively opens the existing Session log without starting an Agent. A missing log, competing writer, invalid transition, or failed durability checkpoint rejects cancellation so the caller retains its pending intent.
 
@@ -118,7 +123,7 @@ The Session records and flushes a route intent before Access changes its receive
 
 An opaque authorized change cursor marks the binding dirty. Busy Agents receive no injected or steering message; their next natural pre-step reads current authority. An idle automatic binding coalesces changes, owns one prefetch at a time, reserves an activation inside a short `runMaintenance`, and queues a local goal pulse. Pre-step reads independently again, checking the exact Agent and binding after awaits. A newer notification does not starve an already captured read; it remains dirty for a following request.
 
-Local Task changes, terminal notices, backend replacement, and the nearest source expiry invalidate the same scheduler. Ordinary tool observations published by the receiving Agent do not independently wake it; explicit publications and terminal notices still do. The actual Task admission consumer owns one injection point. Its unload aborts owned automatic work; a replacement consumer cannot inherit automatic permission. Local state and request evidence use version 2, while remote version-1 records retain their strict parser.
+Local Task changes, terminal notices, backend replacement, and the nearest source expiry invalidate the same scheduler. Ordinary tool observations published by the receiving Agent do not independently wake it; explicit publications and terminal notices still do. The actual Task admission consumer owns one injection point. Its unload aborts owned automatic work; a replacement consumer cannot inherit automatic permission. Local state and request evidence use version 2; combined bindings and dual-input evidence use version 3. Prior event versions retain their strict parsers.
 
 Whole-state Session events own binding and cumulative reservations. Exact context messages carry subscription, binding, grant, peer, task revision, backend identity, projection identity, and source coverage. The first message enters through normal Loop admission after the protected system head. Later projections replace owned visible nodes while preserving historical events. Terminal or unavailable reads withdraw current context; they never authorize an automatic turn.
 
@@ -156,7 +161,7 @@ Remote bindings receive a user-role `## Shared scope context` message. Local bin
 
 #### Token effect
 
-Conditional. One current context message is retained, and automatic turns add a bounded local goal pulse. Reusing the same authorized projection adds no context message. A complete evidence match can suppress an automatic turn; it does not remove source history or prove a token saving for other workloads. A withdrawal is a short replacement, not a semantic summary of removed text.
+Conditional. One current context message per selected source is retained, and automatic turns add a bounded local goal pulse. Reusing the same authorized projection adds no context message. A complete evidence match can suppress an automatic turn; it does not remove source history or prove a token saving for other workloads. A withdrawal is a short replacement, not a semantic summary of removed text.
 
 #### KV Cache effect
 

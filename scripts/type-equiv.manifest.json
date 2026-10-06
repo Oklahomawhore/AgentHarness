@@ -3376,6 +3376,26 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentActivity",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRetainedLocal",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeBinding",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeProjection",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeJoinReadPlan",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
     }
   ]
 }

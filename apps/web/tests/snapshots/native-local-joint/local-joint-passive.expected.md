@@ -1,0 +1,64 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - paragraph: 本地与他人目标各有一份文件分享许可。请在对应目标中查看或停止；停止其中一份不会停止另一份。
+  - status: 工作时更新
+  - paragraph: 累计已用 1 次自动启动额度
+  - paragraph: 保留的本地目标：维护客户端重试实现
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - term: 共享 Task
+  - definition: {{ownerTaskId}}
+  - term: 来源设备
+  - definition: {{ownerPeerId}}
+  - term: 邀请中的职责
+  - definition: 维护客户端重试实现；原本地目标保持不变。
+  - paragraph: 退出共享范围后保持暂停的本地自动目标：维护我负责的客户端重试逻辑，结合共享接口事实。
+  - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - button "离开共享上下文"
+  - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 更新所有者连接地址
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "允许自动协作"
+    - text: 允许自动协作
+  - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
+  - button "确认启用自动协作" [disabled]
+  - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
+  - group:
+    - text: 分享本会话的文件工作
+    - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+    - status: 正在采集已授权的文件工作
+    - term: 目标 Task
+    - definition: {{ownerTaskId}}
+    - term: 任务所有者设备
+    - definition: {{ownerPeerId}}
+    - term: 允许采集的目录
+    - definition: {{cwd}}/local-joint-source/project
+    - term: 允许分享的文件操作
+    - definition: 写入文件（write）
+    - term: 授权到期时间
+    - definition: {{permissionExpiresLocal}}
+    - term: 最多样本数
+    - definition: "8"
+    - term: 每份样本字节上限
+    - definition: "8192"
+    - status: 此次加入的读取已连接
+    - paragraph: 此次申请未附自动许可；可在读取面板另行启用。
+    - paragraph: 协作职责：维护客户端重试实现；原本地目标保持不变。
+    - button "退出此次协作"
+    - paragraph: 结束此次文件分享和本次加入创建的读取连接，不影响后来另行建立的读取。
+    - group: 已批准的权限
+    - paragraph: 等待提交的观察：0
+    - button "停止分享并撤回"
+    - paragraph: 仅停止分享会保留已连接的读取及其已授自动许可；可在上方暂停自动工作或离开。停止分享和此次读取请使用“退出此次协作”。
+    - group: 更新所有者连接地址
+    - button "重新读取分享状态"
+  - button "重新读取状态"
+  - button "查看来源"

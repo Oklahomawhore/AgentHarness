@@ -130,9 +130,9 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const bound = state?.binding?.kind === 'local-task' ? null : state?.binding ?? null
   const expectedBindingId = state?.binding?.id ?? null
   useEffect(() => { setAutomaticSelection(null) }, [expectedBindingId])
-  const automaticKey = `${expectedBindingId ?? ''}/${invitationText}`
+  const automaticKey = `${expectedBindingId ?? ''}/${invitationText}/${JSON.stringify(observation?.eligibility === 'not-live' ? null : observation?.localTask)}`
   const automatic = automaticSelection === automaticKey
-  const eligible = observation?.eligibility === 'eligible' && observation.localTask === null
+  const eligible = observation?.eligibility === 'eligible'
   const orphanLocal = state?.binding?.kind === 'local-task'
     && observation?.eligibility !== 'not-live' && observation?.localTask === null ? state.binding : null
   const terminal = observation !== null && observation.eligibility !== 'not-live'
@@ -146,7 +146,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const localStatus = localContribution?.value
   const localBound = localStatus?.assignment != null || localStatus?.capture != null
   const localLabel = localContribution?.status !== 'ready' ? t('contribution.loading')
-    : state?.binding?.kind === 'local-task' && (mode === 'enabled' || mode === 'paused') ? label
+    : (state?.binding?.kind === 'local-task' || state?.binding?.kind === 'local-task-scope') && (mode === 'enabled' || mode === 'paused') ? label
       : localStatus?.capture?.state === 'ending' ? t('native.local.trigger.ending')
         : localStatus?.capture?.collecting ? t('native.local.trigger.sharing') : t('native.local.trigger.connected')
   const act = async (action: NativeScopeAction): Promise<boolean> => {
@@ -189,7 +189,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
       </div>}
       {local ? <NativeLocalContributionPanel agentId={runtime.sessionId} entry={localContribution} t={t}
         tasks={tasks.tasks.filter(task => task.origin.kind === 'root' && task.ownerNodeId === participants.nodeId)}
-        receivingElsewhere={bound !== null && state?.mode !== 'left'} scope={snapshot} actScope={act}
+        receivingElsewhere={bound !== null && bound.kind !== 'local-task-scope' && state?.mode !== 'left'} scope={snapshot} actScope={act}
         catalogReady={snapshot.phase === 'ready' && tasks.read && participants.read && tasks.error === undefined && participants.error === undefined}
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
@@ -200,7 +200,10 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
           : t('native.budget', { used: state.usedBudget, limit: state.automatic.activationLimit, steps: state.automatic.maxStepsPerTurn })}</p>}
         {observation !== null && (observation.eligibility !== 'eligible'
           ? <p className={css.notice}>{t(`native.eligibility.${observation.eligibility}`)}</p>
-          : observation.localTask !== null && <p className={css.notice}>{t('native.eligibility.task-conflict')}</p>)}
+          : observation.localTask !== null && <div className={css.hint}>
+            <p>{t('native.local.retainedTask', { task: tasks.tasks.find(task => task.id === observation.localTask?.taskId)?.objective ?? observation.localTask.taskId })}</p>
+            <p>{t('native.local.scopeAdded')}</p>
+          </div>)}
         {snapshot.phase === 'unavailable' && <p className={css.hint}>{t('native.unavailable')}</p>}
         {terminal && <p className={css.notice}>{t(`native.subscription.${observation.subscriptionState}`)}</p>}
         {bound !== null && <>
@@ -208,6 +211,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             <dt>{t('native.owner')}</dt><dd>{bound.invitation.ownerPeerId}</dd>
             <dt>{t('native.responsibility')}</dt><dd>{bound.invitation.responsibility}</dd></dl>
           {state?.automatic !== null && state?.automatic !== undefined && <p className={css.goal}>{t('native.currentGoal', { goal: state.automatic.goal })}</p>}
+          {bound.kind === 'local-task-scope' && bound.retainedLocal.automatic !== null
+            && <p className={css.hint}>{t('native.local.retainedPolicy', { goal: bound.retainedLocal.automatic.goal })}</p>}
           <p className={css.hint}>{t('native.receiving')}</p>
           <div className={css.actions}>
             {mode === 'paused' && !terminal && state?.automatic != null && state.automatic.activationLimit > state.usedBudget
@@ -230,7 +235,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             if (automatic && policy !== undefined) void act({ kind: 'resume', expectedBindingId: bound.id, automatic: policy })
           } else if (invitation !== undefined) {
             const permission = automatic ? policy : null
-            if (permission !== undefined) void act({ kind: 'bind', request: { invitation, expectedBindingId, automatic: permission } })
+            if (permission !== undefined) void act({ kind: 'bind', request: { invitation, expectedBindingId, automatic: permission,
+              ...(observation.localTask !== null ? { localTask: observation.localTask } : {}) } })
           }
         }}>
           {!bound && <>

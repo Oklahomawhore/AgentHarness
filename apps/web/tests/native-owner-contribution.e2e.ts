@@ -92,6 +92,16 @@ async function captureStage(page: Page, workspace: string, stage: string,
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await page.locator(PANEL).evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
     if (shots !== undefined) await page.screenshot({ path: join(shots, `${snapshots === SNAPSHOTS ? '' : 'join-automatic-'}${stage}-${String(viewport.width)}.png`), fullPage: true })
+    if (viewport === MOBILE) {
+      const last = page.locator(PANEL).getByRole('button').last()
+      await last.scrollIntoViewIfNeeded()
+      await expect.poll(async () => {
+        const button = await last.boundingBox()
+        const bounds = await page.locator(PANEL).boundingBox()
+        return button !== null && bounds !== null && button.y >= Math.max(0, bounds.y)
+          && button.y + button.height <= Math.min(viewport.height, bounds.y + bounds.height)
+      }).toBe(true)
+    }
   }
   await page.setViewportSize(DESKTOP)
   const aria = await captureStableAria(page, surface, workspace, { replacements: [...replacements] })
@@ -674,7 +684,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
     const sharing = sourcePage.locator(REMOTE)
     await sharing.locator(':scope > summary').click()
-    await bPanel.getByText('本会话保留本地目标，远端读取暂不可用；仍可另行申请文件贡献。', { exact: true }).waitFor()
+    await bPanel.getByText('共享范围只增加获准上下文，不替换本地目标或文件许可。', { exact: true }).waitFor()
     expect(await bPanel.getByRole('button', { name: '连接此会话', exact: true }).isDisabled()).toBe(true)
     expect(await bPanel.getByText('本机会话设置已更新；后续请求将在线核验读取权限。', { exact: true }).count()).toBe(0)
     await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
@@ -783,5 +793,267 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     expect(ownerRequests).toHaveLength(3)
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
     await assertFixtureInventory(snapshots, ['both-active.expected.md', 'peer-stopped-local-retained.expected.md'])
+  }, 180_000)
+})
+
+// A shared scope adds information to an existing local responsibility and retains its separate file permission.
+describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains existing local responsibility', () => {
+  const snapshots = join(import.meta.dirname, 'snapshots/native-local-joint')
+  const localGoal = '维护我负责的客户端重试逻辑，结合共享接口事实。'
+  const corrected = 'export const OWNER_NATIVE_retryDelay = 500;\n'
+  let owner: WebScaffold | undefined
+  let source: WebScaffold | undefined
+  let browser: Browser | undefined
+  let directory: string | undefined
+  let ownerPage: Page
+  let sourcePage: Page
+  const ownerRequests: Message[][] = []
+  const sourceRequests: Message[][] = []
+  const trips: ReturnType<typeof watchConsole>[] = []
+
+  beforeAll(async () => {
+    if (MODE === 'record') throw new Error('Retained-local joining uses controlled keyless responses')
+    directory = await mkdtemp(join(tmpdir(), 'dsh-native-local-joint-web-'))
+    const ownerOverride = join(directory, 'owner.override.json')
+    const sourceOverride = join(directory, 'source.override.json')
+    const ownerReplay: ReplayOverrideDoc = [response('LOCAL_JOIN_OWNER_READY'), writeResponse('owner', A_CODE),
+      response('LOCAL_JOIN_OWNER_PREPARED'), response('LOCAL_JOIN_OWNER_RECEIVED'), writeResponse('owner', corrected, 2),
+      response('LOCAL_JOIN_OWNER_CORRECTED'), response('LOCAL_JOIN_OWNER_AFTER_LEAVE')].map(chunks => ({ kind: 'chunks', chunks }))
+    const sourceReplay: ReplayOverrideDoc = [response('LOCAL_JOIN_SOURCE_READY'), response('LOCAL_JOIN_ORIGINAL_AUTO'),
+      writeResponse('remote', 'export const localRetryStatus = "prepared";\n'), response('LOCAL_JOIN_SOURCE_PREPARED'),
+      response('LOCAL_JOIN_PASSIVE_READ'), writeResponse('remote', B_CODE, 2), response('LOCAL_JOIN_SHARED_WRITE'),
+      response('LOCAL_JOIN_FIRST_RESPONSE'), response('LOCAL_JOIN_CORRECTED_RESPONSE'), response('LOCAL_JOIN_WITHDRAWN_READ'),
+      writeResponse('remote', B_CODE_UPDATED, 3), response('LOCAL_JOIN_LOCAL_AFTER_LEAVE')].map(chunks => ({ kind: 'chunks', chunks }))
+    await writeFile(ownerOverride, JSON.stringify(ownerReplay))
+    await writeFile(sourceOverride, JSON.stringify(sourceReplay))
+    owner = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
+      replayFixture: join(directory, 'owner-override-only.jsonl'), replayOverride: ownerOverride })
+    source = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
+      replayFixture: join(directory, 'source-override-only.jsonl'), replayOverride: sourceOverride })
+    owner.ctx.on('llm/stream', (options, next) => { ownerRequests.push(structuredClone(options.messages)); return next() })
+    source.ctx.on('llm/stream', (options, next) => { sourceRequests.push(structuredClone(options.messages)); return next() })
+    browser = await chromium.launch()
+    ownerPage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    sourcePage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    for (const [page, host, name] of [[ownerPage, owner, 'local-joint-owner'], [sourcePage, source, 'local-joint-source']] as const) {
+      trips.push(watchConsole(page))
+      await page.goto(host.authenticatedUrl, { waitUntil: 'load' })
+      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
+      await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
+    }
+    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
+  }, 120_000)
+
+  afterAll(async () => {
+    const failures: unknown[] = []
+    for (const close of [() => browser?.close(), () => source?.close(), () => owner?.close(),
+      () => directory === undefined ? Promise.resolve() : rm(directory, { recursive: true, force: true })]) {
+      try { await close() } catch (error) { failures.push(error) }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Retained-local joint browser cleanup failed')
+  }, 120_000)
+
+  it('joins once, admits current facts beside local context, and preserves local work after remote departure', async () => {
+    if (owner === undefined || source === undefined) throw new Error('Both independently owned Hosts are required')
+    const a = owner
+    const b = source
+    onTestFailed(() => saveFailureShot(sourcePage, 'web-e2e-native-local-joint'))
+    const aId = await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_READY')
+    const bId = await prompt(b, sourcePage, 'LOCAL_JOIN_SOURCE_READY')
+    const originalAgent = b.ctx.agents.get(bId)
+    if (originalAgent === undefined) throw new Error('Original source Agent is missing')
+    expect(a.harnessHome).not.toBe(b.harnessHome)
+    const tasks = []
+    for (const [host, id, page, name, objective] of [
+      [a, aId, ownerPage, 'local-joint-owner', '维护后端重试接口'],
+      [b, bId, sourcePage, 'local-joint-source', '维护客户端重试实现'],
+    ] as const) {
+      const participantId = (await host.ctx.scopeAgentContributions.localStatus({ agentId: id })).participantId
+      if (participantId === null) throw new Error('Original Session has no participant')
+      const task = await host.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: participantId,
+        objective, scope: '各自保留职责和文件权限，加入共享范围只增加获准事实。' })
+      await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      tasks.push(task)
+      const current = await panel(page)
+      await current.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+      const local = page.locator(LOCAL)
+      await local.getByText(`已连接：${objective}`, { exact: true }).waitFor()
+      await permission(local, join(host.workspaceCwd, name, 'project'), LOCAL_CONSENT)
+      await local.getByRole('button', { name: '允许并开始分享', exact: true }).click()
+      await local.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    }
+    const [ownerTask, localTask] = tasks
+    if (ownerTask === undefined || localTask === undefined) throw new Error('Local responsibilities were not created')
+    const localBefore = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    const originalCapture = localBefore.capture
+    if (originalCapture === null || localBefore.assignment === null) throw new Error('Original capture or assignment is missing')
+    const localAutomatic = sourcePage.locator(AUTOMATIC)
+    await localAutomatic.getByRole('checkbox', { name: '允许此会话为当前目标开始有限自动工作', exact: true }).check()
+    await localAutomatic.getByLabel('本地协作目标', { exact: true }).fill(localGoal)
+    await localAutomatic.getByLabel('允许新增的自动启动次数', { exact: true }).fill('4')
+    await localAutomatic.getByLabel('每轮最多步数', { exact: true }).fill('2')
+    await localAutomatic.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    await Promise.all([b.whenTurnSettled(30_000), localAutomatic.getByRole('button', { name: '确认启用自动协作', exact: true }).click()])
+    await sourcePage.getByText('LOCAL_JOIN_ORIGINAL_AUTO', { exact: true }).waitFor()
+    await localAutomatic.getByRole('button', { name: '暂停自动协作', exact: true }).click()
+    await localAutomatic.getByText('自动协作已暂停', { exact: true }).waitFor()
+    const before = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (before.eligibility !== 'eligible' || before.localTask === null) throw new Error('Original local scheduling target is missing')
+    expect(before.state).toMatchObject({ mode: 'paused', usedBudget: 1, automatic: { goal: localGoal, activationLimit: 4 } })
+    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_PREPARED')
+    await prompt(b, sourcePage, 'LOCAL_JOIN_SOURCE_PREPARED')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(1)
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: localTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(1)
+
+    await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
+    const center = ownerPage.locator('[data-emergence-center]')
+    const access = center.locator('details:has(> summary:text-is("独立设备协作"))')
+    if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
+    const ownerSharing = center.locator('[data-scope-contribution-owner]')
+    if (await ownerSharing.getAttribute('open') === null) await ownerSharing.locator(':scope > summary').click()
+    const applications = center.locator('[data-contribution-applications]')
+    await applications.getByRole('combobox', { name: '入口用途', exact: true }).selectOption('join')
+    await applications.getByLabel('申请入口有效期（小时）', { exact: true }).fill('1')
+    await applications.getByRole('button', { name: '邀请一个会话加入', exact: true }).click()
+    const entryField = applications.getByRole('textbox', { name: '将此入口交给来源用户', exact: true })
+    await expect.poll(() => entryField.inputValue()).toContain('scope-join-entry')
+    const entryText = await entryField.inputValue()
+    const sourcePanel = await panel(sourcePage)
+    await sourcePanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
+    const sharing = sourcePage.locator(REMOTE)
+    await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
+    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
+    await permission(sharing, join(b.workspaceCwd, 'local-joint-source/project'), REMOTE_CONSENT)
+    expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
+    expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
+    await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
+    await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
+    await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+    const requested = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture
+    if (requested === null) throw new Error('Joint source permission was not recorded')
+    expect(requested.receiving).toMatchObject({ localTask: before.localTask, state: 'waiting' })
+    expect(requested.receiving?.automatic).toBeUndefined()
+    const [aIdentity, bIdentity] = await Promise.all([a.ctx.scopeAccess.identity(), b.ctx.scopeAccess.identity()])
+    const replacements: (readonly [string, string])[] = [[ownerTask.id, '{{ownerTaskId}}'], [localTask.id, '{{localTaskId}}'],
+      [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'], [entryText, '{{jointEntry}}'],
+      [originalCapture.grant.bindingId, '{{localBindingId}}'],
+      [`${originalCapture.grant.expectedBindingEpoch.nodeId}:${String(originalCapture.grant.expectedBindingEpoch.seq)}`, '{{localBindingEpoch}}'],
+      [await sourcePage.evaluate(value => new Date(value).toLocaleString(), requested.limits.expiresAt), '{{permissionExpiresLocal}}']]
+    for (const address of aIdentity.addresses) replacements.push([address, '{{ownerAddress}}'])
+    await captureStage(sourcePage, b.workspaceCwd, 'local-joint-pending', replacements, PANEL, snapshots)
+    await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+    await applications.getByLabel('该会话的协作职责', { exact: true }).fill('维护客户端重试实现；原本地目标保持不变。')
+    await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+    await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
+    const joined = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (joined.eligibility !== 'eligible' || joined.state.binding?.kind !== 'local-task-scope') throw new Error('Composite reading was not adopted')
+    expect(joined.localTask).toEqual(before.localTask)
+    expect(joined.state).toMatchObject({ mode: 'passive', automatic: null, usedBudget: 1,
+      binding: { retainedLocal: { automatic: before.state.automatic } } })
+    expect(sourceRequests).toHaveLength(4)
+    expect((await a.ctx.scopeAccess.contributionApplications({ taskId: ownerTask.id })).entries).toHaveLength(1)
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture?.selection).toEqual(originalCapture.selection)
+    await captureStage(sourcePage, b.workspaceCwd, 'local-joint-passive', replacements, PANEL, snapshots)
+    await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
+    expect(await prompt(b, sourcePage, 'LOCAL_JOIN_PASSIVE_READ')).toBe(bId)
+    const passive = sourceRequests[4]
+    if (passive === undefined) throw new Error('Joined passive request is missing')
+    expect(textOf(context(passive, 'scope-agent-context'))).toContain(A_CODE.trim())
+    expect(textOf(context(passive, 'development-task-context'))).toContain(localTask.objective)
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, passive, kind)
+    await prompt(b, sourcePage, 'LOCAL_JOIN_SHARED_WRITE')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: localTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(2)
+    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_RECEIVED')
+    expect(textOf(context(ownerRequests[3]!, 'development-task-context'))).toContain(B_CODE.trim())
+
+    await panel(sourcePage)
+    await sourcePanel.getByRole('radio', { name: '允许自动协作', exact: true }).check()
+    await sourcePanel.getByLabel('本地协作目标', { exact: true }).fill(localGoal)
+    await sourcePanel.getByLabel('允许新增的自动启动次数', { exact: true }).fill('2')
+    await sourcePanel.getByLabel('每轮最多步数', { exact: true }).fill('2')
+    await sourcePanel.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    await Promise.all([b.whenTurnSettled(30_000), sourcePanel.getByRole('button', { name: '确认启用自动协作', exact: true }).click()])
+    await sourcePage.getByText('LOCAL_JOIN_FIRST_RESPONSE', { exact: true }).waitFor()
+    const correcting = b.whenTurnSettled(30_000)
+    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_CORRECTED')
+    expect(await correcting).toBe(bId)
+    await sourcePage.getByText('LOCAL_JOIN_CORRECTED_RESPONSE', { exact: true }).waitFor()
+    const changed = sourceRequests[8]
+    if (changed === undefined) throw new Error('Shared correction was not admitted to an automatic request')
+    expect(textOf(context(changed, 'scope-agent-context'))).toContain(corrected.trim())
+    expect(textOf(context(changed, 'development-task-context'))).toContain(localTask.objective)
+    const afterResponses = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (afterResponses.eligibility !== 'eligible') throw new Error('Combined scheduling was lost')
+    expect(afterResponses.state.usedBudget).toBe(3)
+    expect(afterResponses.activity.completed?.localTaskRevision).toBeDefined()
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, changed, kind)
+    await panel(sourcePage)
+    await recordedCompletion(b, sourcePage, bId)
+    await captureStage(sourcePage, b.workspaceCwd, 'local-joint-automatic', replacements, PANEL, snapshots)
+
+    await panel(ownerPage)
+    await ownerPage.locator(LOCAL).getByRole('button', { name: '停止分享并撤回', exact: true }).click()
+    await ownerPage.locator(LOCAL).getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await prompt(b, sourcePage, 'LOCAL_JOIN_WITHDRAWN_READ')
+    const withdrawn = sourceRequests[9]
+    if (withdrawn === undefined) throw new Error('Withdrawal request is missing')
+    expect(textOf(context(withdrawn, 'scope-agent-context'))).not.toContain(A_CODE.trim())
+    expect(textOf(context(withdrawn, 'scope-agent-context'))).not.toContain(corrected.trim())
+    expect(textOf(context(withdrawn, 'development-task-context'))).toContain(localTask.objective)
+    await panel(sourcePage)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('button', { name: '退出此次协作', exact: true }).click()
+    await expect.poll(async () => (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    await expect.poll(async () => {
+      const current = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      return current.eligibility === 'not-live' ? null : current.state.binding?.kind
+    }).toBe('local-task')
+    const restored = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (restored.eligibility !== 'eligible') throw new Error('Local responsibility was not restored')
+    expect(restored.state).toMatchObject({ binding: { kind: 'local-task' }, mode: 'paused', usedBudget: 3, automatic: before.state.automatic })
+    expect(restored.localTask).toEqual(before.localTask)
+    expect(restored.state.binding?.id).toBe(joined.state.binding.retainedLocal.bindingId)
+    const remaining = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    expect(remaining.assignment).toEqual(localBefore.assignment)
+    expect(remaining.capture).toMatchObject({ selection: originalCapture.selection, collecting: true, grant: originalCapture.grant })
+    await sourcePanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    await sourcePage.locator(AUTOMATIC).getByText('自动协作已暂停', { exact: true }).waitFor()
+    const localExpiry = await sourcePage.evaluate(value => new Date(value).toLocaleString(), originalCapture.grant.expiresAt)
+    await captureStage(sourcePage, b.workspaceCwd, 'local-joint-left-local-kept',
+      [[localExpiry, '{{permissionExpiresLocal}}'], ...replacements], LOCAL, snapshots)
+    const remoteRevision = a.ctx.developmentTasks.get({ taskId: ownerTask.id }).revision
+    await prompt(b, sourcePage, 'LOCAL_JOIN_LOCAL_AFTER_LEAVE')
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: localTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(3)
+    expect(a.ctx.developmentTasks.get({ taskId: ownerTask.id }).revision).toBe(remoteRevision)
+    expect(await readFile(join(b.workspaceCwd, 'local-joint-source/project/remote.ts'), 'utf8')).toBe(B_CODE_UPDATED)
+    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_AFTER_LEAVE')
+    expect(textOf(context(ownerRequests.at(-1)!, 'development-task-context'))).not.toContain(B_CODE.trim())
+    expect(b.ctx.agents.get(bId)).toBe(originalAgent)
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).assignment).toEqual(localBefore.assignment)
+    for (const [host, id, request] of [[a, aId, ownerRequests.at(-1)], [b, bId, sourceRequests.at(-1)]] as const) {
+      const agent = host.ctx.agents.get(id)
+      if (agent === undefined || request === undefined) throw new Error('Existing Session or final request is missing')
+      expect(await host.ctx.sessions.flush(agent.session)).toBe(true)
+      const events = await readPersistedEvents(host, id)
+      expect(events).toEqual(agent.session.snapshotEvents())
+      const replay = Session.create(id, structuredClone([...events]), agent.session.header)
+      for (const kind of ['scope-agent-context', 'development-task-context'] as const) {
+        expect(context(replay.deriveMessages(), kind)).toEqual(context(request, kind))
+      }
+    }
+    expect(sourceRequests).toHaveLength(12)
+    expect(ownerRequests).toHaveLength(7)
+    for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
+    await assertFixtureInventory(snapshots, ['local-joint-pending.expected.md', 'local-joint-passive.expected.md',
+      'local-joint-automatic.expected.md', 'local-joint-left-local-kept.expected.md'])
   }, 180_000)
 })

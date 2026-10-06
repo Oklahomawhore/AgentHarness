@@ -2370,7 +2370,7 @@ Requires: `agents` · `sessionProjections` · `scopeAccess`
 ```ts config-catalog
 /** Complete consumer text and background scheduling limits. */
 export interface Config {
-  /** Complete UTF-8 context message budget, including consumer framing; minimum 512 bytes. */
+  /** Total UTF-8 bytes of all managed context messages, including consumer framing; minimum 512 bytes. */
   readonly maxContextBytes: number
   /** Minimum delay before one idle activation attempt; changes during the delay are coalesced. */
   readonly coalesceMs: number
@@ -2379,7 +2379,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-context/src/index.ts:44`](../packages/collaboration/scope-agent-context/src/index.ts)
+Source: [`packages/collaboration/scope-agent-context/src/index.ts:45`](../packages/collaboration/scope-agent-context/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-contribution"></a>
 

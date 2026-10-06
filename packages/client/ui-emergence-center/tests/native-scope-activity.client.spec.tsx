@@ -6,7 +6,7 @@ import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { NativeScopeActivity } from '../src/client/NativeScopeActivity.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
 import { zh } from '../src/client/locales.ts'
-import { localExecution, localObservation } from './native-local-automatic-fixture.client.ts'
+import { compositeExecution, localExecution, localObservation } from './native-local-automatic-fixture.client.ts'
 import { bound, observation } from './native-scope-fixture.client.ts'
 
 afterEach(cleanup)
@@ -84,6 +84,18 @@ describe('recorded automatic collaboration activity', () => {
     view.rerender(<NativeScopeActivity snapshot={snapshot()} local={false} t={t} />)
     expect(view.container.querySelector('[data-native-scope-activity]')).toBeNull()
   })
+  it('attributes a combined response to both revisions only under the shared-scope controls', () => {
+    const value = localObservation(compositeExecution)
+    if (value.eligibility === 'not-live') throw new Error('Missing combined fixture')
+    const combined = { ...snapshot(), observation: { ...value, activity: { ...empty,
+      completed: { ...completed, bindingId: compositeExecution.binding!.id, localTaskRevision: 12 } } } }
+    const view = render(<NativeScopeActivity snapshot={combined} local={false} t={t} />)
+    expect(screen.getByText(t('native.activity.completed', { turn: 3, revision: 7 }))).not.toBeNull()
+    expect(screen.getByText(t('native.activity.localRevision', { revision: 12 }))).not.toBeNull()
+    view.rerender(<NativeScopeActivity snapshot={combined} local t={t} />)
+    expect(view.container.querySelector('[data-native-scope-activity]')).toBeNull()
+  })
+
   it('uses the same presentation for an exact owner-local assignment', () => {
     const value = localObservation(localExecution)
     if (value.eligibility === 'not-live') throw new Error('Missing local fixture')

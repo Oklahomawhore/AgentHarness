@@ -194,7 +194,11 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
       if (localAction && !sameLocalTarget(observed.localTask, action.request)) {
         publish({ ...snapshot, issue: 'scope-agent/stale-task' }); refresh(); return false
       }
-      if (action.kind === 'bind' && observed.localTask !== null) return false
+      if (action.kind === 'bind' && (action.request.localTask === undefined
+        ? observed.localTask !== null : !sameLocalTarget(observed.localTask, action.request.localTask))) {
+        publish({ ...snapshot, issue: 'scope-agent/stale-task' }); refresh(); return false
+      }
+      if (localAction && observed.state.binding?.kind === 'local-task-scope') return false
       if (action.kind !== 'leave' && action.kind !== 'pause' && action.kind !== 'leaveLocalTask' && action.kind !== 'updateRoute'
         && observed.eligibility !== 'eligible' && !(localAction && observed.eligibility === 'task-conflict')) return false
       const token = Symbol()

@@ -7,8 +7,8 @@ import { parseSnapshotManifest, usesSeparateWriterSnapshot } from '../../package
 import { normalizeSessionSnapshots } from '../../packages/test-support/session-snapshot/src/normalize.ts'
 
 const [mode, scenarioName, root, logPath] = process.argv.slice(2)
-if (!['scope-route-recovery', 'scope-context-live', 'task-context-peer-facts', 'task-context-semantic', 'scope-native-contribution', 'scope-owner-participation', 'scope-dual-contribution', 'scope-owner-idle', 'scope-joint-automatic', 'scope-semantic-idle', 'scope-automatic-withdrawal'].includes(scenarioName ?? '')) {
-  throw new Error('python scope fixture requires scope-route-recovery, scope-context-live, task-context-peer-facts, task-context-semantic, scope-native-contribution, scope-owner-participation, scope-dual-contribution, scope-owner-idle, scope-joint-automatic, scope-semantic-idle, or scope-automatic-withdrawal')
+if (!['scope-route-recovery', 'scope-context-live', 'task-context-peer-facts', 'task-context-semantic', 'scope-native-contribution', 'scope-owner-participation', 'scope-dual-contribution', 'scope-local-joint', 'scope-owner-idle', 'scope-joint-automatic', 'scope-semantic-idle', 'scope-automatic-withdrawal'].includes(scenarioName ?? '')) {
+  throw new Error('python scope fixture requires scope-route-recovery, scope-context-live, task-context-peer-facts, task-context-semantic, scope-native-contribution, scope-owner-participation, scope-dual-contribution, scope-local-joint, scope-owner-idle, scope-joint-automatic, scope-semantic-idle, or scope-automatic-withdrawal')
 }
 if (root === undefined) throw new Error('python scope fixture requires its temporary root')
 const cwd = resolve(root)

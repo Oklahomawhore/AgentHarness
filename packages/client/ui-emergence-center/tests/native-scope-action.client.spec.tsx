@@ -6,7 +6,7 @@ import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { NativeScopeAction, type NativeScopeActionProps } from '../src/client/NativeScopeAction.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
 import { zh } from '../src/client/locales.ts'
-import { localExecution, localSnapshot } from './native-local-automatic-fixture.client.ts'
+import { compositeExecution, localExecution, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { localCapture, assigned as localStatus } from './native-local-contribution-fixture.client.ts'
 import { capturedStatus, capture } from './native-contribution-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
@@ -60,7 +60,7 @@ describe('current Session collaboration action', () => {
     fireEvent.click(screen.getByRole('radio', { name: zh['native.target.remote'] }))
     fireEvent.click(screen.getByText(zh['native.share.title']))
     expect(screen.getAllByRole('status').map(item => item.textContent).join(' ')).not.toContain(zh['native.mode.enabled'])
-    expect(screen.getByText(zh['native.eligibility.task-conflict'])).not.toBeNull()
+    expect(screen.getByText(zh['native.local.scopeAdded'])).not.toBeNull()
     expect(screen.queryByText(zh['native.saved'])).toBeNull()
     expect(screen.queryByText(localExecution.automatic!.goal, { exact: false })).toBeNull()
     expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.share.stop'] }).disabled).toBe(false)
@@ -77,6 +77,28 @@ describe('current Session collaboration action', () => {
     }) })
     expect(f.props.stopNativeLocalContribution).not.toHaveBeenCalled()
     expect(f.action).toHaveBeenCalledOnce()
+  })
+
+  it('adds direct reading with the displayed local target and manages the combined policy separately', async () => {
+    const f = fixture(localSnapshot({ ...localExecution, mode: 'paused' }))
+    paste()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.bind'] }))
+    await waitFor(() => { expect(f.action).toHaveBeenCalledExactlyOnceWith({ kind: 'bind', request: {
+      invitation, automatic: null, expectedBindingId: localExecution.binding!.id, localTask: target,
+    } }) })
+    act(() => { f.source.set(localSnapshot(compositeExecution)) })
+    expect(screen.getByText(zh['native.local.scopeAdded'])).not.toBeNull()
+    expect(screen.getByText(makeTranslate(zh)('native.local.retainedPolicy', { goal: localExecution.automatic!.goal }))).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.leave'] }))
+    await waitFor(() => { expect(f.action).toHaveBeenLastCalledWith({ kind: 'leave', expectedBindingId: compositeExecution.binding!.id }) })
+    expect(f.props.stopNativeLocalContribution).not.toHaveBeenCalled()
+    f.rerender(<NativeScopeAction {...f.props} useNativeLocalContributions={select => select({ [state.agentId]: {
+      status: 'ready', pending: false, value: { ...localStatus, capture: localCapture },
+    } })} />)
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.local'] }))
+    expect(screen.queryByText(zh['native.local.remoteRead'])).toBeNull()
+    expect(screen.getByText(zh['native.local.manageShared'])).not.toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.share.stop'] }).disabled).toBe(false)
   })
 
   it('labels the owner-local connection and capture without claiming remote membership', () => {
@@ -134,7 +156,7 @@ describe('current Session collaboration action', () => {
     } }) })
     act(() => { f.source.set(localSnapshot(localExecution)) })
     expect(screen.queryByRole('button', { name: zh['native.local.clearPermission'] })).toBeNull()
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.bind'] }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.bind'] }).disabled).toBe(false)
   })
   it('retains malformed drafts and never treats numeric invitation generations as valid', () => {
     const f = fixture(); paste('{broken')

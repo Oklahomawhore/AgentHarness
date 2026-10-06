@@ -16,7 +16,7 @@ An actual filesystem mutation is evaluated separately against both live permissi
 
 Local authority follows the exact Task assignment epoch. Peer collection follows its independently approved Session, directories, tools, destination, and limits. Changing the local assignment terminates local collection without changing peer consent. Individual Agent disposal terminates both. Restart finishes both retained terminations without granting a replacement Agent collection permission. The separate durable domains keep their existing representations.
 
-This replaces the capture exclusivity described by the [owner-local contribution decision](2026-10-04-owner-local-scope-contributions.md). Reading and automatic execution remain separate permissions: outgoing peer contribution does not replace the local Task or authorize receiving a foreign scope. The native receiving service retains its local-Task versus peer-subscription restriction.
+This replaces the capture exclusivity described by the [owner-local contribution decision](2026-10-04-owner-local-scope-contributions.md). Reading and automatic execution remain separate permissions: outgoing peer contribution does not replace the local Task or authorize receiving a foreign scope. Receiving both sources requires separate [combined receiving consent](2026-10-07-retain-local-task-during-joint-receiving.md).
 
 ## Alternatives considered
 

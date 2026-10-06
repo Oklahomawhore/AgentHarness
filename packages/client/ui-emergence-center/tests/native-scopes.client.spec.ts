@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RemoteResult, ScopeAgentStatusResult, ScopeAgentBindingStatus } from '@deepseek-ai/dsh-api-remotes/client'
 import { createNativeScopeSource, type NativeScopePort } from '../src/client/native-scopes.ts'
-import { localObservation, target } from './native-local-automatic-fixture.client.ts'
+import { compositeExecution, localObservation, target } from './native-local-automatic-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
 
 const ok = <T>(value: T): RemoteResult<T> => ({ ok: true, value })
@@ -137,6 +137,33 @@ describe('native scope source', () => {
       expect(f.port.bind).not.toHaveBeenCalled()
     } finally { stop() }
   })
+  it('requires the exact local target for added reading and keeps combined departure separate from whole-Task leave', async () => {
+    const f = fixture({ status: async () => ok(localObservation()) }); const stop = f.source.subscribe(vi.fn())
+    try {
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      const request = { invitation, automatic: null, expectedBindingId: null }
+      expect(await f.source.act({ kind: 'bind', request })).toBe(false)
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      expect(await f.source.act({ kind: 'bind', request: { ...request, localTask: { ...target,
+        expectedBindingEpoch: { ...target.expectedBindingEpoch, seq: 999 } } } })).toBe(false)
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      expect(await f.source.act({ kind: 'bind', request: { ...request, localTask: target } })).toBe(true)
+      expect(f.port.bind).toHaveBeenCalledExactlyOnceWith({ ...request, localTask: target, agentId: state.agentId })
+    } finally { stop() }
+    const combined = fixture({ status: async () => ok(localObservation(compositeExecution)) })
+    const stopCombined = combined.source.subscribe(vi.fn())
+    try {
+      await vi.waitFor(() => { expect(combined.source.getSnapshot().phase).toBe('ready') })
+      const expectedBindingId = compositeExecution.binding!.id
+      expect(await combined.source.act({ kind: 'leaveLocalTask', request: { ...target, expectedBindingId } })).toBe(false)
+      expect(await combined.source.act({ kind: 'bindLocal', request: { ...target, expectedBindingId, automatic: null } })).toBe(false)
+      expect(combined.port.leaveLocalTask).not.toHaveBeenCalled()
+      expect(combined.port.bindLocal).not.toHaveBeenCalled()
+      expect(await combined.source.act({ kind: 'leave', expectedBindingId })).toBe(true)
+      expect(combined.port.leave).toHaveBeenCalledExactlyOnceWith({ agentId: state.agentId, expectedBindingId })
+    } finally { stopCombined() }
+  })
+
   it('guards local bind and departure by Task epoch even before an automatic binding exists', async () => {
     const f = fixture({ status: async () => ok(localObservation()) }); const stop = f.source.subscribe(vi.fn())
     try {

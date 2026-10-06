@@ -330,6 +330,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         if (retained != null) {
           if (retained.state === 'ending' || !isDeepStrictEqual(retained.entry, entry) || !isDeepStrictEqual(retained.limits, limits)
             || retained.receiving?.expectedReadStateSeq !== request.receive?.expectedReadStateSeq
+            || !isDeepStrictEqual(retained.receiving?.localTask, request.receive?.localTask)
             || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
@@ -346,9 +347,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
               || receiverIdentity(receiver) !== automaticReceiver.provider)) throw this.superseded(agent.id)
             const receiving = await receiver.status({ agentId: agent.id })
             signal.throwIfAborted()
-            if (receiving.eligibility !== 'eligible' || receiving.state.binding !== null
+            if (receiving.eligibility !== 'eligible'
+              || (receiving.state.binding !== null && (receiving.state.binding.kind !== 'local-task' || receiving.localTask === null))
+              || !isDeepStrictEqual(receiving.localTask, request.receive.localTask ?? null)
               || receiving.readStateSeq !== request.receive.expectedReadStateSeq) {
-              throw this.invalid(agent.id, 'Receiving consent requires the originally observed unbound Session')
+              throw this.invalid(agent.id, 'Receiving consent requires the originally observed Session and exact local assignment')
             }
             if (automatic !== undefined) {
               if (automatic.activationLimit <= receiving.state.usedBudget) {
@@ -365,6 +368,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
           ...(request.receive === undefined ? {} : { receiving: { adoptionId: randomUUID() as ScopeAgentJoinReadId,
             expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const,
+            ...(request.receive.localTask === undefined ? {} : { localTask: request.receive.localTask }),
             ...(automatic === undefined ? {} : { automatic }) } }) }
         }
         await this.save(current, agent.id, capture, row?.samples ?? [])
@@ -677,13 +681,13 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const projection = this.ctx.get('sessionProjections')?.snapshot(agent.session, ['scopeAgentContext']).values.scopeAgentContext
     const binding = projection?.binding
     if (binding == null || projection?.mode === 'left') return
-    if (binding.kind === 'local-task') {
+    if (binding.kind === 'local-task' || binding.kind === 'local-task-scope') {
       const target = binding.target
       if (target.participantId === developmentAgentParticipantId(id) && this.matchesBinding(id, {
         taskId: target.taskId, bindingId: target.taskBindingId, expectedBindingEpoch: target.bindingEpoch,
       })) return
     }
-    if (binding.kind === 'local-task') throw this.invalid(id, 'Read and local contribution permission must select the same Task assignment and epoch')
+    if (binding.kind === 'local-task' || binding.kind === 'local-task-scope') throw this.invalid(id, 'Read and local contribution permission must select the same Task assignment and epoch')
   }
   private requireCaptureCompatible(id: SessionId, capture: NativeCapture | LocalCapture): void {
     if ('grant' in capture) this.requireLocalReadCompatible(id)
@@ -954,6 +958,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
   private publicReceiving(receiving: NativeReceiving) {
     return { adoptionId: receiving.adoptionId, state: receiving.state, invitation: receiving.invitation,
+      ...(receiving.localTask === undefined ? {} : { localTask: receiving.localTask }),
       ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) }
   }
   private receivingSelection(work: NativeReceivingContinuation): ScopeAgentContributionSelection {
@@ -1034,6 +1039,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const result = receiving.state === 'active' && route !== undefined ? { status: 'adopted' as const }
           : await receiver.adoptJoinRead({ agentId: id, adoptionId: receiving.adoptionId,
             expectedReadStateSeq: receiving.expectedReadStateSeq, invitation,
+            ...(receiving.localTask === undefined ? {} : { localTask: receiving.localTask }),
             ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) })
         signal.throwIfAborted()
         if (result.status === 'adopted' && runtime?.automaticReceiver !== undefined) runtime.automaticReceiver.adopted = true

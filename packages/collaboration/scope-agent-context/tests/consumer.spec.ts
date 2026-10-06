@@ -21,6 +21,7 @@ import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScopeAgentContext from '../src/index.ts'
 import { goalDigest } from '../src/evidence.ts'
+import { scopeAgentActivitySchema } from '../src/activity.ts'
 import { replaceContext, snapshotMessage } from '../src/messages.ts'
 import { scopeAgentProjection } from '../src/state.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentBindingId } from '../src/types.ts'
@@ -267,6 +268,11 @@ describe('native scope context through real Loader and AgentLoop', () => {
     const completed = await observation(ctx, agent.id)
     expect(completed.activity.request).toBeNull()
     expect(completed.activity.completed).toMatchObject(dispatched.activity.request!)
+    const wire = { request: { ...dispatched.activity.request!, localTaskRevision: undefined, localContextSeq: undefined },
+      completed: { ...completed.activity.completed!, localTaskRevision: undefined, localContextSeq: undefined },
+      evaluation: { ...completed.activity.evaluation!, localTaskRevision: undefined } }
+    expect(scopeAgentActivitySchema.parse(wire)).toStrictEqual({
+      request: dispatched.activity.request, completed: completed.activity.completed, evaluation: completed.activity.evaluation })
     expect(agent.session.eventAt(completed.activity.completed!.turnEndSeq)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
     const detached = Session.create(agent.id, agent.session.snapshotEvents(), agent.session.header)
     expect(ctx.sessionProjections.snapshot(detached, ['scopeAgentEvidence']).values.scopeAgentEvidence).toEqual(completed.activity)

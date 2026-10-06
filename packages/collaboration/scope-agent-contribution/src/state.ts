@@ -9,6 +9,7 @@ import type { ContributionRecord, ContributionOutboxItem } from '@deepseek-ai/ds
 import { contributionEntrySchema, contributionLimitsSchema, invitationSchema, validateContributionReceipt } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeContributionEntry, ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
 import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
+import type { ScopeAgentLocalTaskTarget } from '@deepseek-ai/dsh-scope-agent-context/types'
 import { peerContributionSampleSchema, peerContributionAdmissionReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
 
 import type { ScopeAgentContributionReceiving } from './types.ts'
@@ -100,7 +101,12 @@ function consistentRoute(value: NativeRouteState & { readonly entry: ScopeContri
   if (value.lastRoute === undefined) return (value.routeRevision ?? 0) === 0
   return value.routeRevision === value.lastRoute.expectedRouteRevision + 1 && value.lastRoute.ownerAddress === value.entry.ownerAddress
 }
+const localTaskSchema = z.strictObject({
+  taskId: z.string().min(1), taskBindingId: z.string().min(1),
+  expectedBindingEpoch: z.strictObject({ nodeId: z.string().min(1), seq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
+}).transform(value => value as ScopeAgentLocalTaskTarget)
 const receivingSchema = z.object({
+  localTask: localTaskSchema.optional(),
   automatic: scopeAgentAutomaticPolicySchema.optional(),
   adoptionId: z.uuid().transform(value => value as NativeReceiving['adoptionId']),
   expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
@@ -112,7 +118,9 @@ const receivingSchema = z.object({
   }).strict().optional(),
 }).strict().refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
   { message: 'receiving departure intent disagrees' })
-  .transform(({ automatic, ...receiving }) => automatic === undefined ? receiving : { ...receiving, automatic })
+  .transform(({ automatic, localTask, ...receiving }) => ({ ...receiving,
+    ...(automatic === undefined ? {} : { automatic }), ...(localTask === undefined ? {} : { localTask }),
+  }))
 const captureSchema = contributionRecordSchema.safeExtend({
   ...routeState,
   roots: z.array(z.string().min(1)).min(1), rootUrls: z.array(z.string().startsWith('file:')).min(1),

@@ -25,6 +25,7 @@ export function NativeScopeActivity({ snapshot, local, t }: PropsLocale<'emergen
     {completed !== null && <p data-native-scope-activity-completed>{t('native.activity.completed', {
       turn: completed.turn, revision: completed.taskRevision,
     })}</p>}
+    {completed?.localTaskRevision !== undefined && <p>{t('native.activity.localRevision', { revision: completed.localTaskRevision })}</p>}
     {request !== null && <p data-native-scope-activity-request>{t('native.activity.request', {
       turn: request.turn, step: request.step,
     })}</p>}

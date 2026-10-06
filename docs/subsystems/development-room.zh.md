@@ -1033,6 +1033,8 @@ interface ScopeAgentContributionRequest {
   /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
+    /** Exact existing local assignment retained by this additional scope permission. */
+    readonly localTask?: ScopeAgentLocalTaskTarget
     /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
     readonly automatic?: ScopeAgentAutomaticPolicy
   }
@@ -1101,6 +1103,8 @@ interface ScopeAgentContributionStatus {
 ```ts type-equiv
 /** Local adoption of a joint entry's separate read permission; active describes a retained local binding. */
 interface ScopeAgentContributionReceiving {
+  /** Original local assignment retained by this join; absence selects an unbound Session. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Original local consent; current mode and consumed budget belong to scopeAgentContext status. */
   readonly automatic?: ScopeAgentAutomaticPolicy
   readonly adoptionId: ScopeAgentJoinReadId
@@ -1122,7 +1126,7 @@ interface ScopeAgentContributionReceivingContinuation {
 
 ## 原生 Session 的独立 scope 接收
 
-[原生接收插件](../../packages/collaboration/scope-agent-context/README.zh.md)把独立读邀请绑定到一个已存活的普通 Agent。变更提示不携带事实；pre-step 在线读取并把确切投影记录到 Session。被动模式等待正常工作，自动模式需要本地目标和有限额度；恢复后暂停自动执行。
+[原生接收插件](../../packages/collaboration/scope-agent-context/README.zh.md)把独立读邀请绑定到一个已存活的普通 Agent，可在同一上下文预算与调度器下，保留其明确确认的本地 Task 分配。变更提示不携带事实；pre-step 在线读取并把确切投影记录到 Session。被动模式等待正常工作，自动模式需要本地目标和有限额度；恢复后暂停自动执行。
 
 ```ts type-equiv
 /** Opaque change comparison tied to one subscription and authorized owner state; not a read lease. */
@@ -1159,12 +1163,14 @@ type ScopeAgentJoinReadId = Branded<'ScopeAgentJoinReadId'>
 ```
 
 ```ts type-equiv
-/** Adopt one joint operation's read permission into an initially unbound live Session. */
+/** Adopt one joint operation’s read permission while retaining an explicitly selected local responsibility. */
 interface ScopeAgentJoinReadRequest {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Exact existing local responsibility retained by this additional read permission. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Explicit permission from this Session's user; absence preserves passive adoption. */
   readonly automatic?: ScopeAgentAutomaticPolicy
 }
@@ -1250,13 +1256,14 @@ type JoinReadTransition<Plan> =
 ```
 
 ```ts type-equiv
-/** Non-ignorable adoption history; version 1 is passive, version 2 atomically installs explicit automatic permission. */
+/** Non-ignorable adoption history: passive v1, explicit automatic v2, and retained local responsibility v3. */
 type ScopeAgentJoinReadEvent = {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
 } & (
   | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
   | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
+  | ({ readonly version: 3 } & JoinReadTransition<ScopeAgentCompositeJoinReadPlan>)
 )
 ```
 
@@ -1281,8 +1288,10 @@ interface ScopeAgentAutomaticPolicy {
 interface ScopeAgentBindRequest {
   readonly agentId: SessionId
   readonly invitation: ScopeInvitation
-  /** Current binding observed by the caller; null requires an unbound Session. */
+  /** Current scheduling binding observed by the caller; null requires no scheduling binding. */
   readonly expectedBindingId: ScopeAgentBindingId | null
+  /** Required when retaining an existing local Root Task assignment. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Null enables request-time reads without authorizing idle turns. */
   readonly automatic: ScopeAgentAutomaticPolicy | null
 }
@@ -1334,13 +1343,57 @@ interface ScopeAgentLocalBinding {
 ```
 
 ```ts type-equiv
-/** Exact local or remote projection used by the shared scheduler. */
-type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection
+/** Local scheduling permission restored as a new paused interval after remote departure. */
+interface ScopeAgentRetainedLocal {
+  readonly bindingId: ScopeAgentBindingId
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+}
 ```
 
 ```ts type-equiv
-/** One local execution interval selects either local Task authority or a remote subscription. */
-type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding
+/** One additional remote read preserves the exact local responsibility and its prior permission. */
+interface ScopeAgentCompositeBinding {
+  readonly kind: 'local-task-scope'
+  readonly id: ScopeAgentBindingId
+  readonly target: DevelopmentTaskLocalContextTarget
+  readonly subscriptionId: ScopeSubscriptionId
+  readonly invitation: ScopeInvitation
+  readonly retainedLocal: ScopeAgentRetainedLocal
+}
+```
+
+```ts type-equiv
+/** Both exact inputs admitted under a single complete UTF-8 message budget. */
+interface ScopeAgentCompositeProjection {
+  readonly kind: 'local-task-scope'
+  readonly version: 1
+  readonly local: DevelopmentTaskLocalContextProjection
+  readonly remote: ScopeAccessProjection
+  readonly maxContextBytes: number
+  readonly projectionId: ScopeAccessProjection['projectionId']
+  /** Remote revision; local.taskRevision remains independently attributable. */
+  readonly taskRevision: ScopeAccessProjection['taskRevision']
+}
+```
+
+```ts type-equiv
+/** A joint operation captures the original local responsibility and scheduling interval. */
+interface ScopeAgentCompositeJoinReadPlan extends ScopeAgentJoinReadPlan {
+  readonly expectedBindingId: ScopeAgentBindingId | null
+  readonly target: DevelopmentTaskLocalContextTarget
+  readonly retainedLocal: ScopeAgentRetainedLocal
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+}
+```
+
+```ts type-equiv
+/** Exact local or remote projection used by the shared scheduler. */
+type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection | ScopeAgentCompositeProjection
+```
+
+```ts type-equiv
+/** One execution interval owns one policy and either or both explicitly selected information sources. */
+type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding | ScopeAgentCompositeBinding
 ```
 
 ```ts type-equiv
@@ -1351,7 +1404,7 @@ type ScopeAgentPauseReason = 'user' | 'restored' | 'cancelled' | 'turn-ended' | 
 ```ts type-equiv
 /** Whole durable scheduling state. It records reservations, never model adoption. */
 interface ScopeAgentBindingStatus {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3
   readonly agentId: SessionId
   readonly binding: ScopeAgentBinding | null
   readonly automatic: ScopeAgentAutomaticPolicy | null
@@ -1426,7 +1479,7 @@ type ScopeAgentGoalDigest = Branded<'ScopeAgentGoalDigest'>
 ```ts type-equiv
 /** Online scheduling decision with the exact projection that was evaluated. */
 interface ScopeAgentEvaluation {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3
   readonly decision: 'activate' | 'suppress-unchanged' | 'blocked-current' | 'suppress-reserved'
   readonly bindingId: ScopeAgentBindingId
   readonly goalDigest: ScopeAgentGoalDigest
@@ -1440,7 +1493,7 @@ interface ScopeAgentEvaluation {
 ```ts type-equiv
 /** Actual loop-built frozen request containing the authorized pulse and exact logged scope snapshot. */
 interface ScopeAgentRequestEvidence {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3
   readonly turn: number
   readonly step: number
   readonly bindingId: ScopeAgentBindingId
@@ -1448,6 +1501,8 @@ interface ScopeAgentRequestEvidence {
   readonly goalDigest: ScopeAgentGoalDigest
   readonly projection: ScopeAgentReadProjection
   readonly contextSeq: SessionSeq
+  /** Required for version 3; contextSeq identifies its remote snapshot. */
+  readonly localContextSeq?: SessionSeq
   readonly maxContextBytes: number
 }
 ```
@@ -1468,6 +1523,8 @@ interface ScopeAgentActivityIdentity {
   readonly bindingId: ScopeAgentBindingId
   readonly goalDigest: ScopeAgentGoalDigest
   readonly taskRevision: ScopeAgentReadProjection['taskRevision']
+  /** Local revision when the projection combines independent local and remote Tasks. */
+  readonly localTaskRevision?: ScopeAgentReadProjection['taskRevision']
   readonly projectionId: ScopeAgentReadProjection['projectionId']
 }
 ```
@@ -1478,6 +1535,7 @@ interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {
   readonly activationId: ScopeAgentActivationId
   readonly requestSeq: SessionSeq
   readonly contextSeq: SessionSeq
+  readonly localContextSeq?: SessionSeq
   readonly turn: number
   readonly step: number
 }
@@ -3536,7 +3594,7 @@ updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<Scop
 /**
  * Stop bound automatic work and end its subscription, or discard a stale local binding after its Task is cleared.
  * @param request - live Session and its observed binding interval.
- * @returns committed unbound state with lifetime reservations retained.
+ * @returns unbound remote-only state, or a fresh local interval with retained permission paused and lifetime reservations unchanged.
  */
 @Remote('leave') async leave(request: ScopeAgentBindingRequest): Promise<ScopeAgentBindingStatus>
 

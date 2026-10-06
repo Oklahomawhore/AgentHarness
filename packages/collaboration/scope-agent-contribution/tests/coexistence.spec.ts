@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Session } from '@deepseek-ai/dsh-session'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
-import type { ScopeAgentStatusResult } from '@deepseek-ai/dsh-scope-agent-context/types'
+import type { ScopeAgentAutomaticPolicy, ScopeAgentStatusResult } from '@deepseek-ai/dsh-scope-agent-context/types'
 import type { ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentContributionSelection } from '../src/types.ts'
+import type { ScopeAgentContributionRequest, ScopeAgentContributionSelection } from '../src/types.ts'
 import { nativeContributionDomain } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
@@ -289,7 +290,7 @@ it('restores two real durable capture domains as separate withdrawals without re
   await expectWithdrawal(f, remote.capture.selection, 'DUAL_RESTART_BODY')
 })
 
-it('rejects joint reading over an existing local binding without cancelling the local capture', async () => {
+it('requires explicit retained-local consent for joint reading without cancelling the local capture', async () => {
   const f = await fixture()
   const entry = await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
     taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
@@ -300,4 +301,116 @@ it('rejects joint reading over an existing local binding without cancelling the 
   expect(live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id })).state.binding).toEqual(f.read.binding)
   expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture?.collecting).toBe(true)
   expect((await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
+})
+
+
+async function beginJoint(f: Awaited<ReturnType<typeof fixture>>, automatic?: ScopeAgentAutomaticPolicy) {
+  const entry = await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+    taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
+  const observed = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  if (observed.localTask === null) throw new Error('Original local target is missing')
+  const request: ScopeAgentContributionRequest = { agentId: f.agent.id, expectedCapture: null,
+    entry: entry.entry, roots: [f.source.workspace], tools: ['write'], limits: f.limits,
+    receive: { expectedReadStateSeq: observed.readStateSeq, localTask: observed.localTask,
+      ...(automatic === undefined ? {} : { automatic }) } }
+  const requested = await f.source.ctx.scopeAgentContributions.request(request)
+  const capture = requested.capture
+  if (capture === null) throw new Error('Joint contribution was not retained')
+  await expect.poll(async () => (await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries[0]?.result.status).toBe('pending')
+  const approve = () => f.owner.ctx.scopeAccess.approveContributionApplication({ entryId: entry.entry.entryId,
+    expectedProposal: capture.proposal, limits: f.limits, ownerAddress: f.ownerAddress,
+    read: { responsibility: 'Maintain my own local implementation with the shared facts.' } })
+  return { request, capture, approve }
+}
+
+it('adopts a joint scope while retaining local capture and paused policy, then leaves only that scope', async () => {
+  const f = await fixture()
+  await run(f.source, f.agent, [toolCallResponse('local-history', 'write', { file_path: 'original.txt', content: 'ORIGINAL_LOCAL_WORK' })])
+  await expect.poll(() => f.localReports().length).toBe(1)
+  const originalPolicy = { goal: 'Maintain my own local implementation.', activationLimit: 4, maxStepsPerTurn: 2, minIntervalMs: 60000 }
+  f.source.script.push(textResponse('One authorized local response.'))
+  const bound = await f.source.ctx.scopeAgentContext.bindLocal({ agentId: f.agent.id, expectedBindingId: f.read.binding!.id,
+    taskId: f.assignment.taskId, taskBindingId: f.assignment.bindingId, expectedBindingEpoch: f.assignment.expectedBindingEpoch,
+    automatic: originalPolicy })
+  await expect.poll(() => f.agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request').length).toBe(1)
+  await f.agent.whenIdle()
+  await f.source.ctx.scopeAgentContext.pause({ agentId: f.agent.id, expectedBindingId: bound.binding!.id })
+  const before = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  expect(before.state).toMatchObject({ mode: 'paused', usedBudget: 1, automatic: originalPolicy })
+  const requests = f.source.adapter.requests.length
+  const joint = await beginJoint(f)
+  expect(joint.capture.receiving?.localTask).toEqual(before.localTask)
+  const stored = nativeContributionDomain.tables.sessions.valueSchema.parse(await storedRow(f.source, 'scope_agent_contributions', f.agent.id))
+  expect(stored.capture?.receiving?.localTask).toEqual(before.localTask)
+  expect(stored.capture?.receiving?.automatic).toBeUndefined()
+  await f.source.ctx.scopeAgentContributions.request({ ...joint.request, expectedCapture: joint.capture.selection })
+  await expect(f.source.ctx.scopeAgentContributions.request({ ...joint.request, expectedCapture: joint.capture.selection,
+    receive: { ...joint.request.receive!, localTask: { ...before.localTask!, expectedBindingEpoch: {
+      ...before.localTask!.expectedBindingEpoch, seq: before.localTask!.expectedBindingEpoch.seq + 1 } } } }))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+  await joint.approve()
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture?.receiving?.state).toBe('active')
+  const joined = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  expect(joined.state).toMatchObject({ mode: 'passive', automatic: null, usedBudget: 1,
+    binding: { kind: 'local-task-scope', retainedLocal: { automatic: originalPolicy } } })
+  expect(joined.localTask).toEqual(before.localTask)
+  expect(f.source.adapter.requests).toHaveLength(requests)
+  expect((await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries).toHaveLength(1)
+  const localBefore = await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })
+  expect(localBefore.capture?.selection).toEqual(f.localCapture.selection)
+  await run(f.source, f.agent, [toolCallResponse('joined-write', 'write', { file_path: 'joined.txt', content: 'BOTH_AUTHORIZED_DESTINATIONS' })])
+  await expect.poll(() => f.localReports().length).toBe(2)
+  await expect.poll(() => f.remoteReports().length).toBe(1)
+  expect(f.source.ctx.agents.get(f.agent.id)).toBe(f.agent)
+  await f.source.ctx.scopeAgentContributions.leaveJoin({ agentId: f.agent.id, expectedCapture: joint.capture.selection })
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
+  await expect.poll(async () => live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id })).state.binding?.kind).toBe('local-task')
+  const restored = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  expect(restored.state).toMatchObject({ mode: 'paused', automatic: originalPolicy, usedBudget: 1, binding: { kind: 'local-task' } })
+  expect(restored.localTask).toEqual(before.localTask)
+  expect(restored.state.binding?.id).not.toBe(bound.binding?.id)
+  const localAfter = await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })
+  expect(localAfter.assignment).toEqual(f.assignment)
+  expect(localAfter.capture).toMatchObject({ selection: f.localCapture.selection, collecting: true })
+  await run(f.source, f.agent, [toolCallResponse('after-joint-leave', 'write', { file_path: 'after.txt', content: 'LOCAL_AFTER_SCOPE_LEAVE' })])
+  await expect.poll(() => f.localReports().length).toBe(3)
+  expect(f.remoteReports()).toHaveLength(1)
+  expect(await f.source.ctx.sessions.flush(f.agent.session)).toBe(true)
+  const disk = await f.source.readEvents(f.agent)
+  expect(disk).toEqual(f.agent.session.snapshotEvents())
+  const restoredSession = Session.create(f.agent.id, structuredClone([...disk]), f.agent.session.header)
+  expect(restoredSession.deriveMessages()).toEqual(f.agent.session.deriveMessages())
+  expect(disk.filter(event => event.type === 'scope-agent-context/join-read'))
+    .toMatchObject([{ data: { version: 3, phase: 'planned' } }, { data: { version: 3, phase: 'adopted' } },
+      { data: { version: 3, phase: 'ended', leaveAdopted: true } }])
+})
+
+it('rejects a changed local epoch before recording joint consent', async () => {
+  const f = await fixture()
+  const entry = await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+    taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
+  const observed = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  if (observed.localTask === null) throw new Error('Missing original assignment')
+  await expect(f.source.ctx.scopeAgentContributions.request({ agentId: f.agent.id, expectedCapture: null, entry: entry.entry,
+    roots: [f.source.workspace], tools: ['write'], limits: f.limits, receive: { expectedReadStateSeq: observed.readStateSeq,
+      localTask: { ...observed.localTask, expectedBindingEpoch: { ...observed.localTask.expectedBindingEpoch,
+        seq: observed.localTask.expectedBindingEpoch.seq + 1 } } } }))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+  expect((await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
+  expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture?.selection)
+    .toEqual(f.localCapture.selection)
+})
+
+it('supersedes stored joint consent when local management changes before owner approval', async () => {
+  const f = await fixture()
+  const joint = await beginJoint(f)
+  await f.source.ctx.scopeAgentContext.bindLocal({ agentId: f.agent.id, expectedBindingId: f.read.binding!.id,
+    taskId: f.assignment.taskId, taskBindingId: f.assignment.bindingId, expectedBindingEpoch: f.assignment.expectedBindingEpoch,
+    automatic: null })
+  await joint.approve()
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture?.receiving?.state).toBe('superseded')
+  expect(live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id })).state.binding?.kind).toBe('local-task')
+  expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture?.selection)
+    .toEqual(f.localCapture.selection)
+  expect((await f.source.ctx.scopeAccess.list()).subscriptions).toEqual([])
 })

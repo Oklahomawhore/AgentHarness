@@ -5,7 +5,7 @@ import type {
   ScopeContributionEntry, ScopeContributionInvitation, ScopeContributionLimits, ScopeContributionProposal, ScopeInvitation,
 } from '@deepseek-ai/dsh-scope-access/types'
 import type {} from '@deepseek-ai/dsh-typert-protocol'
-import type { ScopeAgentAutomaticPolicy, ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
+import type { ScopeAgentAutomaticPolicy, ScopeAgentJoinReadId, ScopeAgentLocalTaskTarget } from '@deepseek-ai/dsh-scope-agent-context/types'
 
 /** One source capture identity, never reused after termination. */
 export type ScopeAgentContributionSelection = Pick<ScopeContributionProposal, 'captureId' | 'captureGeneration'>
@@ -21,6 +21,8 @@ export interface ScopeAgentContributionRequest {
   /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
+    /** Exact existing local assignment retained by this additional scope permission. */
+    readonly localTask?: ScopeAgentLocalTaskTarget
     /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
     readonly automatic?: ScopeAgentAutomaticPolicy
   }
@@ -83,6 +85,8 @@ export interface ScopeAgentContributionStopRequest {
 
 /** Local adoption of a joint entry's separate read permission; active describes a retained local binding. */
 export interface ScopeAgentContributionReceiving {
+  /** Original local assignment retained by this join; absence selects an unbound Session. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Original local consent; current mode and consumed budget belong to scopeAgentContext status. */
   readonly automatic?: ScopeAgentAutomaticPolicy
   readonly adoptionId: ScopeAgentJoinReadId

@@ -7,7 +7,7 @@ import { NativeLocalContributionPanel } from '../src/client/NativeLocalContribut
 import type { NativeScopeAction } from '../src/client/native-scopes.ts'
 import { zh } from '../src/client/locales.ts'
 import { assigned, binding, localCapture, tasks } from './native-local-contribution-fixture.client.ts'
-import { localExecution, localObservation, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
+import { compositeExecution, localExecution, localObservation, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { state } from './native-scope-fixture.client.ts'
 
 afterEach(cleanup)
@@ -34,6 +34,23 @@ function SubmitBeforeEffects() {
 }
 
 describe('owner-local automatic permission', () => {
+  it('retains the original local policy while shared-scope controls own the current automatic interval', () => {
+    const f = fixture(localSnapshot(compositeExecution))
+    expect(screen.getByText(makeTranslate(zh)('native.currentGoal', { goal: localExecution.automatic!.goal }))).not.toBeNull()
+    expect(screen.queryByText(compositeExecution.automatic!.goal, { exact: false })).toBeNull()
+    expect(screen.getByText(zh['native.local.manageShared'])).not.toBeNull()
+    expect(screen.queryByRole('button', { name: zh['native.pause'] })).toBeNull()
+    expect(screen.queryByRole('button', { name: /恢复自动工作/ })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: zh['native.local.allowAutomatic'] })).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.local.leave'] }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: zh['native.local.leave'] }))
+    expect(f.actScope).not.toHaveBeenCalled()
+    f.rerender(<NativeLocalContributionPanel {...f.props} scope={localSnapshot({ ...localExecution,
+      usedBudget: 3, mode: 'paused', pauseReason: 'user' })} />)
+    expect(screen.getByText('累计已用 3 / 5 次 · 每轮最多 3 步')).not.toBeNull()
+    expect(screen.getByRole('button', { name: '恢复自动工作（剩余 2 次）' })).not.toBeNull()
+  })
+
   it('defaults off and starts only an explicitly selected policy independently of file consent', async () => {
     const f = fixture()
     expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.local.allowAutomatic'] }).checked).toBe(false)

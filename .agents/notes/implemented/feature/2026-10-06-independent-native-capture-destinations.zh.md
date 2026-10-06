@@ -16,7 +16,7 @@ Status: implemented
 
 本地授权绑定精确的 Task 分配世代。对等采集遵循独立批准的 Session、目录、工具、目标和限额。改变本地分配会终止本地采集，但不改变对等同意。单独释放 Agent 会终止两份采集。重启会完成两份保留的终止操作，不会向替代 Agent 授予采集许可。两个独立持久化域保留原有表示。
 
-这项决策替代[所有者本地贡献决策](2026-10-04-owner-local-scope-contributions.zh.md)中的采集互斥要求。读取和自动执行仍分别授权：向对等方贡献不会替换本地 Task，也不授予接收外部 scope 的权限。原生接收服务仍限制本地 Task 与对等订阅同时存在。
+这项决策替代[所有者本地贡献决策](2026-10-04-owner-local-scope-contributions.zh.md)中的采集互斥要求。读取和自动执行仍分别授权：向对等方贡献不会替换本地 Task，也不授予接收外部 scope 的权限。同时接收双方来源需要独立的[组合接收同意](2026-10-07-retain-local-task-during-joint-receiving.zh.md)。
 
 ## Alternatives considered
 

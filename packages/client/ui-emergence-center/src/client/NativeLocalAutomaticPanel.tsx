@@ -28,13 +28,14 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
     expectedBindingEpoch: assignment.expectedBindingEpoch }
   const ready = snapshot.phase === 'ready' && !snapshot.pending && status !== undefined && status !== null
     && sameLocalTarget(status.localTask, target)
-  const binding = state?.binding?.kind === 'local-task' ? state.binding : null
+  const composite = state?.binding?.kind === 'local-task-scope' ? state.binding : null
+  const binding = state?.binding?.kind === 'local-task' ? state.binding : composite
   const matched = binding !== null && sameLocalTarget(target, { taskId: binding.target.taskId,
     taskBindingId: binding.target.taskBindingId, expectedBindingEpoch: binding.target.bindingEpoch })
   const eligible = ready && (status.eligibility === 'eligible' || status.eligibility === 'task-conflict')
     && (state?.binding === null || state?.binding?.kind === 'local-task')
-  const enabled = matched && state?.mode === 'enabled'
-  const currentPolicy = matched ? state?.automatic : null
+  const enabled = composite === null && matched && state?.mode === 'enabled'
+  const currentPolicy = matched ? composite === null ? state?.automatic : composite.retainedLocal.automatic : null
   const used = state?.usedBudget ?? 0
   const policy = automaticPolicy(draft, used)
   const expectedBindingId = state?.binding?.id ?? null
@@ -45,8 +46,8 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
   }
   return <section className={css.form} data-native-local-automatic>
     <p role="status" className={css.state}>{t(!ready ? `native.phase.${snapshot.phase === 'ready' ? 'loading' : snapshot.phase}` : enabled ? 'native.mode.enabled'
-      : matched && state?.mode === 'paused' ? 'native.mode.paused' : 'native.mode.passive')}</p>
-    {matched && state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
+      : matched && (composite !== null ? currentPolicy !== null : state?.mode === 'paused') ? 'native.mode.paused' : 'native.mode.passive')}</p>
+    {composite === null && matched && state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
     <p className={css.budget}>{currentPolicy == null ? t('native.used', { used })
       : t('native.budget', { used, limit: currentPolicy.activationLimit, steps: currentPolicy.maxStepsPerTurn })}</p>
     {currentPolicy != null && <p className={css.goal}>{t('native.currentGoal', { goal: currentPolicy.goal })}</p>}
@@ -59,19 +60,20 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
         <dd>{target.expectedBindingEpoch.nodeId}:{target.expectedBindingEpoch.seq}</dd>
       </dl>
     </details>
+    {composite !== null && <p className={css.hint}>{t('native.local.manageShared')}</p>}
     <p className={css.hint}>{t('native.local.automaticHint')}</p>
     <div className={css.actions}>
       {enabled && <Button disabled={!ready}
         onClick={() => { void perform({ kind: 'pause', expectedBindingId: binding.id }) }}>{t('native.pause')}</Button>}
-      {!enabled && matched && currentPolicy != null && currentPolicy.activationLimit > used
+      {composite === null && !enabled && matched && currentPolicy != null && currentPolicy.activationLimit > used
         && <Button disabled={!eligible} onClick={() => {
           void perform({ kind: 'resume', expectedBindingId: binding.id, automatic: currentPolicy })
         }}>{t('native.resumeRemaining', { count: currentPolicy.activationLimit - used })}</Button>}
-      {currentPolicy != null && <Button disabled={!eligible} onClick={() => {
+      {composite === null && currentPolicy != null && <Button disabled={!eligible} onClick={() => {
         void perform({ kind: 'bindLocal', request: { ...target, expectedBindingId, automatic: null } })
       }}>{t('native.disableAutomatic')}</Button>}
     </div>
-    {!enabled && <form className={css.form} onSubmit={(event) => {
+    {composite === null && !enabled && <form className={css.form} onSubmit={(event) => {
       event.preventDefault()
       if (!eligible || !selected || policy === undefined) return
       void perform({ kind: 'bindLocal', request: { ...target, expectedBindingId, automatic: policy } })
@@ -85,7 +87,7 @@ export function NativeLocalAutomaticPanel({ assignment, snapshot, act, t }: Prop
       </>}
     </form>}
     <p className={css.hint}>{t('native.pauseHint')}</p>
-    <Button disabled={!ready} onClick={() => {
+    <Button disabled={!ready || composite !== null} onClick={() => {
       void perform({ kind: 'leaveLocalTask', request: { ...target, expectedBindingId } })
     }}>{t('native.local.leave')}</Button>
     <p className={css.hint}>{t('native.local.leaveHint')}</p>

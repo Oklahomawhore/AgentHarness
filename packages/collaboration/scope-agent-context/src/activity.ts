@@ -11,29 +11,38 @@ const activationId = z.uuid().transform(value => value as ScopeAgentActivationId
 const identityFields = {
   bindingId: z.uuid().transform(value => value as ScopeAgentBindingId),
   goalDigest: z.string().regex(/^[a-f0-9]{64}$/).transform(value => value as ScopeAgentGoalDigest),
-  taskRevision: natural,
+  taskRevision: natural, localTaskRevision: natural.optional(),
   projectionId: z.string().regex(/^[a-f0-9]{64}$/).transform(value => value as ScopeAgentActivityIdentity['projectionId']),
 }
-const requestFields = { ...identityFields, activationId, requestSeq: seq, contextSeq: seq,
+const requestFields = { ...identityFields, activationId, requestSeq: seq, contextSeq: seq, localContextSeq: seq.optional(),
   turn: natural.positive(), step: natural.positive() }
 
 /** The Client receives recorded identities and outcomes, never shared context or source bodies. */
 export const scopeAgentActivitySchema: z.ZodType<ScopeAgentActivity> = z.object({
-  request: z.object(requestFields).strict().nullable(),
-  completed: z.object({ ...requestFields, assistantSeq: seq, turnEndSeq: seq }).strict().nullable(),
+  request: z.object(requestFields).strict().transform(({ localTaskRevision, localContextSeq, ...record }) => ({ ...record,
+    ...(localTaskRevision === undefined ? {} : { localTaskRevision }),
+    ...(localContextSeq === undefined ? {} : { localContextSeq }) })).nullable(),
+  completed: z.object({ ...requestFields, assistantSeq: seq, turnEndSeq: seq }).strict()
+    .transform(({ localTaskRevision, localContextSeq, ...record }) => ({ ...record,
+      ...(localTaskRevision === undefined ? {} : { localTaskRevision }),
+      ...(localContextSeq === undefined ? {} : { localContextSeq }) })).nullable(),
   evaluation: z.object({ ...identityFields,
     decision: z.enum(['activate', 'suppress-unchanged', 'blocked-current', 'suppress-reserved']),
-    activationId: activationId.nullable() }).strict().nullable(),
+    activationId: activationId.nullable() }).strict().transform(({ localTaskRevision, ...record }) =>
+    localTaskRevision === undefined ? record : { ...record, localTaskRevision }).nullable(),
 }).strict()
 
 function identity(value: ScopeAgentRequestEvidence | NonNullable<ScopeAgentEvidenceState['lastEvaluation']>): ScopeAgentActivityIdentity {
   return { bindingId: value.bindingId, goalDigest: value.goalDigest,
-    taskRevision: value.projection.taskRevision, projectionId: value.projection.projectionId }
+    taskRevision: value.projection.taskRevision,
+    ...('kind' in value.projection && value.projection.kind === 'local-task-scope'
+      ? { localTaskRevision: value.projection.local.taskRevision } : {}), projectionId: value.projection.projectionId }
 }
 
 function requestActivity(request: ScopeAgentRequestEvidence, requestSeq: ScopeAgentActivityRequest['requestSeq']): ScopeAgentActivityRequest {
   return { ...identity(request), activationId: request.activationId, requestSeq, contextSeq: request.contextSeq,
-    turn: request.turn, step: request.step }
+    turn: request.turn, step: request.step,
+    ...(request.localContextSeq === undefined ? {} : { localContextSeq: request.localContextSeq }) }
 }
 
 /**

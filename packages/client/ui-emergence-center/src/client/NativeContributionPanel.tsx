@@ -3,13 +3,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest, ScopeAgentContributionReceiving,
   ScopeContributionEntry, ScopeContributionTransfer, ScopeAgentContributionRecoverRouteRequest,
-  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult,
+  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult, ScopeAgentLocalTaskTarget,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
-import type { NativeScopeSnapshot } from './native-scopes.ts'
+import { sameLocalTarget, type NativeScopeSnapshot } from './native-scopes.ts'
 import { ContributionGrantSummary, contributionErrorKey } from './contribution-ui.tsx'
 import type { EmergenceCenterKey } from './locales.ts'
 import { NativeContributionRoute } from './NativeContributionRoute.tsx'
@@ -107,7 +107,11 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const [samples, setSamples] = useState('')
   const [bytes, setBytes] = useState('')
   const [consent, setConsent] = useState(false)
-  const [readConsent, setReadConsent] = useState<{ entry: ScopeContributionEntry; seq: SessionSeqCursor } | null>(null)
+  const [readConsent, setReadConsent] = useState<{
+    entry: ScopeContributionEntry
+    seq: SessionSeqCursor
+    localTask: ScopeAgentLocalTaskTarget | null
+  } | null>(null)
   const [automaticDraft, setAutomaticDraft] = useState<NativeAutomaticDraft>({ goal: '', extra: '', steps: '', interval: '' })
   const [automaticConsent, setAutomaticConsent] = useState<{
     entry: ScopeContributionEntry
@@ -135,9 +139,11 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const observation = scope.observation
   const readState = observation?.eligibility === 'eligible' ? observation : null
   const canReceive = scope.phase === 'ready' && !scope.pending && readState !== null && readState.agentId === agentId
-    && readState.localTask === null && readState.state.binding === null && readState.subscriptionState === 'unbound'
+    && (readState.state.binding === null || (readState.localTask !== null && readState.state.binding.kind === 'local-task'))
+    && readState.subscriptionState === 'unbound'
   const readConfirmed = readConsent !== null && readConsent.entry === preview && canReceive
     && readConsent.seq === readState.readStateSeq
+    && (readConsent.localTask === null ? readState.localTask === null : sameLocalTarget(readState.localTask, readConsent.localTask))
   const used = readState?.state.usedBudget ?? 0
   const automaticConfirmed = automaticConsent !== null && readConfirmed && automaticConsent.entry === preview
     && automaticConsent.seq === readState.readStateSeq && automaticConsent.used === used
@@ -203,6 +209,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
         void perform(() => requestNativeContribution({ agentId, expectedCapture: null, entry: preview, roots: selectedRoots, tools,
           limits: { expiresAt, maxSamples: Number(samples), maxSampleBytes: Number(bytes) },
           ...(joint && readConsent !== null ? { receive: { expectedReadStateSeq: readConsent.seq,
+            ...(readConsent.localTask === null ? {} : { localTask: readConsent.localTask }),
             ...(automaticConfirmed && policy !== undefined ? { automatic: policy } : {}) } } : {}) }))
       }}>
         <label className={css.field} htmlFor={`${id}-entry`}>{t('contribution.application.paste')}
@@ -224,8 +231,9 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             {!canReceive && <p role="status" className={css.notice}>{t('native.join.unboundRequired')}</p>}
             <label className={css.consent}><input type="checkbox" checked={readConfirmed} disabled={!eligible || !canReceive}
               onChange={(event) => {
-                setReadConsent(event.target.checked && readState !== null ? { entry: preview, seq: readState.readStateSeq } : null)
-                if (!event.target.checked) setAutomaticConsent(null)
+                setReadConsent(event.target.checked && readState !== null
+                  ? { entry: preview, seq: readState.readStateSeq, localTask: readState.localTask } : null)
+                setAutomaticConsent(null)
               }} />
             {t('native.join.readConsent')}</label>
           </>}
@@ -237,6 +245,10 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
           {joint && <div data-native-join-automatic className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={automaticConfirmed} disabled={!eligible || !readConfirmed}
               onChange={(event) => {
+                if (event.target.checked && readState?.localTask !== null && readState?.state.automatic != null) {
+                  const goal = readState.state.automatic.goal
+                  setAutomaticDraft(value => ({ ...value, goal: value.goal || goal }))
+                }
                 setAutomaticConsent(event.target.checked && readState !== null
                   ? { entry: preview, seq: readState.readStateSeq, used } : null)
               }} />{t('native.join.automaticConsent')}</label>
