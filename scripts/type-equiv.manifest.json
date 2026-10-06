@@ -3496,6 +3496,36 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentCaptureJoinReadPlan",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskRecordedToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskRecordedToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskPeerToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitializationRequest",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitializationSource",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitialization",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     }
   ]
 }

@@ -261,7 +261,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
           </Button>
         </form>}
         {success && snapshot.phase === 'ready' && state?.binding?.kind !== 'local-task' && <p className={css.hint}>{t('native.saved')}</p>}
-        <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} scope={snapshot} t={t}
+        <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} localEntry={localContribution} scope={snapshot} t={t}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}
           previewNativeContribution={previewNativeContribution} probeNativeContribution={probeNativeContribution}

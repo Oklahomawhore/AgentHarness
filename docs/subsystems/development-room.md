@@ -1064,6 +1064,44 @@ type ScopeAgentContributionSelection = Pick<ScopeContributionProposal, 'captureI
 ```
 
 ```ts type-equiv
+/** One explicit historical export selection, independent of local recording and remote reading permission. */
+interface ScopeAgentContributionInitializationRequest {
+  readonly kind: 'recorded-local-tools'
+  readonly expectedLocalCapture: ScopeAgentContributionSelection
+  readonly localTask: ScopeAgentLocalContributionBinding
+}
+```
+
+```ts type-equiv
+/** Current retained local observations; recording capacity exhaustion does not remove initialization eligibility. */
+interface ScopeAgentContributionInitializationSource {
+  readonly eligible: boolean
+  readonly recordedSamples: number
+  readonly unconfirmedSamples: number
+}
+```
+
+```ts type-equiv
+/** Frozen initialization covers recorded observations, not current file contents or every past execution. */
+interface ScopeAgentContributionInitialization {
+  readonly state: 'pending' | 'frozen' | 'unavailable'
+  readonly request: ScopeAgentContributionInitializationRequest
+  readonly cutoff: { readonly localSequence: number; readonly sessionSeq: SessionSeqCursor } | null
+  readonly coverage: {
+    readonly recorded: number
+    readonly selected: number
+    readonly omitted: number
+    readonly unconfirmed: number
+    /** In-progress mutations or settled completions not yet persisted at the cutoff. */
+    readonly inFlight: number
+    /** Owner-confirmed seed receipts; selected records alone do not establish delivery. */
+    readonly acknowledged: number
+  }
+  readonly reason: 'source-unavailable' | 'source-changed' | 'coverage-invalid' | 'capacity' | null
+}
+```
+
+```ts type-equiv
 /** Explicit permission to collect this Session's allowed tools and activate an equal or narrower owner approval. */
 interface ScopeAgentContributionRequest {
   readonly agentId: SessionId
@@ -1072,6 +1110,8 @@ interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
+  /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
+  readonly initialization?: ScopeAgentContributionInitializationRequest
   /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
@@ -1124,6 +1164,8 @@ interface ScopeAgentContributionCapture {
   readonly collecting: boolean
   readonly application: 'applying' | 'waiting' | 'cancelling' | 'rejected' | 'expired' | null
   readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
+  /** Separately approved recorded-tool initialization and receipt-derived delivery progress. */
+  readonly initialization?: ScopeAgentContributionInitialization
   /** Source-local collection or persistence problem; independent of the owner's response. */
   readonly collectionIssue: 'retention-limit' | 'sample-limit' | 'attribution-budget'
     | 'durability-unavailable' | 'durability-failed' | null
@@ -1686,7 +1728,8 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 
 ```ts type-equiv
 /** Immutable source permission without local filesystem roots or session identifiers. */
-type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource
+type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
 ```
 
 ```ts type-equiv
@@ -1750,7 +1793,7 @@ interface DevelopmentTaskPeerContributionRequest {
   readonly grant: DevelopmentTaskPeerContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskToolObservationResult
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerToolObservationResult
 }
 ```
 
@@ -2532,6 +2575,8 @@ interface DevelopmentTaskOpenApiContributionSource {
 /** Tools approved for observations from a locally permitted collection of files. */
 interface DevelopmentTaskToolObservationSource {
   readonly kind: 'tool-observations'
+  readonly version?: never
+  readonly initialization?: never
   readonly name: string
   readonly tools: readonly ('Write' | 'Edit')[]
 }
@@ -2564,8 +2609,36 @@ type DevelopmentTaskToolObservationResult = {
 ```
 
 ```ts type-equiv
+/** Explicit approval for prior recorded observations as well as subsequent live reports. */
+type DevelopmentTaskRecordedToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'initialization'> & {
+  readonly version: 2
+  readonly initialization: 'recorded-local-tools'
+}
+```
+
+```ts type-equiv
+/** Prior recorded tool report; digests identify source evidence without disclosing local Session or directory identifiers. */
+type DevelopmentTaskRecordedToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 2
+  readonly origin: {
+    readonly kind: 'recorded-local-tools'
+    readonly planDigest: string
+    readonly executionDigest: string
+  }
+}
+```
+
+```ts type-equiv
+/** Peer reports distinguish live observations from explicitly authorized recorded work. */
+type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskRecordedToolObservationResult
+```
+
+```ts type-equiv
 /** Owner-attributed ordered tool event, distinct from a replaceable OpenAPI artifact sample. */
-type DevelopmentTaskPeerToolObservation = DevelopmentTaskToolObservationResult & {
+type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {
   readonly sourceName: string
   readonly grantId: DevelopmentTaskContributionGrantId
   readonly sequence: number
@@ -2735,6 +2808,7 @@ interface ScopeAgentLocalContributionStatus {
   readonly assignment: ScopeAgentLocalContributionBinding | null
   readonly revision: number
   readonly capture: ScopeAgentLocalContributionCapture | null
+  readonly initialization: ScopeAgentContributionInitializationSource
 }
 ```
 
@@ -3681,7 +3755,7 @@ cancelContributionApplication(request: ScopeContributionApplicationRequest, sign
 contributionStatus(request: { readonly invitation: ScopeContributionInvitation }, signal: AbortSignal) : Promise<ScopeContributionStatusResult>
 
 /**
- * Submit a complete durable sample to its authenticated owner.
+ * Submit a complete durable sample on its explicit protocol version; recorded history requires separate source permission.
  * @param request - pinned invitation and exact retained outbox sample; callers must not rebuild a retry.
  * @param signal - consumer cancellation; a failed response does not prove that admission failed.
  * @returns a matched original receipt or explicit refusal, terminal, or temporary status.
@@ -3821,7 +3895,7 @@ Actual file-tool observations become durable original reports, then the existing
 
 /**
  * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.
- * @param request - exact capture expectation, owner entry, local files, tools, and accepted limits.
+ * @param request - exact capture expectation, owner entry, file scope, limits, and optional recorded-local-tool export consent.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>

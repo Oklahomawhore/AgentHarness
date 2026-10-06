@@ -563,7 +563,7 @@ export default class ScopeAccessService extends TypertRemoteService {
   }
 
   /**
-   * Submit a complete durable sample to its authenticated owner.
+   * Submit a complete durable sample on its explicit protocol version; recorded history requires separate source permission.
    * @param request - pinned invitation and exact retained outbox sample; callers must not rebuild a retry.
    * @param signal - consumer cancellation; a failed response does not prove that admission failed.
    * @returns a matched original receipt or explicit refusal, terminal, or temporary status.

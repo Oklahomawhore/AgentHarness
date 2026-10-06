@@ -8,6 +8,7 @@ import type {
   DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskPeerContributionReceipt,
   DevelopmentTaskPeerContributionResult, DevelopmentTaskPeerContribution, DevelopmentTaskEndPeerContributionRequest,
   DevelopmentTaskPeerContributionAdmissionReceipt, DevelopmentTaskToolObservationResult,
+  DevelopmentTaskRecordedToolObservationResult, DevelopmentTaskPeerToolObservationResult,
   DevelopmentTaskAssignmentLogEntry,
   DevelopmentTaskContextBlock,
   DevelopmentTaskLogEntry,
@@ -64,13 +65,15 @@ const legacyPublication = z.strictObject({
 })
 const opaque = z.string().min(1).max(256).refine(value => value.trim().length > 0)
 const natural = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+const toolSource = z.strictObject({ kind: z.literal('tool-observations'), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).min(1).max(2).refine(values => new Set(values).size === values.length) })
+const recordedToolSource = toolSource.extend({ version: z.literal(2), initialization: z.literal('recorded-local-tools') })
 const peerGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, grantId: opaque, generation: opaque, ownerPeerId: opaque, contributorPeerId: opaque,
   captureId: opaque, captureGeneration: opaque,
   source: z.union([
     z.strictObject({ name: opaque, method: z.enum(['post', 'put', 'patch']), path: z.string().startsWith('/').max(2048) }),
-    z.strictObject({ kind: z.literal('tool-observations'), name: opaque, tools: z.array(z.enum(['Write', 'Edit'])).min(1).max(2)
-      .refine(values => new Set(values).size === values.length) }),
+    toolSource, recordedToolSource,
   ]),
   expiresAt: natural, maxSamples: natural, maxSampleBytes: natural,
 })
@@ -89,7 +92,7 @@ const toolObjects = [
     oldString: z.string().optional(), newString: z.string().optional(), replaceAll: z.boolean() }) }),
 ] as const
 const toolResult = z.discriminatedUnion('tool', toolObjects)
-function toolResultValid(value: z.infer<typeof toolResult>): boolean {
+function toolResultValid(value: Pick<z.infer<typeof toolResult>, 'tool' | 'fields' | 'omissions' | 'reportedStatus'>): boolean {
   const body = value.tool === 'Write' ? ['content'] : ['oldString', 'newString']
   const present = new Set(Object.keys(value.fields))
   return new Set(value.omissions).size === value.omissions.length
@@ -101,6 +104,18 @@ function toolResultValid(value: z.infer<typeof toolResult>): boolean {
 }
 /** Strict Write/Edit report, with relative paths and explicit omitted input text. */
 export const toolObservationResultSchema = toolResult.refine(toolResultValid) as unknown as z.ZodType<DevelopmentTaskToolObservationResult>
+const recordedOrigin = z.strictObject({ kind: z.literal('recorded-local-tools'), planDigest: digest, executionDigest: digest })
+const recordedToolObjects = [
+  toolObjects[0].extend({ version: z.literal(2), origin: recordedOrigin }),
+  toolObjects[1].extend({ version: z.literal(2), origin: recordedOrigin }),
+] as const
+const recordedToolResult = z.discriminatedUnion('tool', recordedToolObjects).refine(toolResultValid)
+/** Prior recorded report accepted only with explicit historical-sharing authorization. */
+export const recordedToolObservationResultSchema = recordedToolResult as unknown as z.ZodType<DevelopmentTaskRecordedToolObservationResult>
+/** Strict peer report variants; local observations remain version 1. */
+export const peerToolObservationResultSchema = z.union([toolObservationResultSchema, recordedToolObservationResultSchema]) as
+  z.ZodType<DevelopmentTaskPeerToolObservationResult>
+
 
 const openApiPeerResult = z.discriminatedUnion('state', [
   observationVariants[0].pick({ state: true, sha256: true, facts: true }),
@@ -108,7 +123,8 @@ const openApiPeerResult = z.discriminatedUnion('state', [
   observationVariants[2].pick({ state: true, reason: true }),
 ])
 const peerRequest = z.strictObject({ grant: peerGrant, sourceId: digest,
-  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1), result: z.union([openApiPeerResult, toolObservationResultSchema]),
+  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1),
+  result: z.union([openApiPeerResult, peerToolObservationResultSchema]),
 })
 const peerAdmission = { observerPeerId: opaque, sourceId: digest,
   capture: z.strictObject({ id: opaque, generation: opaque }),
@@ -118,15 +134,18 @@ const peerObservation = z.discriminatedUnion('state', [
   observationVariants[2].extend(peerAdmission), observationVariants[3].extend(peerAdmission),
 ])
 const peerToolAdmission = { sourceName: opaque, grantId: opaque, sequence: natural, ...peerAdmission }
-const peerToolObservation = z.discriminatedUnion('tool', [
-  toolObjects[0].extend(peerToolAdmission), toolObjects[1].extend(peerToolAdmission),
-]).refine(toolResultValid)
+const peerToolObservation = z.union([
+  z.discriminatedUnion('tool', [toolObjects[0].extend(peerToolAdmission), toolObjects[1].extend(peerToolAdmission)]).refine(toolResultValid),
+  z.discriminatedUnion('tool', [recordedToolObjects[0].extend(peerToolAdmission), recordedToolObjects[1].extend(peerToolAdmission)]).refine(toolResultValid),
+])
 const peerEndReason = z.enum(['left', 'revoked', 'expired'])
 const peerPublication = z.strictObject({
   id: z.string(), text: z.string(), uri: z.string().optional(), publishedAt: z.number().int().nonnegative(),
   peerContribution: z.strictObject({ version: z.literal(1), grant: peerGrant, ended: peerEndReason.optional() }),
   peerObservation: peerObservation.optional(), peerToolObservation: peerToolObservation.optional(),
-}).refine(value => value.peerObservation === undefined || value.peerToolObservation === undefined)
+}).refine(value => (value.peerObservation === undefined || value.peerToolObservation === undefined)
+  && (value.peerToolObservation?.version !== 2 || ('version' in value.peerContribution.grant.source
+    && value.peerContribution.grant.source.tools.includes(value.peerToolObservation.tool))))
 const localGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, participantId: opaque, bindingId: opaque,
   expectedBindingEpoch: z.strictObject({ nodeId: opaque, seq: natural }), captureId: opaque, captureGeneration: opaque,
@@ -194,9 +213,19 @@ export const peerContributionProposalSchema = peerGrant.pick({
 /** Exact durable sample and wire request; callers cannot choose owner attribution or text. */
 export const peerContributionRequestSchema = peerRequest.refine(value => 'kind' in value.grant.source
   ? 'kind' in value.result && value.grant.source.tools.includes(value.result.tool)
+    && (value.result.version === 1 || 'version' in value.grant.source)
   : !('kind' in value.result)) as unknown as z.ZodType<DevelopmentTaskPeerContributionRequest>
 /** Exact sampler outbox fields, with its grant retained by the owning capture binding. */
 export const peerContributionSampleSchema = peerRequest.omit({ grant: true }) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+/** Version-1 transport samples exclude recorded-work origins. */
+export const legacyPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: z.union([openApiPeerResult, toolObservationResultSchema]),
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+/** Version-2 transport samples carry exactly one recorded-work observation. */
+export const recordedPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: recordedToolObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
 /** Original open or terminal owner commit. */
 export const peerContributionReceiptSchema = peerReceipt as unknown as z.ZodType<DevelopmentTaskPeerContributionReceipt>
 /** Original sample commit checked against the sender's durable outbox. */

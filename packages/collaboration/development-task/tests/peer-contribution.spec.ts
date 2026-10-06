@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
 import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room/types'
@@ -7,7 +8,10 @@ import DevelopmentTaskService, { peerContributionArtifactId, peerContributionPay
 import type { Config, DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskId,
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId,
   DevelopmentTaskCaptureGeneration, DevelopmentTaskObservedSourceId } from '../src/index.ts'
-import { developmentTaskContextBlockSchema, developmentTaskEventSchema, peerContributionAdmissionReceiptSchema, peerContributionStateSchema, toolObservationResultSchema } from '../src/schema.ts'
+import { developmentTaskContextBlockSchema, developmentTaskEventSchema, peerContributionAdmissionReceiptSchema,
+  peerContributionStateSchema, toolObservationResultSchema,
+  recordedToolObservationResultSchema, legacyPeerContributionSampleSchema, recordedPeerContributionSampleSchema, localContributionSampleSchema } from '../src/schema.ts'
+import { peerPublicationRequest } from '../src/peer.ts'
 
 const contexts: Context[] = []
 const owner = 'owner-peer' as ScopePeerId
@@ -499,4 +503,104 @@ it('retains tool provenance in immutable parent blocks and strict Mesh replica r
   await replica.tasks.acceptLogReplica(developmentTaskEventSchema.parse(JSON.parse(JSON.stringify(ended))), ended.nodeId)
   expect((await replica.tasks.currentContextView(task.id)).task.context).toEqual(tasks.contextView(task.id).task.context)
   expect((await replica.tasks.currentContextView(fork.id)).inherited).toEqual(inherited)
+})
+
+it('requires explicit historical-sharing authority and preserves recorded provenance through retry and restore', async () => {
+  const { tasks, task, grant } = await scenario({}, { source: { kind: 'tool-observations', version: 2,
+    initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write', 'Edit'] } })
+  const live = toolSample(grant)
+  if (!('kind' in live.result)) throw new Error('expected tool report')
+  const recorded: DevelopmentTaskPeerContributionRequest = { ...live, result: { ...live.result, version: 2,
+    origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } } }
+  const { grant: _grant, ...body } = recorded
+  expect(toolObservationResultSchema.safeParse(recorded.result).success).toBe(false)
+  expect(localContributionSampleSchema.safeParse(body).success).toBe(false)
+  expect(legacyPeerContributionSampleSchema.safeParse(body).success).toBe(false)
+  expect(recordedPeerContributionSampleSchema.parse(body)).toEqual(body)
+  expect(recordedPeerContributionSampleSchema.safeParse({ ...body, result: live.result }).success).toBe(false)
+  await tasks.openPeerContribution(grant)
+  const admitted = await tasks.admitPeerContribution(recorded, source)
+  expect(peerPublicationRequest(admitted.publication)).toEqual(recorded)
+  expect(admitted.publication.text).toContain('Previously recorded tool attempt')
+  expect(admitted.publication.text).toContain('not re-executed or checked against the current file')
+  expect(admitted.receipt.payloadDigest).toBe(peerContributionPayloadDigest(recorded))
+  expect(admitted.receipt.payloadDigest).not.toBe(peerContributionPayloadDigest(live))
+  const observation = admitted.publication.peerToolObservation
+  if (observation?.version !== 2) throw new Error('expected recorded observation')
+  expect(Object.isFrozen(observation.origin)).toBe(true)
+  if (!('kind' in recorded.result) || recorded.result.version !== 2) throw new Error('expected recorded sample')
+  await expect(tasks.admitPeerContribution({ ...recorded, result: { ...recorded.result,
+    origin: { ...recorded.result.origin, executionDigest: 'c'.repeat(64) } } }, source)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  const raw = JSON.stringify(tasks.log())
+  const restored = await setup()
+  restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(raw)))
+  expect(JSON.stringify(restored.tasks.log())).toBe(raw)
+  expect((await restored.tasks.admitPeerContribution(recorded, source)).receipt).toEqual(admitted.receipt)
+  await restored.tasks.admitPeerContribution(toolSample(grant, 2), source)
+  await restored.tasks.endPeerContribution({ grant, reason: 'left' }, source)
+  expect((await restored.tasks.currentContextView(task.id)).task.context.at(-1)?.peerContribution?.ended).toBe('left')
+  expect((await restored.tasks.admitPeerContribution(recorded, source)).receipt).toEqual(admitted.receipt)
+  const ordinary = await scenario({}, { source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } })
+  await ordinary.tasks.openPeerContribution(ordinary.grant)
+  await expect(ordinary.tasks.admitPeerContribution({ ...recorded, grant: ordinary.grant }, source))
+    .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  expect(ordinary.tasks.contextView(ordinary.task.id).task.context).toEqual([])
+})
+
+it('rejects incomplete or extra recorded origins and binds each origin field into the receipt', () => {
+  const grant = grantFor('task' as DevelopmentTaskId, { source: { kind: 'tool-observations', version: 2,
+    initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write'] } })
+  const live = toolSample(grant)
+  if (!('kind' in live.result)) throw new Error('expected tool report')
+  const result = { ...live.result, version: 2 as const,
+    origin: { kind: 'recorded-local-tools' as const, planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } }
+  for (const origin of [undefined, { ...result.origin, localSessionId: 'private' }, { ...result.origin, planDigest: '' },
+    { ...result.origin, executionDigest: 'unbounded-proof' }, { ...result.origin, kind: 'live' }]) {
+    expect(recordedToolObservationResultSchema.safeParse({ ...result, origin }).success).toBe(false)
+  }
+  const base = peerContributionPayloadDigest({ ...live, result })
+  for (const key of ['planDigest', 'executionDigest'] as const) {
+    expect(peerContributionPayloadDigest({ ...live, result: { ...result, origin: { ...result.origin, [key]: 'c'.repeat(64) } } }))
+      .not.toBe(base)
+  }
+})
+
+
+it.each(['history', 'tool'] as const)('rejects serialized inherited recorded reports without %s permission even with a recomputed block digest', async (permission) => {
+  const { tasks, task, grant } = await scenario({}, { source: { kind: 'tool-observations', version: 2,
+    initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write'] } })
+  await tasks.openPeerContribution(grant)
+  const original = toolSample(grant)
+  if (!('kind' in original.result)) throw new Error('expected tool report')
+  const recorded: DevelopmentTaskPeerContributionRequest = { ...original, result: { ...original.result, version: 2,
+    origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } } }
+  const admitted = await tasks.admitPeerContribution(recorded, source)
+  const fork = await tasks.create({ origin: { kind: 'fork', parent: { taskId: task.id, revision: 3 } },
+    objective: 'Recorded work', scope: 'Inherited observations', createdBy: human })
+  const block = tasks.blocks()[0]
+  if (block === undefined) throw new Error('expected inherited block')
+  const restored = await setup()
+  restored.tasks.restoreContextBlocks([developmentTaskContextBlockSchema.parse(JSON.parse(JSON.stringify(block)))])
+  restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(tasks.log()))))
+  const inherited = restored.tasks.contextView(fork.id).inherited
+  expect(inherited?.sources[0]?.context).toEqual([admitted.publication])
+  const observation = inherited?.sources[0]?.context[0]?.peerToolObservation
+  if (observation?.version !== 2) throw new Error('expected restored recorded observation')
+  expect(Object.isFrozen(observation.origin)).toBe(true)
+  const sources = block.sources.map(parentSource => ({ ...parentSource,
+    context: parentSource.context.map(publication => ({ ...publication,
+      peerContribution: { version: 1, grant: { ...grant,
+        source: permission === 'history' ? { kind: 'tool-observations', name: 'session-work', tools: ['Write'] }
+          : { kind: 'tool-observations', version: 2, initialization: 'recorded-local-tools', name: 'session-work', tools: ['Edit'] } } },
+    })),
+  }))
+  const tampered = { ...block, sources,
+    id: `context-${createHash('sha256').update(JSON.stringify({ version: 1, sources })).digest('hex')}` }
+  expect(tampered.id).not.toBe(block.id)
+  const serialized = JSON.stringify(tampered)
+  const rejected = await setup()
+  expect(() => {
+    rejected.tasks.restoreContextBlocks([developmentTaskContextBlockSchema.parse(JSON.parse(serialized))])
+  }).toThrow()
+  expect(rejected.tasks.blocks()).toEqual([])
 })

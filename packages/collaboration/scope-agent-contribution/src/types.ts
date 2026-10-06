@@ -18,6 +18,8 @@ export interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
+  /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
+  readonly initialization?: ScopeAgentContributionInitializationRequest
   /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
@@ -54,6 +56,38 @@ export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContr
   readonly limits: ScopeContributionLimits
 }
 
+/** One explicit historical export selection, independent of local recording and remote reading permission. */
+export interface ScopeAgentContributionInitializationRequest {
+  readonly kind: 'recorded-local-tools'
+  readonly expectedLocalCapture: ScopeAgentContributionSelection
+  readonly localTask: ScopeAgentLocalContributionBinding
+}
+
+/** Current retained local observations; recording capacity exhaustion does not remove initialization eligibility. */
+export interface ScopeAgentContributionInitializationSource {
+  readonly eligible: boolean
+  readonly recordedSamples: number
+  readonly unconfirmedSamples: number
+}
+
+/** Frozen initialization covers recorded observations, not current file contents or every past execution. */
+export interface ScopeAgentContributionInitialization {
+  readonly state: 'pending' | 'frozen' | 'unavailable'
+  readonly request: ScopeAgentContributionInitializationRequest
+  readonly cutoff: { readonly localSequence: number; readonly sessionSeq: SessionSeqCursor } | null
+  readonly coverage: {
+    readonly recorded: number
+    readonly selected: number
+    readonly omitted: number
+    readonly unconfirmed: number
+    /** In-progress mutations or settled completions not yet persisted at the cutoff. */
+    readonly inFlight: number
+    /** Owner-confirmed seed receipts; selected records alone do not establish delivery. */
+    readonly acknowledged: number
+  }
+  readonly reason: 'source-unavailable' | 'source-changed' | 'coverage-invalid' | 'capacity' | null
+}
+
 /** Durable local Task permission, independent of receiving context or authorizing idle work. */
 export interface ScopeAgentLocalContributionCapture {
   readonly selection: ScopeAgentContributionSelection
@@ -75,6 +109,7 @@ export interface ScopeAgentLocalContributionStatus {
   readonly assignment: ScopeAgentLocalContributionBinding | null
   readonly revision: number
   readonly capture: ScopeAgentLocalContributionCapture | null
+  readonly initialization: ScopeAgentContributionInitializationSource
 }
 
 /** Select the exact local or remote capture accepted by the called stop method. */
@@ -120,6 +155,8 @@ export interface ScopeAgentContributionCapture {
   readonly collecting: boolean
   readonly application: 'applying' | 'waiting' | 'cancelling' | 'rejected' | 'expired' | null
   readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
+  /** Separately approved recorded-tool initialization and receipt-derived delivery progress. */
+  readonly initialization?: ScopeAgentContributionInitialization
   /** Source-local collection or persistence problem; independent of the owner's response. */
   readonly collectionIssue: 'retention-limit' | 'sample-limit' | 'attribution-budget'
     | 'durability-unavailable' | 'durability-failed' | null

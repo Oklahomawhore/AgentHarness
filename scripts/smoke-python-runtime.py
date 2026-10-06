@@ -740,7 +740,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +759,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +778,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,7 +1109,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-automatic-withdrawal": "scope-automatic-withdrawal-capture-origin-evidence",
@@ -1120,8 +1120,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-native-contribution": "scope-native-contribution-capture-origin-evidence",
         "scope-owner-idle": "scope-owner-idle-capture-origin-evidence",
         "scope-owner-participation": "scope-owner-participation-capture-origin-evidence",
-        "scope-semantic-idle": "scope-semantic-idle-capture-origin-evidence",
-        "task-context-semantic": "task-context-semantic-capture-origin-evidence",
+        "scope-semantic-idle": "scope-semantic-idle-recorded-origin-evidence",
+        "task-context-semantic": "task-context-semantic-recorded-origin-evidence",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -1192,6 +1192,15 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
+            elif scenario == "scope-prejoin-initialization":
+                turns = [session.run(prompt) for prompt in (
+                    "Record my permitted local work before joining any shared goal.",
+                    "Request sharing of my recorded observations and continue while approval is pending.",
+                    "Use the approved historical context without rereading files.",
+                    "Publish a subsequent live change within my original responsibility.",
+                    "Use the other member’s newly approved work.",
+                    "Leave the shared goal and continue my original local work.",
+                )]
             elif scenario == "scope-capture-self-omission":
                 turns = [session.run(prompt) for prompt in (
                     "Retain my original local responsibility before joining the shared goal.",
@@ -1253,6 +1262,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-prejoin-initialization":
+            result = prejoin_initialization_snapshot_result(records, turns, json.loads((home / "prejoin-initialization-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("initialization changed the expected B workspace result")
         elif scenario == "scope-capture-self-omission":
             result = capture_self_snapshot_result(records, turns, json.loads((home / "capture-self-audit.json").read_text()))
             expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
@@ -1305,6 +1320,44 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         normalized = normalized_result["session"]
         compare_snapshot_files({"result.json": json.dumps(result, indent=2) + "\n", "session.v3.jsonl": normalized},
                                update_snapshots, expected, ("result.json", "session.v3.jsonl"))
+
+
+def prejoin_initialization_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Verify recorded-work consent and exact frozen requests from three actual Hosts."""
+    members = {item["key"]: item for item in audit["members"]}
+    b, c = members["b"], members["c"]
+    coverage = audit["initialization"]["coverage"]
+    if coverage != {"recorded": 5, "selected": 4, "omitted": 1, "unconfirmed": 0, "inFlight": 0, "acknowledged": 4}:
+        raise AssertionError("historical selection and real owner receipts must describe the same fixed coverage")
+    if audit["hostCount"] != 3 or audit["executingSessionCount"] != 2 or audit["fileOperations"]:
+        raise AssertionError("three real Hosts initialize recorded observations without reading or scanning files")
+    historical = next(item for item in c["requests"] if item["phase"] == "historical")["remoteText"]
+    latest = next(item for item in c["requests"] if item["phase"] == "latest")["remoteText"]
+    if "B_RECORDED_V2" not in historical or "B_BEFORE_APPROVAL" not in historical or "failure" not in historical:
+        raise AssertionError("C must receive completed Write/Edit/failure evidence recorded before owner approval")
+    if "B_LIVE_LATEST" not in latest:
+        raise AssertionError("subsequent live work must supersede historical evidence")
+    for member in members.values():
+        for request in member["requests"]:
+            if request["bytes"] > 12000:
+                raise AssertionError("full local and framed remote context exceeds its byte budget")
+            remote = request.get("remoteText") or ""
+            if any(marker in remote for marker in ("C_PREJOIN_NOT_CONSENTED", "B_PRIVATE_NOT_SHARED", "DISK_ONLY_UNRECORDED")):
+                raise AssertionError("unapproved history, private roots, and unrecorded disk contents cannot enter remote context")
+    if b["state"]["binding"]["kind"] != "local-task" or c["state"]["binding"]["kind"] != "local-task-scope":
+        raise AssertionError("B leaves only remote collaboration while C stays connected")
+    if len(turns) != 6 or [event["data"]["name"] for event in records if event.get("type") == "tool/call"] != [
+        "write", "edit", "edit", "write", "write", "read", "write", "write",
+    ]:
+        raise AssertionError("real production tools must execute without recall or historical re-execution")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "coverage": coverage,
+            "hostCount": 3, "executingSessionCount": 2,
+            "requestCounts": {key: len(item["requests"]) for key, item in members.items()},
+            "contextBytes": {key: [request["bytes"] for request in item["requests"]] for key, item in members.items()},
+            "noFileScan": True, "noConsentHistoryOmitted": True, "localTaskRetained": True,
+            "subsequentLiveWorkVisible": True, "otherMemberContinues": True}
 
 
 def capture_self_snapshot_result(

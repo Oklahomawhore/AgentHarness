@@ -4,6 +4,24 @@ export const NS = 'emergenceCenter'
 
 /** Simplified Chinese messages. */
 export const zh = {
+  'contribution.initialization': '既有记录分享',
+  'contribution.recordedTools': '允许分享加入前已记录的工具操作，以及后续获准的新操作。',
+  'native.initialization.consent': '同时分享本次范围内已记录的工具操作',
+  'native.initialization.hint': '批准后一次性选取当前本地采集已保存的完成记录。复用上述目录、工具和额度，历史与后续新操作共用样本上限；不会读取或扫描现有文件。',
+  'native.initialization.available': '本地已记录 {count} 条，其中 {unconfirmed} 条尚未获本地目标确认。实际选取范围在批准时确定。',
+  'native.initialization.unavailable': '当前没有可用于历史分享的有效本地采集。仍可单独申请后续文件工作分享。',
+  'native.initialization.pending': '等待批准后选取已记录的工具操作。',
+  'native.initialization.stopped': '既有记录初始化不可用；请查看覆盖情况和原因。',
+  'native.initialization.empty': '本次范围与额度内没有选中的已完成记录。',
+  'native.initialization.complete': '任务所有者已确认本次选中的 {count} 条既有记录。',
+  'native.initialization.delivery': '已选取 {count} 条既有记录，任务所有者已确认 {acknowledged} 条。',
+  'native.initialization.coverage': '冻结时记录 {recorded} 条，选取 {selected} 条，未纳入 {omitted} 条；其中 {unconfirmed} 条当时尚未获本地目标确认，另有 {inFlight} 条尚未完成持久记录，之后完成也不会补入本次历史。',
+  'native.initialization.limit': '仅涵盖选取时已保存的完成记录；保留失败与内容省略标记，不代表当前文件内容或其他 Agent 已读取。',
+  'native.initialization.reason.source-unavailable': '原本地采集已不可用，无法选取既有记录。',
+  'native.initialization.reason.source-changed': '原本地采集或任务归属已变化，原历史分享许可不再适用。',
+  'native.initialization.reason.coverage-invalid': '无法核实记录覆盖范围，未将其视为已完成同步。',
+  'native.initialization.reason.capacity': '记录初始化达到容量限制；已选与已确认数量以当前覆盖情况为准。',
+
   'native.local.trigger.connected': '已连接本地目标',
   'native.local.trigger.sharing': '正在本地分享',
   'native.local.trigger.ending': '正在撤回本地来源',
@@ -550,6 +568,24 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** English messages. */
 export const en = {
+  'contribution.initialization': 'Recorded work sharing',
+  'contribution.recordedTools': 'Allows tool observations recorded before joining, as well as subsequent permitted work.',
+  'native.initialization.consent': 'Also share recorded tool work within this permission',
+  'native.initialization.hint': 'After approval, select completed observations saved by the current local capture once. These directories, tools, and limits apply; recorded and subsequent work share the sample allowance. Existing files are not read or scanned.',
+  'native.initialization.available': 'Local capture has {count} records, including {unconfirmed} not yet acknowledged by the local goal. The approved selection is determined after approval.',
+  'native.initialization.unavailable': 'No valid local capture is available for recorded work sharing. You can still request sharing of subsequent file work.',
+  'native.initialization.pending': 'Waiting for approval before selecting recorded tool work.',
+  'native.initialization.stopped': 'Recorded work initialization is unavailable; check the coverage and reason.',
+  'native.initialization.empty': 'No completed records were selected within this scope and allowance.',
+  'native.initialization.complete': 'The task owner acknowledged all {count} selected records.',
+  'native.initialization.delivery': 'Selected {count} records; the task owner acknowledged {acknowledged}.',
+  'native.initialization.coverage': 'At selection: {recorded} records, {selected} selected, {omitted} excluded; {unconfirmed} had not been acknowledged by the local goal. Another {inFlight} observations were not yet durably complete and will not be added to this historical selection later.',
+  'native.initialization.limit': 'Covers only completed records saved at selection. Failure and content omission markers remain; this does not establish current file contents or another Agent having read them.',
+  'native.initialization.reason.source-unavailable': 'The original local capture is unavailable for recorded work selection.',
+  'native.initialization.reason.source-changed': 'The original local capture or task assignment changed; the historical sharing permission no longer applies.',
+  'native.initialization.reason.coverage-invalid': 'Record coverage could not be verified and is not treated as completed synchronization.',
+  'native.initialization.reason.capacity': 'Recorded work initialization reached a capacity limit; check the selected and acknowledged counts.',
+
   'native.local.trigger.connected': 'Local goal connected',
   'native.local.trigger.sharing': 'Sharing locally',
   'native.local.trigger.ending': 'Withdrawing local source',

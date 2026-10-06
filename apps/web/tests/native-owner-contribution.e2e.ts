@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
 import { ToolCallId, type Message, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
 import { Session } from '@deepseek-ai/dsh-session'
@@ -69,8 +69,8 @@ async function panel(page: Page): Promise<Locator> {
   if (!await page.locator(PANEL).isVisible()) await page.getByRole('button', { name: '协作', exact: true }).click()
   return page.locator(PANEL)
 }
-async function permission(form: Locator, root: string, consent: string): Promise<void> {
-  expect(await form.getByRole('checkbox', { name: '写入文件（write）', exact: true }).isChecked()).toBe(false)
+async function permission(form: Locator, root: string, consent: string, prefilled = false): Promise<void> {
+  expect(await form.getByRole('checkbox', { name: '写入文件（write）', exact: true }).isChecked()).toBe(prefilled)
   expect(await form.getByRole('checkbox', { name: consent, exact: true }).isChecked()).toBe(false)
   await form.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(root)
   await form.getByRole('checkbox', { name: '写入文件（write）', exact: true }).check()
@@ -691,7 +691,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
     await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
     await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
-    await permission(sharing, root, REMOTE_CONSENT)
+    await permission(sharing, root, REMOTE_CONSENT, true)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).count()).toBe(0)
     await sharing.getByRole('button', { name: '申请并允许批准后自动启用', exact: true }).click()
     await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
@@ -929,16 +929,34 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
     await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
     await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
-    await permission(sharing, join(b.workspaceCwd, 'local-joint-source/project'), REMOTE_CONSENT)
+    await permission(sharing, join(b.workspaceCwd, 'local-joint-source/project'), REMOTE_CONSENT, true)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
     expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
+    const history = sharing.getByRole('checkbox', { name: '同时分享本次范围内已记录的工具操作', exact: true })
+    expect(await history.isChecked()).toBe(false)
+    await history.check()
+    await sharing.getByLabel('最多样本数', { exact: true }).fill('7')
+    expect(await history.isChecked()).toBe(false)
+    await sharing.getByLabel('最多样本数', { exact: true }).fill('8')
+    await history.check()
+    expect(await history.isChecked(), 'Historical permission remains selected after its explicit second confirmation').toBe(true)
     await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
-    await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
-    await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+    expect(await history.isChecked(), 'Separate receiving consent must not clear historical file permission').toBe(true)
+    const requestCall = vi.spyOn(b.ctx.scopeAgentContributions, 'request')
+    try {
+      await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
+      await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+      expect(requestCall).toHaveBeenCalledOnce()
+      expect(requestCall.mock.calls[0]?.[0].initialization, 'Actual Host request retains the displayed historical consent').toEqual({
+        kind: 'recorded-local-tools', expectedLocalCapture: originalCapture.selection, localTask: localBefore.assignment,
+      })
+    } finally { requestCall.mockRestore() }
     const requested = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture
     if (requested === null) throw new Error('Joint source permission was not recorded')
     expect(requested.receiving).toMatchObject({ localTask: before.localTask, state: 'waiting' })
     expect(requested.receiving?.automatic).toBeUndefined()
+    expect(requested.initialization).toMatchObject({ state: 'pending', request: { kind: 'recorded-local-tools',
+      expectedLocalCapture: originalCapture.selection, localTask: localBefore.assignment } })
     const [aIdentity, bIdentity] = await Promise.all([a.ctx.scopeAccess.identity(), b.ctx.scopeAccess.identity()])
     const replacements: (readonly [string, string])[] = [[ownerTask.id, '{{ownerTaskId}}'], [localTask.id, '{{localTaskId}}'],
       [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'], [entryText, '{{jointEntry}}'],
@@ -948,6 +966,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     for (const address of aIdentity.addresses) replacements.push([address, '{{ownerAddress}}'])
     await captureStage(sourcePage, b.workspaceCwd, 'local-joint-pending', replacements, PANEL, snapshots)
     await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+    await applications.getByText('允许分享加入前已记录的工具操作，以及后续获准的新操作。', { exact: true }).waitFor()
     await applications.getByLabel('该会话的协作职责', { exact: true }).fill('维护客户端重试实现；原本地目标保持不变。')
     await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
     await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
@@ -959,6 +978,13 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     expect(sourceRequests).toHaveLength(4)
     expect((await a.ctx.scopeAccess.contributionApplications({ taskId: ownerTask.id })).entries).toHaveLength(1)
     expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture?.selection).toEqual(originalCapture.selection)
+    await sharing.getByText('任务所有者已确认本次选中的 1 条既有记录。', { exact: true }).waitFor()
+    const initialized = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture?.initialization
+    expect(initialized).toMatchObject({ state: 'frozen', coverage: {
+      recorded: 1, selected: 1, omitted: 0, unconfirmed: 0, inFlight: 0, acknowledged: 1,
+    } })
+    expect(a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .filter(item => item.peerToolObservation?.version === 2)).toHaveLength(1)
     await captureStage(sourcePage, b.workspaceCwd, 'local-joint-passive', replacements, PANEL, snapshots)
     await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
     expect(await prompt(b, sourcePage, 'LOCAL_JOIN_PASSIVE_READ')).toBe(bId)
@@ -967,13 +993,22 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     expect(textOf(context(passive, 'scope-agent-context'))).toContain(A_CODE.trim())
     expect(textOf(context(passive, 'development-task-context'))).toContain(localTask.objective)
     for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, passive, kind)
+    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_RECEIVED')
+    const historicalRequest = ownerRequests[3]
+    if (historicalRequest === undefined) throw new Error('Owner historical request is missing')
+    const historicalPublication = a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .find(item => item.peerToolObservation?.version === 2)
+    if (historicalPublication === undefined) throw new Error('Recorded source publication is missing')
+    expect(historicalPublication.peerToolObservation).toMatchObject({ tool: 'Write',
+      fields: { content: 'export const localRetryStatus = "prepared";\n' } })
+    expect(textOf(context(historicalRequest, 'development-task-context'))).toContain(JSON.stringify(historicalPublication.text))
+    expect(textOf(context(historicalRequest, 'development-task-context'))).not.toContain(B_CODE.trim())
+    assertReconstructed(a, aId, historicalRequest, 'development-task-context')
     await prompt(b, sourcePage, 'LOCAL_JOIN_SHARED_WRITE')
     await expect.poll(() => a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
-      .filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(2)
     await expect.poll(() => b.ctx.developmentTasks.get({ taskId: localTask.id }).context
       .filter(item => item.localToolObservation !== undefined).length).toBe(2)
-    await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_RECEIVED')
-    expect(textOf(context(ownerRequests[3]!, 'development-task-context'))).toContain(B_CODE.trim())
 
     await panel(sourcePage)
     await sourcePanel.getByRole('radio', { name: '允许自动协作', exact: true }).check()
@@ -985,6 +1020,9 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     await sourcePage.getByText('LOCAL_JOIN_FIRST_RESPONSE', { exact: true }).waitFor()
     const correcting = b.whenTurnSettled(30_000)
     await prompt(a, ownerPage, 'LOCAL_JOIN_OWNER_CORRECTED')
+    const ownerLive = ownerRequests[4]
+    if (ownerLive === undefined) throw new Error('Owner live request is missing')
+    expect(textOf(context(ownerLive, 'development-task-context'))).toContain(B_CODE.trim())
     expect(await correcting).toBe(bId)
     await sourcePage.getByText('LOCAL_JOIN_CORRECTED_RESPONSE', { exact: true }).waitFor()
     const changed = sourceRequests[8]
@@ -1207,7 +1245,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: reusable group entry joi
       await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
       await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
       await sharing.getByText(sharedTask.id, { exact: true }).waitFor()
-      await permission(sharing, join(host.workspaceCwd, `group-${String(index)}/project`), REMOTE_CONSENT)
+      await permission(sharing, join(host.workspaceCwd, `group-${String(index)}/project`), REMOTE_CONSENT, true)
       expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
       expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
       await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()

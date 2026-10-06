@@ -1,7 +1,8 @@
 /** Independent contribution invitations, correlated wire replies, and exact durable receipt associations. */
 import { z } from 'zod'
 import {
-  peerContributionGrantSchema, peerContributionProposalSchema, peerContributionSampleSchema, peerContributionReceiptSchema,
+  peerContributionGrantSchema, peerContributionProposalSchema, legacyPeerContributionSampleSchema,
+  recordedPeerContributionSampleSchema, peerContributionReceiptSchema,
   peerContributionAdmissionReceiptSchema, peerContributionPayloadDigest, peerContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {
@@ -124,12 +125,18 @@ export const contributionSubmitSchema: z.ZodType<ScopeContributionSubmitResult> 
 export const contributionEndSchema: z.ZodType<ScopeContributionEndResult> = z.union([ended, failure])
 
 const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: contributionInvitationSchema }).strict()
-/** Peer requests contain no Task mutation operation other than one bounded sample or interval end. */
+/** Version-one peer requests accept only original samples and retain their status/end operations. */
 export const contributionRequestSchema = z.discriminatedUnion('op', [
   request.extend({ op: z.literal('status') }),
-  request.extend({ op: z.literal('sample'), sample: peerContributionSampleSchema }),
+  request.extend({ op: z.literal('sample'), sample: legacyPeerContributionSampleSchema }),
   request.extend({ op: z.literal('end') }),
 ])
+
+/** Version-two contribution requests carry only explicitly attributed recorded-local-tool samples. */
+export const recordedContributionRequestSchema = request.extend({
+  version: z.literal(2), op: z.literal('sample'), sample: recordedPeerContributionSampleSchema,
+})
+
 const response = z.object({ version: z.literal(1), requestId: z.uuid() }).strict()
 /** A response is correlated to the operation as well as the unique request identifier. */
 export const contributionResponseSchema = z.discriminatedUnion('op', [
@@ -137,6 +144,11 @@ export const contributionResponseSchema = z.discriminatedUnion('op', [
   response.extend({ op: z.literal('sample'), result: contributionSubmitSchema }),
   response.extend({ op: z.literal('end'), result: contributionEndSchema }),
 ])
+
+/** Version-two sample replies retain exact receipts and cannot acknowledge legacy operations. */
+export const recordedContributionResponseSchema = response.extend({
+  version: z.literal(2), op: z.literal('sample'), result: contributionSubmitSchema,
+})
 
 /**
  * Validate a wire or restored receipt against the exact invitation and optional persisted sample.

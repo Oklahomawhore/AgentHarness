@@ -10,6 +10,7 @@ export const binding = {
 export const unbound: ScopeAgentLocalContributionStatus = {
   agentId, participantId: 'agent-participant' as Grant['participantId'], assignment: null,
   eligibility: 'no-local-task', revision: 0, capture: null,
+  initialization: { eligible: false, recordedSamples: 0, unconfirmedSamples: 0 },
 }
 export const assigned: ScopeAgentLocalContributionStatus = { ...unbound, eligibility: 'eligible', assignment: binding }
 export const localCapture: ScopeAgentLocalContributionCapture = {

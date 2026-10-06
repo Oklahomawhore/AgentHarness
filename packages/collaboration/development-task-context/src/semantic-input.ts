@@ -92,6 +92,8 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
             bindingId: local.bindingId, expectedBindingEpoch: local.expectedBindingEpoch, captureId: local.captureId,
             captureGeneration: local.captureGeneration, source: local.source } }),
           ...(tool === undefined ? {} : { tool: tool.tool, reportedStatus: tool.reportedStatus,
+            ...(tool.version === 2 ? { observationOrigin: { ...tool.origin,
+              meaning: 'Previously recorded tool attempt; not re-executed or checked against the current file.' } } : {}),
             rootIndex: tool.fields.rootIndex, path: tool.fields.path, sourceName: 'sourceName' in tool ? tool.sourceName : local?.source.name,
             sequence: tool.sequence, sourceId: tool.sourceId, omissions: tool.omissions }),
         } })

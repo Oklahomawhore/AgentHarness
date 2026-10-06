@@ -13,6 +13,8 @@
 
 `portable-onboarding.smoke.mjs` 是 `scripts/agentharness-pack-portable.mjs` 在无源码产物完成后调用的发布门禁。它通过安装时使用的同一种 `current` 符号链接布局启动该产物，为它提供没有模型凭据的全新 Harness home，再用 Chromium 证明本地化的 Workspace 锁定原因与页面内 browse 对话框经过构建、部署和重定位后仍然存在。
 
+原生所有者贡献用例使用独立 Web Host 和真实 Write 工具。保留本地职责的联合加入用例明确选择加入前观察，向所有者展示这项许可，检查来源的投递覆盖，并在后续实时 Write 前捕获包含已有记录的所有者请求。随后验证实时更新和退出，不替换原本地 Task 或采集。独立 SDK 初始化场景覆盖第三个 Host 默认未选择历史分享的情况。
+
 ## 这些是 Host 面的测试
 
 它们在根 `tsconfig.host.json` 中做类型检查，而不在 Client aggregate 中，因为它们直接读取

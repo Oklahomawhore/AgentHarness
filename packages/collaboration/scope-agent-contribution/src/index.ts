@@ -9,7 +9,7 @@ import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
 import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
 import type ScopeAgentContext from '@deepseek-ai/dsh-scope-agent-context'
@@ -23,7 +23,7 @@ import type { ContributionStore, ContributionOutboxItem } from '@deepseek-ai/dsh
 import { contributionEntrySchema, contributionLimitsSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
 import type { ScopeContributionEntry, ScopeContributionSample, ScopeContributionApplicationResult } from '@deepseek-ai/dsh-scope-access/types'
-import { DevelopmentTaskError } from '@deepseek-ai/dsh-development-task'
+import { DevelopmentTaskError, type DevelopmentTaskService } from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentTaskLocalContributionGrant, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { nativeToolPath, nativeToolReport } from './capture.ts'
@@ -32,6 +32,9 @@ import type { NativeCapture, NativeSample, NativeSourceRecord, NativeContributio
 import { nativeLocalContributionDomain, validateLocalReceipt } from './local-state.ts'
 import type { LocalCapture, LocalSample, NativeLocalContributionDomain } from './local-state.ts'
 import type { ScopeAgentLocalContributionBinding, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus } from './types.ts'
+import { initializationRequestSchema, pendingInitialization, recordedProof, recordedReport, executionDigest, initializationPlanDigest } from './initialization.ts'
+import type { NativeInitialization, InitializationProof } from './initialization.ts'
+import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationSource } from './types.ts'
 import type { ScopeAgentContributionRecoverRouteRequest, ScopeAgentContributionRequest, ScopeAgentContributionSelection, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest } from './types.ts'
 
 export type * from './types.ts'
@@ -47,9 +50,9 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Maximum retained source Session rows, including ended captures. */
   readonly maxSessions: number
-  /** Maximum retained samples and simultaneous unfinished observations across source Sessions. */
+  /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number
-  /** Maximum complete owner-bound sample and application request bytes. */
+  /** Maximum complete owner-bound requests and each initial historical sample with its local proof, before receipts. */
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
@@ -72,6 +75,12 @@ interface Runtime {
   readonly roots: readonly FsTarget[]
   readonly selection: ScopeAgentContributionSelection
   readonly role: CaptureRole
+  /** A failed atomic activation retries the same selection and reserves its retained capacity. */
+  initializationPlan?: {
+    readonly sequence: number
+    readonly initialization: NativeInitialization
+    readonly samples: readonly NativeSample[]
+  }
   /** The accepting receiver lifetime cannot be renewed by an exact capture retry. */
   readonly automaticReceiver?: { readonly provider: ScopeAgentContext; revoked: boolean; adopted: boolean }
 }
@@ -108,6 +117,11 @@ function filesystemIdentity(filesystem: FileSystem): FileSystem {
 function receiverIdentity(receiver: ScopeAgentContext | undefined): ScopeAgentContext | undefined {
   return receiver === undefined ? undefined
     : (receiver as ScopeAgentContext & { [symbols.original]?: ScopeAgentContext })[symbols.original] ?? receiver
+}
+/** Preserve provider-instance comparison across Cordis caller-context proxies. */
+function taskIdentity(tasks: DevelopmentTaskService | undefined): DevelopmentTaskService | undefined {
+  return tasks === undefined ? undefined
+    : (tasks as DevelopmentTaskService & { [symbols.original]?: DevelopmentTaskService })[symbols.original] ?? tasks
 }
 function selection(capture: NativeCapture | LocalCapture): ScopeAgentContributionSelection
 function selection(capture: NativeCapture | LocalCapture | null | undefined): ScopeAgentContributionSelection | null
@@ -254,7 +268,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
 
   /**
    * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.
-   * @param request - exact capture expectation, owner entry, local files, tools, and accepted limits.
+   * @param request - exact capture expectation, owner entry, file scope, limits, and optional recorded-local-tool export consent.
    * @returns durable local intent; later changed notifications describe owner reconciliation.
    */
   @Remote('request')
@@ -271,6 +285,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
+    const initialization = request.initialization === undefined ? undefined : initializationRequestSchema.parse(request.initialization)
     const automatic = request.receive?.automatic === undefined
       ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
     if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry' && entry.kind !== 'scope-group-entry') || entry.sourceKind !== 'tool-observations'
@@ -332,6 +347,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             || retained.receiving?.expectedReadStateSeq !== request.receive?.expectedReadStateSeq
             || !isDeepStrictEqual(retained.receiving?.localTask, request.receive?.localTask)
             || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
+            || !isDeepStrictEqual(retained.initialization?.request, initialization)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -361,11 +377,23 @@ export default class ScopeAgentContributions extends TypertRemoteService {
                 || receiverIdentity(this.ctx.get('scopeAgentContext')) !== automaticReceiver.provider) throw this.superseded(agent.id)
             }
           }
+          if (initialization !== undefined) {
+            const local = this.local().table('sessions').get(agent.id)?.capture
+            if (local == null || !this.initializationSource(agent.id).eligible
+              || !sameSelection(selection(local), initialization.expectedLocalCapture)
+              || !this.matchesBinding(agent.id, initialization.localTask)
+              || !isDeepStrictEqual(initialization.localTask, { taskId: local.grant.taskId, bindingId: local.grant.bindingId,
+                expectedBindingEpoch: local.grant.expectedBindingEpoch })) {
+              throw this.invalid(agent.id, 'Initialization requires the displayed current local capture and assignment')
+            }
+          }
           capture = { proposal: { contributorPeerId: identity.peerId,
             captureId: randomUUID() as NativeCapture['proposal']['captureId'],
             captureGeneration: randomUUID() as NativeCapture['proposal']['captureGeneration'],
-            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') } },
+            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
+              ...(initialization === undefined ? {} : { version: 2 as const, initialization: 'recorded-local-tools' as const }) } },
           roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
+          ...(initialization === undefined ? {} : { initialization: pendingInitialization(initialization) }),
           ...(request.receive === undefined ? {} : { receiving: { version: 2 as const, adoptionId: randomUUID() as ScopeAgentJoinReadId,
             expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const,
             ...(request.receive.localTask === undefined ? {} : { localTask: request.receive.localTask }),
@@ -644,6 +672,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private retainedSamples(domain: NativeContributionDomain): number {
     return [...domain.table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
       + [...this.local().table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
+      + [...this.sources.remote.runtimes.values()].reduce((sum, runtime) => sum + (runtime.initializationPlan?.samples.length ?? 0), 0)
   }
   private assignment(id: SessionId): ScopeAgentLocalContributionBinding | null {
     const tasks = this.ctx.get('developmentTasks')
@@ -701,6 +730,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const exhausted = capture != null && capture.sequence >= capture.grant.maxSamples
     return { agentId: id, participantId: agent === undefined ? null : developmentAgentParticipantId(id),
       eligibility: this.localEligibility(agent), assignment: this.assignment(id), revision: this.revision(domain, id),
+      initialization: this.initializationSource(id),
       capture: capture == null ? null : { selection: selection(capture), grant: capture.grant, roots: capture.roots, tools: capture.tools,
         state: capture.state, collecting: this.collecting(id, capture) && !exhausted, issue: capture.issue ?? null,
         collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
@@ -873,6 +903,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         receiving: capture.receiving === undefined ? null : this.publicReceiving(capture.receiving),
         ...(capture.receiving === undefined ? {} : { receivingIntent: this.receivingIntent(capture.receiving, capture.state === 'ending') }),
         collecting: this.collecting(id, capture) && !exhausted, application: capture.application?.state ?? null,
+        ...(capture.initialization === undefined ? {}
+          : { initialization: this.initializationView(capture.initialization, row?.samples ?? []) }),
         issue: capture.issue ?? null, collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
         pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0)
           + (this.sources[role].completed.get(id)?.size ?? 0) } }
@@ -889,10 +921,141 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const revision = (previous?.revision ?? 0) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: source revision exhausted')
     const record: NativeSourceRecord = { agentId: id, revision, capture, samples,
+      ...(previous?.version === 2 || capture?.initialization !== undefined ? { version: 2 as const } : {}),
       ...(receivingContinuation === undefined ? {} : { receivingContinuation }) }
     await domain.table('sessions').put(id, record)
     this.notify(domain, id)
   }
+  private initializationSource(id: SessionId): ScopeAgentContributionInitializationSource {
+    const row = this.local().table('sessions').get(id)
+    const capture = row?.capture
+    const runtime = this.sources.local.runtimes.get(id)
+    const currentFs = runtime?.agent.ctx.get('fs')
+    const eligible = capture != null && capture.state === 'active' && this.collecting(id, capture)
+      && currentFs !== undefined && runtime !== undefined
+      && filesystemIdentity(currentFs) === filesystemIdentity(runtime.filesystem)
+    return { eligible, recordedSamples: row?.samples.length ?? 0,
+      unconfirmedSamples: row?.samples.filter(item => item.receipt === undefined).length ?? 0 }
+  }
+
+  private initializationView(initialization: NativeInitialization, samples: readonly NativeSample[]): ScopeAgentContributionInitialization {
+    const { plan, ...view } = initialization
+    const acknowledged = plan === null ? 0 : samples.filter(item => item.receipt !== undefined
+      && 'kind' in item.sample.result && item.sample.result.version === 2
+      && item.sample.result.origin.planDigest === plan.digest).length
+    return { ...view, coverage: { ...view.coverage, acknowledged } }
+  }
+
+  private async freezeInitialization(domain: NativeContributionDomain, id: SessionId, capture: NativeCapture)
+    : Promise<{ readonly capture: NativeCapture; readonly samples: readonly NativeSample[] }> {
+    const initialization = capture.initialization
+    const grant = capture.invitation?.grant
+    if (initialization?.state !== 'pending' || grant === undefined) throw new Error('Initialization requires its selected active grant')
+    const signal = this.signal(id, 'remote')
+    const remoteRuntime = this.sources.remote.runtimes.get(id)
+    const localRuntime = this.sources.local.runtimes.get(id)
+    const original = this.local().table('sessions').get(id)
+    const local = original?.capture
+    const request = initialization.request
+    const unavailable = (reason: NonNullable<NativeInitialization['reason']>, recorded = 0, unconfirmed = 0) => ({
+      capture: { ...capture, initialization: { ...initialization, state: 'unavailable' as const, reason,
+        coverage: { recorded, selected: 0, omitted: recorded, unconfirmed, inFlight: 0 } } },
+      samples: domain.table('sessions').get(id)?.samples ?? [],
+    })
+    if (original === undefined || local == null || localRuntime === undefined || remoteRuntime === undefined
+      || !this.initializationSource(id).eligible) {
+      return unavailable('source-unavailable')
+    }
+    if (!sameSelection(selection(local), request.expectedLocalCapture) || !this.matchesBinding(id, request.localTask)
+      || !isDeepStrictEqual(request.localTask, { taskId: local.grant.taskId, bindingId: local.grant.bindingId,
+        expectedBindingEpoch: local.grant.expectedBindingEpoch })
+      || localRuntime.agent !== remoteRuntime.agent
+      || filesystemIdentity(localRuntime.filesystem) !== filesystemIdentity(remoteRuntime.filesystem)) return unavailable('source-changed')
+    const tasks = this.ctx.get('developmentTasks')
+    if (tasks === undefined) return unavailable('source-unavailable')
+    let status
+    try { status = await tasks.localContributionStatus({ grant: local.grant }) }
+    catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof DevelopmentTaskError && (error.code === 'TASK_NOT_FOUND' || error.code === 'POLICY_REJECTED')) {
+        delete remoteRuntime.initializationPlan
+        return unavailable('source-changed')
+      }
+      throw error
+    }
+    signal.throwIfAborted()
+    validateLocalReceipt(local.grant, status.state === 'active' ? status.openReceipt : status.endReceipt)
+    if (status.state !== 'active' || taskIdentity(this.ctx.get('developmentTasks')) !== taskIdentity(tasks)
+      || this.sources.local.runtimes.get(id) !== localRuntime || this.sources.remote.runtimes.get(id) !== remoteRuntime
+      || this.local().table('sessions').get(id) !== original || !this.initializationSource(id).eligible
+      || !this.matchesBinding(id, request.localTask)) return unavailable('source-changed')
+    const cached = remoteRuntime.initializationPlan
+    if (cached !== undefined) return { capture: { ...capture, sequence: cached.sequence, initialization: cached.initialization },
+      samples: [...domain.table('sessions').get(id)?.samples ?? [], ...cached.samples] }
+    const samples = original.samples
+    const coverage = { recorded: samples.length, selected: 0, omitted: samples.length,
+      unconfirmed: samples.filter(item => item.receipt === undefined).length,
+      inFlight: (this.sources.local.pending.get(id)?.size ?? 0) + [...this.sources.local.completed.get(id)?.values() ?? []]
+        .filter(item => !samples.some(sample => sample.callSeq === item.pending.callSeq && sample.resultSeq === item.event.seq)).length }
+    const cutoff = { localSequence: local.sequence, sessionSeq: (localRuntime.agent.session.seq - 1) as SessionSeqCursor }
+    const pending = captureRoles.reduce((sum, role) => sum
+      + [...this.sources[role].pending.values(), ...this.sources[role].completed.values()]
+        .reduce((total, items) => total + items.size, 0), 0)
+    const capacity = Math.max(0, Math.min(grant.maxSamples - capture.sequence,
+      this.config.maxLeases - this.retainedSamples(domain) - pending))
+    const selected: { sample: LocalSample; proof: InitializationProof; result: NonNullable<ReturnType<typeof recordedReport>> }[] = []
+    for (const item of [...samples].sort((a, b) => b.sample.sequence - a.sample.sequence)) {
+      const result = item.sample.result
+      const root = local.rootUrls[result.fields.rootIndex]
+      const rootIndex = root === undefined ? -1 : capture.rootUrls.indexOf(root)
+      const tool = result.tool === 'Write' ? 'write' : 'edit'
+      if (rootIndex < 0 || !capture.tools.includes(tool)) continue
+      const proof = recordedProof(localRuntime.agent.session, item)
+      if (proof === undefined) return unavailable('coverage-invalid', coverage.recorded, coverage.unconfirmed)
+      if (selected.length >= capacity) continue
+      const sequence = grant.maxSamples
+      const leaseId = nativeDigest(['native-tool', id, capture.proposal.captureId, capture.proposal.captureGeneration,
+        item.callSeq, item.resultSeq])
+      const sourceId = nativeDigest([leaseId, sequence]) as DevelopmentTaskObservedSourceId
+      const fits = (report: NonNullable<ReturnType<typeof recordedReport>>) => {
+        const sample = { sourceId, sequence, result: report }
+        return Buffer.byteLength(JSON.stringify({ grant, ...sample }), 'utf8') <= grant.maxSampleBytes
+          && Buffer.byteLength(JSON.stringify({ version: 2, requestId: '00000000-0000-0000-0000-000000000000',
+            op: 'sample', invitation: capture.invitation, sample }), 'utf8') <= this.config.maxObservationBytes
+          && Buffer.byteLength(JSON.stringify({ proof, sample: { id: leaseId,
+            captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration,
+            callId: item.callId, rootCallId: item.rootCallId, callSeq: item.callSeq, resultSeq: item.resultSeq,
+            argumentDigest: item.argumentDigest, completionDigest: item.completionDigest, sample } }), 'utf8')
+            <= this.config.maxObservationBytes
+      }
+      const report = recordedReport(result, rootIndex, { kind: 'recorded-local-tools', planDigest: '0'.repeat(64),
+        executionDigest: executionDigest(request, proof) }, fits)
+      if (report !== undefined) selected.push({ sample: item, proof, result: report })
+    }
+    if (samples.length > 0 && selected.length === 0 && capacity === 0) {
+      return unavailable('capacity', coverage.recorded, coverage.unconfirmed)
+    }
+    selected.reverse()
+    const sources = selected.map(item => item.proof)
+    const digest = initializationPlanDigest(request, cutoff, sources)
+    const seeded: NativeSample[] = selected.map((item, index) => {
+      const sequence = capture.sequence + index + 1
+      const sampleId = nativeDigest(['native-tool', id, capture.proposal.captureId, capture.proposal.captureGeneration,
+        item.sample.callSeq, item.sample.resultSeq])
+      return { id: sampleId, callSeq: item.sample.callSeq, resultSeq: item.sample.resultSeq,
+        callId: item.sample.callId, rootCallId: item.sample.rootCallId,
+        argumentDigest: item.sample.argumentDigest, completionDigest: item.sample.completionDigest,
+        captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration,
+        sample: { sourceId: nativeDigest([sampleId, sequence]) as DevelopmentTaskObservedSourceId, sequence,
+          result: { ...item.result, origin: { ...item.result.origin, planDigest: digest } } } }
+    })
+    const frozen: NativeInitialization = { ...initialization, state: 'frozen', cutoff, reason: null, plan: { digest, sources },
+      coverage: { ...coverage, selected: seeded.length, omitted: samples.length - seeded.length } }
+    remoteRuntime.initializationPlan = { sequence: capture.sequence + seeded.length, initialization: frozen, samples: seeded }
+    return { capture: { ...capture, sequence: capture.sequence + seeded.length, initialization: frozen },
+      samples: [...domain.table('sessions').get(id)?.samples ?? [], ...seeded] }
+  }
+
   private store(domain: NativeContributionDomain, id: SessionId): ContributionStore<NativeCapture> {
     const role = 'remote'
     const row = () => domain.table('sessions').get(id)
@@ -903,7 +1066,24 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
     return {
       current: () => ({ capture: row()?.capture ?? undefined, ended: false }),
-      save: async (capture) => { await this.save(domain, id, capture, row()?.samples ?? []) },
+      save: async (capture) => {
+        if (capture.state === 'active' && row()?.capture?.state !== 'active' && capture.initialization?.state === 'pending') {
+          const localRuntime = this.sources.local.runtimes.get(id)
+          const tasks = this.ctx.get('developmentTasks')
+          let initialized = await this.freezeInitialization(domain, id, capture)
+          this.signal(id, 'remote').throwIfAborted()
+          if (initialized.capture.initialization?.state === 'frozen'
+            && (this.sources.local.runtimes.get(id) !== localRuntime || taskIdentity(this.ctx.get('developmentTasks')) !== taskIdentity(tasks)
+              || !this.initializationSource(id).eligible || !this.matchesBinding(id, capture.initialization.request.localTask))) {
+            const { coverage } = initialized.capture.initialization
+            initialized = { capture: { ...capture, initialization: { ...capture.initialization, state: 'unavailable',
+              reason: 'source-changed', coverage: { ...coverage, selected: 0, omitted: coverage.recorded } } }, samples: row()?.samples ?? [] }
+          }
+          await this.save(domain, id, initialized.capture, initialized.samples)
+          const runtime = this.sources.remote.runtimes.get(id)
+          if (runtime !== undefined) delete runtime.initializationPlan
+        } else await this.save(domain, id, capture, row()?.samples ?? [])
+      },
       clear: async (capture) => {
         this.assertExpected(domain, id, role, selection(capture))
         const receiving = capture.receiving
@@ -1303,14 +1483,14 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const capture = role === 'local' ? localRow?.capture : remoteRow?.capture
       if (capture == null || this.sources[role].runtimes.get(id) !== runtime || !this.collecting(id, capture)) return false
       this.requireCaptureCompatible(id, capture)
-      const sequence = capture.sequence + 1
-      const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
-      if (grant === undefined || sequence > grant.maxSamples || this.retainedSamples(domain) >= this.config.maxLeases) return false
       const identity = selection(capture)
       const leaseId = nativeDigest([runtime.role === 'local' ? 'native-local-tool' : 'native-tool', id,
         identity.captureId, identity.captureGeneration, pending.callSeq, event.seq])
       const samples = runtime.role === 'local' ? localRow?.samples : remoteRow?.samples
       if (samples?.some(item => item.id === leaseId)) return true
+      const sequence = capture.sequence + 1
+      const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+      if (grant === undefined || sequence > grant.maxSamples || this.retainedSamples(domain) >= this.config.maxLeases) return false
       const sourceId = nativeDigest([leaseId, sequence]) as DevelopmentTaskObservedSourceId
       const fits = (result: ScopeContributionSample['result']) => Buffer.byteLength(JSON.stringify({ grant, sourceId, sequence, result }), 'utf8')
         <= Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)

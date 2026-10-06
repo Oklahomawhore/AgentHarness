@@ -107,6 +107,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly ownerLocal?: boolean
     readonly receive?: boolean
     readonly maxLeases?: number
+    readonly maxObservationBytes?: number
     readonly root?: string
     readonly peerId?: ScopePeerId
   } = {},
@@ -165,7 +166,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' }, { name: 'code' },
       { name: 'subprocess' }, { name: 'shell-env', config: { dshHome: join(root, 'home') } },
       { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
-      { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: 65536, contributionPollIntervalMs: 25 } },
+      { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25 } },
     ] : []),
     ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: 16000, coalesceMs: 1, retryDelayMs: 1000 } }] : []),
   ]

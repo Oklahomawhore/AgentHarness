@@ -2392,16 +2392,16 @@ Requires: `agents` · `sessions` · `storageDomain` · `scopeAccess` · `fs`
 export interface Config {
   /** Maximum retained source Session rows, including ended captures. */
   readonly maxSessions: number
-  /** Maximum retained samples and simultaneous unfinished observations across source Sessions. */
+  /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number
-  /** Maximum complete owner-bound sample and application request bytes. */
+  /** Maximum complete owner-bound requests and each initial historical sample with its local proof, before receipts. */
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:47`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:50`](../packages/collaboration/scope-agent-contribution/src/index.ts)
 
 <a id="deepseek-aidsh-scope-transportlibp2p"></a>
 

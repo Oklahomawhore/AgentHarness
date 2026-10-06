@@ -50,14 +50,16 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
   const values = 'kind' in result
     ? [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
       ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
-      result.fields.error ?? null, result.omissions]
+      result.fields.error ?? null, result.omissions,
+      ...result.version === 2 ? [result.origin.kind, result.origin.planDigest, result.origin.executionDigest] : []]
     : result.state === 'valid'
       ? [result.state, result.sha256, result.facts.operationId ?? null, result.facts.requestBodyRequired,
         result.facts.requiredRequestFields, result.facts.responseStatuses, result.facts.deprecated]
       : result.state === 'invalid' ? [result.state, result.sha256, result.reason] : [result.state, result.reason]
   return digest([grant.version, grant.taskId, grant.grantId, grant.generation, grant.ownerPeerId, grant.contributorPeerId,
     grant.captureId, grant.captureGeneration,
-    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools]
+    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
+      ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : []]
       : [grant.source.name, grant.source.method, grant.source.path],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, values])
 }
@@ -71,7 +73,9 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
 export function peerPublication(request: DevelopmentTaskPeerContributionRequest, at: number): DevelopmentTaskContextPublication {
   const { grant } = request
   if ('kind' in request.result) {
-    if (grant.source.kind !== 'tool-observations') throw new Error('tool report requires tool observation authorization')
+    if (grant.source.kind !== 'tool-observations' || (request.result.version === 2 && grant.source.version !== 2)) {
+      throw new Error('tool report requires its matching live or recorded observation authorization')
+    }
     const observation: DevelopmentTaskPeerToolObservation = {
       ...request.result, sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
       observerPeerId: grant.contributorPeerId, sourceId: request.sourceId,
@@ -79,7 +83,7 @@ export function peerPublication(request: DevelopmentTaskPeerContributionRequest,
     }
     return { id: peerContributionPublicationId(request), publishedAt: at, peerContribution: { version: 1, grant },
       peerToolObservation: observation,
-      text: `Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
+      text: `${request.result.version === 2 ? 'Previously recorded tool attempt shared with this scope. It was not re-executed or checked against the current file. Only selected completed records are shared; omitted or unfinished work is not included. ' : ''}Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
     }
   }
   if (grant.source.kind === 'tool-observations') throw new Error('artifact report requires OpenAPI authorization')
@@ -107,7 +111,8 @@ export function peerPublicationRequest(publication: DevelopmentTaskContextPublic
   const tool = publication.peerToolObservation
   if (grant !== undefined && tool !== undefined) {
     return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-      kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+      kind: tool.kind, ...(tool.version === 2 ? { version: 2, origin: tool.origin } : { version: 1 }),
+      reportedStatus: tool.reportedStatus, omissions: tool.omissions,
       ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
     } }
   }

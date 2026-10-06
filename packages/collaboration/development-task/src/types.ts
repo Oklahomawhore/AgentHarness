@@ -92,12 +92,21 @@ export interface DevelopmentTaskOpenApiContributionSource {
 /** Tools approved for observations from a locally permitted collection of files. */
 export interface DevelopmentTaskToolObservationSource {
   readonly kind: 'tool-observations'
+  readonly version?: never
+  readonly initialization?: never
   readonly name: string
   readonly tools: readonly ('Write' | 'Edit')[]
 }
 
+/** Explicit approval for prior recorded observations as well as subsequent live reports. */
+export type DevelopmentTaskRecordedToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'initialization'> & {
+  readonly version: 2
+  readonly initialization: 'recorded-local-tools'
+}
+
 /** Immutable source permission without local filesystem roots or session identifiers. */
-export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource
+export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -122,6 +131,22 @@ export type DevelopmentTaskToolObservationResult = {
     }
   }
 )
+
+/** Prior recorded tool report; digests identify source evidence without disclosing local Session or directory identifiers. */
+export type DevelopmentTaskRecordedToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 2
+  readonly origin: {
+    readonly kind: 'recorded-local-tools'
+    readonly planDigest: string
+    readonly executionDigest: string
+  }
+}
+
+/** Peer reports distinguish live observations from explicitly authorized recorded work. */
+export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskRecordedToolObservationResult
 
 /** Identity of one owner-local capture interval; it is never a transport peer identity. */
 export type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContributionId'>
@@ -262,7 +287,7 @@ export interface DevelopmentTaskPeerContributionRequest {
   readonly grant: DevelopmentTaskPeerContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskToolObservationResult
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerToolObservationResult
 }
 
 /** Source and owner can end a known grant; only the owner may revoke it. */
@@ -281,7 +306,7 @@ export type DevelopmentTaskPeerOpenApiObservation = Omit<DevelopmentTaskOpenApiO
   }
 
 /** Owner-attributed ordered tool event, distinct from a replaceable OpenAPI artifact sample. */
-export type DevelopmentTaskPeerToolObservation = DevelopmentTaskToolObservationResult & {
+export type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {
   readonly sourceName: string
   readonly grantId: DevelopmentTaskContributionGrantId
   readonly sequence: number

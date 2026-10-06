@@ -71,6 +71,8 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 
 工具样本包含报告结果、根目录序号、相对路径、工具字段及明确的整字段省略。失败报告不包含被尝试的成功正文。Owner 在派生归属和规范文本前核对允许的工具及来源种类；绝对根目录和 Session 标识不属于元数据字段。工具观察按序追加，不替代文件快照。结束 grant 会撤回该区间的全部当前报告，同时保留历史。[工具观察决策](../../../.agents/notes/implemented/architecture/2026-10-03-independent-tool-observations.zh.md)说明证据限制。
 
+已记录工作报告要求来源具有明确的第 2 版 `recorded-local-tools` 许可。其第 2 版 origin 用摘要标识冻结的选择和执行证据，规范正文将报告标为此前记录、未经重新执行或当前文件核对的操作尝试。普通工具 grant 拒绝此变体；本地报告仍为第 1 版。已记录与实时报告共用同一有序 grant、额度、重试和终结撤回。[已记录工作决策](../../../.agents/notes/implemented/feature/2026-10-07-recorded-work-on-scope-join.zh.md)说明来源选择及独立许可。
+
 `endPeerContribution` 允许来源退出或 owner 撤权。它记录一个终结事件，派生撤回证据和通知，并拒绝后续激活或新采样。即使 grant 尚无采样，也在 `maxEventsPerTask` 内预留该事件；先于批准到达的 end 留下永久 tombstone。历史采样与继承快照保持原样。`expirePeerContributions` 在同一队列中终结任意 origin 的本地所有 Task 的到期授权；facade 还在启动时核对到期状态。采样字节上限约束新准入；恢复保留历史字节，并拒绝无法终结活跃 grant 的容量配置。
 
 Host 消费者在延迟投影前后调用 `currentContextView`。它先提交本地到期终结，再捕获上下文；如果 Mesh 副本包含活跃的直接 peer 或 owner 本地采集证据则拒绝，因为副本无法证明 owner 的当前授权。本地 Fork 和 Merge Task、不含活跃直接 peer 或 owner 本地采集证据的副本，以及冻结的继承历史仍可读取。新增终结通知会使捕获的投影失效；普通新采样可以等到下一次请求。`contextView`、Remote 的 `context` 方法和 `peerContributions` 只提供已存历史或状态，不执行此当前权威检查。

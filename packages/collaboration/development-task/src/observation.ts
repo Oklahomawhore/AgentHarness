@@ -52,6 +52,7 @@ export function freezePublication(publication: DevelopmentTaskContextPublication
         ...(publication.peerContribution.ended === undefined ? {} : { ended: publication.peerContribution.ended }),
       }),
       ...(tool === undefined ? {} : { peerToolObservation: Object.freeze({ ...tool,
+        ...(tool.version === 2 ? { origin: Object.freeze({ ...tool.origin }) } : {}),
         fields: Object.freeze({ ...tool.fields }), omissions: Object.freeze([...tool.omissions]),
         capture: Object.freeze({ ...tool.capture }),
       }) as typeof tool }),

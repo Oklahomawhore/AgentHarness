@@ -46,7 +46,7 @@
   - group: 分享本会话的文件工作
   - region "当前目标的自动协作记录":
     - heading "当前目标的自动协作记录" [level=3]
-    - paragraph: 最近完成自动响应：第 7 轮，共享版本 6。
+    - paragraph: 最近完成自动响应：第 7 轮，共享版本 7。
     - paragraph: 该响应同时采用本地目标版本 4。
   - button "重新读取状态"
   - button "查看来源"

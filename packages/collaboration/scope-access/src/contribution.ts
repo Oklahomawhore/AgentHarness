@@ -12,6 +12,7 @@ import { peerContributionGrantSchema, peerContributionPayloadDigest, peerContrib
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import type { ScopePeerId, ScopeTransportRequest } from '@deepseek-ai/dsh-scope-transport/types'
 import { contributionInvitationSchema, contributionRequestSchema, contributionResponseSchema,
+  recordedContributionRequestSchema, recordedContributionResponseSchema,
   validateContributionReceipt, contributionApproveSchema, contributionRecoverSchema, decodeContributionText, encodeContributionInvitation } from './contribution-schema.ts'
 import type { Config } from './index.ts'
 import type { ScopeContributionInvitation, ScopeContributionSample, ScopeContributionStatusResult,
@@ -21,8 +22,9 @@ import type { ScopeContributionInvitation, ScopeContributionSample, ScopeContrib
   ScopeContributionManagementErrorCode } from './types.ts'
 
 const PROTOCOL = '/agentharness/scope-contribute/1'
-type WireRequest = ReturnType<typeof contributionRequestSchema.parse>
-type WireResponse = ReturnType<typeof contributionResponseSchema.parse>
+const RECORDED_PROTOCOL = '/agentharness/scope-contribute/2'
+type WireRequest = ReturnType<typeof contributionRequestSchema.parse> | ReturnType<typeof recordedContributionRequestSchema.parse>
+type WireResponse = ReturnType<typeof contributionResponseSchema.parse> | ReturnType<typeof recordedContributionResponseSchema.parse>
 interface Owner {
   readonly config: Config
   readonly signal: AbortSignal
@@ -55,7 +57,10 @@ export class ContributionAccess {
   private started = false
 
   constructor(private readonly ctx: Context, private readonly owner: Owner) {
-    ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, input => owner.track(this.respond(input))), 'scope-access: peer contributions')
+    ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, input => owner.track(this.respond(input, 1))),
+      'scope-access: peer contributions')
+    ctx.effect(() => ctx.scopeTransport.register(RECORDED_PROTOCOL, input => owner.track(this.respond(input, 2))),
+      'scope-access: recorded peer contributions')
     ctx.on('development-task/changed', () => { this.scheduleExpiry() })
     ctx.effect(() => () => { clearTimeout(this.timer) }, 'scope-access: contribution expiry')
   }
@@ -317,14 +322,15 @@ export class ContributionAccess {
   }
 
   /**
-   * Submit exactly one retained sample; a timeout does not establish whether the owner committed it.
+   * Submit one retained sample using its explicit wire version, without fallback; a timeout leaves admission uncertain.
    * @param request - matching contribution invitation and original durable sample, unchanged on retry.
    * @param signal - cancellation of this submission; an already committed owner event remains durable.
    * @returns the matched sample receipt, terminal permission, refusal, capacity failure, or temporary unavailability.
    */
   async submit(request: { readonly invitation: ScopeContributionInvitation; readonly sample: ScopeContributionSample },
     signal: AbortSignal): Promise<ScopeContributionSubmitResult> {
-    const response = await this.send({ version: 1, requestId: randomUUID(), op: 'sample', ...request }, signal)
+    const version = 'kind' in request.sample.result && request.sample.result.version === 2 ? 2 : 1
+    const response = await this.send({ version, requestId: randomUUID(), op: 'sample', ...request }, signal)
     if (response.op !== 'sample') throw new Error('scope-access: contribution operation mismatch')
     return response.result
   }
@@ -358,7 +364,8 @@ export class ContributionAccess {
   }
 
   private reply(request: WireRequest, result: WireResponse['result']): WireResponse {
-    const response = contributionResponseSchema.parse({ version: 1, requestId: request.requestId, op: request.op, result })
+    const fields = { version: request.version, requestId: request.requestId, op: request.op, result }
+    const response = request.version === 2 ? recordedContributionResponseSchema.parse(fields) : contributionResponseSchema.parse(fields)
     if (Buffer.byteLength(JSON.stringify(response), 'utf8') > this.owner.config.maxResponseBytes) {
       throw this.failure('scope-contribution/capacity')
     }
@@ -369,7 +376,7 @@ export class ContributionAccess {
     const peerId = await this.owner.ready()
     consumerSignal.throwIfAborted()
     this.owner.signal.throwIfAborted()
-    const request = contributionRequestSchema.parse(input)
+    const request = input.version === 2 ? recordedContributionRequestSchema.parse(input) : contributionRequestSchema.parse(input)
     const grant = request.invitation.grant
     if (grant.contributorPeerId !== peerId || grant.ownerPeerId === peerId) {
       throw new Error('scope-access: contribution invitation names another contributor')
@@ -382,12 +389,12 @@ export class ContributionAccess {
     const signal = AbortSignal.any([consumerSignal, this.owner.signal, AbortSignal.timeout(this.owner.config.requestTimeoutMs)])
     try {
       const raw = await this.ctx.scopeTransport.request({ peerId: grant.ownerPeerId, address: request.invitation.ownerAddress },
-        PROTOCOL, request, signal)
+        request.version === 2 ? RECORDED_PROTOCOL : PROTOCOL, request, signal)
       signal.throwIfAborted()
       if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > this.owner.config.maxResponseBytes) {
         throw new Error('scope-access: contribution response exceeds budget')
       }
-      const response = contributionResponseSchema.parse(raw)
+      const response = request.version === 2 ? recordedContributionResponseSchema.parse(raw) : contributionResponseSchema.parse(raw)
       if (response.requestId !== request.requestId || response.op !== request.op) {
         throw new Error('scope-access: contribution response does not match its request')
       }
@@ -423,11 +430,11 @@ export class ContributionAccess {
     return current !== undefined && isDeepStrictEqual(current.grant, grant) ? current : undefined
   }
 
-  private async respond(input: ScopeTransportRequest): Promise<WireResponse> {
+  private async respond(input: ScopeTransportRequest, version: 1 | 2): Promise<WireResponse> {
     if (Buffer.byteLength(JSON.stringify(input.payload), 'utf8') > this.owner.config.maxContributionRequestBytes) {
       throw new Error('scope-access: contribution request exceeds budget')
     }
-    const request = contributionRequestSchema.parse(input.payload)
+    const request = version === 2 ? recordedContributionRequestSchema.parse(input.payload) : contributionRequestSchema.parse(input.payload)
     const peerId = await this.owner.ready()
     const signal = AbortSignal.any([input.signal, this.owner.signal])
     signal.throwIfAborted()

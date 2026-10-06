@@ -11,7 +11,7 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SemanticBackend, { type Config as SemanticConfig } from '@deepseek-ai/dsh-development-task-context/semantic'
 import { localContributionGrantSchema, peerContributionGrantSchema } from '@deepseek-ai/dsh-development-task/schema'
-import type { DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
+import type { DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskObservedSourceId, DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
 import type { ScopeContributionSample } from '../src/types.ts'
 import { cleanup, host, peer } from './helpers.ts'
 
@@ -72,7 +72,7 @@ class ControlledSemanticAdapter extends LlmAdapter {
   }
 }
 
-function sample(sequence: number, canary: string): ScopeContributionSample {
+function sample(sequence: number, canary: string): Omit<ScopeContributionSample, 'result'> & { result: DevelopmentTaskToolObservationResult } {
   return {
     sourceId: createHash('sha256').update(`semantic-tool-${String(sequence)}`).digest('hex') as DevelopmentTaskObservedSourceId,
     sequence,
