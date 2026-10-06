@@ -121,6 +121,17 @@ export interface SnapshotManifest {
   session?: SnapshotSessionReference
   /** Historical generation retained by an owner instead of tracking the current writer. */
   sessionFormat?: SnapshotSessionFormatManifest
+  /** Owning SDK replay keeps current-format input immutable and compares a separate native writer oracle. */
+  writer?: 'separate'
+}
+
+/**
+ * Select a native writer oracle independently of the immutable replay input.
+ * @param manifest - Parsed ownership and writer selection; historical formats retain their existing oracle.
+ * @returns whether native output belongs in writer.expected.jsonl and its numbered child siblings.
+ */
+export function usesSeparateWriterSnapshot(manifest: SnapshotManifest): boolean {
+  return manifest.sessionFormat !== undefined || manifest.writer === 'separate'
 }
 
 /** Snapshot execution modes that may read or replace committed fixture generations. */
@@ -128,8 +139,8 @@ export type SnapshotSessionWriteMode = 'replay' | 'record' | 'refresh'
 
 /**
  * Whether one run writes current-writer Session fixtures for this scenario.
- * Explicit historical generations remain immutable replay inputs; record and
- * refresh may still update their non-Session expected outputs.
+ * Explicit historical generations and separate-writer inputs remain immutable;
+ * refresh may update their independent native writer oracles.
  *
  * @param manifest - Parsed scenario ownership and retained-generation metadata.
  * @param mode - Snapshot execution mode.
@@ -139,7 +150,7 @@ export function writesCurrentSessionFixtures(
   manifest: SnapshotManifest,
   mode: SnapshotSessionWriteMode,
 ): boolean {
-  return mode !== 'replay' && manifest.session === undefined && manifest.sessionFormat === undefined
+  return mode !== 'replay' && manifest.session === undefined && !usesSeparateWriterSnapshot(manifest)
 }
 
 const PROFILES = new Set<SnapshotProfile>(['headless', 'sdk', 'acp', 'web'])
@@ -221,6 +232,7 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       'input',
       'session',
       'sessionFormat',
+      'writer',
     ], 'manifest')
     if (root.version !== 1) throw new Error('manifest.version must equal 1')
     const scenario = root.scenario === undefined ? undefined : name(root.scenario, 'manifest.scenario')
@@ -407,6 +419,13 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       }
     }
 
+    if (root.writer !== undefined) {
+      if (root.writer !== 'separate') throw new Error('manifest.writer must equal separate when present')
+      if (root.profile !== 'sdk' || session !== undefined || sessionFormat !== undefined) {
+        throw new Error('manifest.writer is only valid for an owning current-format SDK scenario')
+      }
+    }
+
     return {
       version: 1,
       ...(scenario === undefined ? {} : { scenario }),
@@ -422,6 +441,7 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
       ...(input === undefined ? {} : { input }),
       ...(session === undefined ? {} : { session }),
       ...(sessionFormat === undefined ? {} : { sessionFormat }),
+      ...(root.writer === 'separate' ? { writer: 'separate' as const } : {}),
     }
   } catch (error) {
     /* v8 ignore next -- every parser and validator above throws Error instances. */

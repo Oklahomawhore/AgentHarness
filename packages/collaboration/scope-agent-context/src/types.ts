@@ -195,6 +195,8 @@ export type ScopeAgentStatusResult =
     readonly readStateSeq: SessionSeqCursor
     readonly subscriptionState: ScopeAgentSubscriptionState
     readonly localTask: ScopeAgentLocalTaskTarget | null
+    /** Recorded automatic activity for the current eligible binding and goal; never a current authorization check. */
+    readonly activity: ScopeAgentActivity
   }
 
 /** Logged native context is sufficient to reconstruct the exact request without a network read. */
@@ -246,7 +248,43 @@ export interface ScopeAgentCompletedEvidence {
   readonly turnEndSeq: SessionSeq
 }
 
-/** Bounded Host-only evidence fold preserving both remote and owner-local request attribution. */
+/** Recorded projection identity without shared text, source bodies, or the goal text. */
+export interface ScopeAgentActivityIdentity {
+  readonly bindingId: ScopeAgentBindingId
+  readonly goalDigest: ScopeAgentGoalDigest
+  readonly taskRevision: ScopeAgentReadProjection['taskRevision']
+  readonly projectionId: ScopeAgentReadProjection['projectionId']
+}
+
+/** An actual automatic request retained by the current turn; absence does not mean no earlier request. */
+export interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {
+  readonly activationId: ScopeAgentActivationId
+  readonly requestSeq: SessionSeq
+  readonly contextSeq: SessionSeq
+  readonly turn: number
+  readonly step: number
+}
+
+/** Most recent successfully completed automatic turn for this recorded projection. */
+export interface ScopeAgentActivityCompleted extends ScopeAgentActivityRequest {
+  readonly assistantSeq: SessionSeq
+  readonly turnEndSeq: SessionSeq
+}
+
+/** Most recent recorded scheduling decision; activation does not attest a dispatched request. */
+export interface ScopeAgentActivityEvaluation extends ScopeAgentActivityIdentity {
+  readonly decision: ScopeAgentEvaluation['decision']
+  readonly activationId: ScopeAgentActivationId | null
+}
+
+/** Cropped wire evidence. Status filters it by current eligibility, binding, and local goal. */
+export interface ScopeAgentActivity {
+  readonly request: ScopeAgentActivityRequest | null
+  readonly completed: ScopeAgentActivityCompleted | null
+  readonly evaluation: ScopeAgentActivityEvaluation | null
+}
+
+/** Complete Host evidence fold; its wire view exposes only ScopeAgentActivity metadata. */
 export interface ScopeAgentEvidenceState {
   readonly version: 1
   readonly activeTurn: number | null
@@ -284,6 +322,7 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
+    scopeAgentEvidence: ScopeAgentActivity
     scopeAgentContext: ScopeAgentBindingStatus
   }
   interface SessionProjectionStateMap {

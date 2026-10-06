@@ -23,6 +23,7 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
 import { blocksCurrentCoverage } from './coverage.ts'
+import { currentScopeAgentActivity } from './activity.ts'
 import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { joinReadEventSchema, joinReadHistory } from './join-read.ts'
 import { routeEventSchema } from './route.ts'
@@ -851,7 +852,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   /**
-   * Observe live eligibility, exact Session state, and locally known subscription intent.
+   * Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.
    * @param request - Session identity; lookup never starts or restores a cold Agent.
    * @returns a consistent projection watermark or not-live; no remote authorization is performed.
    */
@@ -870,12 +871,20 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         ? { subscriptions: [] } : await this.ctx.scopeAccess.list()
       if (!this.isCommand(runtime, runtime.commandEpoch) || this.runtimes.get(agentId) !== runtime
         || this.state(runtime).binding?.id !== bindingId) continue
-      const snapshot = this.ctx.sessionProjections.snapshot(agent.session, ['scopeAgentContext'])
+      const snapshot = this.ctx.sessionProjections.snapshot(agent.session, ['scopeAgentContext', 'scopeAgentEvidence'])
       const state = snapshot.values.scopeAgentContext
-      if (state === undefined) throw new Error('scope-agent-context: wire projection is unavailable')
-      return { agentId, eligibility: this.eligibility(runtime), state, asOfSeq: snapshot.asOfSeq,
+      const evidence = snapshot.values.scopeAgentEvidence
+      if (state === undefined || evidence === undefined) throw new Error('scope-agent-context: wire projection is unavailable')
+      const eligibility = this.eligibility(runtime)
+      const subscriptionState = this.subscriptionState(runtime, inventory.subscriptions)
+      const binding = state.binding
+      const current = eligibility === 'eligible' && binding !== null && (binding.kind === 'local-task'
+        ? this.currentLocalTarget(runtime, binding.target) : subscriptionState === 'active')
+      return { agentId, eligibility, state, asOfSeq: snapshot.asOfSeq,
         readStateSeq: joinReadHistory(agent.session).readStateSeq,
-        subscriptionState: this.subscriptionState(runtime, inventory.subscriptions), localTask: this.localTask(runtime) }
+        subscriptionState, localTask: this.localTask(runtime),
+        activity: currentScopeAgentActivity(evidence, current ? binding.id : null,
+          state.automatic === null ? null : goalDigest(state.automatic.goal)) }
     }
     return { agentId, eligibility: 'not-live' }
   }

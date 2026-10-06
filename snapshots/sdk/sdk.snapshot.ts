@@ -44,6 +44,7 @@ import {
   stabilizeRefreshLog,
   tokenizeSessionFixtureCwd,
   writesCurrentSessionFixtures,
+  usesSeparateWriterSnapshot,
   materializeProfilePatch,
   formatSystemPromptSnapshot,
   formatToolSchemasSnapshot,
@@ -683,6 +684,11 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           },
         })
         results.push(result)
+        if (scenario.name === 'scope-semantic-idle' && action.turn === 1) {
+          // Subsequent automatic turns require this setup turn to finish successfully.
+          const setupEnd = result.events.findLast(event => event.type === 'turn/end')
+          expect(setupEnd?.data, 'semantic idle setup turn').toEqual({ turn: 1, reason: { kind: 'completed' } })
+        }
         if (scenario.manifest.environment?.DSH_SNAPSHOT_FEEDBACK === '1') {
           const feedback = result.events.filter(event => event.type.startsWith('feedback/'))
           expect(feedback.map(event => event.type)).toEqual([
@@ -840,13 +846,13 @@ async function verifyHeaders(
 describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
   for (const scenario of sdkScenarios) {
     const scenarioTest = recording
-      && (scenario.manifest.recording === 'authored' || scenario.manifest.sessionFormat !== undefined)
+      && (scenario.manifest.recording === 'authored' || usesSeparateWriterSnapshot(scenario.manifest))
       ? it.skip
       : it
     scenarioTest(`${mode}s ${scenario.name} through dsh --profile sdk`, async () => {
       const scenarioDir = scenario.dir
-      const retained = scenario.manifest.sessionFormat !== undefined
-      const notificationsExpectedPath = join(scenarioDir, retained ? 'notifications.current.expected.jsonl' : 'notifications.expected.jsonl')
+      const separateWriter = usesSeparateWriterSnapshot(scenario.manifest)
+      const notificationsExpectedPath = join(scenarioDir, separateWriter ? 'notifications.current.expected.jsonl' : 'notifications.expected.jsonl')
       const resultExpectedPath = join(scenarioDir, 'result.expected.json')
       const hasWireGoldens = existsSync(notificationsExpectedPath) || existsSync(resultExpectedPath)
       const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
@@ -856,7 +862,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       const replayContents = await Promise.all(files.map(file => readFile(file, 'utf8')))
       if (!recording && !refreshing) {
         const writerFiles = (await readdir(scenarioDir)).filter(name => /^writer(?:\.[1-9]\d*)?\.expected\.jsonl$/u.test(name)).sort()
-        expect(writerFiles, 'native writer oracle inventory').toEqual(retained
+        expect(writerFiles, 'native writer oracle inventory').toEqual(separateWriter
           ? files.map((_, index) => writerSnapshotName(index)).sort() : [])
       }
       const { results, notifications, observedMethods, logs, initialWorkspace, finalWorkspace, cwd } = await runScenario(scenario)
@@ -876,7 +882,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         for (const turnEnd of turnEnds) expect(turnEnd).toMatchObject({ data: { reason: { kind: 'completed' } } })
       }
 
-      let expectedContents = retained && !refreshing
+      let expectedContents = separateWriter && !refreshing
         ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index)), 'utf8')))
         : replayContents
 
@@ -887,7 +893,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         ))
       }
 
-      if (refreshing && (writesSessionFixtures || retained)) {
+      if (refreshing && (writesSessionFixtures || separateWriter)) {
         const harvested = ordered.map((log): HarvestedLog => ({
           id: String(log.header.id),
           createdAt: Number(log.header.createdAt),
@@ -905,8 +911,8 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         expectedContents = redactSessionSnapshotIds(stabilizeFixtureMessageIds(refreshed, expectedContents))
       }
 
-      if (writesSessionFixtures || refreshing && retained) {
-        const outputFiles = ordered.map((log, index) => join(scenarioDir, retained
+      if (writesSessionFixtures || refreshing && separateWriter) {
+        const outputFiles = ordered.map((log, index) => join(scenarioDir, separateWriter
           ? writerSnapshotName(index)
           : sessionFixtureName(index, sessionHeaderVersion(log.content, `harvested Session ${index}`))))
         await Promise.all(expectedContents.map((stable, index) => writeFile(outputFiles[index] as string, stable)))
@@ -921,9 +927,9 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       expect(redactSessionSnapshotIds(expectedContents), `${scenario.name}: identity redaction fixed point`)
         .toEqual(expectedContents)
 
-      if (retained) {
+      if (separateWriter) {
         expect(await Promise.all((await fixtureFiles(scenario)).map(file => readFile(file, 'utf8'))),
-          'historical replay input remains unchanged').toEqual(replayContents)
+          'independent replay input remains unchanged').toEqual(replayContents)
         for (const [index, content] of expectedContents.entries()) {
           expect(sessionHeaderVersion(content, writerSnapshotName(index))).toBe(SESSION_FORMAT_VERSION)
         }

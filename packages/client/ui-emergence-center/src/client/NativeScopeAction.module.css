@@ -36,3 +36,6 @@
 .sharing > summary:focus-visible, .consent input:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
 .consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 18px; }
 .consent input { flex: none; margin: 3px 0 0; accent-color: var(--dsw-alias-label-primary); }
+.activity { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 18px; }
+.activity h3, .activity p { margin: 0; overflow-wrap: anywhere; }
+.activity h3 { font-size: 12px; font-weight: 600; }

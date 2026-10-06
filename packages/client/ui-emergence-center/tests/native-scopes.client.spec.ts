@@ -7,6 +7,7 @@ import { bound, invitation, observation, observable, state } from './native-scop
 const ok = <T>(value: T): RemoteResult<T> => ({ ok: true, value })
 function fixture(overrides: Partial<NativeScopePort> = {}) {
   const projection = observable<unknown>(undefined)
+  const evidence = observable<unknown>(undefined)
   const session = observable({ running: false })
   const connection = observable<{ id: number } | undefined>({ id: 1 })
   const resets = observable(0)
@@ -15,9 +16,9 @@ function fixture(overrides: Partial<NativeScopePort> = {}) {
     leaveLocalTask: vi.fn(async () => ok(state)),
     status: vi.fn(async () => ok(observation())), bind: vi.fn(async () => ok(bound)),
     pause: vi.fn(async () => ok(bound)), resume: vi.fn(async () => ok(bound)), leave: vi.fn(async () => ok(state)), ...overrides }
-  const source = createNativeScopeSource({ agentId: state.agentId, port, projection, session, connection,
+  const source = createNativeScopeSource({ agentId: state.agentId, port, projection, evidence, session, connection,
     subscribeAssignments: listener => assignments.subscribe(listener), subscribeReset: listener => resets.subscribe(listener) })
-  return { source, port, projection, session, connection, resets, assignments }
+  return { source, port, projection, evidence, session, connection, resets, assignments }
 }
 const join = { kind: 'bind', request: { invitation, automatic: null, expectedBindingId: null } } as const
 
@@ -30,7 +31,7 @@ describe('native scope source', () => {
     expect(await f.source.act(join)).toBe(false)
     expect(f.port.bind).not.toHaveBeenCalled()
     stop()
-    expect([f.connection.count(), f.projection.count(), f.session.count(), f.resets.count()]).toEqual([0, 0, 0, 0])
+    expect([f.connection.count(), f.projection.count(), f.evidence.count(), f.session.count(), f.resets.count()]).toEqual([0, 0, 0, 0, 0])
   })
   it('rejects reads overtaken by a projection and keeps the later watermark', async () => {
     const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()
@@ -45,6 +46,21 @@ describe('native scope source', () => {
       await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('error') })
       expect(f.source.getSnapshot().observation).toEqual(observation(bound, 9))
     } finally { stop() }
+  })
+  it('refreshes on evidence-only changes and rejects the overtaken status reply', async () => {
+    const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()
+    const status = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(ok(observation(bound, 12)))
+    const f = fixture({ status }); const stop = f.source.subscribe(vi.fn())
+    try {
+      expect(f.evidence.count()).toBe(1)
+      f.evidence.set({ evaluation: 'suppress-unchanged' })
+      old.resolve(ok(observation(bound, 10)))
+      await vi.waitFor(() => { expect(f.source.getSnapshot().observation).toEqual(observation(bound, 12)) })
+      expect(status).toHaveBeenCalledTimes(2)
+      expect(f.port.bind).not.toHaveBeenCalled()
+      expect(f.port.resume).not.toHaveBeenCalled()
+    } finally { old.resolve(ok(observation())); stop() }
+    expect(f.evidence.count()).toBe(0)
   })
   it('clears trusted display while disconnected and discards prior connection replies', async () => {
     const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()

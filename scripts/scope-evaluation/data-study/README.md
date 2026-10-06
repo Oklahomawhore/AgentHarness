@@ -36,7 +36,11 @@ The parent owns the reference, private inputs and mutants. They are not included
 <a id="register-and-run"></a>
 ## Register and run
 
-Use the repository's supported Node runtime and built public packages. Supply an explicit JSON configuration accepted by [parseDataStudyConfig](../data-study.ts): separate ordinary and semantic routes, credential references, and finite call, input, output, operation, cleanup and wall-time limits. The driver accepts credential environment-variable names or absolute credential-file paths, never credential values. Live routes are restricted to the official DeepSeek HTTPS endpoint; transport calibration accepts an explicit loopback HTTP endpoint and requires null credential-file references.
+Use the repository's supported Node runtime and built public packages. Supply an explicit JSON configuration accepted by [parseDataStudyConfig](../data-study.ts): separate ordinary and semantic routes, credential references, and finite call, input, output, operation, cleanup and wall-time limits. The driver accepts credential environment-variable names or absolute credential-file paths, never credential values. Every route declares `endpointSource`: `{ "kind": "deepseek-official" }` selects the official DeepSeek HTTPS endpoint; `{ "kind": "openai-compatible-gateway", "name": "service name" }` explicitly identifies a compatible HTTPS gateway. `provider: "deepseek-official"` names the production adapter, not the service receiving the request. Endpoint URLs cannot contain credentials, queries, or fragments. Transport calibration accepts only an explicit loopback HTTP endpoint and requires null credential-file references.
+
+Every route also selects `network: { "kind": "direct" }` or `{ "kind": "env-proxy", "urlEnv": "https_proxy" }`. Proxy mode resolves only that environment reference at execution, requires Node support for `--use-env-proxy`, and leaves localhost coordination direct. Missing or invalid proxy settings fail before Hosts or model reservations start; proxy values are never registered. Calibration requires direct mode.
+
+Registration freezes the service declaration, endpoint and requested model in the manifest. Include that manifest when sharing results: the adapter records usage and completion but does not preserve the successful response’s upstream model identity. A requested model name therefore does not verify a gateway’s actual upstream model.
 
 Run from the checkout root. The result directory must not exist:
 

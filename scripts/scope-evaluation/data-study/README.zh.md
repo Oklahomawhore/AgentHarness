@@ -36,7 +36,11 @@ N 的任务要求不编造缺失更新。因此，保留初始策略可以是合
 <a id="register-and-run"></a>
 ## 注册与运行
 
-使用仓库支持的 Node 版本与已构建公开包。提供符合 [parseDataStudyConfig](../data-study.ts) 的显式 JSON 配置：分别指定普通模型与语义模型路由、凭据引用，以及有限的调用、输入、输出、操作、清理和总时限。驱动只接受凭据环境变量名或绝对凭据文件路径，不接受凭据值。真实路由限于官方 DeepSeek HTTPS endpoint；传输校准接受显式本机回环 HTTP endpoint，且凭据文件引用必须为 null。
+使用仓库支持的 Node 版本与已构建公开包。提供符合 [parseDataStudyConfig](../data-study.ts) 的显式 JSON 配置：分别指定普通模型与语义模型路由、凭据引用，以及有限的调用、输入、输出、操作、清理和总时限。驱动只接受凭据环境变量名或绝对凭据文件路径，不接受凭据值。每条路由必须声明 `endpointSource`：`{ "kind": "deepseek-official" }` 选择官方 DeepSeek HTTPS endpoint；`{ "kind": "openai-compatible-gateway", "name": "服务名称" }` 显式标识兼容 HTTPS 网关。`provider: "deepseek-official"` 命名生产适配器，不代表实际接收请求的服务。Endpoint URL 不得包含凭据、查询参数或 fragment。传输校准仅接受显式本机回环 HTTP endpoint，且凭据文件引用必须为 null。
+
+每条路由还必须选择 `network: { "kind": "direct" }` 或 `{ "kind": "env-proxy", "urlEnv": "https_proxy" }`。代理模式只在执行时解析该环境引用，要求 Node 支持 `--use-env-proxy`，并让 localhost 协调保持直连。代理缺失或无效时，在启动 Host 或预留模型调用前失败；代理值不写入注册记录。校准必须使用直连模式。
+
+注册将服务声明、endpoint 和请求模型名冻结到 manifest。分享结果时应附带该文件：适配器记录用量与完成状态，但不保留成功响应的上游模型身份。因此，请求模型名不能验证网关实际使用的上游模型。
 
 在仓库根目录运行，结果目录必须尚不存在：
 

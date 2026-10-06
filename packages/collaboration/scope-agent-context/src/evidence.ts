@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { scopeAgentActivitySchema, scopeAgentActivityView } from './activity.ts'
 import { localContextProjectionSchema } from '@deepseek-ai/dsh-development-task-context/local'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
@@ -83,6 +84,7 @@ export function completedMatches(completed: ScopeAgentCompletedEvidence | null, 
 /** Only an authorized request followed by a non-interrupted assistant and completed turn advances the baseline. */
 export const scopeAgentEvidenceProjection = {
   key: 'scopeAgentEvidence', stateVersion: 1, stateSchema: evidenceSchema,
+  wire: { viewSchema: scopeAgentActivitySchema, view: scopeAgentActivityView },
   init: () => ({ version: 1, activeTurn: null, reservation: null, dispatched: null, completed: null, lastEvaluation: null }),
   apply: (state, event) => {
     if (event.type === 'scope-agent-context/join-read'

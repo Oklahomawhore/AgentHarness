@@ -10,6 +10,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { NativeReadRoute } from './NativeReadRoute.tsx'
+import { NativeScopeActivity } from './NativeScopeActivity.tsx'
 import { NativeContributionPanel, type NativeContributionActions } from './NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
 import type { DevelopmentTaskDirectory } from './task-directory.ts'
@@ -254,6 +255,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
           previewNativeContribution={previewNativeContribution} probeNativeContribution={probeNativeContribution}
           recoverNativeContributionRoute={recoverNativeContributionRoute} />
       </>}
+      <NativeScopeActivity snapshot={snapshot} local={local} t={t} />
       {snapshot.issue !== null && <p ref={error} tabIndex={-1} className={css.notice} role="alert">{t(issueKey(snapshot.issue))}</p>}
       <div className={css.footer}><Button disabled={snapshot.pending} size="sm" onClick={refreshNativeScope}>{t('native.refresh')}</Button>
         <Button size="sm" onClick={() => { runtime.selectView('trajectory'); close() }}>{t('native.sources')}</Button></div>

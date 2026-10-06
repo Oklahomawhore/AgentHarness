@@ -9,6 +9,4 @@ header:
   systemPromptSource: sdk/task-context-disconnect
 replay:
   override: true
-sessionFormat:
-  version: 3
-  coverage: [shipped-profile]
+writer: separate

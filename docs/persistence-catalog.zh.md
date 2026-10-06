@@ -706,7 +706,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentEvaluation](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:279`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:317`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextjoin-read--log-only"></a>
 
@@ -717,7 +717,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'scope-agent-context/join-read': ScopeAgentJoinReadEvent
 ```
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:275`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:313`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextrequest--log-only"></a>
 
@@ -730,7 +730,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentRequestEvidence](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:281`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:319`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextroute--log-only"></a>
 
@@ -743,7 +743,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentRouteEvent](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:277`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:315`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextstate--log-only"></a>
 
@@ -756,7 +756,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentBindingStatus](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:273`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:311`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 ### `session/*`
 

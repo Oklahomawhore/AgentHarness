@@ -105,6 +105,18 @@ function assertReconstructed(host: WebScaffold, id: SessionId, request: readonly
   expect(context(detached.deriveMessages(), kind)).toEqual(context(request, kind))
 }
 
+async function recordedCompletion(host: WebScaffold, page: Page, id: SessionId): Promise<void> {
+  const observed = await host.ctx.scopeAgentContext.status({ agentId: id })
+  if (observed.eligibility !== 'eligible' || observed.activity.completed === null) throw new Error('Completed automatic evidence missing')
+  const completed = observed.activity.completed
+  expect(observed.activity.request).toBeNull()
+  await page.locator(PANEL).getByText(`最近完成自动响应：第 ${String(completed.turn)} 轮，共享版本 ${String(completed.taskRevision)}。`, { exact: true }).waitFor()
+  const visible = await page.locator('[data-native-scope-activity]').textContent()
+  for (const privateText of [A_CODE.trim(), B_CODE.trim(), B_CODE_UPDATED.trim(), B_CODE_PAUSED.trim()]) {
+    expect(visible).not.toContain(privateText)
+  }
+}
+
 describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owner-local and remote native collaboration (join automatic: %s)', (automaticJoin) => {
   const snapshots = automaticJoin ? join(import.meta.dirname, 'snapshots/native-joint-automatic') : SNAPSHOTS
   async function capture(page: Page, workspace: string, stage: string,
@@ -295,6 +307,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
       expect(textOf(pulse)).not.toContain(OWNER_RESPONSIBILITY)
       expect(context(automaticRequest, 'scope-agent-context')).toHaveLength(1)
       assertReconstructed(b, bId, automaticRequest, 'scope-agent-context')
+      await recordedCompletion(b, remotePage, bId)
     }
     await capture(remotePage, b.workspaceCwd, 'joint-active', jointReplacements, REMOTE)
     if (automaticJoin) {
@@ -351,6 +364,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     if (enabled.eligibility === 'not-live') throw new Error('Owner Agent stopped being live')
     expect(enabled.state).toMatchObject({ mode: 'enabled', usedBudget: 1, automatic: { activationLimit: 4 } })
     expect(enabled.state.binding).toMatchObject({ kind: 'local-task', target: { taskId: task.id, taskBindingId: aCapture.grant.bindingId } })
+    await recordedCompletion(a, ownerPage, aId)
     await capture(ownerPage, a.workspaceCwd, 'automatic', replacements)
 
     const [changedAutomatic, remoteChanged] = await Promise.all([a.whenTurnSettled(30_000),
@@ -368,6 +382,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     expect(autoUpdated.some(message => message.source.kind === 'scope-agent-pulse')).toBe(true)
     expect(context(autoUpdated, 'scope-agent-context')).toEqual([])
     expect(ownerRequests).toHaveLength(6)
+    await recordedCompletion(a, ownerPage, aId)
     await automatic.getByRole('button', { name: '暂停自动协作', exact: true }).click()
     await automatic.getByText('自动协作已暂停', { exact: true }).waitFor()
     const paused = await a.ctx.scopeAgentContext.status({ agentId: aId })
@@ -402,6 +417,8 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     const passive = await a.ctx.scopeAgentContext.status({ agentId: aId })
     if (passive.eligibility === 'not-live') throw new Error('Owner Agent stopped being live')
     expect(passive.state).toMatchObject({ mode: 'passive', usedBudget: 3, automatic: null })
+    expect(passive.activity).toEqual({ request: null, completed: null, evaluation: null })
+    await ownerPage.locator('[data-native-scope-activity]').waitFor({ state: 'detached' })
     expect((await a.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture?.collecting).toBe(true)
     await panel(remotePage)
     if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
@@ -433,6 +450,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
       if (resumedRequest === undefined) throw new Error('Automatic read after sharing stop missing')
       expect(textOf(context(resumedRequest, 'scope-agent-context'))).toContain(A_CODE.trim())
       expect(resumedRequest.some(message => message.source.kind === 'scope-agent-pulse')).toBe(true)
+      await recordedCompletion(b, remotePage, bId)
       await capture(remotePage, b.workspaceCwd, 'joint-auto-resumed', jointReplacements, REMOTE)
       await bPanel.getByRole('button', { name: '暂停自动协作', exact: true }).click()
       const pausedAfterStop = await b.ctx.scopeAgentContext.status({ agentId: bId })
@@ -469,6 +487,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
       const value = await b.ctx.scopeAgentContext.status({ agentId: bId })
       return value.eligibility === 'eligible' ? value.state.mode : null
     }).toBe('left')
+    await remotePage.locator('[data-native-scope-activity]').waitFor({ state: 'detached' })
     await capture(remotePage, b.workspaceCwd, 'joint-read-left', jointReplacements, REMOTE)
     expect(await prompt(b, remotePage, 'REMOTE_READ_LEFT')).toBe(bId)
     const bWithdrawn = remoteRequests[automaticJoin ? 10 : 8]
@@ -490,6 +509,8 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     if (left.eligibility === 'not-live') throw new Error('Owner Agent stopped being live')
     expect(left.localTask).toBeNull()
     expect(left.state).toMatchObject({ mode: 'left', pendingActivation: null, usedBudget: 3 })
+    expect(left.activity).toEqual({ request: null, completed: null, evaluation: null })
+    await ownerPage.locator('[data-native-scope-activity]').waitFor({ state: 'detached' })
     await capture(ownerPage, a.workspaceCwd, 'stopped', replacements)
     expect(await prompt(a, ownerPage, 'OWNER_WITHDRAWN')).toBe(aId)
     const aWithdrawn = ownerRequests[9]

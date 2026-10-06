@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSnapshotManifest, writesCurrentSessionFixtures } from '../src/manifest.ts'
+import { parseSnapshotManifest, usesSeparateWriterSnapshot, writesCurrentSessionFixtures } from '../src/manifest.ts'
 
 describe('snapshot manifest', () => {
   it('parses an owning scenario', () => {
@@ -49,6 +49,20 @@ describe('snapshot manifest', () => {
     expect(writesCurrentSessionFixtures(borrower, 'refresh')).toBe(false)
     expect(writesCurrentSessionFixtures(retained, 'record')).toBe(false)
     expect(writesCurrentSessionFixtures(retained, 'refresh')).toBe(false)
+  })
+
+  it('keeps same-format SDK replay input immutable and selects a separate native writer oracle', () => {
+    const manifest = parseSnapshotManifest('version: 1\nprofile: sdk\nwriter: separate\n')
+    expect(manifest).toEqual({ version: 1, profile: 'sdk', writer: 'separate' })
+    expect(manifest.sessionFormat).toBeUndefined()
+    expect(usesSeparateWriterSnapshot(manifest)).toBe(true)
+    for (const mode of ['replay', 'record', 'refresh'] as const) {
+      expect(writesCurrentSessionFixtures(manifest, mode)).toBe(false)
+    }
+    expect(usesSeparateWriterSnapshot(parseSnapshotManifest('version: 1\nprofile: sdk\n'))).toBe(false)
+    expect(usesSeparateWriterSnapshot(parseSnapshotManifest(
+      'version: 1\nprofile: sdk\nsessionFormat:\n  version: 0\n  coverage: [shipped-profile]\n',
+    ))).toBe(true)
   })
 
   it('parses a read-only session reference', () => {
@@ -160,6 +174,11 @@ describe('snapshot manifest', () => {
 
   it.each([
     ['', 'manifest must be a mapping'],
+    ['version: 1\nprofile: sdk\nwriter: current\n', 'manifest.writer must equal separate when present'],
+    ['version: 1\nprofile: sdk\nwriter: true\n', 'manifest.writer must equal separate when present'],
+    ['version: 1\nprofile: headless\nwriter: separate\n', 'manifest.writer is only valid for an owning current-format SDK scenario'],
+    ['version: 1\nprofile: sdk\nwriter: separate\nsession:\n  source: ../owner/session.v3.jsonl\n', 'manifest.writer is only valid for an owning current-format SDK scenario'],
+    ['version: 1\nprofile: sdk\nwriter: separate\nsessionFormat:\n  version: 0\n  coverage: [shipped-profile]\n', 'manifest.writer is only valid for an owning current-format SDK scenario'],
     ['version: 2\nprofile: acp\n', 'manifest.version must equal 1'],
     ['version: 1\nprofile: private\n', 'manifest.profile must be headless, sdk, acp, or web'],
     ['version: 1\nprofile: acp\nextra: true\n', 'manifest has unknown field(s): extra'],

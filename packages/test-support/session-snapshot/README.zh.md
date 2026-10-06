@@ -76,6 +76,8 @@ defineAcpSnapshotSuite({
 
 Spill 场景通过真实本地 provider 保存到私有临时根目录。夹具适配器提供固定长度的逻辑定位符，并仅将本次运行已保存的定位符映射回实际文件以供检索，在不写入共享逻辑路径的情况下保留预览预算。已知的快照 spill 路径会规范化为稳定的定位信息 token，包括 JSON 省略通知中带引号、使用 JSON 转义 Windows 分隔符的路径。刷新提取会保留匹配路径的序列化写法，以便进行字面替换。规范化只改变定位信息：保存字节数与省略计数仍作为比较证据。
 
+拥有当前格式输入的 SDK 场景可声明 `writer: separate`，用于不可变回放输入与当前原生输出在行为上不同、但不涉及 Session 格式迁移的情况。该声明不能与 `sessionFormat` 或借用的 Session 引用并用；manifest 解析器拒绝不支持的 profile 和取值。它复用历史场景的独立输出比较基准，在 record 与 refresh 期间保留所选输入，不把当前格式输入归为历史迁移覆盖。[决策记录](../../../.agents/notes/implemented/testing/2026-10-06-separate-current-writer-oracles.zh.md)说明此区分。
+
 保留历史输入的场景保持规范 Session 文件不变，并继续选择它们进行回放；固定历史版本的目录中没有更新的规范同角色文件。其精确的规范化原生当前格式输出单独记录在父会话的 `writer.expected.jsonl` 和子会话的 `writer.<ordinal>.expected.jsonl` 中；这些是输出比较基准，而非 replay 代际。保留历史输入的 SDK 场景使用 `notifications.current.expected.jsonl` 记录当前协议输出。比较既不将当前事件反向投影为历史格式，也不剥除结构差异。独立迁移测试验证正式转换，而不把原生 writer 布局当作其预期事件序列。
 
 ### 录制、回放与刷新

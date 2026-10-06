@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { launchNativeHost } from './native-run.ts'
 import { resolveNativeModules } from './native-dependencies.ts'
+import { resolveDataNetwork } from './data-network.ts'
 import { createWorkbench, type Workbench } from './workbench.ts'
 import { executePayment, parseCases, parsePolicy, sealDataArtifact, type SealedDataArtifact, type DataArtifactGrades } from './data-artifacts.ts'
 import type { DataModelRoute, DataRoleProject, NativeDataStudy } from './data-study.ts'
@@ -276,10 +277,14 @@ async function until<T>(read: () => Promise<T>, ready: (value: T) => boolean, si
   for (;;) { signal.throwIfAborted(); const value = await read(); if (ready(value)) return value; await delay(25, undefined, { signal }) }
 }
 function environment(route: DataModelRoute, execution: NativeDataRunRequest['execution']): NodeJS.ProcessEnv {
-  if (execution.kind === 'transport-calibration') return { [route.apiKeyEnv]: 'transport-calibration-not-a-secret' }
-  if (route.credentialsPath !== null) return {}
+  if (execution.kind === 'transport-calibration') {
+    if (route.network.kind !== 'direct') throw new Error('transport calibration requires direct networking')
+    return { [route.apiKeyEnv]: 'transport-calibration-not-a-secret' }
+  }
+  const network = resolveDataNetwork(route.network, process.env, process.allowedNodeEnvironmentFlags.has('--use-env-proxy'))
+  if (route.credentialsPath !== null) return network
   const value = process.env[route.apiKeyEnv]
-  return value === undefined ? {} : { [route.apiKeyEnv]: value }
+  return value === undefined ? network : { ...network, [route.apiKeyEnv]: value }
 }
 function sqliteRows(path: string, table: 'u_scope_agent_contributions_sessions' | 'u_development_context_tasks_events'): unknown[] {
   const db = new DatabaseSync(path, { readOnly: true })
@@ -475,6 +480,8 @@ export async function runNativeData(request: NativeDataRunRequest): Promise<Nati
     || !request.study.roles.B.readableFiles.includes(request.continuity.decisionPath))) {
     throw new Error('continuity requires E/R and an explicitly allowed current-work file')
   }
+  const modelEnvironments = { ordinary: environment(request.study.ordinary, request.execution),
+    semantic: request.condition === 'R' ? environment(request.study.semantic, request.execution) : {} }
   await mkdir(request.output, { recursive: false, mode: 0o700 })
   const temporary = await realpath(await mkdtemp(join(tmpdir(), 'scope-native-data-')))
   const lifetime = new AbortController()
@@ -518,7 +525,7 @@ export async function runNativeData(request: NativeDataRunRequest): Promise<Nati
           { name: 'edit', args: { file_path: study.source.path, old_string: study.source.failedEdit.oldString, new_string: study.source.failedEdit.newString } },
         ] } : { ...shared, mode: 'data-recipient', ...target?.spec }
       const host = await launchNativeHost(temporary, role, { ...request, cleanupTimeoutMs: study.limits.cleanupTimeoutMs,
-        environment: role === 'A' || role === 'O' && request.condition !== 'R' ? {} : environment(route, request.execution) }, modules, native,
+        environment: role === 'A' ? {} : role === 'O' ? modelEnvironments.semantic : modelEnvironments.ordinary }, modules, native,
       { ...shared, condition: request.condition, peerTimeoutMs: study.semantic.timeoutMs + study.limits.operationTimeoutMs })
       hosts.push(host); cleanup.started++
       connections.push(await host.connect(lifetime.signal))

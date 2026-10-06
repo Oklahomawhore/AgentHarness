@@ -23,6 +23,11 @@ const contributorPeerId = '12D3KooWFCgiTqWhtsJ1Zj49VtnbFN7F3t1NoMhpZHZnQiF5mr3E'
 const content = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const digest = value => createHash('sha256').update(value).digest('hex')
+const activityIdentity = value => ({ bindingId: value.bindingId, goalDigest: value.goalDigest,
+  taskRevision: value.projection.taskRevision, projectionId: value.projection.projectionId })
+const activityRequest = event => ({ ...activityIdentity(event.data), activationId: event.data.activationId,
+  requestSeq: event.seq, contextSeq: event.data.contextSeq, turn: event.data.turn, step: event.data.step })
+const noActivity = { request: null, completed: null, evaluation: null }
 const reports = [
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
     fields: { rootIndex: 0, path: 'src/retry.ts', content: 'export const retryPolicy = "RETRY_LIMIT_3";\n' } },
@@ -105,11 +110,27 @@ export async function apply(ctx) {
     assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
     admitted[index] = result.publication
   }
-  const completed = turn => {
+  const activity = async () => {
+    const status = await ctx.scopeAgentContext.status({ agentId: agent.id })
+    assert.equal(status.eligibility, 'eligible')
+    assert.equal(status.state.binding?.id ?? null, state().binding?.id ?? null)
+    return status.activity
+  }
+  const completed = async turn => {
     const end = agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
     assert.equal(end.data.turn, turn)
     assert.equal(end.data.reason.kind, 'completed')
-    if (turn > 1) assert.equal(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence').completed.turnEndSeq, end.seq)
+    const observed = await activity()
+    assert.equal(observed.request, null)
+    if (turn === 1) assert.deepEqual(observed, noActivity)
+    else {
+      const evidence = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence').completed
+      assert.equal(evidence.turnEndSeq, end.seq)
+      const request = agent.session.eventAt(evidence.requestSeq)
+      assert.equal(request.type, 'scope-agent-context/request')
+      assert.deepEqual(observed.completed, { ...activityRequest(request),
+        assistantSeq: evidence.assistantSeq, turnEndSeq: end.seq })
+    }
   }
   ctx.on('agent/pre-step', async ({ agent: current, turn, step }, next) => {
     agent = current
@@ -137,7 +158,7 @@ export async function apply(ctx) {
       bindingId = bound.binding.id
       stage = 'initial'
     } else if (turn === 6) {
-      completed(5)
+      await completed(5)
       assert.equal(stage, 'withdrawn')
       assert.equal(requests, 5)
       assert.ok(suppressed)
@@ -160,6 +181,8 @@ export async function apply(ctx) {
       }
       await ctx.scopeAgentContext.leaveLocalTask({ agentId: agent.id, expectedBindingId: bindingId, ...target })
       assert.equal(ctx.developmentTasks.assignmentList().length, 0)
+      assert.deepEqual(await activity(), noActivity)
+      assert.equal(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence').completed.request.turn, 5)
       stage = 'left'
     }
     return next()
@@ -168,17 +191,17 @@ export async function apply(ctx) {
     if (current !== agent || status !== 'idle') return
     if (stage === 'initial') {
       stage = 'first-report'
-      own((async () => { completed(1); await admit(0) })())
+      own((async () => { await completed(1); await admit(0) })())
     } else if (stage === 'first-report') {
       stage = 'unrelated'
-      own((async () => { completed(2); assert.equal(state().usedBudget, 1); await admit(1) })())
+      own((async () => { await completed(2); assert.equal(state().usedBudget, 1); await admit(1) })())
     } else if (stage === 'corrected') {
       stage = 'failed'
-      own((async () => { completed(3); await admit(3) })())
+      own((async () => { await completed(3); await admit(3) })())
     } else if (stage === 'failed') {
       stage = 'withdrawn'
       own((async () => {
-        completed(4)
+        await completed(4)
         const ended = await ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, ownerPeerId)
         assert.equal(ended.event.kind, 'peer-contribution-ended')
       })())
@@ -204,6 +227,13 @@ export async function apply(ctx) {
         && value.source.publicationId === admitted[1].id))
       assert.ok(!projection.text.includes('UNRELATED_ADMIN'))
       assert.equal(adapter.requests.length, 2)
+      const observed = await activity()
+      assert.equal(observed.request, null)
+      assert.deepEqual(observed.evaluation, { ...activityIdentity(event.data),
+        decision: 'suppress-unchanged', activationId: null })
+      assert.equal(observed.completed.requestSeq, baseline.seq)
+      assert.equal(observed.completed.turnEndSeq, event.data.baseline.turnEndSeq)
+      assert.equal(observed.completed.taskRevision, baseline.data.projection.taskRevision)
       suppressed = event
       stage = 'corrected'
       await admit(2)
@@ -253,6 +283,13 @@ export async function apply(ctx) {
     const events = JSON.parse(JSON.stringify(agent.session.snapshotEvents()))
     assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'user').length, requests === 6 ? 2 : 1)
     assert.ok(!events.some(event => event.type.startsWith('context/semantic-')))
+    const observed = await activity()
+    if (requests === 1 || requests === 6) assert.deepEqual(observed, noActivity)
+    else {
+      const request = events.findLast(event => event.type === 'scope-agent-context/request')
+      assert.equal(request.data.turn, requests)
+      assert.deepEqual(observed.request, activityRequest(request))
+    }
     if (requests >= 5) assert.ok(events.some(event => event.type === 'user/message'
       && event.data.source.kind === 'development-task-context' && content(event.data).includes('RETRY_LIMIT_3')))
     assert.deepEqual(contexts(Session.create(agent.id, events, agent.session.header).deriveMessages()), visible,

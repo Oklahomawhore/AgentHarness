@@ -76,7 +76,7 @@ await ctx.scopeAgentContext.resume({
 await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 ```
 
-`status` 只读取已运行的 Agent，不创建或恢复会话，并区分可接收、委派、分叉、冲突和未运行状态。其 `state` 与 `asOfSeq` 对应同一个 Session 日志位置。`scopeAgentContext` wire projection 通过现有 Session control stream 提供相同的调度状态。`localTask` 标识当前 owner 本地 Task 代际。本地绑定的 `subscriptionState` 为 `unbound`；远端 `active` 仅记录本地意图，不证明 owner 当前授权或模型采用。
+`status` 只读取已运行的 Agent，不创建或恢复会话，并区分可接收、委派、分叉、冲突和未运行状态。其 `state` 与 `activity` 对应同一个 `asOfSeq` Session 日志位置。现有 Session control stream 通过 `scopeAgentContext` 提供调度状态，通过 `scopeAgentEvidence` 提供不含正文的活动记录。Status 将活动限定于当前符合资格的绑定和本地目标：当前轮次保留的实际请求、最近一次成功完成及最近一次评估。自动许可或合格目标缺失时清空活动。恢复的历史记录不会续期许可；完成只证明所记录的轮次已结束，不证明产物质量。`localTask` 标识当前 owner 本地 Task 代际。本地绑定的 `subscriptionState` 为 `unbound`；远端 `active` 仅记录本地意图，不证明 owner 当前授权或模型采用。
 
 每个管理修改操作都会先比较 `expectedBindingId`；bind 仅在未绑定时接受 null。延迟的 bind 和 resume 在提交前还会复核准确的 Agent 实例与绑定。替换绑定会保留原绑定，直到新订阅准备完成；未被采用的迟到订阅会结束。RPC 回复丢失后应先读取 status：已经提交的绑定仍可查询，使用旧条件重试会被拒绝。修改响应不带 Session watermark，不能覆盖 Client 已收到的较新投影。
 

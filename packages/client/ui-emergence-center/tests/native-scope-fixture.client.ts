@@ -17,7 +17,7 @@ export const bound: ScopeAgentBindingStatus = { ...state, mode: 'passive', bindi
 } }
 export function observation(value = state, seq = 1): Extract<ScopeAgentStatusResult, { state: unknown }> {
   return { agentId: value.agentId, eligibility: 'eligible', state: value, asOfSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['asOfSeq'],
-    readStateSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'], subscriptionState: value.binding === null ? 'unbound' : 'active', localTask: null }
+    readStateSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'], subscriptionState: value.binding === null ? 'unbound' : 'active', localTask: null, activity: { request: null, completed: null, evaluation: null } }
 }
 export function observable<T>(initial: T): HostObservable<T> & { set(value: T): void; count(): number } {
   let value = initial

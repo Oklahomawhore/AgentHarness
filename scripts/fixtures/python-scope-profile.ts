@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { materializeProfilePatch } from '../../packages/test-support/session-snapshot/src/launcher.ts'
-import { parseSnapshotManifest } from '../../packages/test-support/session-snapshot/src/manifest.ts'
+import { parseSnapshotManifest, usesSeparateWriterSnapshot } from '../../packages/test-support/session-snapshot/src/manifest.ts'
 import { normalizeSessionSnapshots } from '../../packages/test-support/session-snapshot/src/normalize.ts'
 
 const [mode, scenarioName, root, logPath] = process.argv.slice(2)
@@ -31,7 +31,7 @@ if (mode === 'prepare') {
   const normalized = normalizeSessionSnapshots([log], { sessionIds: [header.id], cwd })[0]
   if (normalized === undefined) throw new Error('python scope fixture normalization produced no Session')
   const manifest = parseSnapshotManifest(await readFile(join(scenario, 'snapshot.yml'), 'utf8'))
-  const expected = manifest.sessionFormat === undefined ? 'session.v3.jsonl' : 'writer.expected.jsonl'
+  const expected = usesSeparateWriterSnapshot(manifest) ? 'writer.expected.jsonl' : 'session.v3.jsonl'
   const reference = normalizeSessionSnapshots([await readFile(join(scenario, expected), 'utf8')], { sessionIds: [], cwd: '{{cwd}}' })[0]
   const records = normalized.trimEnd().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
   records[0] = { type: 'session', version: header.version, ...records[0] }

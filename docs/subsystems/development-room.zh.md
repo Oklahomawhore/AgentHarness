@@ -1396,6 +1396,8 @@ type ScopeAgentStatusResult =
     readonly readStateSeq: SessionSeqCursor
     readonly subscriptionState: ScopeAgentSubscriptionState
     readonly localTask: ScopeAgentLocalTaskTarget | null
+    /** Recorded automatic activity for the current eligible binding and goal; never a current authorization check. */
+    readonly activity: ScopeAgentActivity
   }
 ```
 
@@ -1461,7 +1463,53 @@ interface ScopeAgentCompletedEvidence {
 ```
 
 ```ts type-equiv
-/** Bounded Host-only evidence fold preserving both remote and owner-local request attribution. */
+/** Recorded projection identity without shared text, source bodies, or the goal text. */
+interface ScopeAgentActivityIdentity {
+  readonly bindingId: ScopeAgentBindingId
+  readonly goalDigest: ScopeAgentGoalDigest
+  readonly taskRevision: ScopeAgentReadProjection['taskRevision']
+  readonly projectionId: ScopeAgentReadProjection['projectionId']
+}
+```
+
+```ts type-equiv
+/** An actual automatic request retained by the current turn; absence does not mean no earlier request. */
+interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {
+  readonly activationId: ScopeAgentActivationId
+  readonly requestSeq: SessionSeq
+  readonly contextSeq: SessionSeq
+  readonly turn: number
+  readonly step: number
+}
+```
+
+```ts type-equiv
+/** Most recent successfully completed automatic turn for this recorded projection. */
+interface ScopeAgentActivityCompleted extends ScopeAgentActivityRequest {
+  readonly assistantSeq: SessionSeq
+  readonly turnEndSeq: SessionSeq
+}
+```
+
+```ts type-equiv
+/** Most recent recorded scheduling decision; activation does not attest a dispatched request. */
+interface ScopeAgentActivityEvaluation extends ScopeAgentActivityIdentity {
+  readonly decision: ScopeAgentEvaluation['decision']
+  readonly activationId: ScopeAgentActivationId | null
+}
+```
+
+```ts type-equiv
+/** Cropped wire evidence. Status filters it by current eligibility, binding, and local goal. */
+interface ScopeAgentActivity {
+  readonly request: ScopeAgentActivityRequest | null
+  readonly completed: ScopeAgentActivityCompleted | null
+  readonly evaluation: ScopeAgentActivityEvaluation | null
+}
+```
+
+```ts type-equiv
+/** Complete Host evidence fold; its wire view exposes only ScopeAgentActivity metadata. */
 interface ScopeAgentEvidenceState {
   readonly version: 1
   readonly activeTurn: number | null
@@ -3493,7 +3541,7 @@ updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<Scop
 @Remote('leave') async leave(request: ScopeAgentBindingRequest): Promise<ScopeAgentBindingStatus>
 
 /**
- * Observe live eligibility, exact Session state, and locally known subscription intent.
+ * Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.
  * @param request - Session identity; lookup never starts or restores a cold Agent.
  * @returns a consistent projection watermark or not-live; no remote authorization is performed.
  */

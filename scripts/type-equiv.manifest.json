@@ -3351,6 +3351,31 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionRecoverRouteRequest",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityIdentity",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityRequest",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityCompleted",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityEvaluation",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivity",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
     }
   ]
 }

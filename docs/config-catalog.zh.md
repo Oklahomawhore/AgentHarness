@@ -2381,7 +2381,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-agent-context/src/index.ts:43`](../packages/collaboration/scope-agent-context/src/index.ts)
+来源： [`packages/collaboration/scope-agent-context/src/index.ts:44`](../packages/collaboration/scope-agent-context/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-contribution"></a>
 

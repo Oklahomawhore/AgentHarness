@@ -201,6 +201,7 @@ export function apply(ctx: Context): void {
       const source = createNativeScopeSource({
         agentId, port: ctx.remote.scopeAgentContext,
         projection: binding.session.projections.faceOf('scopeAgentContext'),
+        evidence: binding.session.projections.faceOf('scopeAgentEvidence'),
         session: binding.session,
         connection: (ctx.get('connection') as ConnectionHandle).generation,
         subscribeReset: listener => ctx.on('connection/reset', listener),

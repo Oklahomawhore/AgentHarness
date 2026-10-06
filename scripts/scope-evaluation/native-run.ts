@@ -278,11 +278,11 @@ export async function launchNativeHost(root: string, role: string,
   if (launcherUrl === undefined) throw new Error('shared launcher module missing')
   const launcher = await import(launcherUrl) as { resolveExampleLaunch: typeof resolveExampleLaunch }
   const invocation = launcher.resolveExampleLaunch({ srcBin: join(request.repo, 'apps/cli/src/bin.ts'), mode: 'lib',
-    configArgs: ['--profile', profileName], env: { DSH_HOME: home, DSH_AGENTS_HOME: join(directory, 'agents'),
+    configArgs: ['--profile', profileName], env: { ...request.environment, DSH_HOME: home, DSH_AGENTS_HOME: join(directory, 'agents'),
       DSH_TELEMETRY_DISABLED: '1', NODE_NO_WARNINGS: '1' } })
   if (await realpath(request.nodePath) !== await realpath(invocation.command)) throw new Error('nodePath must match the running Node launcher')
   const running = child(invocation.command, invocation.args, directory,
-    { ...environment(), ...request.environment, ...invocation.env, HOME: home, USERPROFILE: home }, undefined, request.cleanupTimeoutMs)
+    { ...environment(), ...invocation.env, HOME: home, USERPROFILE: home }, undefined, request.cleanupTimeoutMs)
   return { ...running, directory, home, async connect(signal: AbortSignal) {
     const stopped = running.closed.then((result) => { throw new Error(`Host ${role} exited before readiness: ${result.code}: ${errorText(result.stderr)}`) })
     void stopped.catch(() => {})

@@ -13,7 +13,7 @@ export const localExecution: ScopeAgentBindingStatus = { ...state, version: 2, m
       participantId: localCapture.grant.participantId } } }
 export function localObservation(value = state, localTask = target): ScopeAgentStatusResult {
   return { agentId: value.agentId, eligibility: value.binding === null ? 'task-conflict' : 'eligible', state: value,
-    localTask, readStateSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'], asOfSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['asOfSeq'], subscriptionState: 'unbound' }
+    localTask, readStateSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'], asOfSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['asOfSeq'], subscriptionState: 'unbound', activity: { request: null, completed: null, evaluation: null } }
 }
 export function localSnapshot(value = state): NativeScopeSnapshot {
   return { phase: 'ready', pending: false, issue: null, observation: localObservation(value) }

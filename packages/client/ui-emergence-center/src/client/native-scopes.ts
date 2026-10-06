@@ -49,6 +49,7 @@ export interface NativeScopeDependencies {
   readonly agentId: SessionId
   readonly port: NativeScopePort
   readonly projection: HostObservable<unknown>
+  readonly evidence: HostObservable<unknown>
   readonly session: HostObservable<{ readonly running: boolean }>
   readonly connection: HostObservable<{ readonly id: number } | undefined>
   readonly subscribeAssignments: (listener: () => void) => () => void
@@ -149,6 +150,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
     connection = deps.connection.getSnapshot()
     disposers = [
       deps.projection.subscribe(refresh),
+      deps.evidence.subscribe(refresh),
       deps.subscribeAssignments(refresh),
       deps.session.subscribe(() => {
         const next = deps.session.getSnapshot().running

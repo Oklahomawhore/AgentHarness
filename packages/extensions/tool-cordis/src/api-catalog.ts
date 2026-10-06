@@ -2367,7 +2367,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'status\') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentStatusResult>',
-        description: 'Observe live eligibility, exact Session state, and locally known subscription intent.',
+        description: 'Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.',
         parameters: [{ name: 'request', description: 'Session identity; lookup never starts or restores a cold Agent.' }],
         returns: 'a consistent projection watermark or not-live; no remote authorization is performed.',
       },
@@ -5668,6 +5668,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskListRequest {\n    readonly participantId?: DevelopmentParticipantId;\n    readonly limit?: number;\n}',
   },
   {
+    name: 'DevelopmentTaskLocalContextProjection',
+    declaration: 'export interface DevelopmentTaskLocalContextProjection extends DevelopmentTaskContextProjection, DevelopmentTaskLocalContextTarget {\n    readonly version: 1;\n    readonly kind: \'local-task\';\n    readonly projectionId: DevelopmentTaskLocalContextProjectionId;\n    readonly taskRevision: number;\n    readonly ownerNodeId: DevelopmentNodeId;\n    readonly backend: {\n        readonly id: string;\n        readonly revision: string;\n    };\n    readonly maxContextBytes: number;\n}',
+  },
+  {
+    name: 'DevelopmentTaskLocalContextProjectionId',
+    declaration: 'export type DevelopmentTaskLocalContextProjectionId = Branded<\'DevelopmentTaskLocalContextProjectionId\'>;',
+  },
+  {
     name: 'DevelopmentTaskLocalContextTarget',
     declaration: 'export interface DevelopmentTaskLocalContextTarget {\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly taskBindingId: DevelopmentTaskBindingId;\n    readonly bindingEpoch: DevelopmentTaskBindingEpoch;\n}',
   },
@@ -6876,6 +6884,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeAgentActivationId = Branded<\'ScopeAgentActivationId\'>;',
   },
   {
+    name: 'ScopeAgentActivity',
+    declaration: 'export interface ScopeAgentActivity {\n    readonly request: ScopeAgentActivityRequest | null;\n    readonly completed: ScopeAgentActivityCompleted | null;\n    readonly evaluation: ScopeAgentActivityEvaluation | null;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityCompleted',
+    declaration: 'export interface ScopeAgentActivityCompleted extends ScopeAgentActivityRequest {\n    readonly assistantSeq: SessionSeq;\n    readonly turnEndSeq: SessionSeq;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityEvaluation',
+    declaration: 'export interface ScopeAgentActivityEvaluation extends ScopeAgentActivityIdentity {\n    readonly decision: ScopeAgentEvaluation[\'decision\'];\n    readonly activationId: ScopeAgentActivationId | null;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityIdentity',
+    declaration: 'export interface ScopeAgentActivityIdentity {\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly taskRevision: ScopeAgentReadProjection[\'taskRevision\'];\n    readonly projectionId: ScopeAgentReadProjection[\'projectionId\'];\n}',
+  },
+  {
+    name: 'ScopeAgentActivityRequest',
+    declaration: 'export interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {\n    readonly activationId: ScopeAgentActivationId;\n    readonly requestSeq: SessionSeq;\n    readonly contextSeq: SessionSeq;\n    readonly turn: number;\n    readonly step: number;\n}',
+  },
+  {
     name: 'ScopeAgentAutomaticPolicy',
     declaration: 'export interface ScopeAgentAutomaticPolicy {\n    readonly goal: string;\n    readonly activationLimit: number;\n    readonly maxStepsPerTurn: number;\n    readonly minIntervalMs: number;\n}',
   },
@@ -6940,6 +6968,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ScopeAgentContributionStopRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection;\n}',
   },
   {
+    name: 'ScopeAgentEvaluation',
+    declaration: 'export interface ScopeAgentEvaluation {\n    readonly version: 1 | 2;\n    readonly decision: \'activate\' | \'suppress-unchanged\' | \'blocked-current\' | \'suppress-reserved\';\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly projection: ScopeAgentReadProjection;\n    readonly maxContextBytes: number;\n    readonly activationId: ScopeAgentActivationId | null;\n    readonly baseline: {\n        readonly requestSeq: SessionSeq;\n        readonly turnEndSeq: SessionSeq;\n    } | null;\n}',
+  },
+  {
+    name: 'ScopeAgentGoalDigest',
+    declaration: 'export type ScopeAgentGoalDigest = Branded<\'ScopeAgentGoalDigest\'>;',
+  },
+  {
     name: 'ScopeAgentJoinReadId',
     declaration: 'export type ScopeAgentJoinReadId = Branded<\'ScopeAgentJoinReadId\'>;',
   },
@@ -6984,6 +7020,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeAgentPauseReason = \'user\' | \'restored\' | \'cancelled\' | \'turn-ended\' | \'step-limit\' | \'budget\' | \'conflict\' | \'unavailable\' | \'terminal\' | \'failed\' | \'coverage\';',
   },
   {
+    name: 'ScopeAgentReadProjection',
+    declaration: 'export type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection;',
+  },
+  {
     name: 'ScopeAgentRemoteBinding',
     declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n}',
   },
@@ -6993,7 +7033,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentStatusResult',
-    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n};',
+    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n    readonly activity: ScopeAgentActivity;\n};',
   },
   {
     name: 'ScopeAgentSubscriptionState',

@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { executePayment, parseCases, parsePolicy, sealDataArtifact } from './data-artifacts.ts'
 import { createDataStudy, parseDataStudyConfig } from './data-study.ts'
 
-const route = { provider: 'deepseek-official', model: 'registered-model', endpoint: 'https://api.deepseek.com/',
+const route = { provider: 'deepseek-official', endpointSource: { kind: 'deepseek-official' },
+  network: { kind: 'direct' }, model: 'registered-model', endpoint: 'https://api.deepseek.com/',
   apiKeyEnv: 'EVALUATION_API_KEY', credentialsPath: '/nonexistent/selected-credentials.yaml',
   maxCalls: 6, maxInputBytes: 32768, maxOutputTokens: 2048, maxOutputBytes: 16384, timeoutMs: 30000 }
 const config = { ordinary: route, semantic: { ...route, maxCalls: 2 }, limits: { contextBytes: 8192,
@@ -18,6 +19,61 @@ describe('ordinary Agent study registration', () => {
     expect(parsed.ordinary.model).toBe('registered-model')
     expect(parsed.limits.contextBytes).toBe(8192)
     expect(parsed.ordinary.credentialsPath).toBe('/nonexistent/selected-credentials.yaml')
+  })
+
+  it('requires explicit direct networking or one named proxy reference, including lowercase environment names', () => {
+    const ordinary = { ...route, network: { kind: 'env-proxy', urlEnv: 'https_proxy' } }
+    expect(parseDataStudyConfig({ ...config, ordinary }, 'live').ordinary.network).toEqual(ordinary.network)
+    for (const network of [undefined, { kind: 'unknown' }, { kind: 'direct', urlEnv: 'HTTPS_PROXY' },
+      { kind: 'env-proxy' }, { kind: 'env-proxy', urlEnv: '' }, { kind: 'env-proxy', urlEnv: 'bad-name' },
+      { kind: 'env-proxy', urlEnv: '1PROXY' }, { kind: 'env-proxy', urlEnv: 'HTTPS_PROXY', url: 'http://secret' }]) {
+      expect(() => parseDataStudyConfig({ ...config, ordinary: { ...route, network } }, 'live')).toThrow()
+    }
+    const local = { ...route, credentialsPath: null, endpoint: 'http://127.0.0.1:12345/v1',
+      network: { kind: 'env-proxy', urlEnv: 'https_proxy' } }
+    expect(() => parseDataStudyConfig({ ...config, ordinary: local, semantic: local }, 'transport-calibration'))
+      .toThrow('requires direct networking')
+  })
+
+  it('requires the service identity separately from the production adapter route', () => {
+    for (const endpointSource of [undefined, { kind: 'unknown' }, { kind: 'deepseek-official', name: 'ambiguous' },
+      { kind: 'openai-compatible-gateway' }, { kind: 'openai-compatible-gateway', name: '' },
+      { kind: 'openai-compatible-gateway', name: '  ' }, { kind: 'openai-compatible-gateway', name: 'x'.repeat(129) },
+      { kind: 'openai-compatible-gateway', name: 'temorouter', apiKey: 'not-a-credential' }]) {
+      expect(() => parseDataStudyConfig({ ...config, ordinary: { ...route, endpointSource } }, 'live')).toThrow()
+    }
+  })
+
+  it.each(['https://gateway.example/', 'https://gateway.example/v1', 'https://gateway.example/api/v1/',
+    'https://gateway.example:8443/custom/v1'])('retains an explicitly named HTTPS gateway and its exact base: %s', (endpoint) => {
+    const ordinary = { ...route, endpointSource: { kind: 'openai-compatible-gateway', name: 'temorouter' },
+      endpoint, apiKeyEnv: 'OPENAI_API_KEY', credentialsPath: null }
+    const parsed = parseDataStudyConfig({ ...config, ordinary }, 'live')
+    expect(parsed.ordinary).toEqual(ordinary)
+    ordinary.endpointSource.name = 'changed'
+    expect(parsed.ordinary.endpointSource).toEqual({ kind: 'openai-compatible-gateway', name: 'temorouter' })
+    expect(parsed.semantic.endpointSource).toEqual({ kind: 'deepseek-official' })
+  })
+
+  it.each(['http://gateway.example/v1', 'http://127.0.0.1:12345/v1', 'https://gateway.example/v1?key=x',
+    'https://gateway.example/v1#fragment', 'https://user:secret@gateway.example/v1'])
+  ('refuses a named gateway with an insecure or credential-bearing endpoint: %s', (endpoint) => {
+    const ordinary = { ...route, endpointSource: { kind: 'openai-compatible-gateway', name: 'temorouter' }, endpoint }
+    expect(() => parseDataStudyConfig({ ...config, ordinary }, 'live')).toThrow()
+  })
+
+  it('keeps named-gateway calibration confined to loopback HTTP without credential files', () => {
+    const local = { ...route, endpointSource: { kind: 'openai-compatible-gateway', name: 'local-http-calibration' },
+      credentialsPath: null, endpoint: 'http://127.0.0.1:12345/v1' }
+    const selected = { ...config, ordinary: local, semantic: local }
+    expect(parseDataStudyConfig(selected, 'transport-calibration').ordinary).toEqual(local)
+    expect(() => parseDataStudyConfig(selected, 'live')).toThrow()
+    for (const endpoint of ['https://gateway.example/v1', 'http://gateway.example:12345/v1',
+      'http://127.0.0.1/v1', 'https://127.0.0.1:12345/v1', 'http://127.0.0.1:12345/custom/v1']) {
+      expect(() => parseDataStudyConfig({ ...selected, ordinary: { ...local, endpoint } }, 'transport-calibration')).toThrow()
+    }
+    expect(() => parseDataStudyConfig({ ...selected, ordinary: { ...local, credentialsPath: '/any/file.yaml' } },
+      'transport-calibration')).toThrow('must not load credential files')
   })
 
   it.each(['http://api.deepseek.com/', 'https://other.example/', 'https://api.deepseek.com/?key=x',
