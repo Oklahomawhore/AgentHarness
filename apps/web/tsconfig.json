@@ -127,6 +127,8 @@
     "tests/online-contribution-scope.e2e.ts",
     "tests/scope-network-settings.e2e.ts",
     "tests/scope-route-recovery.e2e.ts",
+    "tests/two-device-profile.e2e.ts",
+    "tests/two-device-profile-support.ts",
     "tests/contribution-scope-support.ts",
     "tests/workspace-onboarding.e2e.ts"
   ],
