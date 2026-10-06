@@ -2,10 +2,12 @@
 
 [English](README.md) | 中文
 
-这些测试在进程内启动真实的 web 组合，并用真实 Chromium 通过真实 HTTP 驱动它。该 lane
+依赖 scaffold 的测试在进程内启动真实的 web 组合，并用真实 Chromium 通过真实 HTTP 驱动它。该 lane
 的运行机制——模式、fixture、golden，以及与 `dsh web` 之间刻意保留的组合差异——记录在
 [`scaffold.ts`](scaffold.ts) 和
 [浏览器 e2e Agent Note](../../../.agents/notes/implemented/testing/2026-07-24-web-gui-browser-e2e-lane.zh.md)中。
+
+[独立 Web 校准](../../../scripts/scope-evaluation/two-device/README.zh.md)则启动两个正式 `dsh` 进程，通过产品 UI 完成 Task 设置、加入和文件工作。它使用独立持久化和只读证据，不通过 scaffold 预填状态。本机结果不能证明两台物理设备。
 
 ## 完成状态观察
 
