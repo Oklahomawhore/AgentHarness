@@ -20,7 +20,7 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type { AgentCancelCause, SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
+import { replaceContext, snapshotMessage, scopeContextFramingBytes, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
 import { evidenceVersion } from './projection.ts'
 import { blocksCurrentCoverage } from './coverage.ts'
@@ -46,6 +46,8 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Total UTF-8 bytes of all managed context messages, including consumer framing; minimum 512 bytes. */
   readonly maxContextBytes: number
+  /** Local projection ceiling while both sources are active; local-only and remote-withdrawn reads use the remaining total. */
+  readonly maxLocalContextBytes: number
   /** Minimum delay before one idle activation attempt; changes during the delay are coalesced. */
   readonly coalesceMs: number
   /** Delay before rechecking an unavailable owner; automatic permission remains paused. */
@@ -55,6 +57,7 @@ export interface Config {
 /** Configuration does not grant any Session permission to start automatically. */
 export const Config: s<Config> = s.object({
   maxContextBytes: s.number().step(1).min(512).required(),
+  maxLocalContextBytes: s.number().step(1).min(1).required(),
   coalesceMs: s.number().step(1).min(1).max(2_147_483_647).required(),
   retryDelayMs: s.number().step(1).min(1).max(2_147_483_647).required(),
 })
@@ -119,6 +122,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
    */
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx, 'scopeAgentContext')
+    if (config.maxLocalContextBytes + scopeContextFramingBytes() >= config.maxContextBytes) {
+      throw new Error('scope-agent-context: maxLocalContextBytes must leave room for remote framing and text')
+    }
     ctx.sessionProjections.register(scopeAgentProjection)
     ctx.sessionProjections.register(scopeAgentEvidenceProjection)
     ctx.on('llm/stream', (options, next) => {
@@ -1390,12 +1396,14 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           if (!this.localAdmissionAvailable(runtime) || runtime.localAdmissionSignal === undefined) {
             throw new Error('scope-agent-context: local admission consumer changed')
           }
-          return await readComposite(this.ctx, binding, this.config.maxContextBytes,
+          return await readComposite(this.ctx, binding, this.config.maxContextBytes, this.config.maxLocalContextBytes,
             AbortSignal.any([signal, runtime.localAdmissionSignal]), this.extraContextBytes(runtime),
             () => this.currentLocalTarget(runtime, binding.target)
               && this.localAdmissionAvailable(runtime) && this.state(runtime).binding?.id === binding.id)
         }
-        return await this.ctx.scopeAccess.retrieve(binding.subscriptionId, signal)
+        const budget = this.config.maxContextBytes - scopeContextFramingBytes() - this.extraContextBytes(runtime)
+        if (budget <= 0) throw new Error('scope-agent-context: context leaves no remote scope budget')
+        return await this.ctx.scopeAccess.retrieveWithinBudget({ subscriptionId: binding.subscriptionId, maxContextBytes: budget }, signal)
       }
       if (!this.localAdmissionAvailable(runtime) || runtime.localAdmissionSignal === undefined) throw new Error('scope-agent-context: local admission consumer changed')
       const remoteWithdrawal = visibleContext(runtime.agent).length === 0 ? 0 : withdrawalMessage('left').content.reduce((sum, block) => sum
@@ -1582,7 +1590,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         return this.withoutFacts(runtime, decision, messages, external, turn, 'failed', signal)
       }
       if (state.binding.kind === 'local-task' && visibleContext(runtime.agent).length > 0) prepared.push(withdrawalMessage('left'))
-      if (hasLocal(state.binding) && prepared.reduce((sum, message) => sum
+      if (prepared.reduce((sum, message) => sum
         + message.content.reduce((bytes, block) => bytes + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0),
       this.extraContextBytes(runtime)) > this.config.maxContextBytes) {
         this.pauseRuntime(runtime, 'failed')
@@ -1615,6 +1623,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const localWithdrawal = localContextWithdrawalMessage(reason)
     const remoteWithdrawal = withdrawalMessage(binding?.kind === 'local-task' ? 'left' : reason)
     const departedRemote = binding?.kind === 'local-task' && visibleContext(runtime.agent).length > 0
+    if (!hasLocal(binding)) {
+      const bytes = remoteWithdrawal.content.reduce((sum, block) => sum
+        + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), this.extraContextBytes(runtime))
+      if (bytes > this.config.maxContextBytes) return { kind: 'reject' }
+    }
     if (binding?.kind === 'local-task') {
       const withdrawals = departedRemote ? [localWithdrawal, remoteWithdrawal] : [localWithdrawal]
       const bytes = withdrawals.reduce((sum, message) => message.content.reduce((total, block) => total

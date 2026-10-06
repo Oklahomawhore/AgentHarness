@@ -168,7 +168,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
       { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25 } },
     ] : []),
-    ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: 16000, coalesceMs: 1, retryDelayMs: 1000 } }] : []),
+    ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: 16000, maxLocalContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } }] : []),
   ]
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include

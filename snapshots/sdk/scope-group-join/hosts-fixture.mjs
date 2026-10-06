@@ -25,13 +25,13 @@ class SourceAdapter extends LlmAdapter {
 }
 
 /** Create a private Loader tree with real disk storage and native tools. */
-export async function host(root, role, { maxContextBytes = 8000 } = {}) {
+export async function host(root, role, { maxContextBytes = 8000, maxLocalContextBytes = Math.floor(maxContextBytes / 2) } = {}) {
   const ctx = new Context()
   ctx.logger.exporter({ export(message) {
     if (message.type === 'error') process.stderr.write(`group ${role}: ${message.args.map(value => value instanceof Error ? value.stack : String(value)).join(' ')}\n`)
   } })
   try {
-    return await initializeHost(ctx, root, role, maxContextBytes)
+    return await initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes)
   } catch (error) {
     process.stderr.write(`group ${role} initialization failed: ${error instanceof Error ? error.stack : String(error)}\n`)
     try { await ctx.fiber.dispose() } catch (cleanupError) {
@@ -41,7 +41,7 @@ export async function host(root, role, { maxContextBytes = 8000 } = {}) {
   }
 }
 
-async function initializeHost(ctx, root, role, maxContextBytes) {
+async function initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
   const workspace = join(root, 'workspace')
@@ -88,7 +88,7 @@ async function initializeHost(ctx, root, role, maxContextBytes) {
       { name: 'system' }, { name: 'tools' }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
       { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
       { name: 'local-context', config: { maxContextBytesPerStep: 12000 } },
-      { name: 'scope-context', config: { maxContextBytes, coalesceMs: 10, retryDelayMs: 1000 } },
+      { name: 'scope-context', config: { maxContextBytes, maxLocalContextBytes, coalesceMs: 10, retryDelayMs: 1000 } },
       { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25 } })
   }
   await ctx.plugin(Loader)

@@ -192,7 +192,7 @@ async function fixture() {
   await writeFile(path, JSON.stringify([
     { name: 'cordis:history-jsonl', config: { root: join(directory, 'sessions'), compression: 'none' } },
     { name: 'cordis:history-local-context', config: { maxContextBytesPerStep: 8000 } },
-    { name: 'cordis:history-consumer', config: { maxContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } },
+    { name: 'cordis:history-consumer', config: { maxContextBytes: 8000, maxLocalContextBytes: 4000, coalesceMs: 1, retryDelayMs: 1000 } },
   ]))
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
   await ctx.loader.await()

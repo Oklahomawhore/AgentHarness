@@ -20,7 +20,7 @@ import { ContributionApplications } from './application.ts'
 import { ContributionEntryProbe } from './entry-probe.ts'
 import { groupReservedBytes, type ApplicationRecord, type GroupRecord, type ManagedApplicationRecord } from './application-schema.ts'
 import { readRequestSchema, captureReadRequestSchema, readResponseSchema, scopeAccessDomainSpec, scopeGroupDomainSpec,
-  waitRequestSchema, waitResponseSchema } from './state.ts'
+  budgetReadRequestSchema, waitRequestSchema, waitResponseSchema } from './state.ts'
 import type { ScopeAccessDomain, ScopeGroupDomain } from './state.ts'
 import type {
   ScopeContributionEntryRequest, ScopeContributionEntryResult, ScopeContributionEntryRecoverRequest,
@@ -35,7 +35,7 @@ import type {
   ScopeContributionSubmitResult, ScopeContributionEndResult, ScopeContributionTransfer, ScopeContributionApproveRequest,
   ScopeContributionApproval, ScopeContributionInventory, ScopeContributionInventoryRequest, ScopeContributionRecoverRequest,
   ScopeAccessProjection, ScopeOriginalCapture, ScopeChangeCursor, ScopeReadGrant, ScopeRetrieveResult,
-  ScopeSubscription, ScopeSubscriptionId, ScopeWaitResult,
+  ScopeSubscription, ScopeSubscriptionId, ScopeWaitResult, ScopeRetrieveWithinBudgetRequest,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -102,8 +102,10 @@ export const Config: s<Config> = s.object({
 
 const PROTOCOL = '/agentharness/scope-read/1'
 const CAPTURE_PROTOCOL = '/agentharness/scope-read/2'
+const BUDGET_PROTOCOL = '/agentharness/scope-read/3'
 const WAIT_PROTOCOL = '/agentharness/scope-watch/1'
 type ReadRequest = ReturnType<typeof readRequestSchema.parse> | ReturnType<typeof captureReadRequestSchema.parse>
+  | ReturnType<typeof budgetReadRequestSchema.parse>
 type ReadResponse = ReturnType<typeof readResponseSchema.parse>
 type WaitRequest = ReturnType<typeof waitRequestSchema.parse>
 type WaitResponse = ReturnType<typeof waitResponseSchema.parse>
@@ -190,6 +192,8 @@ export default class ScopeAccessService extends TypertRemoteService {
     ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, request => this.track(this.respond(request, 1))), 'scope-access: peer reads')
     ctx.effect(() => ctx.scopeTransport.register(CAPTURE_PROTOCOL, request => this.track(this.respond(request, 2))),
       'scope-access: original-capture peer reads')
+    ctx.effect(() => ctx.scopeTransport.register(BUDGET_PROTOCOL, request => this.track(this.respond(request, 3))),
+      'scope-access: budgeted peer reads')
     ctx.effect(() => ctx.scopeTransport.register(WAIT_PROTOCOL, request => this.track(this.respondWait(request))), 'scope-access: change waits')
     ctx.effect(() => async () => {
       this.lifetime.abort(new Error('scope-access: service disposed'))
@@ -590,7 +594,18 @@ export default class ScopeAccessService extends TypertRemoteService {
    * @returns current projection or an explicit inactive/unknown state; never an offline cached projection.
    */
   retrieve(subscriptionId: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult> {
-    return this.track(this.retrieveCurrent(subscriptionId, signal))
+    return this.track(this.retrieveCurrent(subscriptionId, signal, undefined))
+  }
+
+  /**
+   * Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.
+   * @param request - subscription and positive backend text allowance, excluding consumer-owned model framing.
+   * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
+   * @returns exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.
+   */
+  async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult> {
+    const offered = Math.min(budgetReadRequestSchema.shape.maxContextBytes.parse(request.maxContextBytes), this.config.maxContextBytes)
+    return await this.track(this.retrieveCurrent(request.subscriptionId, signal, offered))
   }
 
   /**
@@ -733,7 +748,8 @@ export default class ScopeAccessService extends TypertRemoteService {
     this.receiverWaits.get(id)?.controller.abort(new Error('scope-access: subscription ended'))
   }
 
-  private async retrieveCurrent(id: ScopeSubscriptionId, consumerSignal: AbortSignal): Promise<ScopeRetrieveResult> {
+  private async retrieveCurrent(id: ScopeSubscriptionId, consumerSignal: AbortSignal,
+    maxContextBytes: number | undefined): Promise<ScopeRetrieveResult> {
     const domain = await this.ready
     consumerSignal.throwIfAborted()
     this.lifetime.signal.throwIfAborted()
@@ -745,12 +761,16 @@ export default class ScopeAccessService extends TypertRemoteService {
     this.activeReads++; this.activeOrdinary++
     const signal = AbortSignal.any([consumerSignal, this.lifetime.signal, AbortSignal.timeout(this.config.requestTimeoutMs)])
     const fields = { requestId: randomUUID(), subscriptionId: id, generation: subscription.generation, invitation: subscription.invitation }
-    const request: ReadRequest = subscription.version === 2
-      ? { ...fields, version: 2, originalCapture: subscription.originalCapture } : { ...fields, version: 1 }
+    const request: ReadRequest = maxContextBytes === undefined
+      ? subscription.version === 2
+        ? { ...fields, version: 2, originalCapture: subscription.originalCapture } : { ...fields, version: 1 }
+      : { ...fields, version: 3, maxContextBytes,
+        ...(subscription.version === 2 ? { originalCapture: subscription.originalCapture } : {}) }
+    const protocol = request.version === 3 ? BUDGET_PROTOCOL : request.version === 2 ? CAPTURE_PROTOCOL : PROTOCOL
     this.requests.set(id, request.requestId)
     try {
       const raw = await this.ctx.scopeTransport.request({ peerId: subscription.invitation.ownerPeerId,
-        address: subscription.invitation.ownerAddress }, request.version === 2 ? CAPTURE_PROTOCOL : PROTOCOL, request, signal)
+        address: subscription.invitation.ownerAddress }, protocol, request, signal)
       signal.throwIfAborted()
       if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > this.config.maxResponseBytes) throw new Error('scope-access: response exceeds budget')
       const response = readResponseSchema.parse(raw)
@@ -774,6 +794,9 @@ export default class ScopeAccessService extends TypertRemoteService {
           await currentDomain.table('subscriptions').put(id, { ...current, state: response.result.status })
           this.stopWaiting(id)
           return { status: response.result.status }
+        }
+        if (request.version === 3 && response.result.projection.maxContextBytes > request.maxContextBytes) {
+          throw new Error('scope-access: projection exceeds the requested text budget')
         }
         this.requireProjection(response.result.projection, subscription.invitation, subscription.originalCapture)
         await this.persistProjection(currentDomain, response.result.projection)
@@ -799,8 +822,9 @@ export default class ScopeAccessService extends TypertRemoteService {
     readonly peerId: ScopePeerId
     readonly payload: unknown
     readonly signal: AbortSignal
-  }, version: 1 | 2): Promise<unknown> {
-    const request = version === 1 ? readRequestSchema.parse(input.payload) : captureReadRequestSchema.parse(input.payload)
+  }, version: 1 | 2 | 3): Promise<unknown> {
+    const request = version === 1 ? readRequestSchema.parse(input.payload)
+      : version === 2 ? captureReadRequestSchema.parse(input.payload) : budgetReadRequestSchema.parse(input.payload)
     const domain = await this.ready
     const respond = (result: ReadResponse['result']): ReadResponse => ({
       requestId: request.requestId, subscriptionId: request.subscriptionId, generation: request.generation, result,
@@ -813,21 +837,24 @@ export default class ScopeAccessService extends TypertRemoteService {
     try {
       const view = this.requireRootView(await this.ctx.developmentTasks.currentContextView(authority.invitation.taskId))
       signal.throwIfAborted()
-      const peerCapture = request.version === 2
-        ? this.originalPeerCapture(domain, authority.invitation, request.originalCapture) : undefined
-      if (request.version === 2 && peerCapture === undefined) return respond({ status: 'denied' })
+      const originalCapture = request.version === 1 ? undefined : request.originalCapture
+      const peerCapture = originalCapture === undefined ? undefined
+        : this.originalPeerCapture(domain, authority.invitation, originalCapture)
+      if (originalCapture !== undefined && peerCapture === undefined) return respond({ status: 'denied' })
+      const maxContextBytes = request.version === 3
+        ? Math.min(this.config.maxContextBytes, request.maxContextBytes) : this.config.maxContextBytes
       const backend = this.ctx.developmentTaskContextBackend
       const identity = backend.identity
       const output = await backend.compute({ view, recipient: {
         participantId: `scope-recipient-${authority.invitation.grantId}` as DevelopmentParticipantId,
         sessionLabel: authority.invitation.responsibility, ...(peerCapture === undefined ? {} : { peerCapture }),
-      }, maxContextBytes: this.config.maxContextBytes, signal })
+      }, maxContextBytes, signal })
       signal.throwIfAborted()
       const fields = { ...output, ...(peerCapture === undefined ? { version: 2 as const } : { version: 3 as const, peerCapture }),
         taskId: view.task.id, taskRevision: view.task.revision,
         ownerPeerId: this.peerId, recipientPeerId: authority.invitation.recipientPeerId,
         grantId: authority.invitation.grantId, grantGeneration: authority.invitation.generation,
-        expiresAt: authority.invitation.expiresAt, backend: { ...identity }, maxContextBytes: this.config.maxContextBytes }
+        expiresAt: authority.invitation.expiresAt, backend: { ...identity }, maxContextBytes }
       const projection = projectionSchema.parse({ ...fields, projectionId: projectionDigest(fields) })
       const expected = [{ kind: 'task', taskId: view.task.id, revision: view.task.revision }, ...view.task.context.map(item => ({
         kind: 'publication', taskId: view.task.id, revision: view.task.revision, publicationId: item.id,
@@ -847,8 +874,8 @@ export default class ScopeAccessService extends TypertRemoteService {
           signal.throwIfAborted()
           if (typeof this.authorize(currentDomain, request, input.peerId) === 'string') return false
           return this.ctx.developmentTaskContextBackend.identity === identity
-            && (request.version === 1 || isDeepStrictEqual(peerCapture,
-              this.originalPeerCapture(currentDomain, authority.invitation, request.originalCapture)))
+            && (originalCapture === undefined || isDeepStrictEqual(peerCapture,
+              this.originalPeerCapture(currentDomain, authority.invitation, originalCapture)))
             && this.contributions.terminalRevision(view.task.id) <= view.task.revision
         }
         if (!await fresh()) return respond({ status: 'unavailable' })
@@ -865,7 +892,8 @@ export default class ScopeAccessService extends TypertRemoteService {
     if (grant === undefined || peerId !== grant.invitation.recipientPeerId || grant.invitation.ownerPeerId !== this.peerId
       || !sameReadGrant(grant.invitation, request.invitation)) return 'denied'
     if (grant.state === 'revoked') return 'revoked'
-    if (request.version === 2 && this.originalPeerCapture(domain, grant.invitation, request.originalCapture) === undefined) return 'denied'
+    const originalCapture = request.version === 1 ? undefined : request.originalCapture
+    if (originalCapture !== undefined && this.originalPeerCapture(domain, grant.invitation, originalCapture) === undefined) return 'denied'
     if (grant.invitation.expiresAt <= Date.now()) return 'expired'
     return grant
   }

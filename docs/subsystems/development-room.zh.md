@@ -931,6 +931,15 @@ interface ScopeInviteRequest {
 ```
 
 ```ts type-equiv
+/** Consumer-selected backend text allowance; callers reserve model framing and other context separately. */
+interface ScopeRetrieveWithinBudgetRequest {
+  readonly subscriptionId: ScopeSubscriptionId
+  /** Positive safe-integer UTF-8 byte ceiling, further narrowed by both Hosts' configured limits. */
+  readonly maxContextBytes: number
+}
+```
+
+```ts type-equiv
 /** Online authorization outcome; unavailable never permits reuse of an earlier projection. */
 type ScopeRetrieveResult =
   | { readonly status: 'active'; readonly projection: ScopeAccessProjection }
@@ -3777,6 +3786,14 @@ endContribution(request: { readonly invitation: ScopeContributionInvitation }, s
  * @returns current projection or an explicit inactive/unknown state; never an offline cached projection.
  */
 retrieve(subscriptionId: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult>
+
+/**
+ * Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.
+ * @param request - subscription and positive backend text allowance, excluding consumer-owned model framing.
+ * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
+ * @returns exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.
+ */
+async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult>
 
 /**
  * Wait online for a bounded change hint without retrieving facts or occupying the mutation queue.

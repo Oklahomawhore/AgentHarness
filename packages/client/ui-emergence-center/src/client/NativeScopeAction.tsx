@@ -1,7 +1,9 @@
 /** Current-Session read subscription and explicit, finite automatic-work permission. */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ScopeInvitation, ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus } from '@deepseek-ai/dsh-api-remotes/client'
+import type {
+  ScopeInvitation, ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus, ScopeAgentBindingStatus,
+} from '@deepseek-ai/dsh-api-remotes/client'
 import {
   Button, IconLinkOutline14, IconChevronDownOutline14, IconCloseOutline16,
   StateDot, useAnchoredPosition, useDismissOnOutsidePointer,
@@ -64,6 +66,13 @@ function issueKey(issue: string): EmergenceCenterKey {
     case 'scope-agent/budget-exhausted': return 'native.error.budget'
     default: return 'native.error.unknown'
   }
+}
+
+const passivePauseKeys: Record<NonNullable<ScopeAgentBindingStatus['pauseReason']>, EmergenceCenterKey> = {
+  user: 'native.passiveHint', restored: 'native.passiveHint', cancelled: 'native.passiveHint',
+  'turn-ended': 'native.passiveHint', 'step-limit': 'native.passiveHint', budget: 'native.passiveHint',
+  conflict: 'native.read.conflict', unavailable: 'native.read.unavailable', terminal: 'native.pause.terminal',
+  failed: 'native.read.failed', coverage: 'native.read.coverage',
 }
 
 /**
@@ -194,7 +203,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
         <p className={css.state} role="status">{state?.binding?.kind === 'local-task' ? t('native.mode.left') : label}</p>
-        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
+        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(state.automatic === null
+          ? passivePauseKeys[state.pauseReason] : `native.pause.${state.pauseReason}`)}</p>}
         {state !== undefined && state.binding?.kind !== 'local-task' && <p className={css.budget}>{state.automatic === null
           ? t('native.used', { used: state.usedBudget })
           : t('native.budget', { used: state.usedBudget, limit: state.automatic.activationLimit, steps: state.automatic.maxStepsPerTurn })}</p>}

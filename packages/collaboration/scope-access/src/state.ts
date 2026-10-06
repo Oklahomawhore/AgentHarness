@@ -21,8 +21,13 @@ export const readRequestSchema = z.object({
   version: z.literal(1), requestId: z.uuid(), subscriptionId, generation, invitation: invitationSchema,
 }).strict()
 
-/** Explicit source association requires the version-2 read protocol. */
+/** Version-2 reads carry an explicit source association. */
 export const captureReadRequestSchema = readRequestSchema.extend({ version: z.literal(2), originalCapture: originalCaptureSchema })
+
+/** Version-3 reads negotiate backend text bytes without changing the optional original source association. */
+export const budgetReadRequestSchema = readRequestSchema.extend({ version: z.literal(3),
+  maxContextBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), originalCapture: originalCaptureSchema.optional(),
+})
 
 /** Response echoes one request identity; denied responses carry no scope metadata. */
 export const readResponseSchema = z.object({

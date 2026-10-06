@@ -56,16 +56,20 @@ export default class FixtureTransport extends ScopeTransport {
       signal.throwIfAborted()
       return { ...envelope, result: { status: 'changed', cursor: cursor() } }
     }
-    assert.equal(protocol, '/agentharness/scope-read/1')
+    assert.equal(protocol, '/agentharness/scope-read/3')
+    assert.equal(payload.version, 3)
+    assert.ok(Number.isSafeInteger(payload.maxContextBytes) && payload.maxContextBytes > 0)
+    assert.ok(payload.maxContextBytes <= 8000, 'the native consumer must offer its remaining context allowance')
     this.reads++
     const values = ['Initial declaration: orderCode is required.', 'Corrected declaration: sku is required.', 'Final declaration: itemId is required.']
     const evidence = values[Math.min(this.revision, 3) - 1]
+    assert.ok(Buffer.byteLength(evidence, 'utf8') <= payload.maxContextBytes)
     const projection = {
       version: 2,
       taskId: invitation.taskId, taskRevision: this.revision,
       ownerPeerId: invitation.ownerPeerId, recipientPeerId: invitation.recipientPeerId,
       grantId: invitation.grantId, grantGeneration: invitation.generation, expiresAt: invitation.expiresAt,
-      backend: { id: 'fixture-exact-owner-text', revision: '1' }, maxContextBytes: 6000,
+      backend: { id: 'fixture-exact-owner-text', revision: '1' }, maxContextBytes: Math.min(6000, payload.maxContextBytes),
       text: evidence, selectedSources: [{ kind: 'task', taskId: invitation.taskId, revision: this.revision }], omittedSources: [],
       activation: { kind: 'recipient-evidence', version: 1, digest: createHash('sha256').update(evidence).digest('hex'), coverage: 'complete' },
     }

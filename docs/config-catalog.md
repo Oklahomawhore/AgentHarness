@@ -2372,6 +2372,8 @@ Requires: `agents` · `sessionProjections` · `scopeAccess`
 export interface Config {
   /** Total UTF-8 bytes of all managed context messages, including consumer framing; minimum 512 bytes. */
   readonly maxContextBytes: number
+  /** Local projection ceiling while both sources are active; local-only and remote-withdrawn reads use the remaining total. */
+  readonly maxLocalContextBytes: number
   /** Minimum delay before one idle activation attempt; changes during the delay are coalesced. */
   readonly coalesceMs: number
   /** Delay before rechecking an unavailable owner; automatic permission remains paused. */

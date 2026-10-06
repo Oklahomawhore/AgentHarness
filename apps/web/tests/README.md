@@ -12,7 +12,7 @@ the deliberate composition divergences from `dsh web` — are documented in
 
 State-sensitive cases use Workspace, admission, attachment, and model-stream barriers to separate visible intermediate states from completed operations. Details close waits for frame transitions; archive verification assigns an explicit title to the seeded Session and follows that identity across reload. See the [CI fixture synchronization decision](../../../.agents/notes/implemented/testing/2026-09-08-ci-completion-observations.md).
 
-Native owner contribution cases use independent Web Hosts and real Write tools. The retained-local joint case explicitly opts into prejoin observations, exposes that permission to the owner, checks source delivery coverage, and captures an owner request containing the recorded work before a subsequent live Write. It then checks live updates and departure without replacing the original local Task or capture. The separate SDK initialization scenario covers a third Host with historical consent left off.
+Native owner contribution cases use independent Web Hosts and real Write tools. The retained-local joint case explicitly opts into prejoin observations, exposes that permission to the owner, checks source delivery coverage, and captures an owner request containing the recorded work before a subsequent live Write. It then checks live updates and departure without replacing the original local Task or capture. The separate SDK initialization scenario covers a third Host with historical consent left off. The separate recipient-budget case joins passively without a preexisting local capture and verifies complete facts plus explicit omissions within the remainder of an unchanged 8,000-byte combined allowance.
 
 ## These are Host-face tests
 

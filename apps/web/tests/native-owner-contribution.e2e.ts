@@ -1448,3 +1448,244 @@ describe.skipIf(process.platform === 'win32')('web e2e: reusable group entry joi
       'group-b-automatic.expected.md', 'group-b-left-local-kept.expected.md'])
   }, 240_000)
 })
+
+// First-use joint receiving retains useful complete groups when the owner offers more text than this Session accepts.
+describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without preexisting local capture', () => {
+  const snapshots = join(import.meta.dirname, 'snapshots/native-recipient-budget')
+  const groups = [1, 2, 3].map(index => `export const WEB_OWNER_BUDGET_${String(index)} = '${'界'.repeat(750)}';\n`)
+  const beforeCode = 'export const WEB_PRIVATE_BEFORE = true;\n'
+  const sharedCode = 'export const WEB_B_SHARED = true;\n'
+  const afterCode = 'export const WEB_LOCAL_AFTER = true;\n'
+  let owner: WebScaffold | undefined
+  let source: WebScaffold | undefined
+  let browser: Browser | undefined
+  let directory: string | undefined
+  let ownerPage: Page
+  let sourcePage: Page
+  const aRequests: Message[][] = []
+  const bRequests: Message[][] = []
+  const trips: ReturnType<typeof watchConsole>[] = []
+  function fileReply(path: string, content: string, ordinal: number): StreamChunk[] {
+    const id = ToolCallId(`recipient-budget-${String(ordinal)}`)
+    const args = JSON.stringify({ file_path: `project/${path}`, content })
+    return [{ type: 'block-start', index: 0, blockType: 'tool-call' },
+      { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'write', arguments: args } },
+      { type: 'finish', reason: { kind: 'tool-calls' } }]
+  }
+  beforeAll(async () => {
+    if (MODE === 'record') throw new Error('Recipient budget acceptance uses controlled keyless responses')
+    directory = await mkdtemp(join(tmpdir(), 'dsh-recipient-budget-web-'))
+    const ownerOverride = join(directory, 'owner.override.json')
+    const sourceOverride = join(directory, 'source.override.json')
+    await writeFile(ownerOverride, JSON.stringify([response('BUDGET_OWNER_READY'),
+      ...groups.map((value, index) => fileReply(`group-${String(index + 1)}.ts`, value, index)), response('BUDGET_OWNER_WRITTEN'),
+      response('BUDGET_OWNER_RECEIVED')].map(chunks => ({ kind: 'chunks', chunks }))))
+    await writeFile(sourceOverride, JSON.stringify([fileReply('before.ts', beforeCode, 10), response('BUDGET_SOURCE_READY'),
+      response('BUDGET_SOURCE_READ'), fileReply('shared.ts', sharedCode, 11), response('BUDGET_SOURCE_SHARED'),
+      fileReply('after.ts', afterCode, 12), response('BUDGET_SOURCE_LEFT')].map(chunks => ({ kind: 'chunks', chunks }))))
+    const aOverlay = join(directory, 'owner.patch.yml')
+    const bOverlay = join(directory, 'source.patch.yml')
+    const accessConfig = {
+      maxGrants: 1024, maxSubscriptions: 256, maxProjections: 8192, maxContextBytes: 12000, maxResponseBytes: 60000,
+      requestTimeoutMs: 5000, maxInvitationLifetimeMs: 604800000, maxConcurrentReads: 16,
+      waitTimeoutMs: 3000, maxConcurrentWaits: 4, maxConcurrentContributions: 4, maxContributionRequestBytes: 16384,
+      maxContributionApplications: 256, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 86400000,
+    }
+    await writeFile(aOverlay, JSON.stringify([
+      { id: 'scope-access', config: accessConfig },
+      { id: 'development-task-context', config: { maxContextBytesPerStep: 12000 } },
+      { id: 'scope-agent-context', config: { maxContextBytes: 12000, maxLocalContextBytes: 6000, coalesceMs: 50, retryDelayMs: 1000 } },
+    ]))
+    await writeFile(bOverlay, JSON.stringify([{ id: 'scope-access', config: accessConfig }]))
+    owner = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5, extraOverlayPath: aOverlay,
+      replayFixture: join(directory, 'owner-override-only.jsonl'), replayOverride: ownerOverride })
+    source = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5, extraOverlayPath: bOverlay,
+      replayFixture: join(directory, 'source-override-only.jsonl'), replayOverride: sourceOverride })
+    owner.ctx.on('llm/stream', (options, next) => { aRequests.push(structuredClone(options.messages)); return next() })
+    source.ctx.on('llm/stream', (options, next) => { bRequests.push(structuredClone(options.messages)); return next() })
+    browser = await chromium.launch()
+    ownerPage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    sourcePage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    for (const [page, host, name] of [[ownerPage, owner, 'budget-owner'], [sourcePage, source, 'budget-source']] as const) {
+      trips.push(watchConsole(page))
+      await page.goto(host.authenticatedUrl, { waitUntil: 'load' })
+      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
+      await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
+    }
+    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
+  }, 120_000)
+  afterAll(async () => {
+    const failures: unknown[] = []
+    for (const close of [() => browser?.close(), () => source?.close(), () => owner?.close(),
+      () => directory === undefined ? Promise.resolve() : rm(directory, { recursive: true, force: true })]) {
+      try { await close() } catch (error) { failures.push(error) }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Recipient budget browser cleanup failed')
+  }, 120_000)
+  it('joins once without local capture, admits complete facts in 8000 bytes, and retains original work after leaving', async () => {
+    if (owner === undefined || source === undefined) throw new Error('Both independently owned Hosts are required')
+    const a = owner
+    const b = source
+    onTestFailed(() => saveFailureShot(sourcePage, 'web-e2e-native-recipient-budget'))
+    const aId = await prompt(a, ownerPage, 'BUDGET_OWNER_READY')
+    const bId = await prompt(b, sourcePage, 'BUDGET_SOURCE_READY')
+    const originalAgent = b.ctx.agents.get(bId)
+    if (originalAgent === undefined) throw new Error('Original source Agent is missing')
+    const tools = originalAgent.ctx.get('tools')
+    if (tools === undefined) throw new Error('Original tools are missing')
+    const originalTools = structuredClone(tools.schemas())
+    const tasks = []
+    for (const [host, id, objective] of [[a, aId, '维护完整后端文件事实'], [b, bId, '保留原有客户端职责']] as const) {
+      const participantId = (await host.ctx.scopeAgentContributions.localStatus({ agentId: id })).participantId
+      if (participantId === null) throw new Error('Existing Session has no participant')
+      const task = await host.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: participantId,
+        objective, scope: '独立职责只增加明确授权的共享信息。' })
+      await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      const status = await host.ctx.scopeAgentContext.status({ agentId: id })
+      if (status.eligibility !== 'eligible' || status.localTask === null) throw new Error('Original Task target is absent')
+      await host.ctx.scopeAgentContext.bindLocal({ agentId: id, expectedBindingId: null, ...status.localTask, automatic: null })
+      tasks.push(task)
+    }
+    const [sharedTask, localTask] = tasks
+    if (sharedTask === undefined || localTask === undefined) throw new Error('Both Tasks are required')
+    const localBefore = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    expect(localBefore.capture).toBeNull()
+    const originalHistory = structuredClone(originalAgent.session.snapshotEvents())
+    const aPanel = await panel(ownerPage)
+    await aPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    const local = ownerPage.locator(LOCAL)
+    await local.getByText(`已连接：${sharedTask.objective}`, { exact: true }).waitFor()
+    await permission(local, join(a.workspaceCwd, 'budget-owner/project'), LOCAL_CONSENT)
+    await local.getByRole('button', { name: '允许并开始分享', exact: true }).click()
+    await local.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    await ownerPage.keyboard.press('Escape')
+    await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
+    const center = ownerPage.locator('[data-emergence-center]')
+    const access = center.locator('details:has(> summary:text-is("独立设备协作"))')
+    if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
+    const ownerSharing = center.locator('[data-scope-contribution-owner]')
+    if (await ownerSharing.getAttribute('open') === null) await ownerSharing.locator(':scope > summary').click()
+    const applications = center.locator('[data-contribution-applications]')
+    await applications.getByRole('combobox', { name: '入口用途', exact: true }).selectOption('join')
+    await applications.getByLabel('申请入口有效期（小时）', { exact: true }).fill('1')
+    await applications.getByRole('button', { name: '邀请一个会话加入', exact: true }).click()
+    const entryField = applications.getByRole('textbox', { name: '将此入口交给来源用户', exact: true })
+    await expect.poll(() => entryField.inputValue()).toContain('scope-join-entry')
+    const entryText = await entryField.inputValue()
+    const bPanel = await panel(sourcePage)
+    // The initial target follows the asynchronous local-status response until a radio change is dispatched.
+    await bPanel.getByText(`已连接：${localTask.objective}`, { exact: true }).waitFor()
+    expect(await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).isChecked()).toBe(true)
+    await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
+    const sharing = sourcePage.locator(REMOTE)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
+    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await sharing.getByText(sharedTask.id, { exact: true }).waitFor()
+    await permission(sharing, join(b.workspaceCwd, 'budget-source/project'), REMOTE_CONSENT)
+    expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
+    await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
+    expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
+    await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
+    await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+    const requested = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture
+    if (requested === null) throw new Error('Explicit source permission was not stored')
+    expect(requested.initialization).toBeUndefined()
+    await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+    await applications.getByLabel('该会话的协作职责', { exact: true }).fill('在原客户端职责内使用完整文件事实。')
+    await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+    await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
+    const joined = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (joined.eligibility !== 'eligible' || joined.state.binding?.kind !== 'local-task-scope') throw new Error('Joint receiving absent')
+    const subscriptionId = joined.state.binding.subscriptionId
+    expect(joined.state).toMatchObject({ automatic: null, mode: 'passive', usedBudget: 0 })
+    expect(bRequests).toHaveLength(2)
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture).toBeNull()
+    await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
+    const reports = () => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
+      .filter(item => item.localToolObservation !== undefined)
+    a.ctx.on('agent/pre-step', async ({ agent, step }, next) => {
+      if (agent.id === aId && step > 1) await expect.poll(() => reports().length).toBe(step - 1)
+      return next()
+    }, { prepend: true })
+    await prompt(a, ownerPage, 'BUDGET_OWNER_WRITTEN')
+    await expect.poll(() => reports().length).toBe(3)
+    const raw = await b.ctx.scopeAccess.retrieve(joined.state.binding.subscriptionId, new AbortController().signal)
+    if (raw.status !== 'active') throw new Error('Unrestricted owner projection unavailable')
+    expect(Buffer.byteLength(raw.projection.text, 'utf8')).toBeGreaterThan(8000)
+    for (const report of reports()) expect(raw.projection.text).toContain(JSON.stringify(report.text))
+    await prompt(b, sourcePage, 'BUDGET_SOURCE_READ')
+    const request = bRequests[2]
+    if (request === undefined) throw new Error('First joined ordinary request missing')
+    const frame = context(request, 'scope-agent-context')[0]
+    if (frame?.source.kind !== 'scope-agent-context' || frame.source.form !== 'snapshot') {
+      throw new Error('Budget withdrew all shared context')
+    }
+    const projection = frame.source.projection
+    const selected = reports().filter(report => projection.selectedSources
+      .some(ref => ref.kind === 'publication' && ref.publicationId === report.id))
+    expect(selected.length).toBeGreaterThan(0)
+    expect(selected.length).toBeLessThan(3)
+    for (const report of selected) expect(projection.text).toContain(JSON.stringify(report.text))
+    expect(projection.omittedSources.some(item => item.reason === 'budget')).toBe(true)
+    const localFrames = context(request, 'development-task-context')
+    const localBytes = Buffer.byteLength(textOf(localFrames), 'utf8')
+    const remoteFrameBytes = Buffer.byteLength(textOf([frame]), 'utf8')
+    const framingBytes = remoteFrameBytes - Buffer.byteLength(projection.text, 'utf8')
+    expect(localBytes).toBeLessThanOrEqual(4000)
+    expect(framingBytes).toBeGreaterThan(0)
+    expect(projection.maxContextBytes).toBe(8000 - localBytes - framingBytes)
+    expect(localBytes + remoteFrameBytes).toBeLessThanOrEqual(8000)
+    expect(textOf(localFrames)).toContain(localTask.objective)
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, request, kind)
+    await panel(sourcePage)
+    const identity = await a.ctx.scopeAccess.identity()
+    const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'], [localTask.id, '{{localTaskId}}'],
+      [identity.peerId, '{{ownerPeerId}}'], [entryText, '{{joinEntry}}'],
+      [await sourcePage.evaluate(value => new Date(value).toLocaleString(), requested.limits.expiresAt), '{{permissionExpiresLocal}}']]
+    if (identity.addresses[0] !== undefined) replacements.push([identity.addresses[0], '{{ownerAddress}}'])
+    await captureStage(sourcePage, b.workspaceCwd, 'budget-passive', replacements, PANEL, snapshots)
+    await prompt(b, sourcePage, 'BUDGET_SOURCE_SHARED')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    await prompt(a, ownerPage, 'BUDGET_OWNER_RECEIVED')
+    const ownerRead = aRequests.at(-1)
+    if (ownerRead === undefined) throw new Error('Owner did not receive B work')
+    expect(textOf(context(ownerRead, 'development-task-context'))).toContain('WEB_B_SHARED')
+    expect(textOf(context(ownerRead, 'development-task-context'))).not.toContain('WEB_PRIVATE_BEFORE')
+    assertReconstructed(a, aId, ownerRead, 'development-task-context')
+    await panel(sourcePage)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('button', { name: '退出此次协作', exact: true }).click()
+    await expect.poll(async () => (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    await prompt(b, sourcePage, 'BUDGET_SOURCE_LEFT')
+    const last = bRequests.at(-1)
+    if (last === undefined) throw new Error('Post-leave ordinary request missing')
+    const withdrawn = context(last, 'scope-agent-context')[0]
+    expect(withdrawn?.source.kind === 'scope-agent-context' && withdrawn.source.form).toBe('withdrawn')
+    expect(textOf(context(last, 'scope-agent-context'))).not.toContain('WEB_OWNER_BUDGET_')
+    expect(textOf(context(last, 'development-task-context'))).toContain(localTask.objective)
+    const restored = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (restored.eligibility !== 'eligible') throw new Error('Original local task no longer eligible')
+    expect(restored.state).toMatchObject({ binding: { kind: 'local-task' }, automatic: null, usedBudget: 0 })
+    expect(restored.localTask).toEqual(joined.localTask)
+    const remaining = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    expect(remaining.assignment).toEqual(localBefore.assignment)
+    expect(remaining.capture).toBeNull()
+    expect(b.ctx.agents.get(bId)).toBe(originalAgent)
+    expect(originalAgent.session.snapshotEvents().slice(0, originalHistory.length)).toEqual(originalHistory)
+    expect(tools.schemas()).toEqual(originalTools)
+    expect(originalAgent.session.snapshotEvents().filter(event => event.type === 'tool/call').map(event => event.data.name))
+      .toEqual(['write', 'write', 'write'])
+    expect((await b.ctx.scopeAccess.list()).subscriptions.find(item => item.id === subscriptionId)?.state).toBe('left')
+    expect(await readFile(join(b.workspaceCwd, 'budget-source/project/after.ts'), 'utf8')).toBe(afterCode)
+    expect(aRequests).toHaveLength(6)
+    expect(bRequests).toHaveLength(7)
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, last, kind)
+    await panel(sourcePage)
+    await captureStage(sourcePage, b.workspaceCwd, 'budget-left', replacements, PANEL, snapshots)
+    for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
+    await assertFixtureInventory(snapshots, ['budget-passive.expected.md', 'budget-left.expected.md'])
+  }, 120_000)
+})

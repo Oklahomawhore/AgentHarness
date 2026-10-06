@@ -54,6 +54,7 @@
       name: '@deepseek-ai/dsh-scope-agent-context'
       config:
         maxContextBytes: 16000
+        maxLocalContextBytes: 8000
         coalesceMs: 1
         retryDelayMs: 1000
     - id: native-contribution-assertions

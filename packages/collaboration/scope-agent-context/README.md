@@ -32,6 +32,7 @@ Mount this consumer in a `dsh` profile that already provides native Agents, Sess
 - name: '@deepseek-ai/dsh-scope-agent-context'
   config:
     maxContextBytes: 8000
+    maxLocalContextBytes: 4000
     coalesceMs: 50
     retryDelayMs: 1000
 ```
@@ -39,10 +40,11 @@ Mount this consumer in a `dsh` profile that already provides native Agents, Sess
 | Field | Default | Meaning |
 |---|---|---|
 | `maxContextBytes` | Required | Total UTF-8 bytes of all managed context messages including framing; at least 512 bytes. |
+| `maxLocalContextBytes` | Required | Complete local projection ceiling while both sources are active; must leave room for remote framing and text. Local-only and remote-withdrawn reads use the remaining total allowance. |
 | `coalesceMs` | Required | Delay that combines pending changes before an idle activation attempt. |
 | `retryDelayMs` | Required | Delay before rechecking an unavailable owner; automatic permission remains paused. |
 
-The [configuration catalog](../../../docs/config-catalog.md) owns accepted ranges. Configure the owner backend text limit below the consumer limit to leave room for framing. An oversized complete message becomes an explicit withdrawal; text is never cut through Unicode characters or silently truncated.
+The [configuration catalog](../../../docs/config-catalog.md) owns accepted ranges. Each remote read offers its available text bytes after reserving consumer framing and other managed context. Scope access clamps this offer to both Hosts’ limits before the owner computes complete source groups. A Task whose required representation cannot fit becomes an explicit withdrawal; text is never cut through Unicode characters or silently truncated.
 
 ### Explicit binding and permission
 
@@ -89,7 +91,7 @@ Every management mutation compares `expectedBindingId` before changing state; bi
 
 Source-associated joint adoption records the original capture in a version-4 plan and binding. The owning Session retains it across read retries, stop of contribution, and route recovery; manual binding does not infer it from a read invitation. A later manual binding or departure cannot inherit the previous association. The owner verifies it before returning a version-3 capture projection; [scope access](../scope-access/README.md) owns that verification. This enables exact-source tool-report omission without granting execution permission or asserting that the model remembers the omitted content.
 
-Combined admission runs through the Task consumer once. It allocates the remote message and framing first, computes the local projection with the remaining bytes, checks remote authorization online again, then synchronously rechecks local assignment, provider, revision, and expiry. It retains both exact messages under the total budget. Remote failure withdraws remote facts while ordinary user work receives fresh local context; automatic continuation stops. Both projections and both committed message sequence numbers establish automatic request evidence, and changes to either source invalidate the completed comparison.
+Combined admission runs through the Task consumer once. It computes the local projection under `maxLocalContextBytes`, subtracts its actual text and all framing and additional withdrawals from the total allowance, then requests a remote projection within the remainder. After that online read, it synchronously rechecks local assignment, provider, revision, and expiry. Changed local authority discards the candidate and repeats the read. It retains both exact messages under the total budget. Remote failure withdraws remote facts while ordinary user work receives fresh local context using the remaining total allowance; automatic continuation stops. Both projections and both committed message sequence numbers establish automatic request evidence, and changes to either source invalidate the completed comparison.
 
 Management failures carry structured Remote codes, including `scope-agent/stale-binding`, `scope-agent/not-live`, and `scope-agent/terminal-subscription`; clients discriminate by code and details rather than diagnostic text. Known revoked, expired, left, or missing subscriptions cannot resume. Pause and leave remain available for the exact binding when a local Task assignment conflicts.
 

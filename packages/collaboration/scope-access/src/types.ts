@@ -74,6 +74,13 @@ export interface ScopeCaptureSubscription extends ScopeSubscriptionFields {
 /** Active means locally enabled, not remotely verified; only version 2 identifies the original joint source. */
 export type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription
 
+/** Consumer-selected backend text allowance; callers reserve model framing and other context separately. */
+export interface ScopeRetrieveWithinBudgetRequest {
+  readonly subscriptionId: ScopeSubscriptionId
+  /** Positive safe-integer UTF-8 byte ceiling, further narrowed by both Hosts' configured limits. */
+  readonly maxContextBytes: number
+}
+
 /** Local owner inputs; responsibility routes context but does not narrow read permission. */
 export interface ScopeInviteRequest {
   readonly taskId: DevelopmentTaskId

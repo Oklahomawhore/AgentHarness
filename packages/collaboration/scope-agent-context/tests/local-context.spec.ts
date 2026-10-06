@@ -46,7 +46,7 @@ class UnusedAccess extends Service {
   constructor(ctx: Context) { super(ctx, 'scopeAccess') }
   async list() { return { subscriptions: [], grants: [] } }
   async join(): Promise<never> { throw new Error('local mode attempted a peer join') }
-  async retrieve(): Promise<never> { throw new Error('local mode attempted a peer read') }
+  async retrieveWithinBudget(): Promise<never> { throw new Error('local mode attempted a peer read') }
   async waitForChange(): Promise<never> { throw new Error('local mode attempted a peer watch') }
 }
 
@@ -92,6 +92,7 @@ async function fixture(options: { injector?: boolean; seed?: readonly SessionEve
   const originalYaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
   const yaml = options.maxContextBytes === undefined ? originalYaml
     : originalYaml.replace('maxContextBytes: 8000', `maxContextBytes: ${options.maxContextBytes}`)
+      .replace('maxLocalContextBytes: 4000', `maxLocalContextBytes: ${Math.floor(options.maxContextBytes / 2)}`)
   const path = join(directory, 'cordis.yml')
   await writeFile(path, options.injector === false ? yaml.replace('disabled: false', 'disabled: true') : yaml)
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })

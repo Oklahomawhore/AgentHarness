@@ -46,7 +46,7 @@ export async function apply(ctx) {
   const directory = join(process.cwd(), '.dsh', 'owner-participation')
   const source = await host(join(directory, 'peer'), 'source')
   ctx.effect(() => source.close)
-  await source.ctx.plugin(ScopeAgentContext, { maxContextBytes: 16000, coalesceMs: 1, retryDelayMs: 1000 })
+  await source.ctx.plugin(ScopeAgentContext, { maxContextBytes: 16000, maxLocalContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 })
   const peerAgent = (await source.ctx.agents.create({ sessionId: 'owner-participation-peer',
     agentOptions: { provider: 'native-fixture', model: 'native-fixture' }, meta: { cwd: source.workspace } })).agent
   const peerRoot = join(source.workspace, 'project')

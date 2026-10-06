@@ -2317,6 +2317,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'current projection or an explicit inactive/unknown state; never an offline cached projection.',
       },
       {
+        signature: 'async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult>',
+        description: 'Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.',
+        parameters: [{ name: 'request', description: 'subscription and positive backend text allowance, excluding consumer-owned model framing.' }, { name: 'signal', description: 'consumer cancellation, combined with service disposal and the configured deadline.' }],
+        returns: 'exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.',
+      },
+      {
         signature: 'waitForChange(subscriptionId: ScopeSubscriptionId, cursor: ScopeChangeCursor | undefined, signal: AbortSignal): Promise<ScopeWaitResult>',
         description: 'Wait online for a bounded change hint without retrieving facts or occupying the mutation queue.',
         parameters: [{ name: 'subscriptionId', description: 'local receiving identity; a new wait cancels its previous wait.' }, { name: 'cursor', description: 'opaque previous hint, or undefined for immediate current-state alignment.' }, { name: 'signal', description: 'caller cancellation; cancellation and replacement reject without ending the subscription.' }],
@@ -7344,6 +7350,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeRetrieveResult',
     declaration: 'export type ScopeRetrieveResult = {\n    readonly status: \'active\';\n    readonly projection: ScopeAccessProjection;\n} | {\n    readonly status: \'revoked\' | \'expired\' | \'unavailable\' | \'left\';\n};',
+  },
+  {
+    name: 'ScopeRetrieveWithinBudgetRequest',
+    declaration: 'export interface ScopeRetrieveWithinBudgetRequest {\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly maxContextBytes: number;\n}',
   },
   {
     name: 'ScopeSingleContributionEntry',

@@ -32,6 +32,7 @@ kind: "package-reference"
 - name: '@deepseek-ai/dsh-scope-agent-context'
   config:
     maxContextBytes: 8000
+    maxLocalContextBytes: 4000
     coalesceMs: 50
     retryDelayMs: 1000
 ```
@@ -39,10 +40,11 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `maxContextBytes` | 必填 | 所有受管上下文消息及说明文字的 UTF-8 总字节数，至少 512 字节。 |
+| `maxLocalContextBytes` | 必填 | 双方来源均有效时完整本地投影的上限，必须为远端说明文字和正文留出空间；纯本地绑定与远端已撤回时使用总额度中的剩余部分。 |
 | `coalesceMs` | 必填 | 空闲启动尝试前用于合并待处理变化的延迟。 |
 | `retryDelayMs` | 必填 | owner 不可用后再次检查的延迟；自动执行许可保持暂停。 |
 
-允许范围以[配置目录](../../../docs/config-catalog.zh.md)为准。owner backend 的文本上限应低于 consumer 上限，为说明文字留出空间。完整消息超限时使用明确撤回标记，不会截断 Unicode 字符或静默裁剪。
+允许范围以[配置目录](../../../docs/config-catalog.zh.md)为准。每次远端读取先扣除 consumer 说明文字及其他受管上下文，再提交可用文本字节数。scope access 取该额度与双方 Host 上限的较小值，交由 owner 计算完整来源组。Task 必需的完整表示无法容纳时使用明确撤回标记，不会截断 Unicode 字符或静默裁剪。
 
 ### 显式绑定与许可
 
@@ -89,7 +91,7 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 带有来源关联的联合采用通过 version-4 计划与绑定记录原始采集。所属 Session 在读取重试、停止贡献和路由恢复期间保留它；手动绑定不会从读取邀请推断该关联。后来的手动绑定或退出不能继承此前的关联。owner 验证关联后才返回 version-3 采集投影；[scope access](../scope-access/README.zh.md)负责该验证。这允许按精确来源省略工具报告，不授予执行许可，也不声称模型记得被省略的内容。
 
-组合准入只经过一次 Task consumer。系统先计入完整远端消息及 framing，再用剩余字节计算本地投影；随后重新在线核验远端授权，并同步复核本地分配、provider、修订和过期时间。两份精确消息共用总预算。远端失败时撤回远端事实，普通用户工作仍获得当前本地上下文；自动续步停止。自动请求证据保存双方投影及两条已提交消息序号，任一来源变化均会使已完成比较失效。
+组合准入只经过一次 Task consumer。系统先按 `maxLocalContextBytes` 计算本地投影，从总额度扣除其实际文本、全部说明文字和额外撤回消息，再按剩余额度请求远端投影。该次在线读取返回后，同步复核本地分配、provider、修订和过期时间；本地授权变化会丢弃候选并重新读取。两份精确消息共用总预算。远端失败时撤回远端事实，普通用户工作仍使用总额度中的剩余部分获得当前本地上下文；自动续步停止。自动请求证据保存双方投影及两条已提交消息序号，任一来源变化均会使已完成比较失效。
 
 管理失败携带结构化 Remote code，包括 `scope-agent/stale-binding`、`scope-agent/not-live` 和 `scope-agent/terminal-subscription`；客户端按 code 与 details 判断，不解析诊断文本。已知撤销、过期、退出或缺失的订阅不能恢复。本地 Task assignment 冲突时，仍可对准确绑定执行暂停与退出。
 

@@ -143,6 +143,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
   },
+  'scope-recipient-budget': {
+    expectedFinalResponse: 'Shared context fit my original budget; my local responsibility remains.',
+  },
   'scope-prejoin-initialization': {
     expectedFinalResponse: 'Recorded and live sharing ended; my local responsibility and the other member remain.',
   },

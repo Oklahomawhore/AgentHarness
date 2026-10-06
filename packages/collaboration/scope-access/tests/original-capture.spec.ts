@@ -289,3 +289,37 @@ it('rejects a delayed associated reply after local leave while a manual subscrip
   expect(projections(f.b).size).toBe(0)
   expect((await f.a.access.list()).grants[0]?.state).toBe('active')
 })
+
+it('negotiates an allowance while preserving exact source omission and independent manual reads', async () => {
+  const f = await fixture()
+  await f.publish()
+  const compute = vi.spyOn(f.a.backend, 'compute')
+  const transport = vi.spyOn(f.b.transport, 'request')
+  const associated = await f.b.access.retrieveWithinBudget({ subscriptionId: f.plan.id, maxContextBytes: 5000 }, signal())
+  if (associated.status !== 'active' || associated.projection.version !== 3) throw new Error('Associated budgeted result is missing')
+  expect(associated.projection.maxContextBytes).toBe(5000)
+  expect(associated.projection.text).not.toContain('OWN_CAPTURE_BODY')
+  expect(associated.projection.text).toContain('OTHER_CAPTURE_BODY')
+  expect(compute.mock.calls[0]?.[0]).toMatchObject({ maxContextBytes: 5000,
+    recipient: { peerCapture: associated.projection.peerCapture } })
+  expect(transport.mock.calls[0]?.[1]).toBe('/agentharness/scope-read/3')
+  expect(transport.mock.calls[0]?.[2]).toMatchObject({ version: 3, originalCapture: f.plan.originalCapture, maxContextBytes: 5000 })
+  const manual = await f.b.access.join({ invitation: f.read })
+  const current = await f.b.access.retrieveWithinBudget({ subscriptionId: manual.id, maxContextBytes: 5000 }, signal())
+  if (current.status !== 'active') throw new Error('Manual budgeted result is missing')
+  expect(current.projection.version).toBe(2)
+  expect(current.projection.text).toContain('OWN_CAPTURE_BODY')
+  expect(current.projection.text).toContain('OTHER_CAPTURE_BODY')
+  expect(compute.mock.calls[1]?.[0].recipient.peerCapture).toBeUndefined()
+})
+
+it.each(['captureId', 'captureGeneration'] as const)('rejects a mismatched budgeted %s before Task lookup', async (field) => {
+  const f = await fixture()
+  const read = vi.spyOn(f.a.tasks, 'currentContextView')
+  const originalCapture = originalCaptureSchema.parse({ ...f.plan.originalCapture, [field]: randomUUID() })
+  const raw = await f.b.transport.request({ peerId: f.read.ownerPeerId, address: f.read.ownerAddress },
+    '/agentharness/scope-read/3', { ...f.wire(originalCapture), version: 3, maxContextBytes: 5000 }, signal())
+  expect(readResponseSchema.parse(raw).result).toEqual({ status: 'denied' })
+  expect(read).not.toHaveBeenCalled()
+  expect(projections(f.a).size).toBe(0)
+})

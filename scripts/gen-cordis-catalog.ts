@@ -430,6 +430,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   ScopeReadGrant: 'development-room.md',
   ScopeSubscription: 'development-room.md',
   ScopeInviteRequest: 'development-room.md',
+  ScopeRetrieveWithinBudgetRequest: 'development-room.md',
   ScopeRetrieveResult: 'development-room.md',
   ScopeAccessList: 'development-room.md',
   ScopeAccessIdentity: 'development-room.md',

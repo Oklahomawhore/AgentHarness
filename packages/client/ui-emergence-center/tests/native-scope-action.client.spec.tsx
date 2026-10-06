@@ -179,7 +179,8 @@ describe('current Session collaboration action', () => {
   })
   it('explains a current-evidence capacity pause without resuming automatically', () => {
     const f = fixture({ phase: 'ready', pending: false, issue: null,
-      observation: observation({ ...bound, mode: 'paused', pauseReason: 'coverage' }) })
+      observation: observation({ ...bound, mode: 'paused', pauseReason: 'coverage',
+        automatic: { goal: 'Inspect current evidence', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 } }) })
     expect(screen.getByText('当前共享更新超出接收容量，自动启动已暂停。调整共享范围或容量后，再明确恢复。')).not.toBeNull()
     expect(screen.queryByText(zh['native.pause.failed'])).toBeNull()
     expect(f.action).not.toHaveBeenCalled()
@@ -285,6 +286,21 @@ describe('current Session collaboration action', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.invitation']).value).toBe('')
     expect(screen.queryByText(zh['native.saved'])).toBeNull()
+  })
+})
+
+describe('passive receiving failures', () => {
+  it.each(['failed', 'unavailable', 'coverage', 'conflict'] as const)('reports %s without implying automatic authority', (reason) => {
+    const current = { ...bound, mode: 'paused' as const, pauseReason: reason, automatic: null }
+    const f = fixture({ phase: 'ready', pending: false, issue: null, observation: observation(current) })
+    expect(screen.getByText(zh[`native.read.${reason}`])).toBeTruthy()
+    expect(screen.queryByText(zh[`native.pause.${reason}`])).toBeNull()
+    expect(f.action).not.toHaveBeenCalled()
+    act(() => { f.source.set({ phase: 'ready', pending: false, issue: null, observation: observation({ ...current,
+      automatic: { goal: 'Maintain the existing task', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 },
+    }) }) })
+    expect(screen.getByText(zh[`native.pause.${reason}`])).toBeTruthy()
+    expect(screen.queryByText(zh[`native.read.${reason}`])).toBeNull()
   })
 })
 

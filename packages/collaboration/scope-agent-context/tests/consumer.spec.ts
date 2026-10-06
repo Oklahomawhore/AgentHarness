@@ -16,13 +16,13 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { activationSchema, projectionSchema, projectionDigest } from '@deepseek-ai/dsh-scope-access/schema'
-import type { ScopeAccessProjection, ScopeChangeCursor, ScopeInvitation, ScopeRetrieveResult, ScopeSubscription, ScopeSubscriptionId, ScopeWaitResult } from '@deepseek-ai/dsh-scope-access/types'
+import type { ScopeAccessProjection, ScopeChangeCursor, ScopeInvitation, ScopeRetrieveResult, ScopeSubscription, ScopeSubscriptionId, ScopeRetrieveWithinBudgetRequest, ScopeWaitResult } from '@deepseek-ai/dsh-scope-access/types'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScopeAgentContext from '../src/index.ts'
 import { goalDigest } from '../src/evidence.ts'
 import { scopeAgentActivitySchema } from '../src/activity.ts'
-import { replaceContext, snapshotMessage } from '../src/messages.ts'
+import { replaceContext, snapshotMessage, scopeContextFramingBytes, withdrawalMessage } from '../src/messages.ts'
 import { scopeAgentProjection } from '../src/state.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentBindingId } from '../src/types.ts'
 
@@ -123,7 +123,8 @@ class ControlledAccess extends Service {
     this.subscriptions.set(value.id, { ...value, state: 'left' })
     for (const wake of this.waiting) wake()
   }
-  async retrieve(id: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult> {
+  async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult> {
+    const id = request.subscriptionId
     this.reads++
     const captured = this.result
     if (this.readGate !== undefined) await this.readGate
@@ -233,6 +234,61 @@ async function requests(adapter: RecordingAdapter, count: number): Promise<void>
 }
 
 describe('native scope context through real Loader and AgentLoop', () => {
+  it.each([0, 1])('rejects a combined local ceiling that consumes remote framing and text, excess=%s', (excess) => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    expect(() => new ScopeAgentContext(ctx, { maxContextBytes: 512,
+      maxLocalContextBytes: 512 - scopeContextFramingBytes() + excess, coalesceMs: 1, retryDelayMs: 1000 }))
+      .toThrow('maxLocalContextBytes must leave room')
+  })
+
+  it('offers only bytes left after remote framing and additional owned withdrawals', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const read = vi.spyOn(access, 'retrieveWithinBudget')
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic: null })
+    agent.followup(user('Receive the current scope'))
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    expect(read.mock.calls[0]![0].maxContextBytes).toBe(8000 - scopeContextFramingBytes())
+    const owned = agent.session.deriveMessages().find(message => message.role === 'user'
+      && message.source.kind === 'scope-agent-context')
+    if (owned?.role !== 'user') throw new Error('Missing original owned scope context')
+    await agent.runMaintenance(async () => {
+      agent.session.append('user/message', createUserMessage({ source: owned.source, content: owned.content }), { surfaceOp: 'append' })
+    })
+    agent.followup(user('Refresh both owned nodes'))
+    await agent.whenIdle()
+    const withdrawalBytes = withdrawalMessage('left').content.reduce((sum, block) => sum
+      + (block.type === 'text' ? Buffer.byteLength(block.text, 'utf8') : 0), 0)
+    expect(read.mock.calls[1]![0].maxContextBytes).toBe(8000 - scopeContextFramingBytes() - withdrawalBytes)
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it.each([false, true])('rejects a natural request when owned withdrawals exhaust the budget, departed=%s', async (departed) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const read = vi.spyOn(access, 'retrieveWithinBudget')
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic: null })
+    agent.followup(user('Receive the original scope'))
+    await agent.whenIdle()
+    const owned = agent.session.deriveMessages().find(message => message.role === 'user'
+      && message.source.kind === 'scope-agent-context')
+    if (owned?.role !== 'user') throw new Error('Missing original owned scope context')
+    const withdrawalBytes = withdrawalMessage('left').content.reduce((sum, block) => sum
+      + (block.type === 'text' ? Buffer.byteLength(block.text, 'utf8') : 0), 0)
+    await agent.runMaintenance(async () => {
+      for (let index = 0; index <= Math.ceil(8000 / withdrawalBytes); index++) {
+        agent.session.append('user/message', createUserMessage({ source: owned.source, content: owned.content }), { surfaceOp: 'append' })
+      }
+    })
+    if (departed) await ctx.scopeAgentContext.leave({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    agent.followup(user('Do not dispatch an oversized withdrawal surface'))
+    await agent.whenIdle()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(adapter.requests).toHaveLength(1)
+    if (departed) expect((await state(ctx, agent.id)).binding).toBeNull()
+    else expect((await state(ctx, agent.id)).pauseReason).toBe('failed')
+  })
+
   it('distinguishes a reservation, an actual automatic request, and completed history without exposing shared text', async () => {
     const { ctx, agent, adapter, access } = await fixture()
     const admission = barrier()
@@ -760,7 +816,7 @@ describe('native scope context through real Loader and AgentLoop', () => {
       ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
         parameters: {}, execute: async () => {
           if (failure === 'read-error') {
-            vi.spyOn(access, 'retrieve').mockRejectedValue(new Error('controlled read failure'))
+            vi.spyOn(access, 'retrieveWithinBudget').mockRejectedValue(new Error('controlled read failure'))
           } else if (failure === 'oversized') {
             access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
           } else if (failure === 'recovered') {
@@ -788,7 +844,7 @@ describe('native scope context through real Loader and AgentLoop', () => {
       const human = user('Continue my own work after the connection change')
       ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
         parameters: {}, execute: async () => {
-          if (failure === 'read-error') vi.spyOn(access, 'retrieve').mockRejectedValue(new Error('controlled read failure'))
+          if (failure === 'read-error') vi.spyOn(access, 'retrieveWithinBudget').mockRejectedValue(new Error('controlled read failure'))
           else if (failure === 'oversized') access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
           else if (failure === 'recovered') {
             access.change({ status: 'unavailable' })

@@ -12,3 +12,4 @@ replay:
 workspace:
   final: true
 writer: separate
+writerRevision: 2

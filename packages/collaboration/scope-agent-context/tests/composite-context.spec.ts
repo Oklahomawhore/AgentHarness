@@ -18,7 +18,7 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, host, peer } from '../../scope-access/tests/helpers.ts'
 import ScopeAgentContext from '../src/index.ts'
-import { validateHistory } from '../src/messages.ts'
+import { validateHistory, scopeContextFramingBytes } from '../src/messages.ts'
 import { scopeAgentActivitySchema } from '../src/activity.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentLocalTaskTarget, ScopeAgentJoinReadId } from '../src/types.ts'
 
@@ -46,11 +46,12 @@ class Recorder extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
-async function fixture(maxContextBytes = 8000, reverse = false, canonicalOwner = false) {
+async function fixture(maxContextBytes = 8000, reverse = false, canonicalOwner = false,
+  maxLocalContextBytes = Math.floor(maxContextBytes / 2), ownerMaxContextBytes = 6000) {
   const suffix = randomUUID()
-  const remote = await host(`context-remote-${suffix}`, undefined, {}, [],
+  const remote = await host(`context-remote-${suffix}`, undefined, { maxContextBytes: ownerMaxContextBytes }, [],
     canonicalOwner ? peer('12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy') : peer(`context-remote-${suffix}`))
-  const local = await host(`context-local-${suffix}`)
+  const local = await host(`context-local-${suffix}`, undefined, { maxContextBytes: ownerMaxContextBytes })
   const { ctx } = local
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })
@@ -61,7 +62,7 @@ async function fixture(maxContextBytes = 8000, reverse = false, canonicalOwner =
   const entries = [
     { name: 'cordis:fixture-jsonl', config: { root: join(directory, 'sessions'), compression: 'none' } },
     { name: 'cordis:fixture-task', config: { maxContextBytesPerStep: 8000 } },
-    { name: 'cordis:fixture-combined', config: { maxContextBytes, coalesceMs: 1, retryDelayMs: 1000 } },
+    { name: 'cordis:fixture-combined', config: { maxContextBytes, maxLocalContextBytes, coalesceMs: 1, retryDelayMs: 1000 } },
   ]
   const configPath = join(directory, 'cordis.yml')
   await writeFile(configPath, JSON.stringify(reverse ? entries.reverse() : entries))
@@ -127,6 +128,70 @@ it.each([false, true])('retains ordinary history, both exact contexts and one to
   expect(after).toContain('LOCAL_AFTER_LEAVE')
   expect(after).not.toContain('REMOTE_INITIAL')
   expect((await f.status()).localTask).toEqual(f.target)
+})
+
+it('requests complete remote groups within the actual remaining bytes instead of rejecting the larger owner projection', async () => {
+  const f = await fixture(8000, false, false, 4000, 12000)
+  let now = Date.now()
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  try {
+    for (let index = 0; index < 3; index++) {
+      now++
+      await f.remote.tasks.publishContext({ taskId: f.remoteTask.id, participantId: f.remote.participantId,
+        text: `OLDER_GROUP_${index}: ${'旧'.repeat(900)}` })
+    }
+    now++
+    await f.remote.tasks.publishContext({ taskId: f.remoteTask.id, participantId: f.remote.participantId,
+      text: 'LATEST_ALLOWED_FACT' })
+  } finally { clock.mockRestore() }
+  const bound = await f.bind()
+  if (bound.binding === null || bound.binding.kind === 'local-task') throw new Error('Missing remote binding')
+  const unbounded = await f.local.access.retrieve(bound.binding.subscriptionId, new AbortController().signal)
+  if (unbounded.status !== 'active') throw new Error('Expected the larger owner projection')
+  expect(Buffer.byteLength(unbounded.projection.text, 'utf8')).toBeGreaterThan(8000)
+  const localCompute = vi.spyOn(f.local.backend, 'compute')
+  const remoteRead = vi.spyOn(f.local.access, 'retrieveWithinBudget')
+  const request = await f.run()
+  const local = request.messages.find(message => message.role === 'user' && message.source.kind === 'development-task-context')
+  const remote = request.messages.find(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+  if (local?.role !== 'user' || local.source.kind !== 'development-task-context' || local.source.form !== 'snapshot'
+    || local.source.version !== 3 || remote?.role !== 'user' || remote.source.kind !== 'scope-agent-context'
+    || remote.source.form !== 'snapshot') throw new Error('Both current contexts must reach the actual request')
+  const localBytes = Buffer.byteLength(local.source.projection.text, 'utf8')
+  expect(local.source.projection.maxContextBytes).toBe(4000)
+  expect(localBytes).toBeLessThanOrEqual(4000)
+  expect(localCompute).toHaveBeenCalledTimes(1)
+  expect(remoteRead).toHaveBeenCalledTimes(1)
+  expect(remoteRead.mock.calls[0]![0]).toEqual({ subscriptionId: bound.binding.subscriptionId,
+    maxContextBytes: 8000 - localBytes - scopeContextFramingBytes() })
+  expect(remote.source.projection.maxContextBytes).toBe(8000 - localBytes - scopeContextFramingBytes())
+  expect(remote.source.projection.text).toContain('LATEST_ALLOWED_FACT')
+  expect(remote.source.projection.omittedSources.some(item => item.reason === 'budget')).toBe(true)
+  expect(texts(request).reduce((sum, text) => sum + Buffer.byteLength(text, 'utf8'), 0)).toBeLessThanOrEqual(8000)
+  const detached = Session.create(f.agent.id, f.agent.session.snapshotEvents(), f.agent.session.header)
+  expect(detached.deriveMessages()).toEqual(f.agent.session.deriveMessages())
+  expect((await f.status()).state).toMatchObject({ mode: 'passive', usedBudget: 0 })
+})
+
+it('keeps the local-only allowance independent of the combined local ceiling', async () => {
+  const f = await fixture()
+  for (const marker of ['LOCAL_LARGE_A', 'LOCAL_LARGE_B']) {
+    await f.local.tasks.publishContext({ taskId: f.task.id, participantId: f.local.participantId,
+      text: `${marker}: ${'本'.repeat(900)}` })
+  }
+  const bound = await f.bind()
+  const combined = await f.run()
+  const initial = combined.messages.find(message => message.role === 'user' && message.source.kind === 'development-task-context')
+  if (initial?.role !== 'user' || initial.source.kind !== 'development-task-context'
+    || initial.source.form !== 'snapshot' || initial.source.version !== 3) throw new Error('Missing combined local projection')
+  const localProjection = initial.source.projection
+  expect(localProjection.maxContextBytes).toBe(4000)
+  expect(['LOCAL_LARGE_A', 'LOCAL_LARGE_B'].every(marker => localProjection.text.includes(marker))).toBe(false)
+  expect(localProjection.omittedSources.some(item => item.reason === 'budget')).toBe(true)
+  await f.ctx.scopeAgentContext.leave({ agentId: f.agent.id, expectedBindingId: bound.binding!.id })
+  const localOnly = await f.run()
+  for (const marker of ['LOCAL_LARGE_A', 'LOCAL_LARGE_B']) expect(texts(localOnly).join('')).toContain(marker)
+  expect(texts(localOnly).reduce((sum, text) => sum + Buffer.byteLength(text, 'utf8'), 0)).toBeLessThanOrEqual(8000)
 })
 
 it('logs both actual request anchors and lets either Task revision break the completed baseline', async () => {
@@ -215,11 +280,11 @@ it('recomputes local facts changed while the final remote authorization read is 
   const f = await fixture()
   await f.bind()
   const entered = barrier(), release = barrier()
-  const retrieve = f.local.access.retrieve.bind(f.local.access)
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
   let reads = 0
-  vi.spyOn(f.local.access, 'retrieve').mockImplementation(async (id, signal) => {
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementation(async (id, signal) => {
     const result = await retrieve(id, signal)
-    if (++reads === 2) { entered.resolve(undefined); await release.promise }
+    if (++reads === 1) { entered.resolve(undefined); await release.promise }
     return result
   })
   const running = f.run()
@@ -227,18 +292,18 @@ it('recomputes local facts changed while the final remote authorization read is 
   await f.local.tasks.publishContext({ taskId: f.task.id, participantId: f.local.participantId, text: 'LOCAL_FINAL_AUTHORIZATION_UPDATE' })
   release.resolve(undefined)
   expect(texts(await running).join('\n')).toContain('LOCAL_FINAL_AUTHORIZATION_UPDATE')
-  expect(reads).toBeGreaterThanOrEqual(4)
+  expect(reads).toBeGreaterThanOrEqual(2)
 })
 
 it('retires the old candidate on same-identity backend reload and retains undispatched input for fresh admission', async () => {
   const f = await fixture()
   await f.bind()
   const entered = barrier(), release = barrier()
-  const retrieve = f.local.access.retrieve.bind(f.local.access)
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
   let reads = 0
-  vi.spyOn(f.local.access, 'retrieve').mockImplementation(async (id, signal) => {
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementation(async (id, signal) => {
     const result = await retrieve(id, signal)
-    if (++reads === 2) { entered.resolve(undefined); await release.promise }
+    if (++reads === 1) { entered.resolve(undefined); await release.promise }
     return result
   })
   const message = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Retain this undispatched request' }] })
@@ -268,11 +333,11 @@ it('withdraws both candidates when the local epoch is cleared during remote vali
   const f = await fixture()
   await f.bind()
   const entered = barrier(), release = barrier()
-  const retrieve = f.local.access.retrieve.bind(f.local.access)
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
   let reads = 0
-  vi.spyOn(f.local.access, 'retrieve').mockImplementation(async (id, signal) => {
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementation(async (id, signal) => {
     const result = await retrieve(id, signal)
-    if (++reads === 2) { entered.resolve(undefined); await release.promise }
+    if (++reads === 1) { entered.resolve(undefined); await release.promise }
     return result
   })
   const running = f.run()

@@ -3526,6 +3526,11 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionInitialization",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeRetrieveWithinBudgetRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
     }
   ]
 }
