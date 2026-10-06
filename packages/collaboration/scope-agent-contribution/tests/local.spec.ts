@@ -98,7 +98,7 @@ describe('owner-local native source with an independently authorized remote Agen
     expect(replay.deriveMessages().filter(message => message.source.kind === 'development-task-context'))
       .toEqual(ownerRequest.messages.filter(message => message.source.kind === 'development-task-context'))
     expect(remote.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     await run(remote, b)
     const withdrawn = remote.adapter.requests.at(-1)
@@ -139,7 +139,7 @@ describe('owner-local native source with an independently authorized remote Agen
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.collectionIssue).toBe('durability-failed')
     expect(await readFile(join(owner.workspace, 'late.txt'), 'utf8')).toBe('LATE_LOCAL_BODY')
     expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     blocked = false
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.some(item => item.localToolObservation !== undefined)).toBe(false)
@@ -171,7 +171,7 @@ describe('owner-local native source with an independently authorized remote Agen
 
   it('rejects invalid first roots without authority and permits a later valid request', async () => {
     const { owner, a, task, capture, assignment, limits } = await fixture()
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     const other = await owner.createAgent('fresh-local-agent')
     const participantId = developmentAgentParticipantId(other.id)

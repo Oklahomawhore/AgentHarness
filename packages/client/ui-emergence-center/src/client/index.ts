@@ -98,7 +98,7 @@ export function apply(ctx: Context): void {
     status: async request => unwrap(await ctx.remote.scopeAgentContributions.localStatus(request)),
     checkout: async request => unwrap(await ctx.remote.developmentTaskAssignments.checkout(request)),
     request: async request => unwrap(await ctx.remote.scopeAgentContributions.requestLocal(request)),
-    stop: async request => unwrap(await ctx.remote.scopeAgentContributions.stop(request)),
+    stopLocal: async request => unwrap(await ctx.remote.scopeAgentContributions.stopLocal(request)),
   }, (error) => { console.error('[ui-emergence-center] local contribution management failed:', error) })
   const nativeLocalActions: NativeLocalContributionActions = {
     readNativeLocalContribution: (agentId) => {

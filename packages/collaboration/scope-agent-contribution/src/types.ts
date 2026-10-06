@@ -69,13 +69,13 @@ export interface ScopeAgentLocalContributionCapture {
 export interface ScopeAgentLocalContributionStatus {
   readonly agentId: SessionId
   readonly participantId: DevelopmentParticipantId | null
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task' | 'remote-capture'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task'
   readonly assignment: ScopeAgentLocalContributionBinding | null
   readonly revision: number
   readonly capture: ScopeAgentLocalContributionCapture | null
 }
 
-/** Stop sharing and pending read/automatic adoption; preserve already adopted reading and its execution policy. */
+/** Select the exact local or remote capture accepted by the called stop method. */
 export interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection
@@ -125,7 +125,7 @@ export interface ScopeAgentContributionCapture {
 /** Read-only live eligibility and one durable-domain revision; never an online authorization or model-adoption claim. */
 export interface ScopeAgentContributionStatus {
   readonly agentId: SessionId
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'task-conflict'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork'
   readonly revision: number
   readonly capture: ScopeAgentContributionCapture | null
   readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation
@@ -135,7 +135,6 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
     'scope-agent-contribution/not-live': { readonly agentId: SessionId }
     'scope-agent-contribution/ineligible': { readonly agentId: SessionId; readonly reason: 'delegated' | 'fork' }
-    'scope-agent-contribution/task-conflict': { readonly agentId: SessionId }
     'scope-agent-contribution/stale-capture': {
       readonly agentId: SessionId
       readonly expectedCapture: ScopeAgentContributionSelection | null

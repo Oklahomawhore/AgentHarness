@@ -1055,7 +1055,7 @@ interface ScopeAgentContributionRecoverRouteRequest {
 ```
 
 ```ts type-equiv
-/** Stop sharing and pending read/automatic adoption; preserve already adopted reading and its execution policy. */
+/** Select the exact local or remote capture accepted by the called stop method. */
 interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection
@@ -1091,7 +1091,7 @@ interface ScopeAgentContributionCapture {
 /** Read-only live eligibility and one durable-domain revision; never an online authorization or model-adoption claim. */
 interface ScopeAgentContributionStatus {
   readonly agentId: SessionId
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'task-conflict'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork'
   readonly revision: number
   readonly capture: ScopeAgentContributionCapture | null
   readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation
@@ -2502,7 +2502,7 @@ interface ScopeAgentLocalContributionCapture {
 interface ScopeAgentLocalContributionStatus {
   readonly agentId: SessionId
   readonly participantId: DevelopmentParticipantId | null
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task' | 'remote-capture'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task'
   readonly assignment: ScopeAgentLocalContributionBinding | null
   readonly revision: number
   readonly capture: ScopeAgentLocalContributionCapture | null
@@ -3582,7 +3582,7 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('recoverRoute') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>
 
 /**
- * Stop future collection immediately and retain any owner cancellation until it is confirmed.
+ * Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.
  * @param request - exact displayed capture, including for an inactive source Session.
  * @returns durable sharing termination and pending-read cancellation; already adopted reading is retained.
  */
@@ -3594,6 +3594,13 @@ Actual file-tool observations become durable original reports, then the existing
  * @returns durable departure intent or confirmed cleanup; failed cleanup remains retryable.
  */
 @Remote('leaveJoin') leaveJoin(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>
+
+/**
+ * Stop only the selected owner-local capture and withdraw its reports from the original Task.
+ * @param request - exact displayed local capture, including for an inactive source Session.
+ * @returns durable local termination; unrelated remote sharing and receiving remain unchanged.
+ */
+@Remote('stopLocal') stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus>
 
 /**
  * Inspect the live Agent's local Task binding without changing assignment or consent.

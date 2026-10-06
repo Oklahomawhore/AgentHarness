@@ -1,4 +1,4 @@
-/** Two existing native Sessions exchange authorized file work through one owner-local Task. */
+/** Existing native Sessions exchange authorized file work while retaining each destination’s permissions. */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -549,5 +549,239 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
       'joint-auto-resumed.expected.md', 'joint-read-left.expected.md',
     ] : ['unconnected.expected.md', 'connected.expected.md', 'active.expected.md', 'automatic.expected.md', 'paused.expected.md', 'stopped.expected.md',
       'joint-pending.expected.md', 'joint-active.expected.md', 'joint-sharing-stopped.expected.md', 'joint-read-left.expected.md'])
+  }, 180_000)
+})
+
+// Each destination owns consent and withdrawal while the source retains its original Task and automatic goal.
+describe.skipIf(process.platform === 'win32')('web e2e: independent local and peer file capture', () => {
+  const snapshots = join(import.meta.dirname, 'snapshots/native-parallel-contribution')
+  const localGoal = '继续维护我负责的重试实现；外发文件工作不改变本地目标。'
+  let owner: WebScaffold | undefined
+  let source: WebScaffold | undefined
+  let browser: Browser | undefined
+  let directory: string | undefined
+  let ownerPage: Page
+  let sourcePage: Page
+  const ownerRequests: Message[][] = []
+  const sourceRequests: Message[][] = []
+  const trips: ReturnType<typeof watchConsole>[] = []
+
+  beforeAll(async () => {
+    if (MODE === 'record') throw new Error('Parallel native capture acceptance uses controlled keyless responses')
+    directory = await mkdtemp(join(tmpdir(), 'dsh-native-parallel-web-'))
+    const ownerOverride = join(directory, 'owner.override.json')
+    const sourceOverride = join(directory, 'source.override.json')
+    const ownerReplay: ReplayOverrideDoc = [response('PARALLEL_OWNER_READY'), response('PARALLEL_OWNER_RECEIVED'),
+      response('PARALLEL_OWNER_WITHDRAWN')].map(chunks => ({ kind: 'chunks', chunks }))
+    const sourceReplay: ReplayOverrideDoc = [response('PARALLEL_SOURCE_READY'), response('PARALLEL_LOCAL_AUTO'),
+      writeResponse('remote', B_CODE), response('PARALLEL_SHARED_WRITE'),
+      writeResponse('remote', B_CODE_UPDATED, 2), response('PARALLEL_LOCAL_WRITE')].map(chunks => ({ kind: 'chunks', chunks }))
+    await writeFile(ownerOverride, JSON.stringify(ownerReplay))
+    await writeFile(sourceOverride, JSON.stringify(sourceReplay))
+    owner = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
+      replayFixture: join(directory, 'owner-override-only.jsonl'), replayOverride: ownerOverride })
+    source = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
+      replayFixture: join(directory, 'source-override-only.jsonl'), replayOverride: sourceOverride })
+    owner.ctx.on('llm/stream', (options, next) => { ownerRequests.push(structuredClone(options.messages)); return next() })
+    source.ctx.on('llm/stream', (options, next) => { sourceRequests.push(structuredClone(options.messages)); return next() })
+    browser = await chromium.launch()
+    ownerPage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    sourcePage = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+    for (const [page, host, name] of [[ownerPage, owner, 'parallel-owner'], [sourcePage, source, 'parallel-source']] as const) {
+      trips.push(watchConsole(page))
+      await page.goto(host.authenticatedUrl, { waitUntil: 'load' })
+      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
+      await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
+    }
+    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
+  }, 120_000)
+
+  afterAll(async () => {
+    const failures: unknown[] = []
+    for (const close of [() => browser?.close(), () => source?.close(), () => owner?.close(),
+      () => directory === undefined ? Promise.resolve() : rm(directory, { recursive: true, force: true })]) {
+      try { await close() } catch (error) { failures.push(error) }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Parallel capture browser cleanup failed')
+  }, 120_000)
+
+  it('shares one existing Session’s file work to both Tasks and stops the peer destination without clearing its local work', async () => {
+    if (owner === undefined || source === undefined) throw new Error('Parallel Hosts were not started')
+    const a = owner
+    const b = source
+    onTestFailed(() => saveFailureShot(sourcePage, 'web-e2e-native-parallel-contribution'))
+    expect(a.harnessHome).not.toBe(b.harnessHome)
+    const aId = await prompt(a, ownerPage, 'PARALLEL_OWNER_READY')
+    const bId = await prompt(b, sourcePage, 'PARALLEL_SOURCE_READY')
+    const originalAgent = b.ctx.agents.get(bId)
+    if (originalAgent === undefined) throw new Error('Existing source Agent is missing')
+    const tasks = []
+    for (const [host, id, objective] of [[a, aId, '接收对方明确授权的文件工作'], [b, bId, '独立维护客户端重试实现']] as const) {
+      const participantId = (await host.ctx.scopeAgentContributions.localStatus({ agentId: id })).participantId
+      if (participantId === null) throw new Error('Existing Session has no local participant')
+      const task = await host.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: participantId,
+        objective, scope: '保留本地职责与文件权限，跨设备贡献另行授权。' })
+      await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      tasks.push(task)
+    }
+    const [ownerTask, sourceTask] = tasks
+    if (ownerTask === undefined || sourceTask === undefined) throw new Error('Both independently owned Tasks are required')
+    const [aIdentity, bIdentity] = await Promise.all([a.ctx.scopeAccess.identity(), b.ctx.scopeAccess.identity()])
+    expect(aIdentity.peerId).not.toBe(bIdentity.peerId)
+    const ownerAddress = aIdentity.addresses[0]
+    if (ownerAddress === undefined) throw new Error('Owner address is missing')
+    const bPanel = await panel(sourcePage)
+    await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    const local = sourcePage.locator(LOCAL)
+    await local.getByText(`已连接：${sourceTask.objective}`, { exact: true }).waitFor()
+    const root = join(b.workspaceCwd, 'parallel-source/project')
+    await permission(local, root, LOCAL_CONSENT)
+    await local.getByRole('button', { name: '允许并开始分享', exact: true }).click()
+    await local.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    const localBefore = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    const localCapture = localBefore.capture
+    if (localCapture === null || localBefore.assignment === null) throw new Error('Local capture was not established')
+    const automatic = sourcePage.locator(AUTOMATIC)
+    await automatic.getByRole('checkbox', { name: '允许此会话为当前目标开始有限自动工作', exact: true }).check()
+    await automatic.getByLabel('本地协作目标', { exact: true }).fill(localGoal)
+    await automatic.getByLabel('允许新增的自动启动次数', { exact: true }).fill('2')
+    await automatic.getByLabel('每轮最多步数', { exact: true }).fill('2')
+    await automatic.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    const [automaticId] = await Promise.all([b.whenTurnSettled(30_000),
+      automatic.getByRole('button', { name: '确认启用自动协作', exact: true }).click()])
+    expect(automaticId).toBe(bId)
+    await sourcePage.getByText('PARALLEL_LOCAL_AUTO', { exact: true }).waitFor()
+    await automatic.getByRole('button', { name: '暂停自动协作', exact: true }).click()
+    await automatic.getByText('自动协作已暂停', { exact: true }).waitFor()
+    const receivingBefore = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (receivingBefore.eligibility !== 'eligible') throw new Error('Local scheduler is unavailable')
+    expect(receivingBefore.state).toMatchObject({ mode: 'paused', usedBudget: 1, automatic: { goal: localGoal } })
+
+    await ownerPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
+    const center = ownerPage.locator('[data-emergence-center]')
+    const access = center.locator('details:has(> summary:text-is("独立设备协作"))')
+    if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
+    const ownerSharing = center.locator('[data-scope-contribution-owner]')
+    if (await ownerSharing.getAttribute('open') === null) await ownerSharing.locator(':scope > summary').click()
+    const applications = center.locator('[data-contribution-applications]')
+    await applications.getByRole('combobox', { name: '入口用途', exact: true }).selectOption('contribution')
+    await applications.getByLabel('申请入口有效期（小时）', { exact: true }).fill('1')
+    await applications.getByRole('button', { name: '生成一次申请入口', exact: true }).click()
+    const entryField = applications.getByRole('textbox', { name: '将此入口交给来源用户', exact: true })
+    await expect.poll(() => entryField.inputValue()).toContain('contribution-entry')
+    const entryText = await entryField.inputValue()
+    await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
+    const sharing = sourcePage.locator(REMOTE)
+    await sharing.locator(':scope > summary').click()
+    await bPanel.getByText('本会话保留本地目标，远端读取暂不可用；仍可另行申请文件贡献。', { exact: true }).waitFor()
+    expect(await bPanel.getByRole('button', { name: '连接此会话', exact: true }).isDisabled()).toBe(true)
+    expect(await bPanel.getByText('本机会话设置已更新；后续请求将在线核验读取权限。', { exact: true }).count()).toBe(0)
+    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
+    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
+    await permission(sharing, root, REMOTE_CONSENT)
+    expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).count()).toBe(0)
+    await sharing.getByRole('button', { name: '申请并允许批准后自动启用', exact: true }).click()
+    await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+    const requested = (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture
+    if (requested === null) throw new Error('Peer capture was not requested')
+    expect(requested.receiving).toBeNull()
+    expect(requested.selection).not.toEqual(localCapture.selection)
+    await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+    await applications.getByRole('button', { name: '批准并让来源自动启用', exact: true }).click()
+    await sharing.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    expect((await a.ctx.scopeAccess.contributionApplications({ taskId: ownerTask.id })).entries).toHaveLength(1)
+    expect(sourceRequests).toHaveLength(2)
+    expect((await b.ctx.scopeAccess.list()).subscriptions).toEqual([])
+    expect((await b.ctx.scopeAgentContext.status({ agentId: bId })).eligibility).toBe('eligible')
+    const replacements: (readonly [string, string])[] = [[ownerTask.id, '{{ownerTaskId}}'], [sourceTask.id, '{{sourceTaskId}}'],
+      [ownerAddress, '{{ownerAddress}}'], [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'],
+      [entryText, '{{contributionEntry}}'], [localCapture.grant.bindingId, '{{localBindingId}}'],
+      [`${localCapture.grant.expectedBindingEpoch.nodeId}:${String(localCapture.grant.expectedBindingEpoch.seq)}`, '{{localBindingEpoch}}'],
+    ]
+    const expiry = async (value: number): Promise<readonly [string, string]> => [
+      await sourcePage.evaluate(timestamp => new Date(timestamp).toLocaleString(), value), '{{permissionExpiresLocal}}',
+    ]
+    await captureStage(sourcePage, b.workspaceCwd, 'both-active',
+      [...replacements, await expiry(requested.limits.expiresAt)], PANEL, snapshots)
+    await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
+
+    expect(await prompt(b, sourcePage, 'PARALLEL_SHARED_WRITE')).toBe(bId)
+    expect(await readFile(join(root, 'remote.ts'), 'utf8')).toBe(B_CODE)
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: sourceTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(1)
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    const localPublication = b.ctx.developmentTasks.get({ taskId: sourceTask.id }).context
+      .find(item => item.localToolObservation !== undefined)
+    expect(localPublication?.localContribution?.grant).toEqual(localCapture.grant)
+    const peerPublication = a.ctx.developmentTasks.get({ taskId: ownerTask.id }).context
+      .find(item => item.peerToolObservation !== undefined)
+    expect(peerPublication?.peerToolObservation).toMatchObject({ observerPeerId: bIdentity.peerId,
+      tool: 'Write', reportedStatus: 'success', fields: { path: 'remote.ts' } })
+    expect(peerPublication?.peerContribution?.grant).toMatchObject(requested.selection)
+    expect(await prompt(a, ownerPage, 'PARALLEL_OWNER_RECEIVED')).toBe(aId)
+    const received = ownerRequests[1]
+    if (received === undefined) throw new Error('Owner context request is missing')
+    expect(textOf(context(received, 'development-task-context'))).toContain(B_CODE.trim())
+    assertReconstructed(a, aId, received, 'development-task-context')
+    for (const request of sourceRequests) expect(context(request, 'scope-agent-context')).toEqual([])
+
+    await panel(sourcePage)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
+    await sharing.getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await expect.poll(async () => (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    const localAfter = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    expect(localAfter.assignment).toEqual(localBefore.assignment)
+    expect(localAfter.capture).toMatchObject({ selection: localCapture.selection, collecting: true, grant: localCapture.grant })
+    const receivingAfter = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (receivingAfter.eligibility !== 'eligible') throw new Error('Local scheduler was lost')
+    expect(receivingAfter.state).toEqual(receivingBefore.state)
+    expect(receivingAfter.localTask).toEqual(receivingBefore.localTask)
+    await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    await local.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    await captureStage(sourcePage, b.workspaceCwd, 'peer-stopped-local-retained',
+      [...replacements, await expiry(localCapture.grant.expiresAt)], LOCAL, snapshots)
+    const ownerRevision = a.ctx.developmentTasks.get({ taskId: ownerTask.id }).revision
+    expect(await prompt(b, sourcePage, 'PARALLEL_LOCAL_WRITE')).toBe(bId)
+    expect(await readFile(join(root, 'remote.ts'), 'utf8')).toBe(B_CODE_UPDATED)
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: sourceTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(2)
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture?.selection).toEqual(localCapture.selection)
+    expect(a.ctx.developmentTasks.get({ taskId: ownerTask.id }).revision).toBe(ownerRevision)
+    expect(await prompt(a, ownerPage, 'PARALLEL_OWNER_WITHDRAWN')).toBe(aId)
+    const withdrawn = ownerRequests[2]
+    const sourceLast = sourceRequests.at(-1)
+    if (withdrawn === undefined || sourceLast === undefined) throw new Error('Final model requests are missing')
+    expect(textOf(context(withdrawn, 'development-task-context'))).not.toContain(B_CODE.trim())
+    expect(textOf(context(withdrawn, 'development-task-context'))).not.toContain(B_CODE_UPDATED.trim())
+    expect(b.ctx.agents.get(bId)).toBe(originalAgent)
+    expect(b.ctx.developmentTasks.list({ limit: 32 })).toHaveLength(1)
+    for (const [host, id, request] of [[a, aId, withdrawn], [b, bId, sourceLast]] as const) {
+      const agent = host.ctx.agents.get(id)
+      if (agent === undefined) throw new Error('Original Session was replaced')
+      expect(await host.ctx.sessions.flush(agent.session)).toBe(true)
+      const events = await readPersistedEvents(host, id)
+      expect(events).toEqual(agent.session.snapshotEvents())
+      const restored = Session.create(id, structuredClone([...events]), agent.session.header)
+      expect(context(restored.deriveMessages(), 'development-task-context')).toEqual(context(request, 'development-task-context'))
+      expect(events.filter(event => event.type === 'scope-agent-context/join-read')).toEqual([])
+    }
+    await panel(sourcePage)
+    await local.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
+    await local.getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    const localStopped = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    expect(localStopped.capture).toBeNull()
+    expect(localStopped.assignment).toEqual(localBefore.assignment)
+    const receivingStopped = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (receivingStopped.eligibility !== 'eligible') throw new Error('Local scheduler was cleared by capture stop')
+    expect(receivingStopped.state).toEqual(receivingBefore.state)
+    expect((await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    expect(sourceRequests).toHaveLength(6)
+    expect(ownerRequests).toHaveLength(3)
+    for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
+    await assertFixtureInventory(snapshots, ['both-active.expected.md', 'peer-stopped-local-retained.expected.md'])
   }, 180_000)
 })

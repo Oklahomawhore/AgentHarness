@@ -1,0 +1,14 @@
+version: 1
+scenario: scope-dual-contribution
+profile: sdk
+composition: sdk-scope-dual-contribution
+recording: authored
+header:
+  class: scope-dual-contribution
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+  toolSchemasSource: sdk/scope-owner-participation
+replay:
+  override: true
+workspace:
+  final: true

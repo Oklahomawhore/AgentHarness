@@ -86,12 +86,14 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const localContribution = useNativeLocalContributions(value => value[runtime.sessionId])
   const tasks = useNativeTasks(value => value)
   const participants = useNativeParticipants(value => value)
-  const [local, setLocal] = useState(false)
+  const [selectedLocal, setLocal] = useState<boolean>()
+  const local = selectedLocal ?? (localContribution?.value?.assignment != null || localContribution?.value?.capture != null)
   const [open, setOpen] = useState(false)
-  useEffect(() => { if (open) readNativeLocalContribution(runtime.sessionId) }, [open, readNativeLocalContribution, runtime.sessionId])
   useEffect(() => {
-    if (localContribution?.value?.assignment != null || localContribution?.value?.capture != null) setLocal(true)
-  }, [localContribution?.value?.assignment?.bindingId, localContribution?.value?.capture?.selection.captureId])
+    if (!open) return
+    readNativeLocalContribution(runtime.sessionId)
+    readNativeContribution(runtime.sessionId)
+  }, [open, readNativeContribution, readNativeLocalContribution, runtime.sessionId])
   const [invitationText, setInvitationText] = useState('')
   const [automaticSelection, setAutomaticSelection] = useState<string | null>(null)
   const [goal, setGoal] = useState('')
@@ -177,6 +179,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         <label><input type="radio" name={`${id}-target`} checked={local} onChange={() => { setLocal(true) }} />{t('native.target.local')}</label>
         <label><input type="radio" name={`${id}-target`} checked={!local} onChange={() => { setLocal(false) }} />{t('native.target.remote')}</label>
       </fieldset>
+      {localStatus?.capture != null && contribution?.value?.capture != null
+        && <p className={css.hint}>{t('native.share.parallel')}</p>}
       {orphanLocal !== null && <div className={css.form}>
         <p className={css.hint}>{t('native.local.orphanHint')}</p>
         <Button disabled={!ready} onClick={() => { void act({ kind: 'leave', expectedBindingId: orphanLocal.id }) }}>
@@ -189,12 +193,14 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         catalogReady={snapshot.phase === 'ready' && tasks.read && participants.read && tasks.error === undefined && participants.error === undefined}
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
-        <p className={css.state} role="status">{label}</p>
-        {state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
-        {state !== undefined && <p className={css.budget}>{state.automatic === null
+        <p className={css.state} role="status">{state?.binding?.kind === 'local-task' ? t('native.mode.left') : label}</p>
+        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
+        {state !== undefined && state.binding?.kind !== 'local-task' && <p className={css.budget}>{state.automatic === null
           ? t('native.used', { used: state.usedBudget })
           : t('native.budget', { used: state.usedBudget, limit: state.automatic.activationLimit, steps: state.automatic.maxStepsPerTurn })}</p>}
-        {observation !== null && observation.eligibility !== 'eligible' && <p className={css.notice}>{t(`native.eligibility.${observation.eligibility}`)}</p>}
+        {observation !== null && (observation.eligibility !== 'eligible'
+          ? <p className={css.notice}>{t(`native.eligibility.${observation.eligibility}`)}</p>
+          : observation.localTask !== null && <p className={css.notice}>{t('native.eligibility.task-conflict')}</p>)}
         {snapshot.phase === 'unavailable' && <p className={css.hint}>{t('native.unavailable')}</p>}
         {terminal && <p className={css.notice}>{t(`native.subscription.${observation.subscriptionState}`)}</p>}
         {bound !== null && <>
@@ -248,7 +254,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             {bound === null ? t('native.bind') : t('native.resume')}
           </Button>
         </form>}
-        {success && snapshot.phase === 'ready' && <p className={css.hint}>{t('native.saved')}</p>}
+        {success && snapshot.phase === 'ready' && state?.binding?.kind !== 'local-task' && <p className={css.hint}>{t('native.saved')}</p>}
         <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} scope={snapshot} t={t}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}

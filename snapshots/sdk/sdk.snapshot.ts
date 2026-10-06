@@ -143,6 +143,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
   },
+  'scope-dual-contribution': {
+    expectedFinalResponse: 'Both captures ended independently; the local Task and history remain.',
+  },
   'scope-owner-participation': {
     expectedFinalResponse: 'Both source captures ended; historical evidence remains.',
   },
@@ -879,7 +882,6 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       const actualContext = contextOf(ordered, cwd)
       if (assertions.expectedFinalResponse !== undefined) {
-        expect(results.at(-1)?.finalResponse, `${scenario.name}: final response`).toBe(assertions.expectedFinalResponse)
         const parent = ordered[0]
         const expected = replayContents[0]
         if (parent === undefined || expected === undefined) throw new Error(`${scenario.name}: no primary session log`)
@@ -888,8 +890,9 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         const reasons = assertions.expectedTurnReasons ?? turnEnds.map(() => 'completed')
         expect(reasons, `${scenario.name}: expected turn reasons`).toHaveLength(turnEnds.length)
         for (const [index, turnEnd] of turnEnds.entries()) {
-          expect(turnEnd).toMatchObject({ data: { reason: { kind: reasons[index] } } })
+          expect(turnEnd, `${scenario.name}: turn ${index + 1}: ${JSON.stringify(turnEnd)}`).toMatchObject({ data: { reason: { kind: reasons[index] } } })
         }
+        expect(results.at(-1)?.finalResponse, `${scenario.name}: final response`).toBe(assertions.expectedFinalResponse)
       }
 
       let expectedContents = separateWriter && !refreshing

@@ -32,7 +32,6 @@ function issueKey(code: string): EmergenceCenterKey {
   switch (code) {
     case 'scope-agent-contribution/not-live': return 'native.share.notLive'
     case 'scope-agent-contribution/ineligible': return 'native.share.ineligible'
-    case 'scope-agent-contribution/task-conflict': return 'native.share.conflict'
     case 'scope-agent-contribution/stale-route': case 'scope-agent-contribution/stale-capture': case 'scope-agent-contribution/superseded': return 'contribution.error.stale'
     case 'scope-agent-contribution/invalid-permission': return 'contribution.error.permission'
     case 'scope-agent-contribution/unavailable':
@@ -197,7 +196,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {entry?.status === 'error' && <p role="alert" className={css.notice}>{t(issueKey(entry.error ?? 'unknown'))}</p>}
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
       {status !== undefined && status.eligibility !== 'eligible' && <p className={css.hint}>{t(status.eligibility === 'not-live'
-        ? 'native.share.notLive' : status.eligibility === 'task-conflict' ? 'native.share.conflict' : 'native.share.ineligible')}</p>}
+        ? 'native.share.notLive' : 'native.share.ineligible')}</p>}
       {capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
         event.preventDefault()
         if (!canRequest) return

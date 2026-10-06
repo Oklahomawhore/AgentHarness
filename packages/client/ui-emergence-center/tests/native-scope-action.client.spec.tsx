@@ -8,6 +8,7 @@ import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
 import { zh } from '../src/client/locales.ts'
 import { localExecution, localSnapshot } from './native-local-automatic-fixture.client.ts'
 import { localCapture, assigned as localStatus } from './native-local-contribution-fixture.client.ts'
+import { capturedStatus, capture } from './native-contribution-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
 
 afterEach(cleanup)
@@ -43,6 +44,41 @@ function policy() {
 }
 
 describe('current Session collaboration action', () => {
+  it('keeps both file permissions discoverable and preserves the selected destination across local capture changes', async () => {
+    const f = fixture(localSnapshot(localExecution))
+    const local = { status: 'ready' as const, pending: false, value: { ...localStatus, capture: localCapture } }
+    const remote = { status: 'ready' as const, pending: false, value: capturedStatus }
+    const props: NativeScopeActionProps = { ...f.props,
+      useNativeLocalContributions: select => select({ [state.agentId]: local }),
+      useNativeContributions: select => select({ [state.agentId]: remote }),
+    }
+    f.rerender(<NativeScopeAction {...props} />)
+    expect(screen.getByText(zh['native.share.parallel'])).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.pause'] }))
+    await waitFor(() => { expect(f.action).toHaveBeenCalledExactlyOnceWith({ kind: 'pause', expectedBindingId: localExecution.binding?.id }) })
+    act(() => { f.source.set(localSnapshot({ ...localExecution, mode: 'paused', pauseReason: 'user' })) })
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.remote'] }))
+    fireEvent.click(screen.getByText(zh['native.share.title']))
+    expect(screen.getAllByRole('status').map(item => item.textContent).join(' ')).not.toContain(zh['native.mode.enabled'])
+    expect(screen.getByText(zh['native.eligibility.task-conflict'])).not.toBeNull()
+    expect(screen.queryByText(zh['native.saved'])).toBeNull()
+    expect(screen.queryByText(localExecution.automatic!.goal, { exact: false })).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.share.stop'] }).disabled).toBe(false)
+    f.rerender(<NativeScopeAction {...props}
+      useNativeLocalContributions={select => select({ [state.agentId]: { ...local, pending: true,
+        value: { ...local.value, capture: { ...localCapture, selection: { ...localCapture.selection,
+          captureId: 'new-local' as typeof localCapture.selection.captureId } } } } })} />)
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: zh['native.target.remote'] }).checked).toBe(true)
+    const stop = screen.getByRole<HTMLButtonElement>('button', { name: zh['native.share.stop'] })
+    expect(stop.disabled).toBe(false)
+    fireEvent.click(stop)
+    await waitFor(() => { expect(f.props.stopNativeContribution).toHaveBeenCalledExactlyOnceWith({
+      agentId: state.agentId, expectedCapture: capture.selection,
+    }) })
+    expect(f.props.stopNativeLocalContribution).not.toHaveBeenCalled()
+    expect(f.action).toHaveBeenCalledOnce()
+  })
+
   it('labels the owner-local connection and capture without claiming remote membership', () => {
     const f = fixture()
     f.rerender(<NativeScopeAction {...f.props} useNativeLocalContributions={select => select({ [state.agentId]: { status: 'ready', pending: false, value: localStatus } })} />)
@@ -80,6 +116,7 @@ describe('current Session collaboration action', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['native.bind'] }))
     await waitFor(() => { expect(f.action).toHaveBeenCalledExactlyOnceWith({ kind: 'bind', request: { invitation, automatic: null, expectedBindingId: null } }) })
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.invitation']).value).toBe(JSON.stringify(invitation))
+    await waitFor(() => { expect(screen.getByText(zh['native.saved'])).not.toBeNull() })
   })
   it('can clear or replace an orphan local permission without reusing its automatic consent', async () => {
     const orphan = localSnapshot({ ...localExecution, mode: 'paused', pauseReason: 'conflict' })

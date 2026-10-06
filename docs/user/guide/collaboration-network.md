@@ -26,6 +26,8 @@ Connection verification uses the owner device identity in the entry. It does not
 
 To participate from the owner's own Agent, select this local Task in that native Session and separately permit its file sharing. Creating the Task alone does not connect the owner's Agent or share its files.
 
+An Agent already assigned to its own local Task can separately share file work with another owner through a file-contribution entry. Select the remote sharing page, verify that entry, and approve its directories, tools and limits. Its existing local capture remains separate. Stop each destination in its own panel. This file-only permission does not enable remote reading or change the local goal; the joint reading flow above still requires no local Task.
+
 Responsibility guides context selection. It does not hide other shared material in that Task. Use a separate unshared Task for private work. Each permission and delivery state has its own status; approval alone does not prove that an Agent has used the context.
 
 ## 3. Recover a connection

@@ -2398,7 +2398,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'stop\') stop(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>',
-        description: 'Stop future collection immediately and retain any owner cancellation until it is confirmed.',
+        description: 'Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.',
         parameters: [{ name: 'request', description: 'exact displayed capture, including for an inactive source Session.' }],
         returns: 'durable sharing termination and pending-read cancellation; already adopted reading is retained.',
       },
@@ -2407,6 +2407,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'End the selected joint contribution and the receiving operation that belongs to the same local consent.',
         parameters: [{ name: 'request', description: 'exact displayed joint capture; unrelated or later bindings are retained.' }],
         returns: 'durable departure intent or confirmed cleanup; failed cleanup remains retryable.',
+      },
+      {
+        signature: '@Remote(\'stopLocal\') stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus>',
+        description: 'Stop only the selected owner-local capture and withdraw its reports from the original Task.',
+        parameters: [{ name: 'request', description: 'exact displayed local capture, including for an inactive source Session.' }],
+        returns: 'durable local termination; unrelated remote sharing and receiving remain unchanged.',
       },
       {
         signature: '@Remote(\'localStatus\') async localStatus(request: { readonly agentId: SessionId }): Promise<ScopeAgentLocalContributionStatus>',
@@ -6961,7 +6967,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionStatus',
-    declaration: 'export interface ScopeAgentContributionStatus {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly revision: number;\n    readonly capture: ScopeAgentContributionCapture | null;\n    readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation;\n}',
+    declaration: 'export interface ScopeAgentContributionStatus {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\';\n    readonly revision: number;\n    readonly capture: ScopeAgentContributionCapture | null;\n    readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation;\n}',
   },
   {
     name: 'ScopeAgentContributionStopRequest',
@@ -7009,7 +7015,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentLocalContributionStatus',
-    declaration: 'export interface ScopeAgentLocalContributionStatus {\n    readonly agentId: SessionId;\n    readonly participantId: DevelopmentParticipantId | null;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'no-local-task\' | \'remote-capture\';\n    readonly assignment: ScopeAgentLocalContributionBinding | null;\n    readonly revision: number;\n    readonly capture: ScopeAgentLocalContributionCapture | null;\n}',
+    declaration: 'export interface ScopeAgentLocalContributionStatus {\n    readonly agentId: SessionId;\n    readonly participantId: DevelopmentParticipantId | null;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'no-local-task\';\n    readonly assignment: ScopeAgentLocalContributionBinding | null;\n    readonly revision: number;\n    readonly capture: ScopeAgentLocalContributionCapture | null;\n}',
   },
   {
     name: 'ScopeAgentLocalTaskTarget',

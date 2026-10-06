@@ -116,7 +116,7 @@ export async function apply(ctx) {
       assert.equal(await readFile(join(peerRoot, 'peer.txt'), 'utf8'), 'REMOTE_PEER_READY\n')
       await runPeer([], true)
     } else if (turn === 2 && step === 1) {
-      await ctx.scopeAgentContributions.stop({ agentId: agent.id, expectedCapture: ownerCapture.selection })
+      await ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: ownerCapture.selection })
       await until('owner termination', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture === null)
       const context = await runPeer([], false)
       assert.ok(context.source.projection.omittedSources.some(item => item.reason === 'withdrawn'))

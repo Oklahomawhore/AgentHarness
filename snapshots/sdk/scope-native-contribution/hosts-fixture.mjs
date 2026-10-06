@@ -27,6 +27,17 @@ class SourceAdapter extends LlmAdapter {
 /** Create a private Loader tree with real disk storage and native tools. */
 export async function host(root, role) {
   const ctx = new Context()
+  try {
+    return await initializeHost(ctx, root, role)
+  } catch (error) {
+    try { await ctx.fiber.dispose() } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Native fixture initialization and cleanup failed', { cause: error })
+    }
+    throw error
+  }
+}
+
+async function initializeHost(ctx, root, role) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
   const workspace = join(root, 'workspace')

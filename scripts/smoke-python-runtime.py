@@ -740,7 +740,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +759,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +778,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,10 +1109,11 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-owner-idle": "scope-owner-idle-current-evidence",
+        "scope-owner-participation": "scope-owner-participation-current-evidence",
         "scope-native-contribution": "scope-native-contribution-current-evidence",
         "task-context-semantic": "task-context-semantic-recipient-evidence",
     }.get(scenario, scenario)
@@ -1132,7 +1133,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         root = Path(temporary).resolve()
         prepared = prepare("prepare", root)
         assert isinstance(prepared, dict)
-        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal"}:
+        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal", "scope-dual-contribution"}:
             shutil.copytree(repository / "snapshots/sdk" / scenario / "workspace", root, dirs_exist_ok=True)
         home = root / ".dsh"
         with DeepSeekHarness(
@@ -1185,6 +1186,13 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
+            elif scenario == "scope-dual-contribution":
+                turns = [session.run(prompt) for prompt in (
+                    "Continue my existing local responsibility before sharing any tool reports.",
+                    "Share this permitted Write with the remote owner while retaining my local Task.",
+                    "Stop remote sharing and continue writing for my local Task.",
+                    "Stop local collection while keeping my local Task and history.",
+                )]
             elif scenario == "scope-owner-participation":
                 turns = [session.run(prompt) for prompt in (
                     "Use the peer update and write the owner result.",
@@ -1227,6 +1235,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-dual-contribution":
+            result = dual_contribution_snapshot_result(records, turns)
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("dual contribution changed the expected local workspace result")
         elif scenario == "scope-owner-participation":
             result = owner_participation_snapshot_result(records, turns)
         elif scenario == "scope-native-contribution":
@@ -1608,6 +1622,51 @@ def owner_idle_snapshot_result(
             "contextRevisions": [source.get("projection", {}).get("taskRevision") for source in sources],
             "blockedCurrentRevision": 6, "coveragePauses": len(pauses), "fileWrites": 1, "finalMode": state["mode"], "usedBudget": state["usedBudget"],
             "wirePreservesExactLocalRequestEvidence": True}
+
+
+def dual_contribution_snapshot_result(records: list[dict[str, object]], turns: list[RunResult]) -> dict[str, object]:
+    """Check unchanged local responsibility and exact withdrawal through the Python SDK stream."""
+    contexts = [event for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "development-task-context"]
+    wire_contexts = [event for turn in turns for event in turn.events if event.get("type") == "user/message"
+                     and event["data"]["source"]["kind"] == "development-task-context"]
+    if len(contexts) != 4 or [event["data"] for event in contexts] != [event["data"] for event in wire_contexts]:
+        raise AssertionError("Python wire must preserve four exact local context revisions")
+    sources = [event["data"]["source"] for event in contexts]
+    if len({source["taskId"] for source in sources}) != 1 or len({source["bindingId"] for source in sources}) != 1:
+        raise AssertionError("remote contribution replaced the original local Task or assignment")
+    if any(source["bindingEpoch"] != sources[0]["bindingEpoch"] for source in sources):
+        raise AssertionError("capture management changed the local assignment epoch")
+    if [source["revision"] for source in sources] != [2, 3, 4, 5]:
+        raise AssertionError("local context must advance for two real Writes and local withdrawal")
+    for event in contexts:
+        text = event["data"]["content"][0]["text"]
+        if "Keep the existing local implementation responsibility." not in text:
+            raise AssertionError("the original local goal disappeared from model-visible context")
+        if "DUAL_SHARED_RESULT" in text or "LOCAL_ONLY_RESULT" in text:
+            raise AssertionError("self-published tool bodies must not be reinjected as other-source facts")
+    if [sum(item["reason"] == "self-published" for item in source["omittedSources"]) for source in sources] != [0, 1, 2, 0]:
+        raise AssertionError("both tool reports need local self-publication provenance")
+    withdrawn = [item for item in sources[-1]["omittedSources"] if item["reason"] == "withdrawn"]
+    if len(withdrawn) != 2 or "ended" not in contexts[-1]["data"]["content"][0]["text"]:
+        raise AssertionError("stopLocal must retain exact current withdrawal evidence")
+    if any(event.get("type", "").startswith("scope-agent-context/") for event in records):
+        raise AssertionError("contribution-only authorization must not install remote reading or automatic work")
+    calls = [event["data"] for event in records if event.get("type") == "tool/call"]
+    if [(call["turn"], call["name"]) for call in calls] != [(2, "write"), (3, "write")]:
+        raise AssertionError("ordinary history must precede two real Writes without recall tools")
+    expected_responses = [
+        "The existing local Task and ordinary work history are retained.",
+        "One real Write reached both independently authorized Tasks.",
+        "Remote sharing ended; local collection received the next Write.",
+        "Both captures ended independently; the local Task and history remain.",
+    ]
+    if [turn.final_response for turn in turns] != expected_responses or any(turn.finish_reason != "completed" for turn in turns):
+        raise AssertionError("the Python runtime did not complete the four controlled local turns")
+    return {"turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
+            "contextRevisions": [source["revision"] for source in sources], "realWriteTurns": [2, 3],
+            "withdrawnSources": len(withdrawn), "localAssignmentPreserved": True,
+            "wirePreservesExactContextMessages": True, "remoteReadingEvents": 0}
 
 
 def owner_participation_snapshot_result(records: list[dict[str, object]], turns: list[RunResult]) -> dict[str, object]:

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/collaboration/scope-agent-contribution/README.md
-README.md: 29237d54b8123f265a9c15ee6162f78ba73d5c5a
-README.zh.md: d96f721c8af6728965ce75d09c0cc22cac88f1eb
+README.md: f16a052b67d4cb24acf399a30f496c3863f7cad0
+README.zh.md: d4284d21c3d22c33b5ff10b296294fba084d16be
