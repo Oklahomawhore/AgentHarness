@@ -167,7 +167,7 @@ Replacing a visible context node invalidates the request suffix from that node o
 - **Native Sessions only** — this consumer cannot wake arbitrary Claude Code terminal sessions. It does not start cold Agents or bind delegated/forked Agents.
 - **Read-only scope** — a Root Task grant and responsibility do not confer file, command, capture, or cross-owner write permission.
 - **Local scope** — only an exact owner-local Root Task assignment is eligible. Filtering its own ordinary captures does not prove freedom from cross-owner semantic feedback loops.
-- **Provider-defined comparison** — the facts backend compares supported declaration evidence selected for the recipient. Text providers use exact projection identity; arbitrary paraphrases are not proved equivalent. Online reads and audit records continue even when an automatic turn is suppressed.
+- **Provider-defined comparison** — the facts backend compares supported declaration evidence selected for the recipient. The semantic backend compares exact selected summaries and their source evidence; Text providers use exact projection identity. Arbitrary paraphrases are not proved equivalent, and a semantic relevance mistake can suppress a useful response. Online reads and audit records continue even when an automatic turn is suppressed.
 - **Visible replacement is bounded** — removing an owned context node does not erase facts quoted in ordinary user or assistant messages, undo work, or prove model forgetting.
 - **Explicit resume** — unavailable authority, failed waits, cancellation, step limits, and budget exhaustion pause automatic permission. Recovery can continue passive reads; automatic turns need explicit resume.
 

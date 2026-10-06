@@ -50,6 +50,8 @@ Before booting, add `--dump-config` to the owner command to inspect the composed
 
 After authorized file work and the receiving native Session’s next request, open **Current session collaboration → View sources**. In Trajectory, select the `scope-agent-context` message and open its **Source** tab. Expand `projection` and `backend`: `id` identifies the provider used for that recorded delivery, and must be `semantic`. Inspect the message content and source references as well. This identifies the selected recorded projection, including historical projections that may have been replaced or withdrawn. To verify adoption by a particular model request, inspect that request’s context as well; this Source tab is not a live status indicator. A connected binding or approved application alone does not confirm adoption.
 
+For a Session with finite automatic permission, an irrelevant update can be recorded without spending another automatic response when its exact selected summary and evidence still match a successfully completed response to the same local goal. The next ordinary request still receives current context. Changed wording or relevant evidence can trigger another response; summary calls retain their separate cost and allowance.
+
 Responsibility guides summarization; it is not a privacy ACL. A successful request and exact source quotes do not prove that the model interpreted corrections, failures, or negation correctly. This configuration does not add embeddings, latent exchange, or internet discovery.
 
 ## 4. Stop summaries or handle an exhausted allowance

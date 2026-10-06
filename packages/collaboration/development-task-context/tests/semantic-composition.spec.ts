@@ -5,7 +5,7 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
 import DevelopmentTaskService, { type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task'
-import LlmRuntime, { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, LlmAdapter, MessageId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -19,8 +19,8 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import SemanticBackend, { type Config } from '../src/semantic.ts'
 import { restoreSemanticProjection } from '../src/semantic-input.ts'
-import { semanticCapturedInputSchema, semanticDigest, semanticJson } from '../src/semantic-schema.ts'
-import type { DevelopmentTaskContextInput } from '../src/types.ts'
+import { semanticDigest, semanticJson, type SemanticRequestRecord, type SemanticResultRecord } from '../src/semantic-schema.ts'
+import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection } from '../src/types.ts'
 
 const contexts = new Set<Context>()
 const roots: string[] = []
@@ -32,7 +32,7 @@ afterEach(async () => {
 })
 
 async function composition(existingRoot?: string, semantic = false,
-  options: { backend?: typeof SemanticBackend; maxCalls?: number } = {}) {
+  options: { maxCalls?: number } = {}) {
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), 'semantic-composition-'))
   if (existingRoot === undefined) roots.push(root)
   const ordinaryRoot = join(root, 'ordinary')
@@ -53,7 +53,7 @@ async function composition(existingRoot?: string, semantic = false,
     ['@deepseek-ai/dsh-llm', LlmRuntime],
     ['@deepseek-ai/dsh-development-room', DevelopmentRoomService],
     ['@deepseek-ai/dsh-development-task', DevelopmentTaskService],
-    ['@deepseek-ai/dsh-development-task-context/semantic', options.backend ?? SemanticBackend],
+    ['@deepseek-ai/dsh-development-task-context/semantic', SemanticBackend],
     ['@deepseek-ai/dsh-session', SessionStore],
     ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
     ['@deepseek-ai/dsh-session-persistence-jsonl', JsonlSessionPersistence],
@@ -192,12 +192,12 @@ it('serves a parent backend consumer while auditing separately and reuses the du
   const projection = await backend.compute(input)
   expect(projection.text).toContain('Use the reported retry requirement in the client.')
   expect(projection.text).toContain('retryCount=3')
-  expect(projection.activation).toEqual({ kind: 'exact' })
+  expect(projection.activation).toMatchObject({ kind: 'recipient-evidence', version: 1, coverage: 'complete' })
   expect(adapter.requests).toHaveLength(1)
   const audit = await readAudit(first.auditPersistence)
   expect(audit.events.map(event => event.type)).toEqual(['context/semantic-request', 'context/semantic-result'])
   expect(audit.events[1]).toMatchObject({ ignorable: true,
-    data: { status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
+    data: { version: 2, status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
   expect(audit.header).not.toHaveProperty('parentSession')
   expect(audit.header).not.toHaveProperty('origin')
   expect(audit.header.isSeeded).toBe(false)
@@ -254,82 +254,113 @@ These updates summarize authorized reports for your responsibility. They do not 
 <shared-work-updates>
 `
 
-it('reopens a v1 audit with v2 computation without rewriting history or resetting the call budget', async () => {
-  let legacyConfig: Config | undefined
-  class LegacyIdentityBackend extends SemanticBackend {
-    override readonly identity: SemanticBackend['identity']
+// The v1 result seed uses the former request identity and renderer, never the current compute/project implementation.
+const legacyConfig: Config = {
+  auditSessionId: 'semantic-composition-audit', provider: 'semantic-composition', model: 'controlled-summary',
+  maxInputBytes: 32768, maxOutputTokens: 1024, maxOutputBytes: 16384, timeoutMs: 3000, maxConcurrentCalls: 2, maxCalls: 2,
+}
 
-    constructor(ctx: Context, config: Config) {
-      super(ctx, config)
-      legacyConfig = SemanticBackend.Config(config)
-      this.identity = { id: 'semantic', revision: semanticDigest({ version: 1,
-        system: legacySemanticSystem, config: legacyConfig }) }
-    }
-  }
-
-  const first = await composition(undefined, true, { backend: LegacyIdentityBackend, maxCalls: 2 })
-  const firstAdapter = new CompositionAdapter()
-  first.ctx.effect(() => first.ctx.llm.registerAdapter(['semantic-composition'], firstAdapter))
+async function seedLegacyAudit() {
+  const first = await composition(undefined, false, { maxCalls: 2 })
+  expect(first.ctx.get('developmentTaskContextBackend')).toBeUndefined()
   const owner = 'legacy-semantic-owner' as DevelopmentParticipantId
   await first.ctx.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
-  const task = await first.ctx.developmentTasks.create({ origin: { kind: 'root' },
+  const created = await first.ctx.developmentTasks.create({ origin: { kind: 'root' },
     objective: 'Update the retry client', scope: 'Client and API', createdBy: owner })
-  await first.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: owner,
+  await first.ctx.developmentTasks.publishContext({ taskId: created.id, participantId: owner,
     text: 'The retry client must preserve retryCount=3 and must not retry validation errors.' })
-  const input: DevelopmentTaskContextInput = { view: first.ctx.developmentTasks.contextView(task.id),
+  const input: DevelopmentTaskContextInput = { view: first.ctx.developmentTasks.contextView(created.id),
     recipient: { participantId: 'frontend-recipient' as DevelopmentParticipantId, sessionLabel: 'Implement the client' },
     maxContextBytes: 16384, signal: new AbortController().signal }
-  const legacyProjection = await first.ctx.developmentTaskContextBackend.compute(input)
-  expect(firstAdapter.requests).toHaveLength(1)
-  const firstRequest = firstAdapter.requests[0]
-  if (firstRequest === undefined || legacyConfig === undefined) throw new Error('legacy computation was not dispatched')
-  expect(firstRequest.system).toBe(legacySemanticSystem)
+  const task = input.view.task
+  const publication = task.context[0]
+  if (publication === undefined) throw new Error('legacy explicit publication is missing')
+  const source = { kind: 'publication' as const, taskId: task.id, revision: task.revision, publicationId: publication.id }
+  const selected = [{ kind: 'task' as const, taskId: task.id, revision: task.revision }]
+  const attribution = { basis: 'current-task-report', publishedAt: publication.publishedAt, publishedBy: publication.publishedBy }
+  const captured = { task: { id: task.id, revision: task.revision, objective: task.objective, scope: task.scope, origin: task.origin },
+    recipient: input.recipient, inherited: [], mandatory: [],
+    sources: [{ sourceId: semanticDigest(source), source, body: publication.text, attribution }],
+    coverage: { selectedSources: selected, omittedSources: [] } }
+  const summary = 'Use the reported retry requirement in the client.'
+  const reply = { version: 1, decisions: [{ sourceId: semanticDigest(source), relevant: true }],
+    updates: [{ text: summary, sources: [{ sourceId: semanticDigest(source), quote: publication.text }] }] }
+  const projection = { activation: { kind: 'exact' },
+    text: legacySemanticPrefix + semanticJson({ task: captured.task, recipient: captured.recipient, inherited: [], mandatory: [],
+      updates: [{ text: summary, sources: [{ source, quote: publication.text, attribution }] }],
+      coverage: { selectedSources: [...selected, source], omittedSources: [] },
+    }).replaceAll('<', '\\u003c') + '\n</shared-work-updates>',
+    selectedSources: [...selected, source], omittedSources: [] } satisfies DevelopmentTaskContextProjection
+  const backend = { id: 'semantic' as const,
+    revision: semanticDigest({ version: 2, system: legacySemanticSystem, config: legacyConfig }) }
+  const call = { provider: legacyConfig.provider, model: legacyConfig.model, maxTokens: legacyConfig.maxOutputTokens }
+  const content = [{ type: 'text' as const, text: semanticJson(captured) }]
+  const key = semanticDigest({ backend, call, system: legacySemanticSystem, input: content, maxContextBytes: input.maxContextBytes })
+  const request = { version: 1, key, ordinal: 1, backend, call, system: legacySemanticSystem,
+    messages: [{ id: MessageId(`semantic-${key}`), role: 'user', content,
+      source: { kind: 'plugin', plugin: 'dsh-development-task-context/semantic' } }],
+    purpose: 'context-summary', maxContextBytes: input.maxContextBytes } satisfies SemanticRequestRecord
+  const session = first.ctx.sessions.prepare(SessionId(legacyConfig.auditSessionId))
+  const requestEvent = session.append('context/semantic-request', request)
+  const result = { version: 1, key, requestSeq: requestEvent.seq, status: 'completed',
+    rawOutput: [{ type: 'text', text: JSON.stringify(reply) }], finish: { kind: 'stop' }, usage: null,
+    elapsedMs: 1, error: null, rejectedChunk: null, projection } satisfies SemanticResultRecord
+  session.append('context/semantic-result', result)
+  const writer = await first.auditPersistence.create(session.header)
+  try {
+    await writer.append(session.snapshotEvents().map(event => ({ ...event, ignorable: true })))
+    await writer.flush()
+  } finally { await writer.close() }
   const audit = await readAudit(first.auditPersistence)
-  const request = audit.events.find(event => event.type === 'context/semantic-request')
-  const result = audit.events.find(event => event.type === 'context/semantic-result')
-  if (request === undefined || result === undefined) throw new Error('legacy audit pair was not persisted')
-  expect(request.data.ordinal).toBe(1)
-  const capturedText = request.data.messages[0]?.content[0]?.text
-  if (capturedText === undefined) throw new Error('legacy audit has no captured input')
-  const captured = semanticCapturedInputSchema.parse(JSON.parse(capturedText) as unknown)
-  expect(captured.sources).toHaveLength(1)
-  const source = captured.sources[0]
-  if (source === undefined) throw new Error('legacy explicit publication is missing')
-  expect(legacyProjection.text).toBe(legacySemanticPrefix + semanticJson({
-    task: captured.task, recipient: captured.recipient, inherited: [], mandatory: [],
-    updates: [{ text: 'Use the reported retry requirement in the client.', sources: [
-      { source: source.source, quote: source.body, attribution: source.attribution },
-    ] }],
-    coverage: { selectedSources: [...captured.coverage.selectedSources, source.source], omittedSources: [] },
-  }).replaceAll('<', '\\u003c') + '\n</shared-work-updates>')
-  expect(restoreSemanticProjection(request.data, result.data)).toEqual(legacyProjection)
+  expect(audit.events.map(event => event.type)).toEqual(['context/semantic-request', 'context/semantic-result'])
   const files = (await readdir(first.auditRoot, { recursive: true })).filter(path => path.endsWith('.jsonl'))
   expect(files).toHaveLength(1)
-  const auditFile = files[0]
-  if (auditFile === undefined) throw new Error('legacy audit JSONL is missing')
-  const originalBytes = await readFile(join(first.auditRoot, auditFile), 'utf8')
+  const file = files[0]
+  if (file === undefined) throw new Error('legacy audit JSONL is missing')
+  const auditPath = join(first.auditRoot, file)
+  const bytes = await readFile(auditPath, 'utf8')
   await first.ctx.fiber.dispose()
   contexts.delete(first.ctx)
+  return { root: first.root, input, request, result, projection, audit, auditPath, bytes }
+}
 
-  const second = await composition(first.root, true, { maxCalls: 2 })
+it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves the cumulative call budget', async () => {
+  const seed = await seedLegacyAudit()
+  const { input, request, result, projection: legacyProjection } = seed
+  const legacyProjectionBytes = JSON.stringify(legacyProjection)
+  expect(JSON.stringify(restoreSemanticProjection(request, result))).toBe(legacyProjectionBytes)
+  const second = await composition(seed.root, true, { maxCalls: 2 })
   const adapter = new CompositionAdapter()
   second.ctx.effect(() => second.ctx.llm.registerAdapter(['semantic-composition'], adapter))
   const backend = second.ctx.developmentTaskContextBackend
-  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 2,
+  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 3,
     system: legacySemanticSystem, config: legacyConfig }) })
-  expect(backend.identity).not.toEqual(request.data.backend)
+  expect(backend.identity).not.toEqual(request.backend)
   const reopened = await readAudit(second.auditPersistence)
-  expect(reopened.events.slice(0, audit.events.length)).toEqual(audit.events)
-  expect(restoreSemanticProjection(request.data, result.data)).toEqual(legacyProjection)
+  expect(reopened.events.slice(0, seed.audit.events.length)).toEqual(seed.audit.events)
+  expect(JSON.stringify(restoreSemanticProjection(request, result))).toBe(legacyProjectionBytes)
+  expect(adapter.requests).toEqual([])
+  expect((await readFile(seed.auditPath, 'utf8')).startsWith(seed.bytes)).toBe(true)
+
   const current = await backend.compute(input)
-  expect(current).toEqual(legacyProjection)
+  expect(current.text).toBe(legacyProjection.text)
+  expect(current.selectedSources).toEqual(legacyProjection.selectedSources)
+  expect(current.omittedSources).toEqual(legacyProjection.omittedSources)
+  expect(current.activation).toMatchObject({ kind: 'recipient-evidence', version: 1, coverage: 'complete' })
   expect(adapter.requests).toHaveLength(1)
   const after = await readAudit(second.auditPersistence)
   const requests = after.events.filter(event => event.type === 'context/semantic-request')
   expect(requests.map(event => event.data.ordinal)).toEqual([1, 2])
-  expect(requests.map(event => event.data.backend)).toEqual([request.data.backend, backend.identity])
+  expect(requests.map(event => event.data.version)).toEqual([1, 1])
+  expect(requests.map(event => event.data.backend)).toEqual([request.backend, backend.identity])
+  expect(requests.map(event => event.data.messages[0]?.content))
+    .toEqual([request.messages[0]?.content, request.messages[0]?.content])
+  expect(requests.map(event => event.data.call)).toEqual([request.call, request.call])
   expect(new Set(requests.map(event => event.data.key)).size).toBe(2)
-  expect(after.events.filter(event => event.type === 'context/semantic-result')).toHaveLength(2)
+  const results = after.events.filter(event => event.type === 'context/semantic-result')
+  expect(results.map(event => event.data.version)).toEqual([1, 2])
+  expect(results.map(event => event.data.projection?.activation.kind)).toEqual(['exact', 'recipient-evidence'])
+  expect(results.map(event => event.data.requestSeq)).toEqual(requests.map(event => event.seq))
   expect(await backend.compute(input)).toEqual(current)
   expect(adapter.requests).toHaveLength(1)
   const different: DevelopmentTaskContextInput = { ...input,
@@ -337,19 +368,42 @@ it('reopens a v1 audit with v2 computation without rewriting history or resettin
   await expect(backend.compute(different)).rejects.toThrow('cumulative maxCalls exhausted')
   expect(adapter.requests).toHaveLength(1)
   expect((await readAudit(second.auditPersistence)).events).toEqual(after.events)
-  expect((await readFile(join(second.auditRoot, auditFile), 'utf8')).startsWith(originalBytes)).toBe(true)
+  expect((await readFile(seed.auditPath, 'utf8')).startsWith(seed.bytes)).toBe(true)
   await second.ctx.fiber.dispose()
   contexts.delete(second.ctx)
 
-  const third = await composition(first.root, true, { maxCalls: 2 })
+  const third = await composition(seed.root, true, { maxCalls: 2 })
   const unused = new CompositionAdapter()
   third.ctx.effect(() => third.ctx.llm.registerAdapter(['semantic-composition'], unused))
   expect(await third.ctx.developmentTaskContextBackend.compute(input)).toEqual(current)
   await expect(third.ctx.developmentTaskContextBackend.compute(different)).rejects.toThrow('cumulative maxCalls exhausted')
   expect(unused.requests).toEqual([])
   const final = await readAudit(third.auditPersistence)
-  expect(final.events.filter(event => event.type === 'context/semantic-request').map(event => event.data.ordinal))
-    .toEqual([1, 2])
-  expect(final.events.slice(0, audit.events.length)).toEqual(audit.events)
-  expect((await readFile(join(third.auditRoot, auditFile), 'utf8')).startsWith(originalBytes)).toBe(true)
+  expect(final.events.filter(event => event.type === 'context/semantic-request').map(event => event.data.ordinal)).toEqual([1, 2])
+  expect(final.events.slice(0, seed.audit.events.length)).toEqual(seed.audit.events)
+  expect(JSON.stringify(restoreSemanticProjection(request, result))).toBe(legacyProjectionBytes)
+  expect((await readFile(seed.auditPath, 'utf8')).startsWith(seed.bytes)).toBe(true)
+})
+
+it.each([
+  { name: 'v2 with an exact projection', version: 2, activation: { kind: 'exact' }, error: 'recipient-evidence' },
+  { name: 'v1 with recipient evidence', version: 1, error: 'exact',
+    activation: { kind: 'recipient-evidence', version: 1, digest: '0'.repeat(64), coverage: 'complete' } },
+  { name: 'v2 with a forged evidence digest', version: 2, error: 'cached projection disagrees with recorded output',
+    activation: { kind: 'recipient-evidence', version: 1, digest: '0'.repeat(64), coverage: 'complete' } },
+])('rejects a persisted $name without rewriting the audit', async ({ version, activation, error }) => {
+  const seed = await seedLegacyAudit()
+  const object = z.record(z.string(), z.unknown())
+  let altered = 0
+  const damaged = seed.bytes.trimEnd().split('\n').map((line) => {
+    const row = object.parse(JSON.parse(line) as unknown)
+    if (row.type !== 'context/semantic-result') return line
+    altered++
+    const data = object.parse(row.data)
+    return JSON.stringify({ ...row, data: { ...data, version, projection: { ...object.parse(data.projection), activation } } })
+  }).join('\n') + '\n'
+  expect(altered).toBe(1)
+  await writeFile(seed.auditPath, damaged)
+  await expect(composition(seed.root, true, { maxCalls: 2 })).rejects.toThrow(error)
+  expect(await readFile(seed.auditPath, 'utf8')).toBe(damaged)
 })

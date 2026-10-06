@@ -258,6 +258,7 @@ it('rebuilds cached output from the raw reply and refuses a valid-shaped unrelat
   const recordedResult = events.find(event => event.type === 'context/semantic-result')
   const request = semanticRequestSchema.parse(recordedRequest?.data)
   const result = semanticResultSchema.parse(recordedResult?.data)
+  if (result.version !== 2) throw new Error('new computations must persist result version two')
   const projection = result.projection
   if (projection === null) throw new Error('missing completed projection')
   expect(restoreSemanticProjection(request, result)).toEqual(projection)

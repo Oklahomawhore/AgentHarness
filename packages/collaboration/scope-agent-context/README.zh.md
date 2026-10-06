@@ -167,7 +167,7 @@ Session 先记录并落盘地址变更意图，再由 Access 修改接收记录�
 - **仅限原生 Session** — 此 consumer 不能唤醒任意 Claude Code 终端会话，也不会启动未运行的 Agent 或绑定委派／分叉 Agent。
 - **只读 scope** — Root Task grant 和职责不授予文件、命令、采集或跨 owner 写入权限。
 - **本地范围** — 仅支持精确匹配的 owner 本地 Root Task 分配。过滤自身普通采集不证明跨 owner 语义反馈循环已消除。
-- **由 provider 定义比较** — facts backend 比较为接收方选择的受支持声明证据。text provider 使用精确投影 identity，不证明任意改写等价。即使抑制自动轮次，在线读取和审计记录仍会继续。
+- **由 provider 定义比较** — facts backend 比较为接收方选择的受支持声明证据。semantic backend 比较逐字选定摘要及其来源证据；text provider 使用精确投影 identity。这不证明任意改写等价，语义相关性误判也可能抑制有用的响应。即使抑制自动轮次，在线读取和审计记录仍会继续。
 - **可见替换范围有限** — 移除自有上下文节点不会擦除普通用户或 assistant 消息引用的事实、撤销已完成工作，也不能证明模型遗忘。
 - **显式恢复** — 权限不可用、等待失败、取消、步骤上限和预算耗尽会暂停自动执行许可。恢复后可继续被动读取，自动轮次需要显式恢复。
 

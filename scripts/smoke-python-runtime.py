@@ -740,7 +740,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +759,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +778,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,11 +1109,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-owner-idle": "scope-owner-idle-current-evidence",
         "scope-native-contribution": "scope-native-contribution-current-evidence",
+        "task-context-semantic": "task-context-semantic-recipient-evidence",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -1160,6 +1161,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     "Inspect the reported failed Write without assuming success.",
                     "Continue after the owner revokes the tool contribution.",
                 )]
+            elif scenario == "scope-semantic-idle":
+                first, last, observed = run_finite_scope_turns(
+                    harness, session,
+                    first_prompt="Join the shared Task and observe authorized implementation reports.",
+                    last_prompt="Finish this verification and leave the Task.", completed_turn=5,
+                )
             elif scenario in {"scope-owner-idle", "scope-joint-automatic"}:
                 first_prompt, last_prompt = (
                     ("Authorize bounded owner work for the connected local Task.", "Continue after leaving the local Task.")
@@ -1194,6 +1201,11 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             if set(audits) != {"task-context-semantic-audit"}:
                 raise AssertionError("semantic runtime must retain one separately owned auxiliary audit Session")
             result = semantic_snapshot_result(records, turns, audits["task-context-semantic-audit"])
+        elif scenario == "scope-semantic-idle":
+            audits = read_session_logs(home / "semantic-audit")
+            if set(audits) != {"scope-semantic-idle-audit"}:
+                raise AssertionError("semantic idle run must retain its separate auxiliary audit")
+            result = semantic_idle_snapshot_result(records, first, last, observed, audits["scope-semantic-idle-audit"])
         elif scenario == "scope-owner-idle":
             result = owner_idle_snapshot_result(records, first, last, observed)
         elif scenario == "scope-joint-automatic":
@@ -1317,7 +1329,7 @@ def native_scope_snapshot_result(
 
 def run_finite_scope_turns(
     harness: DeepSeekHarness, session: Session, *, first_prompt: str, last_prompt: str,
-    coverage_revision: int | None = None,
+    coverage_revision: int | None = None, completed_turn: int = 2,
 ) -> tuple[RunResult, RunResult, list[dict[str, object]]]:
     """Wait for automatic completion and an optional coverage pause before the final user request."""
     with harness.client.subscribe_session_notifications(session.id) as subscription:
@@ -1337,7 +1349,7 @@ def run_finite_scope_turns(
                 if not isinstance(event, dict):
                     continue
                 observed.append(event)
-                if event.get("type") == "turn/end" and event["data"]["turn"] == 2:
+                if event.get("type") == "turn/end" and event["data"]["turn"] == completed_turn:
                     if event["data"]["reason"] != {"kind": "completed"}:
                         raise AssertionError("scope automatic turn did not complete")
                     completed = True
@@ -1354,6 +1366,90 @@ def run_finite_scope_turns(
             deadline.cancel()
             deadline.join()
     return first, last, observed
+
+
+def semantic_idle_snapshot_result(
+    records: list[dict[str, object]], first: RunResult, last: RunResult, observed: list[dict[str, object]],
+    audit: list[dict[str, object]],
+) -> dict[str, object]:
+    """Check actual automatic responses, suppressed evidence and independent Python wire delivery."""
+    dispatches = [event["data"] for event in records if event.get("type") == "scope-agent-context/request"]
+    wire_dispatches = [event["data"] for event in observed if event.get("type") == "scope-agent-context/request"]
+    if [(item["turn"], item["step"]) for item in dispatches] != [(2, 1), (3, 1), (4, 1), (5, 1)]:
+        raise AssertionError("the initial report, correction, failure and withdrawal must each receive one automatic response")
+    if dispatches != wire_dispatches:
+        raise AssertionError("Python notifications lost exact semantic request evidence")
+    suppressed = [event for event in records if event.get("type") == "scope-agent-context/evaluation"
+                  and event["data"]["decision"] == "suppress-unchanged"]
+    if len(suppressed) != 1 or suppressed[0]["data"]["projection"]["taskRevision"] != 4:
+        raise AssertionError("only the unrelated report must be suppressed")
+    suppression = suppressed[0]
+    data = suppression["data"]
+    baseline = next(event for event in records if event.get("seq") == data["baseline"]["requestSeq"])
+    if baseline["type"] != "scope-agent-context/request" or baseline["data"]["turn"] != 2:
+        raise AssertionError("suppression must point to an actual completed automatic request")
+    current, previous = data["projection"], baseline["data"]["projection"]
+    if current["activation"] != previous["activation"] or current["projectionId"] == previous["projectionId"]:
+        raise AssertionError("current exact projection must change while recipient evidence stays identical")
+    if current["activation"]["kind"] != "recipient-evidence" or current["activation"]["coverage"] != "complete":
+        raise AssertionError("suppression requires complete semantic recipient evidence")
+    if not any(item["reason"] == "recipient-irrelevant" for item in current["omittedSources"]):
+        raise AssertionError("suppressed unrelated report must remain in source accounting")
+    preceding_states = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"
+                        and event["seq"] < suppression["seq"]]
+    if preceding_states[-1]["usedBudget"] != 1 or data["activationId"] is not None:
+        raise AssertionError("an unrelated report must not reserve another automatic turn")
+    wire_suppressed = [event["data"] for event in observed if event.get("type") == "scope-agent-context/evaluation"
+                       and event["data"]["decision"] == "suppress-unchanged"]
+    if wire_suppressed != [data]:
+        raise AssertionError("Python wire must preserve the complete suppression decision")
+    contexts = [event["data"] for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "development-task-context"]
+    if len(contexts) != 6 or contexts[-1]["source"]["form"] != "disconnected":
+        raise AssertionError("the six requests must retain current context and final departure")
+    projections = [item["source"]["projection"] for item in contexts[:-1]]
+    revisions = [item["taskRevision"] for item in projections]
+    if revisions != [2, 3, 5, 6, 7]:
+        raise AssertionError("unrelated revision must not create another automatic model request")
+    if any("UNRELATED_ADMIN" in item["text"] for item in projections):
+        raise AssertionError("the unrelated report body leaked into receiving context")
+    if "RETRY_LIMIT_1" not in projections[2]["text"] or "FAILED_RETRY_9" not in projections[3]["text"]:
+        raise AssertionError("correction and failure must reach actual automatic requests")
+    terminal = projections[-1]
+    if any(marker in terminal["text"] for marker in ("RETRY_LIMIT_3", "RETRY_LIMIT_1", "FAILED_RETRY_9", "src/retry.ts")):
+        raise AssertionError("withdrawal must remove prior report bodies from current context")
+    if len([item for item in terminal["omittedSources"] if item["reason"] == "withdrawn"]) != 4:
+        raise AssertionError("withdrawal must account for every admitted report")
+    users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
+    pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
+    if len(users) != 2 or len(pulses) != 4:
+        raise AssertionError("automatic responses must use finite permission without intermediate human prompts")
+    state = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"][-1]
+    if state["mode"] != "left" or state["usedBudget"] != 4 or state["pendingActivation"] is not None:
+        raise AssertionError("departure must retain spent allowance and end scheduling")
+    requests = [event for event in audit if event.get("type") == "context/semantic-request"]
+    results = [event for event in audit if event.get("type") == "context/semantic-result"]
+    if len(requests) != 4 or len(results) != 4:
+        raise AssertionError("suppression can still spend an auxiliary call; empty or withdrawn-only evidence cannot")
+    for request, result in zip(requests, results, strict=True):
+        output = result["data"]
+        if output["version"] != 2 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
+            raise AssertionError("semantic audit must retain version 2 results for their exact requests")
+        if output["status"] != "completed" or output["projection"]["activation"]["kind"] != "recipient-evidence":
+            raise AssertionError("semantic audit must retain completed evidence")
+    if results[0]["data"]["projection"]["activation"] != results[1]["data"]["projection"]["activation"]:
+        raise AssertionError("the unrelated audited summary must preserve completed evidence")
+    if any(str(event.get("type", "")).startswith("context/semantic-") for event in records):
+        raise AssertionError("auxiliary audit must remain separate from the receiving Session")
+    if first.finish_reason != "completed" or last.finish_reason != "completed":
+        raise AssertionError("explicit join and leave requests must complete")
+    return {"first": {"text": first.final_response, "finishReason": first.finish_reason},
+            "last": {"text": last.final_response, "finishReason": last.finish_reason},
+            "contextRevisions": revisions, "suppressedRevision": 4, "spentBeforeSuppression": 1,
+            "automaticRequests": len(dispatches), "automaticPulses": len(pulses), "humanRequests": len(users),
+            "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
+            "auditResultVersion": 2, "realModelCalls": 0, "withdrawnSources": 4,
+            "wirePreservesExactEvidence": True}
 
 
 def joint_automatic_snapshot_result(
@@ -1596,15 +1692,17 @@ def semantic_snapshot_result(
     if len(contexts) != 4 or [event["data"] for event in wire_contexts] != [event["data"] for event in contexts]:
         raise AssertionError("Python wire events must preserve all four exact semantic context messages")
     revisions = [event["data"]["source"]["revision"] for event in contexts]
-    if revisions != [4, 5, 6, 7] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
+    if revisions != [5, 6, 7, 8] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
         raise AssertionError("Python runtime must consume the real semantic backend at each owner revision")
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("semantic updates and withdrawal must replace the current native surface")
     texts = [event["data"]["content"][0]["text"] for event in contexts]
     projections = [json.loads(text.split("<shared-work-updates>\n")[1].split("\n</shared-work-updates>")[0]) for text in texts]
     update_counts = [len(projection["updates"]) for projection in projections]
-    if update_counts != [1, 2, 3, 0]:
-        raise AssertionError("semantic updates must include each report until its source authorization ends")
+    if update_counts != [2, 2, 3, 0]:
+        raise AssertionError("semantic updates must retain the current complete Write and later reports until source withdrawal")
+    if any("WRITE_ALPHA" in text for text in texts[1:]) or any("WRITE_CURRENT" not in text for text in texts[1:3]):
+        raise AssertionError("a complete replacement must remove the superseded Write from current semantic text")
     for event, projection in zip(contexts, projections, strict=True):
         source = event["data"]["source"]
         if projection["coverage"] != {"selectedSources": source["selectedSources"], "omittedSources": source["omittedSources"]}:
@@ -1617,10 +1715,10 @@ def semantic_snapshot_result(
                 raise AssertionError("each semantic update must cite its selected original publication")
     if any("UNRELATED_ADMIN" in text for text in texts):
         raise AssertionError("the irrelevant source body leaked into an adopted semantic projection")
-    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md")):
+    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "WRITE_CURRENT", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md")):
         raise AssertionError("source withdrawal must exclude old semantic text and quotes")
-    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 3:
-        raise AssertionError("withdrawal must account for all three original tool observations")
+    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 4:
+        raise AssertionError("withdrawal must account for all four original tool observations")
     if len(projections[-1]["mandatory"]) != 1 or projections[-1]["mandatory"][0]["kind"] != "withdrawal":
         raise AssertionError("the controlled model cannot erase the deterministic withdrawal notice")
     requests = [event for event in audit if event.get("type") == "context/semantic-request"]
@@ -1634,6 +1732,8 @@ def semantic_snapshot_result(
             raise AssertionError("semantic audit result must identify its exact completed model request")
         if request["data"]["purpose"] != "context-summary" or request["data"]["call"]["provider"] != "semantic-snapshot":
             raise AssertionError("semantic runtime must use the dedicated controlled auxiliary route")
+        if output["version"] != 2 or output["projection"]["activation"]["kind"] != "recipient-evidence":
+            raise AssertionError("current semantic audit must record versioned recipient evidence")
         if output["projection"]["text"] != context["data"]["content"][0]["text"]:
             raise AssertionError("actual native context must equal the durably completed semantic projection")
         audit_links.append({"requestSeq": request["seq"], "status": output["status"],
@@ -1643,7 +1743,7 @@ def semantic_snapshot_result(
     return {
         "turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
         "contextRevisions": revisions, "backend": "semantic", "updateCounts": update_counts,
-        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 3,
+        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 4,
         "controlledSemanticRequests": len(requests), "realModelRequests": 0,
         "auditResults": audit_links, "wirePreservesExactContextMessages": True,
         "isolatedAuditMatchesNativeContext": True,

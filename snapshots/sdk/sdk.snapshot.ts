@@ -126,6 +126,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-semantic-idle': {
+    expectedFinalResponse: 'Semantic idle evidence verified; the Task was left without renewing automatic permission.',
+  },
   'scope-joint-automatic': {
     expectedFinalResponse: 'Original automatic permission remained paused until this read connection was left.',
   },

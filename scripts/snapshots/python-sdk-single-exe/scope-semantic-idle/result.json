@@ -1,0 +1,29 @@
+{
+  "first": {
+    "text": "Shared Task observation is ready.",
+    "finishReason": "completed"
+  },
+  "last": {
+    "text": "Semantic idle evidence verified; the Task was left without renewing automatic permission.",
+    "finishReason": "completed"
+  },
+  "contextRevisions": [
+    2,
+    3,
+    5,
+    6,
+    7
+  ],
+  "suppressedRevision": 4,
+  "spentBeforeSuppression": 1,
+  "automaticRequests": 4,
+  "automaticPulses": 4,
+  "humanRequests": 2,
+  "usedBudget": 4,
+  "mode": "left",
+  "controlledSummaryCalls": 4,
+  "auditResultVersion": 2,
+  "realModelCalls": 0,
+  "withdrawnSources": 4,
+  "wirePreservesExactEvidence": true
+}
