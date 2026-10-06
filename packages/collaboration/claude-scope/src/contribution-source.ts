@@ -44,12 +44,13 @@ export function contributionProposalSource(source: ClaudeScopeContributionSource
 }
 
 /**
- * Keep application consent within the source kind selected by the owner.
+ * Keep application consent within the supported single-entry source kind; reusable native joins require native receiving.
  * @param entry - original application invitation.
  * @param source - parsed local collection selection.
  * @returns whether this entry permits applying for that kind of contribution.
  */
 export function contributionEntryMatches(entry: ScopeContributionEntry, source: ClaudeScopeContributionSource): boolean {
+  if (entry.kind === 'scope-group-entry') return false
   const mode = 'kind' in source ? source.kind : 'openapi'
   return (entry.kind === 'openapi-contribution-entry' ? 'openapi' : entry.sourceKind) === mode
 }

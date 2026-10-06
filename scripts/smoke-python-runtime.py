@@ -740,7 +740,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +759,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +778,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,7 +1109,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-owner-idle": "scope-owner-idle-current-evidence",
@@ -1133,7 +1133,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         root = Path(temporary).resolve()
         prepared = prepare("prepare", root)
         assert isinstance(prepared, dict)
-        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal", "scope-dual-contribution", "scope-local-joint"}:
+        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal", "scope-dual-contribution", "scope-local-joint", "scope-group-join"}:
             shutil.copytree(repository / "snapshots/sdk" / scenario / "workspace", root, dirs_exist_ok=True)
         home = root / ".dsh"
         with DeepSeekHarness(
@@ -1186,6 +1186,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
+            elif scenario == "scope-group-join":
+                turns, observed = run_group_join_turns(harness, session)
             elif scenario == "scope-local-joint":
                 turns, observed = run_local_joint_turns(harness, session)
             elif scenario == "scope-dual-contribution":
@@ -1237,6 +1239,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-group-join":
+            result = group_join_snapshot_result(records, turns, observed, json.loads((home / "group-join-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("group join changed the expected B workspace result")
         elif scenario == "scope-local-joint":
             result = local_joint_snapshot_result(records, turns, observed, json.loads((home / "local-joint-audit.json").read_text()))
             expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
@@ -1277,6 +1285,46 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         normalized = normalized_result["session"]
         compare_snapshot_files({"result.json": json.dumps(result, indent=2) + "\n", "session.v3.jsonl": normalized},
                                update_snapshots, expected, ("result.json", "session.v3.jsonl"))
+
+
+def run_group_join_turns(
+    harness: DeepSeekHarness, session: Session,
+) -> tuple[list[RunResult], list[dict[str, object]]]:
+    """Drive three owner prompts and wait for the three actual bounded automatic turns."""
+    with harness.client.subscribe_session_notifications(session.id) as subscription:
+        deadline = threading.Timer(110, harness.close)
+        deadline.start()
+        observed: list[dict[str, object]] = []
+
+        def wait_completed(turn: int) -> None:
+            while True:
+                notification = subscription.next()
+                if notification.method != "session.event":
+                    continue
+                event = notification.payload.get("event")
+                if not isinstance(event, dict):
+                    continue
+                observed.append(event)
+                if event.get("type") == "turn/end" and event["data"]["turn"] == turn:
+                    if event["data"]["reason"] != {"kind": "completed"}:
+                        raise AssertionError(f"group join turn {turn} did not complete")
+                    return
+
+        try:
+            first = session.run("Continue my existing B responsibility and save my local baseline.")
+            if first.finish_reason != "completed":
+                raise AssertionError("group join setup failed before automatic work")
+            wait_completed(2)
+            joined = session.run("Join the shared goal with C while preserving my local Task and allowing two more automatic responses.")
+            if joined.finish_reason != "completed":
+                raise AssertionError("group join approval failed before automatic work")
+            wait_completed(5)
+            last = session.run("Leave the group scope and finish my local work while C stays joined.")
+            wait_completed(6)
+        finally:
+            deadline.cancel()
+            deadline.join()
+    return [first, joined, last], observed
 
 
 def run_local_joint_turns(
@@ -1321,7 +1369,7 @@ def run_local_joint_turns(
 
 def local_joint_snapshot_result(
     records: list[dict[str, object]], turns: list[RunResult], observed: list[dict[str, object]],
-    audit: dict[str, object],
+    audit: dict[str, object], *, remote_marker: str = "REMOTE_API",
 ) -> dict[str, object]:
     """Verify retained local responsibility, both frozen request inputs and monotonic automatic allowance."""
     ends = [event["data"] for event in records if event.get("type") == "turn/end"]
@@ -1369,7 +1417,7 @@ def local_joint_snapshot_result(
         budgets.append(byte_count)
         text = "\n".join(block["text"] for block in remote["content"] if block["type"] == "text")
         expected_version = 2 if request["turn"] == 5 else 1
-        if f"REMOTE_API_V{expected_version}" not in text or (expected_version == 2 and "REMOTE_API_V1" in text):
+        if f"{remote_marker}_V{expected_version}" not in text or (expected_version == 2 and f"{remote_marker}_V1" in text):
             raise AssertionError("the current API correction must supersede its predecessor")
     joins = [event["data"] for event in records if event.get("type") == "scope-agent-context/join-read"]
     adopted = [item for item in joins if item["phase"] == "adopted"]
@@ -1396,7 +1444,7 @@ def local_joint_snapshot_result(
     final_contexts = [event["data"] for event in records if event.get("type") == "user/message"
                       and event["seq"] > final_start and event["data"]["source"]["kind"] in
                       {"development-task-context", "scope-agent-context"}]
-    if any(f"REMOTE_API_V{version}" in block["text"] for message in final_contexts for block in message["content"]
+    if any(f"{remote_marker}_V{version}" in block["text"] for message in final_contexts for block in message["content"]
            if block["type"] == "text" for version in (1, 2, 3)):
         raise AssertionError("departed context retained remote API facts")
     authority = [event for event in records if event.get("type") in {"permission/preset", "sandbox/mode", "approval/policy"}]
@@ -1411,6 +1459,77 @@ def local_joint_snapshot_result(
         "finalMode": final["mode"], "usedBudget": final["usedBudget"], "originalAuthorityEvents": len(authority),
         "retainedOriginalTask": True, "restoredNewLocalInterval": True, "remoteFactsAfterLeave": [],
     }
+
+
+def group_join_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], observed: list[dict[str, object]],
+    audit: dict[str, object],
+) -> dict[str, object]:
+    """Validate independent B/C authorization and passive C requests after B leaves the shared goal."""
+    result = local_joint_snapshot_result(records, turns, observed, audit, remote_marker="C_SHARED")
+    activations = {event["data"]["activationId"]: event["data"] for event in records
+                   if event.get("type") == "scope-agent-context/evaluation" and event["data"]["decision"] == "activate"}
+    for event in records:
+        if event.get("type") != "scope-agent-context/request" or event["data"]["turn"] not in (4, 5):
+            continue
+        request = event["data"]
+        candidate = activations[request["activationId"]]["projection"]["remote"]["text"]
+        if f"C_SHARED_V{request['turn'] - 3}" not in candidate or (request["turn"] == 5 and "C_SHARED_V1" in candidate):
+            raise AssertionError("B automatic reservation must already be caused by the independent current C update")
+    entry = audit["entry"]
+    applications = audit["applications"]
+    if (entry["entry"]["kind"] != "scope-group-entry" or entry["entry"]["version"] != 2 or
+            entry["entry"]["maxMembers"] != 2 or entry["state"] != "closed" or entry["applicationCount"] != 2):
+        raise AssertionError("one explicitly reusable entry must retain two applicants after it closes")
+    if len(applications) != 2 or len({item["applicationId"] for item in applications}) != 2:
+        raise AssertionError("B and C require distinct retained applications")
+    by_peer = {item["proposal"]["contributorPeerId"]: item for item in applications}
+    b, c = by_peer[audit["bPeer"]], by_peer[audit["cPeer"]]
+    if (b["result"]["status"] != "ended" or b["result"]["reason"] != "left" or
+            b["result"]["readState"] != "active" or c["result"]["status"] != "approved" or
+            c["result"]["readState"] != "active"):
+        raise AssertionError("B departure must retain C independent active contribution and read permission: " +
+                                 repr([{key: member["result"].get(key) for key in ("status", "reason", "readState")} for member in (b, c)]))
+    if (any(item["entry"] != entry["entry"] for item in applications) or
+            len({item["result"]["invitation"]["grant"]["grantId"] for item in applications}) != 2 or
+            len({item["result"]["readInvitation"]["grantId"] for item in applications}) != 2):
+        raise AssertionError("same-entry approvals must issue separate exact read and contribution grants")
+    if (audit["bSubscription"]["state"] != "left" or audit["cSubscription"]["state"] != "active" or
+            audit["bSubscription"]["invitation"]["grantId"] != b["result"]["readInvitation"]["grantId"]):
+        raise AssertionError("B must end its exact subscription while C remains subscribed")
+    c_state = audit["cState"]
+    if (c_state["binding"]["kind"] != "local-task-scope" or c_state["automatic"] is not None or
+            c_state["mode"] != "passive" or c_state["usedBudget"] != 0 or
+            c_state["binding"]["target"]["taskId"] in {audit["sharedTaskId"], audit["state"]["binding"]["target"]["taskId"]} or
+            audit["cLocalCapture"] != audit["cOriginalLocalCapture"]):
+        raise AssertionError("C must retain its original different local Task and passive permission")
+    if audit["cTurns"] != [{"turn": turn, "reason": {"kind": "completed"}} for turn in range(1, 5)]:
+        raise AssertionError("passive C must execute exactly its four ordinary user turns")
+    c_requests = audit["cRequests"]
+    if [(item["turn"], item["step"]) for item in c_requests] != [(turn, step) for turn in range(1, 5) for step in (1, 2)]:
+        raise AssertionError("C must make eight actual requests through the native AgentLoop")
+    for item in c_requests:
+        if item["bytes"] > 8000:
+            raise AssertionError("passive C also requires one complete combined context budget")
+        text = item["remoteText"]
+        if item["turn"] == 3 and "B_SHARED_V1" not in text:
+            raise AssertionError("C requests must contain the real independently published B Write")
+        if item["turn"] == 4 and any(marker in text for marker in ("B_SHARED_V1", "B_SHARED_V2")):
+            raise AssertionError("C kept B facts after that member left")
+    result["group"] = {
+        "entryVersion": 2, "entryState": entry["state"], "retainedApplications": 2,
+        "separateContributionGrants": 2, "separateReadGrants": 2,
+        "memberOutcomes": [b["result"]["status"], c["result"]["status"]],
+        "bSubscriptionState": audit["bSubscription"]["state"], "cSubscriptionState": audit["cSubscription"]["state"],
+        "bOwnerReadGrantState": b["result"]["readState"],
+        "cMode": c_state["mode"], "cUsedBudget": c_state["usedBudget"],
+        "cOrdinaryTurns": [item["turn"] for item in audit["cTurns"]],
+        "cCombinedContextBytes": [item["bytes"] for item in c_requests],
+        "cActualRequests": 8, "bActualRequests": 10, "totalControlledRequests": 18,
+        "retainedDistinctLocalTasks": True, "cReceivesBWrite": True, "bReceivesCWrite": True,
+        "cContinuesAfterBLeave": True, "cRemoteBFactsAfterLeave": [], "cChangesPrecedeBActivations": True,
+    }
+    return result
 
 
 def run_native_scope_turns(harness: DeepSeekHarness, session: Session) -> tuple[RunResult, RunResult, list[dict[str, object]]]:

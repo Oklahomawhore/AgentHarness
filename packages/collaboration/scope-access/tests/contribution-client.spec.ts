@@ -121,3 +121,33 @@ it('keeps common durable state strict while allowing an adapter to add its local
   expect(extended.safeParse({ ...value.current(), state: 'ending' }).success).toBe(false)
   expect(extended.safeParse({ ...value.current(), sequence: -1 }).success).toBe(false)
 })
+
+
+it('requires a group receiving-consent adopter before activating an approved contribution', async () => {
+  const value = await source()
+  const retained = value.current()
+  const application = retained.application
+  if (application === undefined) throw new Error('Missing source application')
+  const entry = (await value.owner.access.createGroupEntry({ taskId: value.task.id,
+    ownerAddress: application.entry.ownerAddress, expiresAt: application.entry.expiresAt, maxMembers: 2 })).entry
+  await value.store.save({ ...retained, application: { ...application, entry } })
+  await value.controller.pollApplication(value.run, signal())
+  const member = (await value.owner.access.groupApplications({ entryId: entry.entryId })).entries[0]
+  if (member === undefined) throw new Error('Group application was not retained')
+  await value.owner.access.approveContributionApplication({ entryId: entry.entryId, applicationId: member.applicationId,
+    expectedProposal: member.proposal, limits: application.limits, ownerAddress: entry.ownerAddress, read: { responsibility: 'Frontend' } })
+  await expect(value.controller.pollApplication(value.run, signal())).rejects.toMatchObject({ code: 'invitation-mismatch' })
+  expect(value.current().state).toBe('prepared')
+  expect(value.current().invitation).toBeUndefined()
+  expect(value.current().application?.state).toBe('waiting')
+  const selectApproval = vi.fn<NonNullable<ContributionStore<LocalCapture>['selectApproval']>>(async (capture, result) => {
+    expect(capture.application?.entry).toEqual(entry)
+    expect(result).toMatchObject({ status: 'approved', readInvitation: { recipientPeerId: retained.proposal.contributorPeerId },
+      readState: 'active' })
+    return capture
+  })
+  const supported: ContributionRun<LocalCapture> = async operation => operation({ ...value.store, selectApproval })
+  await value.controller.pollApplication(supported, signal())
+  expect(selectApproval).toHaveBeenCalledTimes(1)
+  expect(value.current().state).toBe('active')
+})

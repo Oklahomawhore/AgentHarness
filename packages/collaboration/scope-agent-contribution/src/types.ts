@@ -18,7 +18,7 @@ export interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
-  /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
+  /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
     /** Exact existing local assignment retained by this additional scope permission. */

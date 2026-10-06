@@ -211,11 +211,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 }
 
-/** One owner-issued, single-capture application entry; possession grants no Task access. */
+/** Owner-issued application entrance identity; possession grants no Task access. */
 export type ScopeContributionEntryId = Branded<'ScopeContributionEntryId'>
 
 /** Addressed application entry, distinct from read and contribution grants. */
-export type ScopeContributionEntry = {
+export type ScopeSingleContributionEntry = {
   readonly version: 1
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
@@ -228,6 +228,82 @@ export type ScopeContributionEntry = {
   | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' }
 )
 
+/** Reusable application entrance; each source receives independently approved grants. */
+export interface ScopeGroupEntry {
+  readonly version: 2
+  readonly kind: 'scope-group-entry'
+  readonly sourceKind: 'tool-observations'
+  readonly entryId: ScopeContributionEntryId
+  readonly taskId: DevelopmentTaskId
+  readonly ownerPeerId: ScopePeerId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  /** Retained applicants, including cancelled, rejected, and expired members. */
+  readonly maxMembers: number
+}
+
+/** Single-capture entries retain version one; reusable groups require an explicit version-two entry. */
+export type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry
+
+/** Owner-assigned durable identity of one exact group applicant. */
+export type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
+
+/** Explicitly create a reusable entry for one owned Root Task. */
+export interface ScopeGroupEntryRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  readonly maxMembers: number
+}
+
+/** Shared entry text without any member's permission. */
+export interface ScopeGroupEntryResult {
+  readonly entry: ScopeGroupEntry
+  readonly text: string
+}
+
+/** Closing an entry blocks new applicants while retained applicants keep their independent permissions. */
+export interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {
+  readonly state: 'open' | 'closed' | 'expired'
+  readonly applicationCount: number
+}
+
+/** Select an owner-local reusable entry; closure is irreversible. */
+export interface ScopeGroupEntrySelection {
+  readonly entryId: ScopeContributionEntryId
+}
+
+/** Stable entry-identity pagination within one owned Task. */
+export interface ScopeGroupEntriesRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly afterEntryId?: ScopeContributionEntryId
+}
+
+/** Complete UTF-8-bounded page of retained reusable entries. */
+export interface ScopeGroupEntries {
+  readonly entries: readonly ScopeGroupEntryStatus[]
+  readonly nextEntryId: ScopeContributionEntryId | null
+}
+
+/** One independently selected applicant; entry text remains common to the group. */
+export interface ScopeGroupApplication extends ScopeContributionApplication {
+  readonly entry: ScopeGroupEntry
+  readonly applicationId: ScopeGroupApplicationId
+  readonly proposal: ScopeContributionProposal
+  readonly result: ScopeContributionApplicationResult
+}
+
+/** Stable applicant-identity pagination within one reusable entry. */
+export interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {
+  readonly afterApplicationId?: ScopeGroupApplicationId
+}
+
+/** Complete UTF-8-bounded page; an applicant cursor never selects a different entry. */
+export interface ScopeGroupApplications {
+  readonly entries: readonly ScopeGroupApplication[]
+  readonly nextApplicationId: ScopeGroupApplicationId | null
+}
+
 /** Inspect one addressed entry before granting any local collection permission. */
 export interface ScopeContributionEntryProbeRequest {
   readonly entry: ScopeContributionEntry
@@ -235,7 +311,7 @@ export interface ScopeContributionEntryProbeRequest {
 
 /** A momentary owner observation, not an application, reservation, or authorization. */
 export interface ScopeContributionEntryProbeResult {
-  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  /** An available group stays ready until full or closed; single-capture claims are claimed and decisions are closed. */
   readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
 }
 
@@ -313,6 +389,8 @@ export interface ScopeContributionApplicationsRequest {
 
 /** Approval names the exact displayed claimant and an equal or narrower permission. */
 export interface ScopeContributionApplicationApprovalRequest {
+  /** Required for a group member and forbidden for a single-capture entry. */
+  readonly applicationId?: ScopeGroupApplicationId
   /** Required only for a joint entry; read expiry equals the approved contribution expiry. */
   readonly read?: { readonly responsibility: string }
   readonly entryId: ScopeContributionEntryId
@@ -323,6 +401,8 @@ export interface ScopeContributionApplicationApprovalRequest {
 
 /** Rejection cannot accidentally stop another capture; null selects an unclaimed entry. */
 export interface ScopeContributionApplicationRejectRequest {
+  /** Select only this group member; group entry closure uses closeGroupEntry instead. */
+  readonly applicationId?: ScopeGroupApplicationId
   readonly entryId: ScopeContributionEntryId
   readonly expectedProposal: ScopeContributionProposal | null
 }

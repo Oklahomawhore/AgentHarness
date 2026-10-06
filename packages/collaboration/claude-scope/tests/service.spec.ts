@@ -1819,6 +1819,18 @@ async function onlineApplication() {
 }
 
 describe('online Claude contribution applications', () => {
+  it('rejects reusable native group entries before saving source consent or applying', async () => {
+    const f = await onlineApplication()
+    const issued = await f.owner.ctx.scopeAccess.createGroupEntry({ taskId: f.task.id,
+      ownerAddress: f.entry.ownerAddress, expiresAt: f.entry.expiresAt, maxMembers: 2 })
+    const apply = vi.spyOn(f.source.ctx.scopeAccess, 'applyContribution')
+    await expect(f.source.scope.requestContribution({ ...f.request, entry: issued.entry,
+      source: { kind: 'tool-observations', tools: ['Write'] } })).rejects.toThrow('entry')
+    expect((await f.detail()).capture).toBeNull()
+    expect(apply).not.toHaveBeenCalled()
+    expect((await f.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })).entries).toEqual([])
+  })
+
   it('persists consent before sending and activates after approval without an inventory or hook trigger', async () => {
     const f = await onlineApplication()
     const observed: string[] = []

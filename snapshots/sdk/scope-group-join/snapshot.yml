@@ -1,0 +1,13 @@
+version: 1
+scenario: scope-group-join
+profile: sdk
+composition: sdk-scope-group-join
+recording: authored
+header:
+  class: scope-group-join
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+workspace:
+  final: true

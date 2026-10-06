@@ -143,6 +143,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
   },
+  'scope-group-join': {
+    expectedFinalResponse: 'B left the shared goal; C remains joined and B local work is saved.',
+  },
   'scope-local-joint': {
     expectedFinalResponse: 'The shared scope is left; my original local policy remains paused and local work is saved.',
   },
@@ -696,9 +699,9 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           },
         })
         results.push(result)
-        if (scenario.name === 'scope-local-joint') {
+        if (scenario.name === 'scope-local-joint' || scenario.name === 'scope-group-join') {
           const ended = result.events.findLast(event => event.type === 'turn/end')
-          expect(ended?.data, 'local joint owner turn before automatic wait').toEqual({ turn: action.turn, reason: { kind: 'completed' } })
+          expect(ended?.data, 'joined owner turn before automatic wait').toEqual({ turn: action.turn, reason: { kind: 'completed' } })
         }
         if (scenario.name === 'scope-semantic-idle' && action.turn === 1) {
           // Subsequent automatic turns require this setup turn to finish successfully.

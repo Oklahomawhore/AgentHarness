@@ -4,7 +4,7 @@ import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
 import { invitationSchema, projectionSchema } from './schema.ts'
-import { applicationRecordSchema, type ApplicationRecord } from './application-schema.ts'
+import { applicationRecordSchema, groupRecordSchema, type ApplicationRecord, type GroupRecord } from './application-schema.ts'
 import type {
   ScopeChangeCursor, ScopeGeneration, ScopeGrantId, ScopeAccessProjection,
   ScopeReadGrant, ScopeSubscription, ScopeSubscriptionId, ScopeContributionEntryId,
@@ -63,3 +63,13 @@ export const scopeAccessDomainSpec = defineDomain({
 
 /** Open authoritative scope authorization state. */
 export type ScopeAccessDomain = Domain<typeof scopeAccessDomainSpec>
+
+/** Reusable entries have their own versioned storage unit; existing scope_access records are unchanged. */
+export const scopeGroupDomainSpec = defineDomain({
+  name: 'scope_group_applications', version: 1,
+  global: { schema: z.object({ peerId: peer.nullable() }).strict(), initial: { peerId: null } },
+  tables: { entries: domainTable<ScopeContributionEntryId, GroupRecord>(groupRecordSchema) },
+})
+
+/** Open reusable-entry authority owned by the same scope-access service lifetime. */
+export type ScopeGroupDomain = Domain<typeof scopeGroupDomainSpec>

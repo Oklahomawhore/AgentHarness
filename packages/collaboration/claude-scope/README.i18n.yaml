@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/collaboration/claude-scope/README.md
-README.md: 930e94a7a74ea8d0b6c588a80b045e246f4089ea
-README.zh.md: 6087a88497fab89f61e6ce01e77a564fbdd644f2
+README.md: e6a6633a0d6321338eca2faee0edb9bc8dd65b39
+README.zh.md: 9fe32502c2a920d4b4853a25d3a5a98bded1b77f

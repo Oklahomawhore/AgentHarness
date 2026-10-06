@@ -2352,16 +2352,16 @@ export interface Config {
   readonly maxContributionRequestBytes: number
   /** Shared bound for pending owner and recipient waits; leaves ordinary transport capacity available. */
   readonly maxConcurrentWaits: number
-  /** Retained contribution application entries, including rejected and cancelled records. */
+  /** Total retained single entries, group entrances, and group members, including terminal records. */
   readonly maxContributionApplications: number
-  /** Complete application request and retained decision record limit in UTF-8 bytes. */
+  /** Complete application request and retained record limit in UTF-8 bytes, including a group and all its members. */
   readonly maxApplicationRequestBytes: number
   /** Maximum time from entry creation to its last new application or approval. */
   readonly maxApplicationLifetimeMs: number
 }
 ```
 
-来源： [`packages/collaboration/scope-access/src/index.ts:47`](../packages/collaboration/scope-access/src/index.ts)
+来源： [`packages/collaboration/scope-access/src/index.ts:49`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 

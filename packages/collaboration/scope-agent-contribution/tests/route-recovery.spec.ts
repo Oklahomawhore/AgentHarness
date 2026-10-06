@@ -71,7 +71,9 @@ async function fixture(approve = true, joint = false) {
   await run(source, agent)
   const changeRoute = async (port: number) => {
     address = originalAddress.replace('/tcp/1/', `/tcp/${port}/`)
-    return (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    const recovered = (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    if (recovered.version !== 1) throw new Error('The fixture must recover its original single-use entry')
+    return recovered
   }
   const recover = (replacement: ScopeContributionEntry, expectedOwnerAddress = originalAddress, expectedRouteRevision = 0) =>
     source.ctx.scopeAgentContributions.recoverRoute({ agentId: agent.id, expectedCapture: selection,

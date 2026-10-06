@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { useSyncExternalStore } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ClaudeScopeContributionDetail, ScopeContributionInvitation, ScopeContributionProposal,
-  ScopeContributionTransfer, ScopeContributionEntry, DevelopmentTaskId, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
+  ScopeContributionTransfer, ScopeContributionEntry, ScopeGroupEntry, ScopeGroupApplicationId, DevelopmentTaskId, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskPeerContribution } from '@deepseek-ai/dsh-development-task/types'
 import { SourceContributionPanel, type SourceContributionActions } from '../src/client/SourceContributionPanel.tsx'
 import { OwnerContributionPanel, type OwnerContributionActions, type OwnerContributionValue } from '../src/client/OwnerContributionPanel.tsx'
@@ -44,6 +44,7 @@ const active: DevelopmentTaskPeerContribution = { state: 'active', grant: G, ope
 const owned: OwnerContributionValue = {
   identity: { peerId: G.ownerPeerId, addresses: [invitation.ownerAddress] },
   inventory: { entries: [], nextGrantId: null }, applications: { entries: [], nextEntryId: null },
+  groups: { entries: [], nextEntryId: null },
 }
 const disposers: (() => void)[] = []
 afterEach(() => { cleanup(); disposers.splice(0).forEach((dispose) => { dispose() }) })
@@ -55,7 +56,8 @@ function sourceActions(overrides: Partial<SourceContributionActions> = {}): Sour
 
 }
 function ownerActions(overrides: Partial<OwnerContributionActions> = {}): OwnerContributionActions {
-  return { createContributionEntry: vi.fn(noop), recoverContributionEntry: vi.fn(async () => undefined),
+  return { createGroupEntry: vi.fn(), closeGroupEntry: vi.fn(), createContributionEntry: vi.fn(noop),
+    recoverContributionEntry: vi.fn(async () => undefined),
     approveContributionApplication: vi.fn(noop), rejectContributionApplication: vi.fn(noop), readOwnedContributions: () => {}, moreOwnedContributions: vi.fn(), approveContribution: vi.fn(async () => undefined), recoverContribution: vi.fn(async () => undefined), revokeContribution: vi.fn(noop), previewContributionText: vi.fn(async (): Promise<ScopeContributionTransfer> => ({ version: 1, kind: 'openapi-contribution-request', proposal })), ...overrides }
 }
 function paste(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }) }
@@ -447,3 +449,141 @@ describe('owner joint read permission visibility', () => {
 function captureLimits() {
   return { expiresAt: G.expiresAt, maxSamples: G.maxSamples, maxSampleBytes: G.maxSampleBytes }
 }
+
+
+describe('owner reusable collaboration entries', () => {
+  const groupEntry: ScopeGroupEntry = { ...applicationEntry, version: 2, kind: 'scope-group-entry',
+    sourceKind: 'tool-observations', maxMembers: 2 }
+  const members = ['b', 'c'].map(name => ({
+    entry: groupEntry, text: 'same-group-entry', applicationId: `application-${name}` as ScopeGroupApplicationId,
+    proposal: { ...proposal, contributorPeerId: `peer-${name}` as typeof proposal.contributorPeerId,
+      captureId: `capture-${name}` as typeof proposal.captureId }, limits: captureLimits(), result: { status: 'pending' as const },
+  }))
+  const value: OwnerContributionValue = { ...owned, groups: { nextEntryId: null, entries: [{
+    group: { entry: groupEntry, text: 'same-group-entry', state: 'open', applicationCount: 2 },
+    applications: { entries: members, nextApplicationId: null },
+  }] } }
+
+  it('requires explicit capacity before issuing one reusable entry and explains retained applicant slots', () => {
+    const actions = ownerActions()
+    render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    paste(zh['contribution.join.purpose'], 'group')
+    paste(zh['contribution.application.entryHours'], '1')
+    const create = screen.getByRole<HTMLButtonElement>('button', { name: zh['contribution.group.create'] })
+    expect(create.disabled).toBe(true)
+    expect(screen.getByText(zh['contribution.group.capacityHint'])).toBeTruthy()
+    paste(zh['contribution.group.capacity'], '2')
+    fireEvent.click(create)
+    const expiresAt = vi.mocked(actions.createGroupEntry).mock.calls[0]?.[0].expiresAt
+    expect(expiresAt).toBeTypeOf('number')
+    expect(actions.createGroupEntry).toHaveBeenCalledExactlyOnceWith({ taskId: TASK,
+      ownerAddress: invitation.ownerAddress, expiresAt, maxMembers: 2 })
+    expect(actions.createContributionEntry).not.toHaveBeenCalled()
+  })
+
+  it('ends only the selected approved member without closing the entry or invoking contribution-only revocation', () => {
+    const actions = ownerActions()
+    const approved: OwnerContributionValue = { ...value, groups: { ...value.groups, entries: value.groups.entries.map(item => ({
+      ...item, applications: { ...item.applications, entries: item.applications.entries.map(member => ({ ...member,
+        result: { status: 'approved', invitation, receipt, readInvitation, readState: 'active' },
+      })) },
+    })) } }
+    render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: approved }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    const buttons = screen.getAllByRole('button', { name: zh['contribution.group.endMember'] })
+    const selected = members[1]
+    const end = buttons[1]
+    if (selected === undefined || end === undefined) throw new Error('Both approved members must be displayed')
+    fireEvent.click(end)
+    expect(actions.rejectContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
+      entryId: groupEntry.entryId, applicationId: selected.applicationId, expectedProposal: selected.proposal,
+    })
+    expect(actions.closeGroupEntry).not.toHaveBeenCalled()
+    expect(actions.revokeContribution).not.toHaveBeenCalled()
+  })
+
+  it.each(['active', 'revoked', 'expired'] as const)('offers ending a contributed member only while its reading is %s', (readState) => {
+    const actions = ownerActions()
+    const ended: OwnerContributionValue = { ...value, groups: { ...value.groups, entries: value.groups.entries.map(item => ({
+      ...item, applications: { ...item.applications, entries: item.applications.entries.map(member => ({ ...member,
+        result: { status: 'ended', reason: 'left', invitation,
+          receipt: { ...receipt, event: { ...receipt.event, kind: 'peer-contribution-ended' } }, readInvitation, readState },
+      })) },
+    })) } }
+    render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: ended }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    const buttons = screen.queryAllByRole('button', { name: zh['contribution.group.endMember'] })
+    if (readState === 'active') {
+      expect(buttons).toHaveLength(2)
+      const selected = members[0]
+      const end = buttons[0]
+      if (selected === undefined || end === undefined) throw new Error('Still authorized member must retain its end control')
+      fireEvent.click(end)
+      expect(actions.rejectContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
+        entryId: groupEntry.entryId, applicationId: selected.applicationId, expectedProposal: selected.proposal,
+      })
+    } else {
+      expect(buttons).toEqual([])
+      expect(actions.rejectContributionApplication).not.toHaveBeenCalled()
+    }
+  })
+
+  it('visibly distinguishes two captures on the same peer and approves only the chosen one', () => {
+    const actions = ownerActions()
+    const samePeer: OwnerContributionValue = { ...value, groups: { ...value.groups, entries: value.groups.entries.map(item => ({
+      ...item, applications: { ...item.applications, entries: item.applications.entries.map(member => ({ ...member,
+        proposal: { ...member.proposal, contributorPeerId: G.contributorPeerId,
+          captureGeneration: `generation-${member.proposal.captureId}` as typeof G.captureGeneration },
+      })) },
+    })) } }
+    const view = render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: samePeer }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    expect(screen.getAllByText(G.contributorPeerId)).toHaveLength(2)
+    const second = samePeer.groups.entries[0]?.applications.entries[1]
+    if (second === undefined) throw new Error('Second capture fixture is missing')
+    const secondLabel = screen.getByText(second.proposal.captureId, { exact: true })
+    const row = secondLabel.closest('[data-group-application]')
+    if (!(row instanceof HTMLElement)) throw new Error('Capture identity must be visible within its independent member controls')
+    expect(within(row).getByText(second.proposal.captureGeneration, { exact: true })).toBeTruthy()
+    expect(view.container.textContent).toContain('capture-b')
+    fireEvent.change(within(row).getByLabelText(zh['contribution.join.responsibility']), { target: { value: 'Second session responsibility' } })
+    fireEvent.click(within(row).getByRole('button', { name: zh['contribution.join.approve'] }))
+    expect(actions.approveContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
+      entryId: groupEntry.entryId, applicationId: second.applicationId, expectedProposal: second.proposal,
+      limits: second.limits, ownerAddress: invitation.ownerAddress, read: { responsibility: 'Second session responsibility' },
+    })
+  })
+
+  it('keeps members distinct through close and approves or rejects only the selected application', () => {
+    const actions = ownerActions()
+    const view = render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    expect(screen.getByText(t('contribution.group.count', { count: 2, capacity: 2 }))).toBeTruthy()
+    expect(screen.getByText(zh['contribution.group.closeHint'])).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['contribution.group.close'] }))
+    expect(actions.closeGroupEntry).toHaveBeenCalledExactlyOnceWith(TASK, { entryId: groupEntry.entryId })
+    expect(actions.rejectContributionApplication).not.toHaveBeenCalled()
+    expect(actions.revokeContribution).not.toHaveBeenCalled()
+    const closed: OwnerContributionValue = { ...value, groups: { ...value.groups,
+      entries: value.groups.entries.map(item => ({ ...item, group: { ...item.group, state: 'closed' } })) } }
+    view.rerender(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: closed }} {...actions} t={t} />)
+    expect(screen.getByText(zh['contribution.group.state.closed'])).toBeTruthy()
+    expect(screen.queryByRole('button', { name: zh['contribution.group.close'] })).toBeNull()
+    const rows = [...view.container.querySelectorAll<HTMLElement>('[data-group-application]')]
+    expect(rows).toHaveLength(2)
+    const b = within(rows[0]!)
+    const c = within(rows[1]!)
+    fireEvent.change(b.getByLabelText(zh['contribution.join.responsibility']), { target: { value: 'Frontend implementation' } })
+    fireEvent.click(b.getByRole('button', { name: zh['contribution.join.approve'] }))
+    expect(actions.approveContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
+      entryId: groupEntry.entryId, applicationId: members[0]!.applicationId, expectedProposal: members[0]!.proposal,
+      limits: captureLimits(), ownerAddress: invitation.ownerAddress, read: { responsibility: 'Frontend implementation' },
+    })
+    expect(c.getByRole<HTMLButtonElement>('button', { name: zh['contribution.join.approve'] }).disabled).toBe(true)
+    fireEvent.click(c.getByRole('button', { name: zh['contribution.application.reject'] }))
+    expect(actions.rejectContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
+      entryId: groupEntry.entryId, applicationId: members[1]!.applicationId, expectedProposal: members[1]!.proposal,
+    })
+  })
+})

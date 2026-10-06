@@ -17,12 +17,14 @@ import { invitationSchema, sameReadGrant, projectionDigest, projectionSchema } f
 import { ContributionAccess } from './contribution.ts'
 import { ContributionApplications } from './application.ts'
 import { ContributionEntryProbe } from './entry-probe.ts'
-import type { ApplicationRecord } from './application-schema.ts'
-import { readRequestSchema, readResponseSchema, scopeAccessDomainSpec,
+import { groupReservedBytes, type ApplicationRecord, type GroupRecord, type ManagedApplicationRecord } from './application-schema.ts'
+import { readRequestSchema, readResponseSchema, scopeAccessDomainSpec, scopeGroupDomainSpec,
   waitRequestSchema, waitResponseSchema } from './state.ts'
-import type { ScopeAccessDomain } from './state.ts'
+import type { ScopeAccessDomain, ScopeGroupDomain } from './state.ts'
 import type {
   ScopeContributionEntryRequest, ScopeContributionEntryResult, ScopeContributionEntryRecoverRequest,
+  ScopeGroupEntryRequest, ScopeGroupEntryResult, ScopeGroupEntrySelection, ScopeGroupEntryStatus,
+  ScopeGroupEntriesRequest, ScopeGroupEntries, ScopeGroupApplicationsRequest, ScopeGroupApplications,
   ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult,
   ScopeContributionApplicationsRequest, ScopeContributionApplications, ScopeContributionApplicationApprovalRequest,
   ScopeContributionApplicationRejectRequest, ScopeContributionApplication, ScopeContributionApplyRequest,
@@ -69,9 +71,9 @@ export interface Config {
   readonly maxContributionRequestBytes: number
   /** Shared bound for pending owner and recipient waits; leaves ordinary transport capacity available. */
   readonly maxConcurrentWaits: number
-  /** Retained contribution application entries, including rejected and cancelled records. */
+  /** Total retained single entries, group entrances, and group members, including terminal records. */
   readonly maxContributionApplications: number
-  /** Complete application request and retained decision record limit in UTF-8 bytes. */
+  /** Complete application request and retained record limit in UTF-8 bytes, including a group and all its members. */
   readonly maxApplicationRequestBytes: number
   /** Maximum time from entry creation to its last new application or approval. */
   readonly maxApplicationLifetimeMs: number
@@ -119,6 +121,7 @@ export default class ScopeAccessService extends TypertRemoteService {
   static Config = Config
   private readonly lifetime = new AbortController()
   private readonly ready: Promise<ScopeAccessDomain>
+  private groupDomain!: ScopeGroupDomain
   private tail: Promise<unknown> = Promise.resolve()
   private readonly operations = new Set<Promise<unknown>>()
   private readonly requests = new Map<ScopeSubscriptionId, string>()
@@ -152,7 +155,9 @@ export default class ScopeAccessService extends TypertRemoteService {
     const started = Promise.withResolvers<undefined>()
     const stopReady = appReady.onReady(() => { started.resolve(undefined) })
     const opening = ctx.storageDomain.open(scopeAccessDomainSpec)
-    this.ready = opening.then(async (domain) => {
+    const groupOpening = ctx.storageDomain.open(scopeGroupDomainSpec)
+    this.ready = Promise.all([opening, groupOpening]).then(async ([domain, groups]) => {
+      this.groupDomain = groups
       await started.promise
       this.lifetime.signal.throwIfAborted()
       this.peerId = (await ctx.scopeTransport.identity()).peerId
@@ -171,9 +176,10 @@ export default class ScopeAccessService extends TypertRemoteService {
       ready: async () => { await this.ready; return this.peerId },
       acquire: kind => this.acquireContribution(kind), track: operation => this.track(operation) })
     this.entryProbe = new ContributionEntryProbe(ctx, { config, signal: this.lifetime.signal,
-      ready: () => this.ready, acquire: () => this.acquireContribution('ordinary'), track: operation => this.track(operation) })
+      ready: () => this.ready, groups: () => this.groupDomain, acquire: () => this.acquireContribution('ordinary'), track: operation => this.track(operation) })
     this.applications = new ContributionApplications(ctx, { config, signal: this.lifetime.signal,
-      ready: () => this.ready, contributions: this.contributions,
+      ready: () => this.ready, groups: () => this.groupDomain, saveGroup: record => this.saveGroup(record),
+      contributions: this.contributions,
       saveApplication: record => this.saveApplication(record),
       reconcileRead: (invitation, terminal) => this.reconcileApplicationRead(invitation, terminal),
       acquire: kind => this.acquireContribution(kind), track: operation => this.track(operation) })
@@ -187,7 +193,11 @@ export default class ScopeAccessService extends TypertRemoteService {
       await Promise.allSettled([...this.operations])
       await this.tail.catch(() => {}) // Queued callers own mutation failures.
       await this.ready.catch(() => {}) // Initialization failure is reported above.
-      await (await opening.catch(() => undefined))?.close() // Failed opens own no handle.
+      const closed = await Promise.allSettled([opening, groupOpening].map(async (resource) => {
+        await (await resource.catch(() => undefined))?.close() // Failed opens own no handle.
+      }))
+      const failures = closed.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : [])
+      if (failures.length > 0) throw new AggregateError(failures, 'scope-access: durable domains failed to close')
     }, 'scope-access: durable state and pending reads')
   }
 
@@ -431,6 +441,42 @@ export default class ScopeAccessService extends TypertRemoteService {
   @Remote('createContributionEntry')
   createContributionEntry(request: ScopeContributionEntryRequest): Promise<ScopeContributionEntryResult> {
     return this.track(this.applications.create(request))
+  }
+
+  /** Create a reusable target entrance with independent owner approval for each applicant.
+   * @param request - owned Task, explicit route, deadline, and retained member limit.
+   * @returns version-two entry text after durability; no grant is issued by creation.
+   */
+  @Remote('createGroupEntry')
+  createGroupEntry(request: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult> {
+    return this.track(this.applications.createGroup(request))
+  }
+
+  /** List reusable entrances separately from their independent member decisions.
+   * @param request - owned Task and optional stable entry cursor.
+   * @returns a complete byte-bounded page, including closed and expired entrances.
+   */
+  @Remote('groupEntries')
+  groupEntries(request: ScopeGroupEntriesRequest): Promise<ScopeGroupEntries> {
+    return this.track(this.applications.listGroups(request))
+  }
+
+  /** List one group's independently retained applicants and reconciled Task grants.
+   * @param request - exact entrance and optional applicant cursor belonging to it.
+   * @returns a complete byte-bounded page of member decisions.
+   */
+  @Remote('groupApplications')
+  groupApplications(request: ScopeGroupApplicationsRequest): Promise<ScopeGroupApplications> {
+    return this.track(this.applications.listGroupApplications(request))
+  }
+
+  /** Permanently stop new applicants without revoking members or cancelling existing pending applications.
+   * @param request - exact retained reusable entrance.
+   * @returns durable closure; pending approval still obeys the original deadline.
+   */
+  @Remote('closeGroupEntry')
+  closeGroupEntry(request: ScopeGroupEntrySelection): Promise<ScopeGroupEntryStatus> {
+    return this.track(this.applications.closeGroup(request))
   }
 
   /** Recover an original entry through a current owner address without reopening it.
@@ -862,9 +908,20 @@ export default class ScopeAccessService extends TypertRemoteService {
     return () => { this[field] = false }
   }
 
+  private retainedApplications(domain: ScopeAccessDomain): readonly ManagedApplicationRecord[] {
+    return [...[...domain.table('applications').entries()].map(([, record]) => record),
+      ...[...this.groupDomain.table('entries').entries()].flatMap(([, group]) =>
+        group.members.map(member => ({ ...member, entry: group.entry })))]
+  }
+
+  private applicationCount(domain: ScopeAccessDomain): number {
+    return domain.table('applications').size + [...this.groupDomain.table('entries').entries()]
+      .reduce((total, [, group]) => total + 1 + group.members.length, 0)
+  }
+
   private readGrantIds(domain: ScopeAccessDomain): ReadonlySet<ScopeGrantId> {
     const ids = new Set(domain.table('grants').keys())
-    for (const [, application] of domain.table('applications').entries()) {
+    for (const application of this.retainedApplications(domain)) {
       if (application.readInvitation !== undefined) ids.add(application.readInvitation.grantId)
     }
     return ids
@@ -877,7 +934,24 @@ export default class ScopeAccessService extends TypertRemoteService {
       if (planned !== undefined && !retained.has(planned.grantId) && retained.size >= this.config.maxGrants) {
         throw new RemoteError('scope-contribution/capacity', 'The read grant inventory is full.', {})
       }
+      if (domain.table('applications').get(record.entry.entryId) === undefined && this.applicationCount(domain) >= this.config.maxContributionApplications) {
+        throw new RemoteError('scope-contribution/capacity', 'The retained application inventory is full.', {})
+      }
       await domain.table('applications').put(record.entry.entryId, record)
+    })
+  }
+
+  private async saveGroup(record: GroupRecord): Promise<void> {
+    await this.enqueue(async (domain) => {
+      const previous = this.groupDomain.table('entries').get(record.entry.entryId)
+      const count = this.applicationCount(domain) - (previous === undefined ? 0 : 1 + previous.members.length) + 1 + record.members.length
+      if (count > this.config.maxContributionApplications) {
+        throw new RemoteError('scope-contribution/capacity', 'The retained application inventory is full.', {})
+      }
+      const readIds = new Set(this.readGrantIds(domain))
+      for (const member of record.members) if (member.readInvitation !== undefined) readIds.add(member.readInvitation.grantId)
+      if (readIds.size > this.config.maxGrants) throw new RemoteError('scope-contribution/capacity', 'The read grant inventory is full.', {})
+      await this.groupDomain.table('entries').put(record.entry.entryId, record)
     })
   }
 
@@ -911,12 +985,37 @@ export default class ScopeAccessService extends TypertRemoteService {
       }
       await domain.global.set({ peerId: this.peerId })
     } else if (stored !== this.peerId) throw new Error('scope-access: durable state belongs to a different transport key')
+    const storedGroupPeer = this.groupDomain.global.get().peerId
+    if (storedGroupPeer === null) {
+      if (this.groupDomain.table('entries').size !== 0) throw new Error('scope-access: groups have no owning peer identity')
+      await this.groupDomain.global.set({ peerId: this.peerId })
+    } else if (storedGroupPeer !== this.peerId) throw new Error('scope-access: group state belongs to a different transport key')
+    const applicationIds = new Set<string>()
+    const contributionIds = new Set([...domain.table('applications').entries()].flatMap(([, application]) =>
+      application.grant === null ? [] : [application.grant.grantId]))
+    for (const [id, group] of this.groupDomain.table('entries').entries()) {
+      if (id !== group.entry.entryId || domain.table('applications').get(id) !== undefined || group.entry.ownerPeerId !== this.peerId
+        || groupReservedBytes(group) > this.config.maxApplicationRequestBytes) {
+        throw new Error('scope-access: invalid retained group identity or configured byte budget')
+      }
+      this.rootView(group.entry.taskId)
+      for (const member of group.members) {
+        if (applicationIds.has(member.applicationId) || (member.grant !== null && contributionIds.has(member.grant.grantId))) {
+          throw new Error('scope-access: group members share a retained application or grant identity')
+        }
+        applicationIds.add(member.applicationId)
+        if (member.grant !== null) contributionIds.add(member.grant.grantId)
+      }
+    }
     if (this.readGrantIds(domain).size > this.config.maxGrants || domain.table('subscriptions').size > this.config.maxSubscriptions
       || domain.table('projections').size > this.config.maxProjections
-      || domain.table('applications').size > this.config.maxContributionApplications) throw new Error('scope-access: retained state exceeds configured capacity')
+      || this.applicationCount(domain) > this.config.maxContributionApplications) throw new Error('scope-access: retained state exceeds configured capacity')
     const plannedReads = new Set<ScopeGrantId>()
     for (const [id, application] of domain.table('applications').entries()) {
-      if (id !== application.entry.entryId || application.entry.ownerPeerId !== this.peerId
+      if (id !== application.entry.entryId) throw new Error('scope-access: retained application key differs from its entry')
+    }
+    for (const application of this.retainedApplications(domain)) {
+      if (application.entry.ownerPeerId !== this.peerId
         || Buffer.byteLength(JSON.stringify(application), 'utf8') > this.config.maxApplicationRequestBytes) {
         throw new Error('scope-access: invalid retained application identity or configured byte budget')
       }

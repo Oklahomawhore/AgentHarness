@@ -756,3 +756,41 @@ describe('online entry validation', () => {
     expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
   })
 })
+
+
+describe('native reusable scope entry consent', () => {
+  const groupEntry = { ...joinEntry, version: 2 as const, kind: 'scope-group-entry' as const, maxMembers: 2 }
+  it('requires the same independent read consent and keeps automatic response disabled by default', async () => {
+    const f = fixture()
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(groupEntry)
+    await consentFields()
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
+    expect(readConsent().checked).toBe(false)
+    expect(automaticConsent().checked).toBe(false)
+    expect(joinSubmit().disabled).toBe(true)
+    fireEvent.click(readConsent()); fireEvent.click(joinSubmit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]).toMatchObject({ entry: groupEntry,
+      receive: { expectedReadStateSeq: 1 } })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0].receive?.automatic).toBeUndefined()
+  })
+
+  it('shows the same public capture identity that the owner uses to distinguish sessions on this peer', () => {
+    fixture({ ...capturedStatus, capture: { ...capture, entry: groupEntry, receiving: jointReceiving } })
+    expect(screen.getByText(zh['contribution.group.capture'])).toBeTruthy()
+    expect(screen.getByText(capture.selection.captureId, { exact: true })).toBeTruthy()
+    expect(screen.getByText(capture.selection.captureGeneration, { exact: true })).toBeTruthy()
+  })
+
+  it('rejects a replacement route that changes group capacity even when the group identity matches', async () => {
+    const f = fixture({ ...capturedStatus, capture: { ...capture, entry: groupEntry, receiving: jointReceiving } })
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue({ ...groupEntry, maxMembers: 3,
+      ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' })
+    fireEvent.click(screen.getByText(zh['native.route.title']))
+    change(zh['native.route.paste'], 'same id with changed capacity')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.route.verify'] }))
+    await screen.findByText(zh['native.route.invalid'])
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.route.apply'] }).disabled).toBe(true)
+    expect(f.actions.recoverNativeContributionRoute).not.toHaveBeenCalled()
+  })
+})

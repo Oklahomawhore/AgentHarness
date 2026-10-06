@@ -123,7 +123,7 @@ function panelProps(
     useOwnerContributions: selector => selector({}),
     readContribution: vi.fn(), requestContribution: vi.fn(), prepareContribution: vi.fn(),
     activateContribution: vi.fn(), stopContribution: vi.fn(),
-    createContributionEntry: vi.fn(), recoverContributionEntry: vi.fn(),
+    createGroupEntry: vi.fn(), closeGroupEntry: vi.fn(), createContributionEntry: vi.fn(), recoverContributionEntry: vi.fn(),
     approveContributionApplication: vi.fn(), rejectContributionApplication: vi.fn(),
     previewContributionText: vi.fn(), readOwnedContributions: vi.fn(), moreOwnedContributions: vi.fn(),
     approveContribution: vi.fn(), recoverContribution: vi.fn(), revokeContribution: vi.fn(),

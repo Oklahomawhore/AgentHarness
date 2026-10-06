@@ -1030,7 +1030,7 @@ interface ScopeAgentContributionRequest {
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
   readonly limits: ScopeContributionLimits
-  /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
+  /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
     /** Exact existing local assignment retained by this additional scope permission. */
@@ -2174,16 +2174,16 @@ type ScopeContributionEndResult = ScopeContributionEnded | ScopeContributionFail
 
 ### Online contribution applications
 
-An owner-issued entry accepts one authenticated source capture and its explicit automatic-activation limits. The source retains local file permission; the owner grants contribution through the Task authority. Read access and automatic model work remain separate permissions. The [online approval decision](../../.agents/notes/implemented/architecture/2026-10-03-online-contribution-approval.md) explains durable cancellation and recovery.
+Single-capture entries retain one authenticated application. A reusable group entry retains independently selected applicants for the same owned Task; closing admission preserves their existing permissions. The source retains local file and automatic-response consent, while the owner controls contribution and reading. The [online approval decision](../../.agents/notes/implemented/architecture/2026-10-03-online-contribution-approval.md) and [group-entry decision](../../.agents/notes/implemented/feature/2026-10-07-reusable-scope-group-entry.md) explain authorization, retained capacity and recovery.
 
 ```ts type-equiv
-/** One owner-issued, single-capture application entry; possession grants no Task access. */
+/** Owner-issued application entrance identity; possession grants no Task access. */
 type ScopeContributionEntryId = Branded<'ScopeContributionEntryId'>
 ```
 
 ```ts type-equiv
 /** Addressed application entry, distinct from read and contribution grants. */
-type ScopeContributionEntry = {
+type ScopeSingleContributionEntry = {
   readonly version: 1
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
@@ -2198,6 +2198,106 @@ type ScopeContributionEntry = {
 ```
 
 ```ts type-equiv
+/** Reusable application entrance; each source receives independently approved grants. */
+interface ScopeGroupEntry {
+  readonly version: 2
+  readonly kind: 'scope-group-entry'
+  readonly sourceKind: 'tool-observations'
+  readonly entryId: ScopeContributionEntryId
+  readonly taskId: DevelopmentTaskId
+  readonly ownerPeerId: ScopePeerId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  /** Retained applicants, including cancelled, rejected, and expired members. */
+  readonly maxMembers: number
+}
+```
+
+```ts type-equiv
+/** Owner-assigned durable identity of one exact group applicant. */
+type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
+```
+
+```ts type-equiv
+/** Explicitly create a reusable entry for one owned Root Task. */
+interface ScopeGroupEntryRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  readonly maxMembers: number
+}
+```
+
+```ts type-equiv
+/** Shared entry text without any member's permission. */
+interface ScopeGroupEntryResult {
+  readonly entry: ScopeGroupEntry
+  readonly text: string
+}
+```
+
+```ts type-equiv
+/** Closing an entry blocks new applicants while retained applicants keep their independent permissions. */
+interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {
+  readonly state: 'open' | 'closed' | 'expired'
+  readonly applicationCount: number
+}
+```
+
+```ts type-equiv
+/** Select an owner-local reusable entry; closure is irreversible. */
+interface ScopeGroupEntrySelection {
+  readonly entryId: ScopeContributionEntryId
+}
+```
+
+```ts type-equiv
+/** Stable entry-identity pagination within one owned Task. */
+interface ScopeGroupEntriesRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly afterEntryId?: ScopeContributionEntryId
+}
+```
+
+```ts type-equiv
+/** Complete UTF-8-bounded page of retained reusable entries. */
+interface ScopeGroupEntries {
+  readonly entries: readonly ScopeGroupEntryStatus[]
+  readonly nextEntryId: ScopeContributionEntryId | null
+}
+```
+
+```ts type-equiv
+/** One independently selected applicant; entry text remains common to the group. */
+interface ScopeGroupApplication extends ScopeContributionApplication {
+  readonly entry: ScopeGroupEntry
+  readonly applicationId: ScopeGroupApplicationId
+  readonly proposal: ScopeContributionProposal
+  readonly result: ScopeContributionApplicationResult
+}
+```
+
+```ts type-equiv
+/** Stable applicant-identity pagination within one reusable entry. */
+interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {
+  readonly afterApplicationId?: ScopeGroupApplicationId
+}
+```
+
+```ts type-equiv
+/** Complete UTF-8-bounded page; an applicant cursor never selects a different entry. */
+interface ScopeGroupApplications {
+  readonly entries: readonly ScopeGroupApplication[]
+  readonly nextApplicationId: ScopeGroupApplicationId | null
+}
+```
+
+```ts type-equiv
+/** Single-capture entries retain version one; reusable groups require an explicit version-two entry. */
+type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry
+```
+
+```ts type-equiv
 /** Inspect one addressed entry before granting any local collection permission. */
 interface ScopeContributionEntryProbeRequest {
   readonly entry: ScopeContributionEntry
@@ -2207,7 +2307,7 @@ interface ScopeContributionEntryProbeRequest {
 ```ts type-equiv
 /** A momentary owner observation, not an application, reservation, or authorization. */
 interface ScopeContributionEntryProbeResult {
-  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  /** An available group stays ready until full or closed; single-capture claims are claimed and decisions are closed. */
   readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
 }
 ```
@@ -2305,6 +2405,8 @@ interface ScopeContributionApplicationsRequest {
 ```ts type-equiv
 /** Approval names the exact displayed claimant and an equal or narrower permission. */
 interface ScopeContributionApplicationApprovalRequest {
+  /** Required for a group member and forbidden for a single-capture entry. */
+  readonly applicationId?: ScopeGroupApplicationId
   /** Required only for a joint entry; read expiry equals the approved contribution expiry. */
   readonly read?: { readonly responsibility: string }
   readonly entryId: ScopeContributionEntryId
@@ -2317,6 +2419,8 @@ interface ScopeContributionApplicationApprovalRequest {
 ```ts type-equiv
 /** Rejection cannot accidentally stop another capture; null selects an unclaimed entry. */
 interface ScopeContributionApplicationRejectRequest {
+  /** Select only this group member; group entry closure uses closeGroupEntry instead. */
+  readonly applicationId?: ScopeGroupApplicationId
   readonly entryId: ScopeContributionEntryId
   readonly expectedProposal: ScopeContributionProposal | null
 }
@@ -3431,6 +3535,30 @@ async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision
  * @returns durable entry and canonical copyable text.
  */
 @Remote('createContributionEntry') createContributionEntry(request: ScopeContributionEntryRequest): Promise<ScopeContributionEntryResult>
+
+/** Create a reusable target entrance with independent owner approval for each applicant.
+ * @param request - owned Task, explicit route, deadline, and retained member limit.
+ * @returns version-two entry text after durability; no grant is issued by creation.
+ */
+@Remote('createGroupEntry') createGroupEntry(request: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult>
+
+/** List reusable entrances separately from their independent member decisions.
+ * @param request - owned Task and optional stable entry cursor.
+ * @returns a complete byte-bounded page, including closed and expired entrances.
+ */
+@Remote('groupEntries') groupEntries(request: ScopeGroupEntriesRequest): Promise<ScopeGroupEntries>
+
+/** List one group's independently retained applicants and reconciled Task grants.
+ * @param request - exact entrance and optional applicant cursor belonging to it.
+ * @returns a complete byte-bounded page of member decisions.
+ */
+@Remote('groupApplications') groupApplications(request: ScopeGroupApplicationsRequest): Promise<ScopeGroupApplications>
+
+/** Permanently stop new applicants without revoking members or cancelling existing pending applications.
+ * @param request - exact retained reusable entrance.
+ * @returns durable closure; pending approval still obeys the original deadline.
+ */
+@Remote('closeGroupEntry') closeGroupEntry(request: ScopeGroupEntrySelection): Promise<ScopeGroupEntryStatus>
 
 /** Recover an original entry through a current owner address without reopening it.
  * @param request - retained entry and explicitly confirmed advertised address.

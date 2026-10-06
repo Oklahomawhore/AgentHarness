@@ -135,7 +135,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
   const eligible = ready && status?.eligibility === 'eligible'
-  const joint = preview?.kind === 'scope-join-entry'
+  const joint = preview?.kind === 'scope-join-entry' || preview?.kind === 'scope-group-entry'
   const observation = scope.observation
   const readState = observation?.eligibility === 'eligible' ? observation : null
   const canReceive = scope.phase === 'ready' && !scope.pending && readState !== null && readState.agentId === agentId
@@ -172,7 +172,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       return
     }
     if (revision !== previewRevision.current) return
-    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry') || result.sourceKind !== 'tool-observations') {
+    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || result.sourceKind !== 'tool-observations') {
       setInvalid(true); setPreviewing(false); return
     }
     let checked: ScopeContributionEntryProbeResult
@@ -264,6 +264,10 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {capture != null && <>
         <dl className={css.details}>
           <dt>{t('contribution.task')}</dt><dd>{capture.entry.taskId}</dd><dt>{t('contribution.owner')}</dt><dd>{capture.entry.ownerPeerId}</dd>
+          {capture.entry.kind === 'scope-group-entry' && <>
+            <dt>{t('contribution.group.capture')}</dt><dd>{capture.selection.captureId}</dd>
+            <dt>{t('contribution.group.captureGeneration')}</dt><dd>{capture.selection.captureGeneration}</dd>
+          </>}
           <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
           <dt>{t('native.share.tools')}</dt><dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
           <dt>{t('contribution.expires')}</dt><dd>{new Date(capture.limits.expiresAt).toLocaleString()}</dd>
@@ -293,8 +297,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       </div>}
       {recoverable != null && <NativeContributionRoute
         key={`${agentId}/${recoverable.selection.captureId}/${recoverable.selection.captureGeneration}/${recoverable.entry.ownerAddress}/${recoverable.routeRevision}/${routeReadSeq ?? ''}`}
-        agentId={agentId} current={recoverable} ready={ready && !scope.pending && (recoverable.entry.kind !== 'scope-join-entry' || scope.phase === 'ready')} t={t}
-        {...(recoverable.entry.kind === 'scope-join-entry' && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
+        agentId={agentId} current={recoverable} ready={ready && !scope.pending && ((recoverable.entry.kind !== 'scope-join-entry' && recoverable.entry.kind !== 'scope-group-entry') || scope.phase === 'ready')} t={t}
+        {...((recoverable.entry.kind === 'scope-join-entry' || recoverable.entry.kind === 'scope-group-entry') && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
         preview={previewNativeContribution} recover={request => perform(() => recoverNativeContributionRoute(request))} />}
       {entry?.status !== 'error' && entry?.error !== undefined && <p role="alert" className={css.notice}>{t(issueKey(entry.error))}</p>}
       <Button size="sm" disabled={entry?.pending} onClick={() => { readNativeContribution(agentId) }}>{t('native.share.refresh')}</Button>

@@ -273,13 +273,13 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const limits = contributionLimitsSchema.parse(request.limits)
     const automatic = request.receive?.automatic === undefined
       ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
-    if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry') || entry.sourceKind !== 'tool-observations'
+    if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry' && entry.kind !== 'scope-group-entry') || entry.sourceKind !== 'tool-observations'
       || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now() || request.roots.length === 0
       || request.tools.length === 0
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) {
       throw this.invalid(agent.id, 'The source file selection, entry, or accepted limits are invalid')
     }
-    if ((entry.kind === 'scope-join-entry') !== (request.receive !== undefined)) {
+    if ((entry.kind === 'scope-join-entry' || entry.kind === 'scope-group-entry') !== (request.receive !== undefined)) {
       throw this.invalid(agent.id, 'Joint entry receiving requires explicit local consent')
     }
     const signal = this.invalidate(agent.id, role, false)

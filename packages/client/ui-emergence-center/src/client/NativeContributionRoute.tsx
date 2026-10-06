@@ -9,9 +9,10 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './NativeScopeAction.module.css'
 
 function sameEntry(left: ScopeContributionEntry, right: ScopeContributionEntry): boolean {
-  return left.kind === right.kind && left.entryId === right.entryId
+  return left.version === right.version && left.kind === right.kind && left.entryId === right.entryId
     && left.taskId === right.taskId && left.ownerPeerId === right.ownerPeerId
     && left.sourceKind === right.sourceKind && left.expiresAt === right.expiresAt
+    && (left.kind !== 'scope-group-entry' || (right.kind === 'scope-group-entry' && left.maxMembers === right.maxMembers))
 }
 
 /**
@@ -41,7 +42,7 @@ export function NativeContributionRoute({ agentId, current, ready, preview, reco
     try {
       const value = await preview(text)
       if (at !== revision.current) return
-      if ((value.kind === 'contribution-entry' || value.kind === 'scope-join-entry')
+      if ((value.kind === 'contribution-entry' || value.kind === 'scope-join-entry' || value.kind === 'scope-group-entry')
         && value.sourceKind === 'tool-observations' && sameEntry(current.entry, value)
         && (value.ownerAddress !== current.entry.ownerAddress || receive !== undefined)) setChecked(value)
       else setInvalid(true)

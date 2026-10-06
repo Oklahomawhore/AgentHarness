@@ -1057,3 +1057,355 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
       'local-joint-automatic.expected.md', 'local-joint-left-local-kept.expected.md'])
   }, 180_000)
 })
+
+// Three independently owned Sessions use one entry without replacing their original responsibilities.
+describe.skipIf(process.platform === 'win32')('web e2e: reusable group entry joins existing responsibilities', () => {
+  const snapshots = join(import.meta.dirname, 'snapshots/native-group-join')
+  const goal = '维护我负责的客户端重试实现，响应已核实的协作事实。'
+  const bInitial = 'export const GROUP_B_local = "prepared";\n'
+  const cInitial = 'export const GROUP_C_local = "prepared";\n'
+  const bShared = 'export const GROUP_B_retries = 3;\n'
+  const cShared = 'export const GROUP_C_delay = 250;\n'
+  const cCorrected = 'export const GROUP_C_delay = 500;\n'
+  const bAfter = 'export const GROUP_B_retries = 7;\n'
+  const cAfter = 'export const GROUP_C_delay = 750;\n'
+  const hosts: WebScaffold[] = []
+  const pages: Page[] = []
+  const requests: Message[][][] = [[], [], []]
+  const trips: ReturnType<typeof watchConsole>[] = []
+  let browser: Browser | undefined
+  let directory: string | undefined
+
+  beforeAll(async () => {
+    if (MODE === 'record') throw new Error('Group acceptance uses controlled keyless responses')
+    directory = await mkdtemp(join(tmpdir(), 'dsh-native-group-web-'))
+    const plans = [
+      [response('GROUP_A_READY')],
+      [response('GROUP_B_READY'), response('GROUP_B_ORIGINAL_AUTO'), writeResponse('remote', bInitial), response('GROUP_B_PREPARED'),
+        writeResponse('remote', bShared, 2), response('GROUP_B_SHARED'), response('GROUP_B_FIRST_RESPONSE'),
+        response('GROUP_B_CORRECTED_RESPONSE'), writeResponse('remote', bAfter, 3), response('GROUP_B_LOCAL_AFTER')],
+      [response('GROUP_C_READY'), writeResponse('remote', cInitial), response('GROUP_C_PREPARED'), response('GROUP_C_READ_B'),
+        writeResponse('remote', cShared, 2), response('GROUP_C_SHARED'), writeResponse('remote', cCorrected, 3),
+        response('GROUP_C_CORRECTED'), response('GROUP_C_WITHDRAWN_B'), writeResponse('remote', cAfter, 4), response('GROUP_C_CONTINUED')],
+    ]
+    browser = await chromium.launch()
+    for (const [index, chunks] of plans.entries()) {
+      const name = `group-${String(index)}`
+      const override = join(directory, `${name}.override.json`)
+      const replay: ReplayOverrideDoc = chunks.map(value => ({ kind: 'chunks', chunks: value }))
+      await writeFile(override, JSON.stringify(replay))
+      const host = await launchWebScaffold({ hermeticMcpClients: true, toolsMode: 'native', paceMs: 5,
+        replayFixture: join(directory, `${name}-override-only.jsonl`), replayOverride: override })
+      hosts.push(host)
+      const observed = requests[index]
+      if (observed === undefined) throw new Error('Missing request inventory')
+      host.ctx.on('llm/stream', (options, next) => { observed.push(structuredClone(options.messages)); return next() })
+      const page = await browser.newPage({ viewport: DESKTOP, locale: ZH_BROWSER_LOCALE })
+      pages.push(page); trips.push(watchConsole(page))
+      await page.goto(host.authenticatedUrl, { waitUntil: 'load' })
+      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
+      await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
+    }
+    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
+  }, 180_000)
+
+  afterAll(async () => {
+    const failures: unknown[] = []
+    for (const close of [() => browser?.close(), ...hosts.toReversed().map(host => () => host.close()),
+      () => directory === undefined ? Promise.resolve() : rm(directory, { recursive: true, force: true })]) {
+      try { await close() } catch (error) { failures.push(error) }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Three-owner group browser cleanup failed')
+  }, 120_000)
+
+  it('approves each member once, exchanges facts without recall, and leaves one while preserving the other', async () => {
+    const [a, b, c] = hosts
+    const [aPage, bPage, cPage] = pages
+    const [aRequests, bRequests, cRequests] = requests
+    if (!a || !b || !c || !aPage || !bPage || !cPage || !aRequests || !bRequests || !cRequests) {
+      throw new Error('Three independently owned Hosts are required')
+    }
+    onTestFailed(() => saveFailureShot(bPage, 'web-e2e-native-group-join'))
+    expect(new Set(hosts.map(host => host.harnessHome)).size).toBe(3)
+    const ids = [await prompt(a, aPage, 'GROUP_A_READY'), await prompt(b, bPage, 'GROUP_B_READY'),
+      await prompt(c, cPage, 'GROUP_C_READY')]
+    const [aId, bId, cId] = ids
+    if (!aId || !bId || !cId) throw new Error('Original Session identities are missing')
+    const originals = ids.map((id, index) => hosts[index]?.ctx.agents.get(id))
+    const tasks = []
+    for (const [host, id, page, index, objective] of [
+      [a, aId, aPage, 0, '共同维护重试接口'], [b, bId, bPage, 1, '维护客户端重试实现'],
+      [c, cId, cPage, 2, '维护服务端重试策略'],
+    ] as const) {
+      const participantId = (await host.ctx.scopeAgentContributions.localStatus({ agentId: id })).participantId
+      if (participantId === null) throw new Error('Original Session has no participant')
+      const task = await host.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: participantId,
+        objective, scope: '共享事实用于共同目标，各自保留职责和执行权限。' })
+      await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      tasks.push(task)
+      if (index === 0) continue
+      const scope = await panel(page)
+      await scope.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+      const local = page.locator(LOCAL)
+      await local.getByText(`已连接：${objective}`, { exact: true }).waitFor()
+      await permission(local, join(host.workspaceCwd, `group-${String(index)}/project`), LOCAL_CONSENT)
+      await local.getByRole('button', { name: '允许并开始分享', exact: true }).click()
+      await local.getByText('正在采集已授权的文件工作', { exact: true }).waitFor()
+    }
+    const [sharedTask, bTask, cTask] = tasks
+    if (!sharedTask || !bTask || !cTask) throw new Error('Local responsibilities are missing')
+    const bLocal = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
+    const cLocal = await c.ctx.scopeAgentContributions.localStatus({ agentId: cId })
+    if (bLocal.capture === null || cLocal.capture === null) throw new Error('Original file permissions are missing')
+    const automatic = bPage.locator(AUTOMATIC)
+    await automatic.getByRole('checkbox', { name: '允许此会话为当前目标开始有限自动工作', exact: true }).check()
+    await automatic.getByLabel('本地协作目标', { exact: true }).fill(goal)
+    await automatic.getByLabel('允许新增的自动启动次数', { exact: true }).fill('4')
+    await automatic.getByLabel('每轮最多步数', { exact: true }).fill('2')
+    await automatic.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    await Promise.all([b.whenTurnSettled(30_000), automatic.getByRole('button', { name: '确认启用自动协作', exact: true }).click()])
+    await bPage.getByText('GROUP_B_ORIGINAL_AUTO', { exact: true }).waitFor()
+    await automatic.getByRole('button', { name: '暂停自动协作', exact: true }).click()
+    await automatic.getByText('自动协作已暂停', { exact: true }).waitFor()
+    const bBefore = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (bBefore.eligibility !== 'eligible') throw new Error('Original local policy is missing')
+    expect(bBefore.state).toMatchObject({ mode: 'paused', usedBudget: 1, automatic: { goal, activationLimit: 4 } })
+    await prompt(b, bPage, 'GROUP_B_PREPARED'); await prompt(c, cPage, 'GROUP_C_PREPARED')
+    for (const [host, task] of [[b, bTask], [c, cTask]] as const) {
+      await expect.poll(() => host.ctx.developmentTasks.get({ taskId: task.id }).context
+        .filter(item => item.localToolObservation !== undefined).length).toBe(1)
+    }
+
+    await aPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
+    const center = aPage.locator('[data-emergence-center]')
+    const access = center.locator('details:has(> summary:text-is("独立设备协作"))')
+    if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
+    const ownerSharing = center.locator('[data-scope-contribution-owner]')
+    if (await ownerSharing.getAttribute('open') === null) await ownerSharing.locator(':scope > summary').click()
+    const applications = center.locator('[data-contribution-applications]')
+    await applications.getByRole('combobox', { name: '入口用途', exact: true }).selectOption('group')
+    await applications.getByLabel('累计申请名额', { exact: true }).fill('2')
+    await applications.getByLabel('申请入口有效期（小时）', { exact: true }).fill('1')
+    await applications.getByRole('button', { name: '邀请多人加入同一目标', exact: true }).click()
+    const entryField = applications.getByRole('textbox', { name: '将此入口交给来源用户', exact: true })
+    await expect.poll(() => entryField.inputValue()).toContain('scope-group-entry')
+    const entryText = await entryField.inputValue()
+    const identities = await Promise.all(hosts.map(host => host.ctx.scopeAccess.identity()))
+    const ownerIdentity = identities[0]
+    if (ownerIdentity === undefined) throw new Error('Owner identity is missing')
+    const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'],
+      [bTask.id, '{{bTaskId}}'], [cTask.id, '{{cTaskId}}'], [entryText, '{{groupEntry}}']]
+    for (const [index, identity] of identities.entries()) replacements.push([identity.peerId, `{{peer${String(index)}}}`])
+    for (const address of ownerIdentity.addresses) replacements.push([address, '{{ownerAddress}}'])
+    for (const [host, id, page, index, original] of [[b, bId, bPage, 1, bLocal], [c, cId, cPage, 2, cLocal]] as const) {
+      const scope = await panel(page)
+      await scope.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
+      const sharing = page.locator(REMOTE)
+      await sharing.locator(':scope > summary').click()
+      await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
+      await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+      await sharing.getByText(sharedTask.id, { exact: true }).waitFor()
+      await permission(sharing, join(host.workspaceCwd, `group-${String(index)}/project`), REMOTE_CONSENT)
+      expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
+      expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
+      await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
+      await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
+      await sharing.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+      const requested = (await host.ctx.scopeAgentContributions.status({ agentId: id })).capture
+      const identity = identities[index]
+      if (requested === null || identity === undefined) throw new Error('Member application is missing')
+      expect(requested.receiving?.automatic).toBeUndefined()
+      replacements.push([requested.selection.captureId, `{{member${String(index)}Capture}}`],
+        [requested.selection.captureGeneration, `{{member${String(index)}CaptureGeneration}}`])
+      expect(requested.receiving?.localTask?.taskId).toBe(original.assignment?.taskId)
+      const member = applications.locator('[data-group-application]').filter({ hasText: identity.peerId })
+      await member.getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+      await member.getByLabel('该会话的协作职责', { exact: true }).fill(index === 1 ? '维护客户端重试实现' : '维护服务端重试策略')
+      await member.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+      await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
+      const joined = await host.ctx.scopeAgentContext.status({ agentId: id })
+      if (joined.eligibility !== 'eligible') throw new Error('Joined Session is no longer eligible')
+      expect(joined.state).toMatchObject({ binding: { kind: 'local-task-scope' }, mode: 'passive', automatic: null })
+      expect((await host.ctx.scopeAgentContributions.localStatus({ agentId: id })).capture?.selection).toEqual(original.capture?.selection)
+      replacements.push([await page.evaluate(value => new Date(value).toLocaleString(), requested.limits.expiresAt),
+        '{{expiresLocal}}'])
+    }
+    expect(bRequests).toHaveLength(4); expect(cRequests).toHaveLength(3)
+    const groups = await a.ctx.scopeAccess.groupEntries({ taskId: sharedTask.id })
+    const group = groups.entries[0]
+    if (group === undefined) throw new Error('Reusable entry disappeared')
+    expect(groups.entries).toHaveLength(1)
+    const members = (await a.ctx.scopeAccess.groupApplications({ entryId: group.entry.entryId })).entries
+    expect(members).toHaveLength(2)
+    expect(new Set(members.map(item => item.applicationId)).size).toBe(2)
+    expect(members.map(item => item.result.status)).toEqual(['approved', 'approved'])
+    expect((await a.ctx.scopeAccess.contributionApplications({ taskId: sharedTask.id })).entries).toEqual([])
+    await applications.getByRole('button', { name: '关闭新申请入口', exact: true }).click()
+    await applications.getByText('入口已关闭，不再接受新申请', { exact: true }).waitFor()
+    await applications.getByText('累计申请：2 / 2', { exact: true }).waitFor()
+    replacements.push([await aPage.evaluate(value => new Date(value).toLocaleString(), group.entry.expiresAt), '{{expiresLocal}}'])
+    const shots = process.env.DSH_CONTRIBUTION_SCOPE_SHOTS
+    if (shots !== undefined) await mkdir(shots, { recursive: true })
+    for (const viewport of [DESKTOP, MOBILE]) {
+      await aPage.setViewportSize(viewport)
+      expect(await aPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await applications.getByRole('heading', { name: '多人协作入口', exact: true }).scrollIntoViewIfNeeded()
+      if (shots !== undefined) await aPage.screenshot({
+        path: join(shots, `group-owner-closed-entry-${String(viewport.width)}.png`), fullPage: true,
+      })
+      await applications.getByRole('button', { name: '结束该成员协作', exact: true }).last().scrollIntoViewIfNeeded()
+      if (shots !== undefined) await aPage.screenshot({ path: join(shots, `group-owner-closed-${String(viewport.width)}.png`), fullPage: true })
+    }
+    await aPage.setViewportSize(DESKTOP)
+    expect(await applications.locator('[data-group-application]').evaluateAll(elements =>
+      elements.map(element => element.getAttribute('data-group-application')))).toEqual(members.map(item => item.applicationId))
+    const memberIds = new Set<string>(members.flatMap(item => [
+      item.proposal.contributorPeerId, item.proposal.captureId, item.proposal.captureGeneration,
+    ]))
+    const ownerReplacements: (readonly [string, string])[] = replacements.filter(([value]) => !memberIds.has(value))
+    for (const [index, member] of members.entries()) {
+      const ordinal = String(index + 1)
+      ownerReplacements.push([member.proposal.contributorPeerId, `{{listedMember${ordinal}Peer}}`],
+        [member.proposal.captureId, `{{listedMember${ordinal}Capture}}`],
+        [member.proposal.captureGeneration, `{{listedMember${ordinal}Generation}}`])
+    }
+    const ownerAria = await captureStableAria(aPage, '[data-contribution-applications]', a.workspaceCwd, { replacements: ownerReplacements })
+    await compareOrRefreshGolden(join(snapshots, 'group-owner-closed.expected.md'), ownerAria, MODE)
+    await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
+    await captureStage(cPage, c.workspaceCwd, 'group-c-passive', replacements, PANEL, snapshots)
+
+    await prompt(b, bPage, 'GROUP_B_SHARED')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    await prompt(c, cPage, 'GROUP_C_READ_B')
+    const cRead = cRequests[3]
+    if (cRead === undefined) throw new Error('Passive peer request is missing')
+    expect(textOf(context(cRead, 'scope-agent-context'))).toContain(bShared.trim())
+    expect(textOf(context(cRead, 'scope-agent-context'))).not.toContain(cInitial.trim())
+    expect(textOf(context(cRead, 'development-task-context'))).toContain(cTask.objective)
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(c, cId, cRead, kind)
+    await prompt(c, cPage, 'GROUP_C_SHARED')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(2)
+    const bPanel = await panel(bPage)
+    await bPanel.getByRole('radio', { name: '允许自动协作', exact: true }).check()
+    await bPanel.getByLabel('本地协作目标', { exact: true }).fill(goal)
+    await bPanel.getByLabel('允许新增的自动启动次数', { exact: true }).fill('2')
+    await bPanel.getByLabel('每轮最多步数', { exact: true }).fill('2')
+    await bPanel.getByLabel('最短间隔（秒）', { exact: true }).fill('0')
+    await Promise.all([b.whenTurnSettled(30_000), bPanel.getByRole('button', { name: '确认启用自动协作', exact: true }).click()])
+    await bPage.getByText('GROUP_B_FIRST_RESPONSE', { exact: true }).waitFor()
+    const first = bRequests[6]
+    if (first === undefined) throw new Error('Authorized group response is missing')
+    expect(textOf(context(first, 'scope-agent-context'))).toContain(cShared.trim())
+    const awakened = b.whenTurnSettled(30_000)
+    await prompt(c, cPage, 'GROUP_C_CORRECTED')
+    expect(await awakened).toBe(bId)
+    await bPage.getByText('GROUP_B_CORRECTED_RESPONSE', { exact: true }).waitFor()
+    const correction = bRequests[7]
+    if (correction === undefined) throw new Error('Peer correction did not reach automatic response')
+    expect(textOf(context(correction, 'scope-agent-context'))).toContain(cCorrected.trim())
+    expect(textOf(context(correction, 'development-task-context'))).toContain(bTask.objective)
+    for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, correction, kind)
+    const after = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (after.eligibility !== 'eligible' || after.state.binding?.kind !== 'local-task-scope') {
+      throw new Error('Combined policy was lost')
+    }
+    const bSubscriptionId = after.state.binding.subscriptionId
+    expect(after.state.usedBudget).toBe(3)
+    expect(cRequests).toHaveLength(8)
+    await panel(bPage); await recordedCompletion(b, bPage, bId)
+    await captureStage(bPage, b.workspaceCwd, 'group-b-automatic', replacements, PANEL, snapshots)
+    const visible = await bPage.locator(PANEL).textContent()
+    expect(visible).not.toContain(cCorrected.trim())
+    const sharing = bPage.locator(REMOTE)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
+    await sharing.getByRole('button', { name: '退出此次协作', exact: true }).click()
+    await expect.poll(async () => (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    await expect.poll(async () => {
+      const status = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      return status.eligibility === 'not-live' ? null : status.state.binding?.kind
+    }).toBe('local-task')
+    const restored = await b.ctx.scopeAgentContext.status({ agentId: bId })
+    if (restored.eligibility !== 'eligible') throw new Error('Original local policy was not restored')
+    expect(restored.state).toMatchObject({ binding: { kind: 'local-task' }, mode: 'paused', usedBudget: 3,
+      automatic: bBefore.state.automatic })
+    expect(restored.localTask).toEqual(bBefore.localTask)
+    expect((await b.ctx.scopeAccess.list()).subscriptions.find(item => item.id === bSubscriptionId)).toMatchObject({ state: 'left' })
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).assignment).toEqual(bLocal.assignment)
+    expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture?.selection).toEqual(bLocal.capture.selection)
+    const remaining = await c.ctx.scopeAgentContext.status({ agentId: cId })
+    if (remaining.eligibility !== 'eligible' || remaining.state.binding?.kind !== 'local-task-scope') {
+      throw new Error('Other member was removed')
+    }
+    const cSubscriptionId = remaining.state.binding.subscriptionId
+    expect((await c.ctx.scopeAccess.list()).subscriptions.find(item => item.id === cSubscriptionId)).toMatchObject({ state: 'active' })
+    expect(remaining.state).toMatchObject({ mode: 'passive', usedBudget: 0, binding: { kind: 'local-task-scope' } })
+    expect((await c.ctx.scopeAgentContributions.status({ agentId: cId })).capture?.collecting).toBe(true)
+    await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    replacements.push([bLocal.capture.grant.bindingId, '{{bLocalBindingId}}'],
+      [`${bLocal.capture.grant.expectedBindingEpoch.nodeId}:${String(bLocal.capture.grant.expectedBindingEpoch.seq)}`, '{{bLocalEpoch}}'],
+      [await bPage.evaluate(value => new Date(value).toLocaleString(), bLocal.capture.grant.expiresAt), '{{expiresLocal}}'])
+    await captureStage(bPage, b.workspaceCwd, 'group-b-left-local-kept', replacements, LOCAL, snapshots)
+    const revision = a.ctx.developmentTasks.get({ taskId: sharedTask.id }).revision
+    await prompt(b, bPage, 'GROUP_B_LOCAL_AFTER')
+    const bFinal = bRequests.at(-1)
+    if (bFinal === undefined) throw new Error('Departed member’s final local request is missing')
+    expect(textOf(context(bFinal, 'scope-agent-context'))).not.toContain(cShared.trim())
+    expect(textOf(context(bFinal, 'scope-agent-context'))).not.toContain(cCorrected.trim())
+    expect(textOf(context(bFinal, 'development-task-context'))).toContain(bTask.objective)
+    expect(a.ctx.developmentTasks.get({ taskId: sharedTask.id }).revision).toBe(revision)
+    await expect.poll(() => b.ctx.developmentTasks.get({ taskId: bTask.id }).context
+      .filter(item => item.localToolObservation !== undefined).length).toBe(3)
+    await prompt(c, cPage, 'GROUP_C_WITHDRAWN_B')
+    const withdrawn = cRequests[8]
+    if (withdrawn === undefined) throw new Error('Remaining member request is missing')
+    expect(textOf(context(withdrawn, 'scope-agent-context'))).not.toContain(bShared.trim())
+    expect(textOf(context(withdrawn, 'scope-agent-context'))).not.toContain(bAfter.trim())
+    expect(textOf(context(withdrawn, 'development-task-context'))).toContain(cTask.objective)
+    await prompt(c, cPage, 'GROUP_C_CONTINUED')
+    await expect.poll(() => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
+      .filter(item => item.peerToolObservation !== undefined).length).toBe(4)
+    expect(await readFile(join(b.workspaceCwd, 'group-1/project/remote.ts'), 'utf8')).toBe(bAfter)
+    expect(await readFile(join(c.workspaceCwd, 'group-2/project/remote.ts'), 'utf8')).toBe(cAfter)
+    expect((await c.ctx.scopeAgentContributions.localStatus({ agentId: cId })).assignment).toEqual(cLocal.assignment)
+    for (const [index, host, id, observed] of [[1, b, bId, bRequests], [2, c, cId, cRequests]] as const) {
+      const agent = host.ctx.agents.get(id)
+      const final = observed.at(-1)
+      if (agent === undefined || final === undefined) throw new Error('Original Session or final request is missing')
+      expect(agent).toBe(originals[index])
+      expect(host.ctx.developmentTasks.list({ limit: 32 })).toHaveLength(1)
+      expect(await host.ctx.sessions.flush(agent.session)).toBe(true)
+      const events = await readPersistedEvents(host, id)
+      expect(events).toEqual(agent.session.snapshotEvents())
+      const replay = Session.create(id, structuredClone([...events]), agent.session.header)
+      for (const kind of ['scope-agent-context', 'development-task-context'] as const) {
+        expect(context(replay.deriveMessages(), kind)).toEqual(context(final, kind))
+      }
+    }
+    const bMember = members.find(item => item.proposal.contributorPeerId === identities[1]?.peerId)
+    const cMember = members.find(item => item.proposal.contributorPeerId === identities[2]?.peerId)
+    if (bMember === undefined || cMember === undefined) throw new Error('Independent application identities were lost')
+    const departed = (await a.ctx.scopeAccess.groupApplications({ entryId: group.entry.entryId })).entries
+      .find(item => item.applicationId === bMember.applicationId)
+    expect(departed?.result).toMatchObject({ status: 'ended', readState: 'active' })
+    await aPage.getByRole('button', { name: '打开涌现协作中心', exact: true }).click()
+    if (await access.getAttribute('open') === null) await access.locator(':scope > summary').click()
+    if (await ownerSharing.getAttribute('open') === null) await ownerSharing.locator(':scope > summary').click()
+    const departedRow = applications.locator(`[data-group-application="${bMember.applicationId}"]`)
+    await departedRow.getByText('读取仍获授权；贡献结束不会自动撤销读取权限。', { exact: true }).waitFor()
+    await departedRow.getByRole('button', { name: '结束该成员协作', exact: true }).click()
+    await departedRow.getByText('读取权限已撤销。', { exact: true }).waitFor()
+    expect(await departedRow.getByRole('button', { name: '结束该成员协作', exact: true }).count()).toBe(0)
+    const ownerAfter = (await a.ctx.scopeAccess.groupApplications({ entryId: group.entry.entryId })).entries
+    expect(ownerAfter.find(item => item.applicationId === bMember.applicationId)?.result).toMatchObject({ status: 'ended', readState: 'revoked' })
+    expect(ownerAfter.find(item => item.applicationId === cMember.applicationId)?.result).toMatchObject({ status: 'approved', readState: 'active' })
+    expect((await c.ctx.scopeAccess.list()).subscriptions.find(item => item.id === cSubscriptionId)).toMatchObject({ state: 'active' })
+    expect((await c.ctx.scopeAgentContributions.status({ agentId: cId })).capture?.collecting).toBe(true)
+    expect(aRequests).toHaveLength(1); expect(bRequests).toHaveLength(10); expect(cRequests).toHaveLength(11)
+    for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
+    await assertFixtureInventory(snapshots, ['group-owner-closed.expected.md', 'group-c-passive.expected.md',
+      'group-b-automatic.expected.md', 'group-b-left-local-kept.expected.md'])
+  }, 240_000)
+})

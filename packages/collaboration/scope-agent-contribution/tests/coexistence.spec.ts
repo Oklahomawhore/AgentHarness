@@ -290,10 +290,13 @@ it('restores two real durable capture domains as separate withdrawals without re
   await expectWithdrawal(f, remote.capture.selection, 'DUAL_RESTART_BODY')
 })
 
-it('requires explicit retained-local consent for joint reading without cancelling the local capture', async () => {
+it.each([false, true])('requires explicit retained-local consent (reusable: %s) without cancelling local capture', async (group) => {
   const f = await fixture()
-  const entry = await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
-    taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
+  const entry = group
+    ? await f.owner.ctx.scopeAccess.createGroupEntry({ taskId: f.task.id, ownerAddress: f.ownerAddress,
+      expiresAt: f.limits.expiresAt, maxMembers: 2 })
+    : await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+      taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
   const reading = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
   await expect(f.source.ctx.scopeAgentContributions.request({ agentId: f.agent.id, expectedCapture: null,
     entry: entry.entry, roots: [f.source.workspace], tools: ['write'], limits: f.limits, receive: { expectedReadStateSeq: reading.readStateSeq } }))
@@ -304,9 +307,12 @@ it('requires explicit retained-local consent for joint reading without cancellin
 })
 
 
-async function beginJoint(f: Awaited<ReturnType<typeof fixture>>, automatic?: ScopeAgentAutomaticPolicy) {
-  const entry = await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
-    taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
+async function beginJoint(f: Awaited<ReturnType<typeof fixture>>, automatic?: ScopeAgentAutomaticPolicy, group = false) {
+  const entry = group
+    ? await f.owner.ctx.scopeAccess.createGroupEntry({ taskId: f.task.id, ownerAddress: f.ownerAddress,
+      expiresAt: f.limits.expiresAt, maxMembers: 2 })
+    : await f.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+      taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.limits.expiresAt })
   const observed = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
   if (observed.localTask === null) throw new Error('Original local target is missing')
   const request: ScopeAgentContributionRequest = { agentId: f.agent.id, expectedCapture: null,
@@ -316,14 +322,20 @@ async function beginJoint(f: Awaited<ReturnType<typeof fixture>>, automatic?: Sc
   const requested = await f.source.ctx.scopeAgentContributions.request(request)
   const capture = requested.capture
   if (capture === null) throw new Error('Joint contribution was not retained')
-  await expect.poll(async () => (await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries[0]?.result.status).toBe('pending')
+  const applications = async () => group
+    ? (await f.owner.ctx.scopeAccess.groupApplications({ entryId: entry.entry.entryId })).entries
+    : (await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries
+  await expect.poll(async () => (await applications())[0]?.result.status).toBe('pending')
+  const applicationId = group
+    ? (await f.owner.ctx.scopeAccess.groupApplications({ entryId: entry.entry.entryId })).entries[0]?.applicationId : undefined
   const approve = () => f.owner.ctx.scopeAccess.approveContributionApplication({ entryId: entry.entry.entryId,
+    ...(applicationId === undefined ? {} : { applicationId }),
     expectedProposal: capture.proposal, limits: f.limits, ownerAddress: f.ownerAddress,
     read: { responsibility: 'Maintain my own local implementation with the shared facts.' } })
-  return { request, capture, approve }
+  return { request, capture, approve, applications }
 }
 
-it('adopts a joint scope while retaining local capture and paused policy, then leaves only that scope', async () => {
+it.each([false, true])('adopts a joint scope (reusable: %s), retains local capture and policy, then leaves only that scope', async (group) => {
   const f = await fixture()
   await run(f.source, f.agent, [toolCallResponse('local-history', 'write', { file_path: 'original.txt', content: 'ORIGINAL_LOCAL_WORK' })])
   await expect.poll(() => f.localReports().length).toBe(1)
@@ -338,7 +350,7 @@ it('adopts a joint scope while retaining local capture and paused policy, then l
   const before = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
   expect(before.state).toMatchObject({ mode: 'paused', usedBudget: 1, automatic: originalPolicy })
   const requests = f.source.adapter.requests.length
-  const joint = await beginJoint(f)
+  const joint = await beginJoint(f, undefined, group)
   expect(joint.capture.receiving?.localTask).toEqual(before.localTask)
   const stored = nativeContributionDomain.tables.sessions.valueSchema.parse(await storedRow(f.source, 'scope_agent_contributions', f.agent.id))
   expect(stored.capture?.receiving?.localTask).toEqual(before.localTask)
@@ -355,7 +367,7 @@ it('adopts a joint scope while retaining local capture and paused policy, then l
     binding: { kind: 'local-task-scope', retainedLocal: { automatic: originalPolicy } } })
   expect(joined.localTask).toEqual(before.localTask)
   expect(f.source.adapter.requests).toHaveLength(requests)
-  expect((await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries).toHaveLength(1)
+  expect(await joint.applications()).toHaveLength(1)
   const localBefore = await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })
   expect(localBefore.capture?.selection).toEqual(f.localCapture.selection)
   await run(f.source, f.agent, [toolCallResponse('joined-write', 'write', { file_path: 'joined.txt', content: 'BOTH_AUTHORIZED_DESTINATIONS' })])

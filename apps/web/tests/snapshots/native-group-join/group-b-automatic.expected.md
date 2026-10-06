@@ -1,0 +1,52 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - paragraph: 本地与他人目标各有一份文件分享许可。请在对应目标中查看或停止；停止其中一份不会停止另一份。
+  - status: 自动协作已暂停
+  - paragraph: 自动启动额度已用完。增加有限额度后才能恢复。
+  - paragraph: 累计已用 3 / 3 次 · 每轮最多 2 步
+  - paragraph: 保留的本地目标：维护客户端重试实现
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - term: 共享 Task
+  - definition: {{sharedTaskId}}
+  - term: 来源设备
+  - definition: {{peer0}}
+  - term: 邀请中的职责
+  - definition: 维护客户端重试实现
+  - paragraph: 本地目标：维护我负责的客户端重试实现，响应已核实的协作事实。
+  - paragraph: 退出共享范围后保持暂停的本地自动目标：维护我负责的客户端重试实现，响应已核实的协作事实。
+  - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - button "离开共享上下文"
+  - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 更新所有者连接地址
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "允许自动协作" [checked]
+    - text: 允许自动协作
+  - paragraph: 自动启动会调用模型并可能执行工具。预留后取消也计入次数；此额度不是费用、token 或 API 重试上限。
+  - group:
+    - text: 本地协作目标
+    - textbox "本地协作目标": 维护我负责的客户端重试实现，响应已核实的协作事实。
+    - text: 允许新增的自动启动次数
+    - spinbutton "允许新增的自动启动次数": "2"
+    - text: 每轮最多步数
+    - spinbutton "每轮最多步数": "2"
+    - text: 最短间隔（秒）
+    - spinbutton "最短间隔（秒）": "0"
+    - paragraph: 允许此会话为“维护我负责的客户端重试实现，响应已核实的协作事实。”再自动启动最多 2 次。
+  - button "确认启用自动协作"
+  - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
+  - group: 分享本会话的文件工作
+  - region "当前目标的自动协作记录":
+    - heading "当前目标的自动协作记录" [level=3]
+    - paragraph: 最近完成自动响应：第 6 轮，共享版本 6。
+    - paragraph: 该响应同时采用本地目标版本 4。
+  - button "重新读取状态"
+  - button "查看来源"

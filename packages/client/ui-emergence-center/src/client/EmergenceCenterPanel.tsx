@@ -150,6 +150,7 @@ export function EmergenceCenterPanel({
   readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
   readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
   createContributionEntry, recoverContributionEntry, approveContributionApplication, rejectContributionApplication,
+  createGroupEntry, closeGroupEntry,
   refresh,
   t,
 }: EmergenceCenterPanelProps) {
@@ -475,6 +476,7 @@ export function EmergenceCenterPanel({
             entry={selectedTask === undefined ? undefined : ownerContributions[selectedTask.id]}
             readOwnedContributions={readOwnedContributions} moreOwnedContributions={moreOwnedContributions}
             createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}
+            createGroupEntry={createGroupEntry} closeGroupEntry={closeGroupEntry}
             approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
             approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
             previewContributionText={previewContributionText} t={t} />

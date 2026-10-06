@@ -10,7 +10,8 @@ import type {
 import type {
   ScopeContributionInvitation, ScopeContributionSample, ScopeContributionStatusResult,
   ScopeContributionSubmitResult, ScopeContributionEndResult, ScopeContributionProposal, ScopeContributionTransfer,
-  ScopeContributionApproveRequest, ScopeContributionRecoverRequest, ScopeContributionEntry, ScopeContributionLimits,
+  ScopeContributionApproveRequest, ScopeContributionRecoverRequest, ScopeContributionEntry, ScopeSingleContributionEntry,
+  ScopeGroupEntry, ScopeContributionLimits,
 } from './types.ts'
 
 /** Write invitations carry their own discriminator and never inherit read-invitation authority. */
@@ -27,12 +28,23 @@ const entryFields = {
   ownerAddress: z.string().min(1).max(2048), expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 }
 /** Single-capture application entrance; legacy entries permit only OpenAPI sources. */
-export const contributionEntrySchema: z.ZodType<ScopeContributionEntry> = z.discriminatedUnion('kind', [
+export const singleContributionEntrySchema: z.ZodType<ScopeSingleContributionEntry> = z.discriminatedUnion('kind', [
   z.strictObject({ ...entryFields, kind: z.literal('openapi-contribution-entry') }),
   z.strictObject({ ...entryFields, kind: z.literal('contribution-entry'), sourceKind: z.enum(['openapi', 'tool-observations']) }),
   z.strictObject({ ...entryFields, kind: z.literal('scope-join-entry'), sourceKind: z.literal('tool-observations') }),
 ]).transform(value => ({ ...value, entryId: value.entryId as ScopeContributionEntry['entryId'],
   taskId: value.taskId as ScopeContributionEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeContributionEntry['ownerPeerId'] }))
+
+/** Explicit version-two group entrance; legacy single-capture parsers never accept it. */
+export const groupEntrySchema: z.ZodType<ScopeGroupEntry> = z.strictObject({
+  ...entryFields, version: z.literal(2), kind: z.literal('scope-group-entry'), sourceKind: z.literal('tool-observations'),
+  maxMembers: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).transform(value => ({ ...value, entryId: value.entryId as ScopeGroupEntry['entryId'],
+  taskId: value.taskId as ScopeGroupEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeGroupEntry['ownerPeerId'] }))
+
+/** Transferable entrances preserve their explicitly selected single-capture or reusable semantics. */
+export const contributionEntrySchema: z.ZodType<ScopeContributionEntry> = z.union([singleContributionEntrySchema, groupEntrySchema])
+
 
 /** All source consent ceilings are positive, explicit, and immutable on retry. */
 export const contributionLimitsSchema: z.ZodType<ScopeContributionLimits> = z.object({

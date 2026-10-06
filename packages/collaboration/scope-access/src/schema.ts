@@ -79,5 +79,5 @@ export function projectionDigest(projection: Omit<ScopeAccessLegacyProjection, '
 export { contributionInvitationSchema, contributionStatusSchema, contributionSubmitSchema, contributionEndSchema,
   validateContributionReceipt, contributionProposalSchema, decodeContributionText, encodeContributionProposal, encodeContributionInvitation } from './contribution-schema.ts'
 
-export { contributionEntrySchema, contributionLimitsSchema } from './contribution-schema.ts'
+export { contributionEntrySchema, singleContributionEntrySchema, groupEntrySchema, contributionLimitsSchema } from './contribution-schema.ts'
 export { contributionApplicationResultSchema } from './application-schema.ts'

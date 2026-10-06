@@ -19,7 +19,7 @@ import type { NativeLocalContributionActions } from './NativeLocalContributionPa
 import type { NativeContributionActions } from './NativeContributionPanel.tsx'
 import { createMcpClientSetupDirectory } from './mcp-clients.ts'
 import { createContributionDirectory } from './contribution-directory.ts'
-import type { OwnerContributionValue } from './OwnerContributionPanel.tsx'
+import { readOwnerContributions, type OwnerContributionValue } from './owner-contributions.ts'
 import { createClaudeScopeDirectory } from './claude-scopes.ts'
 import { createObservedScopeDirectory } from './observed-scopes.ts'
 import { createParticipantDirectory } from './participant-directory.ts'
@@ -128,27 +128,16 @@ export function apply(ctx: Context): void {
     async sessionKey => unwrap(await ctx.remote.claudeScope.contributionDetail({ sessionKey })),
     (error) => { console.error('[ui-emergence-center] source contribution management failed:', error) },
   )
-  const ownerContributions = createContributionDirectory<DevelopmentTaskId, OwnerContributionValue>(async (taskId, previous) => {
-    const [identity, grantPage, applicationPage] = await Promise.all([
-      ctx.remote.scopeAccess.identity().then(unwrap),
-      previous?.inventory.nextGrantId === null ? undefined : ctx.remote.scopeAccess.contributionInventory({
-        taskId, ...(previous?.inventory.nextGrantId == null ? {} : { afterGrantId: previous.inventory.nextGrantId }),
-      }).then(unwrap),
-      previous?.applications.nextEntryId === null ? undefined : ctx.remote.scopeAccess.contributionApplications({
-        taskId, ...(previous?.applications.nextEntryId == null ? {} : { afterEntryId: previous.applications.nextEntryId }),
-      }).then(unwrap),
-    ])
-    const grants = new Map(previous?.inventory.entries.map(item => [item.grant.grantId, item]))
-    for (const item of grantPage?.entries ?? []) grants.set(item.grant.grantId, item)
-    const applications = new Map(previous?.applications.entries.map(item => [item.entry.entryId, item]))
-    for (const item of applicationPage?.entries ?? []) applications.set(item.entry.entryId, item)
-    return { identity,
-      inventory: { entries: [...grants.values()],
-        nextGrantId: grantPage === undefined ? previous?.inventory.nextGrantId ?? null : grantPage.nextGrantId },
-      applications: { entries: [...applications.values()],
-        nextEntryId: applicationPage === undefined ? previous?.applications.nextEntryId ?? null : applicationPage.nextEntryId },
-    }
-  }, (error) => { console.error('[ui-emergence-center] owner contribution management failed:', error) })
+  const ownerContributions = createContributionDirectory<DevelopmentTaskId, OwnerContributionValue>(
+    (taskId, previous) => readOwnerContributions({
+      identity: async () => unwrap(await ctx.remote.scopeAccess.identity()),
+      contributionInventory: async request => unwrap(await ctx.remote.scopeAccess.contributionInventory(request)),
+      contributionApplications: async request => unwrap(await ctx.remote.scopeAccess.contributionApplications(request)),
+      groupEntries: async request => unwrap(await ctx.remote.scopeAccess.groupEntries(request)),
+      groupApplications: async request => unwrap(await ctx.remote.scopeAccess.groupApplications(request)),
+    }, taskId, previous),
+    (error) => { console.error('[ui-emergence-center] owner contribution management failed:', error) },
+  )
 
   const observedScopes = createObservedScopeDirectory({
     candidates: async request => unwrap(await ctx.remote.developmentTasks.observedCandidates(request)),
@@ -271,6 +260,12 @@ export function apply(ctx: Context): void {
       moreOwnedContributions: (taskId) => { void ownerContributions.more(taskId) },
       createContributionEntry: async (request) => {
         await ownerContributions.mutate(request.taskId, async () => unwrap(await ctx.remote.scopeAccess.createContributionEntry(request)))
+      },
+      createGroupEntry: async (request) => {
+        await ownerContributions.mutate(request.taskId, async () => unwrap(await ctx.remote.scopeAccess.createGroupEntry(request)))
+      },
+      closeGroupEntry: async (taskId, request) => {
+        await ownerContributions.mutate(taskId, async () => unwrap(await ctx.remote.scopeAccess.closeGroupEntry(request)))
       },
       recoverContributionEntry: (taskId, request) => ownerContributions.mutate(taskId,
         async () => unwrap(await ctx.remote.scopeAccess.recoverContributionEntry(request))),

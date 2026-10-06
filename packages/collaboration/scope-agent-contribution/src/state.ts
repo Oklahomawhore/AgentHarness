@@ -134,7 +134,7 @@ const captureSchema = contributionRecordSchema.safeExtend({
   const receiving = capture.receiving
   const read = receiving?.invitation
   if (!consistentRoute(capture)
-    || (capture.entry.kind === 'scope-join-entry') !== (receiving !== undefined)
+    || (capture.entry.kind === 'scope-join-entry' || capture.entry.kind === 'scope-group-entry') !== (receiving !== undefined)
     || (receiving !== undefined && ((receiving.state === 'adopting' || receiving.state === 'active') && read == null))
     || (read != null && (read.taskId !== capture.entry.taskId || read.ownerPeerId !== capture.entry.ownerPeerId
       || read.recipientPeerId !== capture.proposal.contributorPeerId || read.expiresAt > capture.limits.expiresAt
@@ -160,7 +160,8 @@ const continuationSchema = z.object({
   ...routeState,
   proposal: contributionRecordSchema.shape.proposal, entry: contributionEntrySchema, limits: contributionLimitsSchema,
   receiving: receivingSchema,
-}).strict().refine(value => consistentRoute(value) && value.entry.kind === 'scope-join-entry' && value.proposal.source.kind === 'tool-observations'
+}).strict().refine(value => consistentRoute(value) && (value.entry.kind === 'scope-join-entry' || value.entry.kind === 'scope-group-entry')
+  && value.proposal.source.kind === 'tool-observations'
   && value.receiving.intent !== undefined
   && (value.receiving.routeRecovery === undefined || value.receiving.routeRecovery.ownerAddress === value.entry.ownerAddress)
   && (value.receiving.invitation === null ? value.receiving.intent !== 'adopt'

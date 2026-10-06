@@ -1,5 +1,6 @@
 - text: 入口用途
 - combobox "入口用途":
+  - option "邀请多人加入同一目标"
   - option "邀请一个会话加入"
   - option "仅申请文件贡献" [selected]
 - text: 贡献来源

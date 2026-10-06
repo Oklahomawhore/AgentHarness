@@ -2958,6 +2958,66 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeSingleContributionEntry",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntry",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplicationId",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryResult",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryStatus",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntrySelection",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntriesRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntries",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplication",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplicationsRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplications",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeContributionEntry",
       "source": "packages/collaboration/scope-access/src/types.ts"
     },

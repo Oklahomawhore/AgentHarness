@@ -2227,6 +2227,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable entry and canonical copyable text.',
       },
       {
+        signature: '@Remote(\'createGroupEntry\') createGroupEntry(request: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult>',
+        description: 'Create a reusable target entrance with independent owner approval for each applicant.',
+        parameters: [{ name: 'request', description: 'owned Task, explicit route, deadline, and retained member limit.' }],
+        returns: 'version-two entry text after durability; no grant is issued by creation.',
+      },
+      {
+        signature: '@Remote(\'groupEntries\') groupEntries(request: ScopeGroupEntriesRequest): Promise<ScopeGroupEntries>',
+        description: 'List reusable entrances separately from their independent member decisions.',
+        parameters: [{ name: 'request', description: 'owned Task and optional stable entry cursor.' }],
+        returns: 'a complete byte-bounded page, including closed and expired entrances.',
+      },
+      {
+        signature: '@Remote(\'groupApplications\') groupApplications(request: ScopeGroupApplicationsRequest): Promise<ScopeGroupApplications>',
+        description: 'List one group\'s independently retained applicants and reconciled Task grants.',
+        parameters: [{ name: 'request', description: 'exact entrance and optional applicant cursor belonging to it.' }],
+        returns: 'a complete byte-bounded page of member decisions.',
+      },
+      {
+        signature: '@Remote(\'closeGroupEntry\') closeGroupEntry(request: ScopeGroupEntrySelection): Promise<ScopeGroupEntryStatus>',
+        description: 'Permanently stop new applicants without revoking members or cancelling existing pending applications.',
+        parameters: [{ name: 'request', description: 'exact retained reusable entrance.' }],
+        returns: 'durable closure; pending approval still obeys the original deadline.',
+      },
+      {
         signature: '@Remote(\'recoverContributionEntry\') recoverContributionEntry(request: ScopeContributionEntryRecoverRequest): Promise<ScopeContributionEntryResult>',
         description: 'Recover an original entry through a current owner address without reopening it.',
         parameters: [{ name: 'request', description: 'retained entry and explicitly confirmed advertised address.' }],
@@ -7079,11 +7103,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionApplicationApprovalRequest',
-    declaration: 'export interface ScopeContributionApplicationApprovalRequest {\n    readonly read?: {\n        readonly responsibility: string;\n    };\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal;\n    readonly limits: ScopeContributionLimits;\n    readonly ownerAddress: string;\n}',
+    declaration: 'export interface ScopeContributionApplicationApprovalRequest {\n    readonly applicationId?: ScopeGroupApplicationId;\n    readonly read?: {\n        readonly responsibility: string;\n    };\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal;\n    readonly limits: ScopeContributionLimits;\n    readonly ownerAddress: string;\n}',
   },
   {
     name: 'ScopeContributionApplicationRejectRequest',
-    declaration: 'export interface ScopeContributionApplicationRejectRequest {\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal | null;\n}',
+    declaration: 'export interface ScopeContributionApplicationRejectRequest {\n    readonly applicationId?: ScopeGroupApplicationId;\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal | null;\n}',
   },
   {
     name: 'ScopeContributionApplicationRequest',
@@ -7123,7 +7147,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionEntry',
-    declaration: 'export type ScopeContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\';\n});',
+    declaration: 'export type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry;',
   },
   {
     name: 'ScopeContributionEntryId',
@@ -7206,6 +7230,50 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeGrantId = Branded<\'ScopeGrantId\'>;',
   },
   {
+    name: 'ScopeGroupApplication',
+    declaration: 'export interface ScopeGroupApplication extends ScopeContributionApplication {\n    readonly entry: ScopeGroupEntry;\n    readonly applicationId: ScopeGroupApplicationId;\n    readonly proposal: ScopeContributionProposal;\n    readonly result: ScopeContributionApplicationResult;\n}',
+  },
+  {
+    name: 'ScopeGroupApplicationId',
+    declaration: 'export type ScopeGroupApplicationId = Branded<\'ScopeGroupApplicationId\'>;',
+  },
+  {
+    name: 'ScopeGroupApplications',
+    declaration: 'export interface ScopeGroupApplications {\n    readonly entries: readonly ScopeGroupApplication[];\n    readonly nextApplicationId: ScopeGroupApplicationId | null;\n}',
+  },
+  {
+    name: 'ScopeGroupApplicationsRequest',
+    declaration: 'export interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {\n    readonly afterApplicationId?: ScopeGroupApplicationId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntries',
+    declaration: 'export interface ScopeGroupEntries {\n    readonly entries: readonly ScopeGroupEntryStatus[];\n    readonly nextEntryId: ScopeContributionEntryId | null;\n}',
+  },
+  {
+    name: 'ScopeGroupEntriesRequest',
+    declaration: 'export interface ScopeGroupEntriesRequest {\n    readonly taskId: DevelopmentTaskId;\n    readonly afterEntryId?: ScopeContributionEntryId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntry',
+    declaration: 'export interface ScopeGroupEntry {\n    readonly version: 2;\n    readonly kind: \'scope-group-entry\';\n    readonly sourceKind: \'tool-observations\';\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryRequest',
+    declaration: 'export interface ScopeGroupEntryRequest {\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryResult',
+    declaration: 'export interface ScopeGroupEntryResult {\n    readonly entry: ScopeGroupEntry;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'ScopeGroupEntrySelection',
+    declaration: 'export interface ScopeGroupEntrySelection {\n    readonly entryId: ScopeContributionEntryId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryStatus',
+    declaration: 'export interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {\n    readonly state: \'open\' | \'closed\' | \'expired\';\n    readonly applicationCount: number;\n}',
+  },
+  {
     name: 'ScopeInvitation',
     declaration: 'export interface ScopeInvitation {\n    readonly version: 1;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly recipientPeerId: ScopePeerId;\n    readonly taskId: DevelopmentTaskId;\n    readonly grantId: ScopeGrantId;\n    readonly generation: ScopeGeneration;\n    readonly expiresAt: number;\n    readonly responsibility: string;\n}',
   },
@@ -7232,6 +7300,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeRetrieveResult',
     declaration: 'export type ScopeRetrieveResult = {\n    readonly status: \'active\';\n    readonly projection: ScopeAccessProjection;\n} | {\n    readonly status: \'revoked\' | \'expired\' | \'unavailable\' | \'left\';\n};',
+  },
+  {
+    name: 'ScopeSingleContributionEntry',
+    declaration: 'export type ScopeSingleContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\';\n});',
   },
   {
     name: 'ScopeSubscription',
