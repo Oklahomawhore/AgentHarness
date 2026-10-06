@@ -6,8 +6,8 @@ import { materializeProfilePatch } from '../../packages/test-support/session-sna
 import { normalizeSessionSnapshots } from '../../packages/test-support/session-snapshot/src/normalize.ts'
 
 const [mode, scenarioName, root, logPath] = process.argv.slice(2)
-if (!['scope-route-recovery', 'scope-context-live', 'task-context-peer-facts', 'task-context-semantic', 'scope-native-contribution', 'scope-owner-participation', 'scope-owner-idle'].includes(scenarioName ?? '')) {
-  throw new Error('python scope fixture requires scope-route-recovery, scope-context-live, task-context-peer-facts, task-context-semantic, scope-native-contribution, scope-owner-participation, or scope-owner-idle')
+if (!['scope-route-recovery', 'scope-context-live', 'task-context-peer-facts', 'task-context-semantic', 'scope-native-contribution', 'scope-owner-participation', 'scope-owner-idle', 'scope-joint-automatic'].includes(scenarioName ?? '')) {
+  throw new Error('python scope fixture requires scope-route-recovery, scope-context-live, task-context-peer-facts, task-context-semantic, scope-native-contribution, scope-owner-participation, scope-owner-idle, or scope-joint-automatic')
 }
 if (root === undefined) throw new Error('python scope fixture requires its temporary root')
 const cwd = resolve(root)

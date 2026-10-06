@@ -4,7 +4,7 @@
 
 **让团队和各自的 agent（智能体）围绕同一个需求协作。**
 
-前端、后端和算法需要一起交付一个功能，老板需要了解团队推进到了哪里、哪些事情等着拍板。AgentHarness 把需求、已发布的进展、阻塞和决策放在同一个共享 Task 中，让团队成员和各自的 agent 接着彼此的工作继续推进。这是面向团队协作的上下文工程（Context Engineering）。
+前端、后端和算法需要一起交付一个功能，老板需要了解团队推进到了哪里、哪些事情等着拍板。AgentHarness 把需求、已发布的进展、阻塞和决策放在同一个共享 Task 中，让团队成员和各自的 agent 接着彼此的工作继续推进。这是面向团队协作的上下文工程（Context Engineering）。参与者各自带来 Agent，是因为人的职责、访问权限和问责关系已经分开。[产品原则](docs/whitepaper.zh.md#human-responsibility)评价这些既有职责之间的协作，不预设多个 Agent 优于拥有同等全部权限的单个 Agent。
 
 [立即体验](#run) · [用户指南](docs/user/guide/index.zh.md) · [设计白皮书](docs/whitepaper.zh.md) · [参与贡献](CONTRIBUTING.zh.md)
 

@@ -104,7 +104,7 @@ interface ChildResult {
   readonly stdout: string
   readonly stderr: string
 }
-function child(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, input?: string) {
+function child(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, input?: string, cleanupTimeoutMs = 3000) {
   const process = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
   let stdout = ''; let stderr = ''; let failure: Error | undefined
   process.stdout.on('data', (data: Buffer) => {
@@ -128,7 +128,7 @@ function child(command: string, args: readonly string[], cwd: string, env: NodeJ
   let stopping: Promise<ChildResult> | undefined
   const stop = (): Promise<ChildResult> => stopping ??= (async () => {
     process.kill('SIGTERM')
-    const force = setTimeout(() => process.kill('SIGKILL'), 3000)
+    const force = setTimeout(() => process.kill('SIGKILL'), cleanupTimeoutMs)
     try { return await closed } finally { clearTimeout(force) }
   })()
   return { process, closed, stop }
@@ -251,7 +251,18 @@ async function coordinator(recipients: Readonly<Record<Role, Recipient>>, fixtur
   } }
 }
 
-async function launch(root: string, role: string, request: NativeRunRequest, modules: Readonly<Record<string, string>>, native?: unknown) {
+/** Launch an isolated named dsh profile and authenticate its private management connection.
+ * @param root Private run directory owned by the caller.
+ * @param role Unique Host label within this run.
+ * @param request Explicit built launcher and optional termination/environment controls.
+ * @param modules Public artifact URLs resolved through declared dependency owners.
+ * @param native Optional ordinary Session configuration.
+ * @param data Optional bounded data-study profile configuration.
+ * @returns Owned process and authenticated management client; caller must await stop.
+ */
+export async function launchNativeHost(root: string, role: string,
+  request: Pick<NativeRunRequest, 'repo' | 'nodePath'> & { readonly cleanupTimeoutMs?: number; readonly environment?: NodeJS.ProcessEnv },
+  modules: Readonly<Record<string, string>>, native?: unknown, data?: unknown) {
   const directory = join(root, `host-${role}`); const home = join(directory, 'home')
   const profileName = `scope-evaluation-${role.toLowerCase()}`
   const profile = join(home, 'profiles', profileName)
@@ -261,7 +272,7 @@ async function launch(root: string, role: string, request: NativeRunRequest, mod
   await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify([{ insert: [{ id: 'evaluation',
     name: new URL('./native-profile.mjs', import.meta.url).href,
     config: { directory, nodeId: `evaluation-${role.toLowerCase()}`, cliPath: join(request.repo, 'apps/cli/lib/bin.js'), modules,
-      ...native === undefined ? {} : { native } },
+      ...native === undefined ? {} : { native }, ...data === undefined ? {} : { data } },
   }] }]), { mode: 0o600 })
   const launcherUrl = modules.Launcher
   if (launcherUrl === undefined) throw new Error('shared launcher module missing')
@@ -271,7 +282,7 @@ async function launch(root: string, role: string, request: NativeRunRequest, mod
       DSH_TELEMETRY_DISABLED: '1', NODE_NO_WARNINGS: '1' } })
   if (await realpath(request.nodePath) !== await realpath(invocation.command)) throw new Error('nodePath must match the running Node launcher')
   const running = child(invocation.command, invocation.args, directory,
-    { ...environment(), ...invocation.env, HOME: home, USERPROFILE: home })
+    { ...environment(), ...request.environment, ...invocation.env, HOME: home, USERPROFILE: home }, undefined, request.cleanupTimeoutMs)
   return { ...running, directory, home, async connect(signal: AbortSignal) {
     const stopped = running.closed.then((result) => { throw new Error(`Host ${role} exited before readiness: ${result.code}: ${errorText(result.stderr)}`) })
     void stopped.catch(() => {})
@@ -321,7 +332,7 @@ export async function runControlledNative(request: NativeRunRequest): Promise<Na
   const temporary = await realpath(await mkdtemp(join(tmpdir(), 'scope-native-run-')))
   const lifetime = new AbortController()
   const timer = setTimeout(() => { lifetime.abort(new Error('native run deadline exceeded')) }, request.timeoutMs)
-  const hosts: Awaited<ReturnType<typeof launch>>[] = []
+  const hosts: Awaited<ReturnType<typeof launchNativeHost>>[] = []
   let server: Awaited<ReturnType<typeof coordinator>> | undefined
   let result: Omit<NativeRunResult, 'cleanup'> | undefined
   let failed: unknown
@@ -335,7 +346,7 @@ export async function runControlledNative(request: NativeRunRequest): Promise<Na
     }, { once: true })
     server = await coordinator(recipients, request.fixture, request.nodePath, lifetime.signal)
     const modules = resolveNativeModules(request.repo)
-    const connected: Awaited<ReturnType<Awaited<ReturnType<typeof launch>>['connect']>>[] = []
+    const connected: Awaited<ReturnType<Awaited<ReturnType<typeof launchNativeHost>>['connect']>>[] = []
     for (const role of ['A', 'O', 'B', 'C'] as const) {
       const target = role === 'B' || role === 'C' ? recipients[role] : undefined
       const artifact = role === 'B' ? 'frontend/client.mjs' : 'qa/contract.test.mjs'
@@ -350,7 +361,7 @@ export async function runControlledNative(request: NativeRunRequest): Promise<Na
           { name: 'evaluation_write', args: { path: artifact, text: role === 'B' ? request.fixture.correctClientSource : request.fixture.correctTestSource } },
           { name: 'evaluation_test', args: {} }],
       }
-      const host = await launch(temporary, role, request, modules, native)
+      const host = await launchNativeHost(temporary, role, request, modules, native)
       hosts.push(host); cleanup.started++
       connected.push(await host.connect(lifetime.signal))
     }

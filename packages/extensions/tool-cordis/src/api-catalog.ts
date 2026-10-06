@@ -2307,8 +2307,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'adoptJoinRead(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadResult>',
-        description: 'Adopt a source-owned joint read plan once, with passive permission and no implicit automatic budget.',
-        parameters: [{ name: 'request', description: 'live Session, original operation, exact read-state cursor, and pinned owner invitation.' }],
+        description: 'Adopt a source-owned joint read plan once, using only the receiving Session\'s explicit automatic permission.',
+        parameters: [{ name: 'request', description: 'live Session, original operation, exact read-state cursor, invitation, and optional local execution policy.' }],
         returns: 'the original adopted, ended, or superseded outcome after Session durability.',
       },
       {
@@ -6913,7 +6913,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionReceiving',
-    declaration: 'export interface ScopeAgentContributionReceiving {\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly invitation: ScopeInvitation | null;\n}',
+    declaration: 'export interface ScopeAgentContributionReceiving {\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly invitation: ScopeInvitation | null;\n}',
   },
   {
     name: 'ScopeAgentContributionReceivingContinuation',
@@ -6925,7 +6925,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionRequest',
-    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n    };\n}',
+    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
   },
   {
     name: 'ScopeAgentContributionSelection',
@@ -6945,7 +6945,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentJoinReadRequest',
-    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n}',
+    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n}',
   },
   {
     name: 'ScopeAgentJoinReadResult',

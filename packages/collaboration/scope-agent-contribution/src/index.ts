@@ -11,7 +11,8 @@ import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
-import type {} from '@deepseek-ai/dsh-scope-agent-context'
+import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
+import type ScopeAgentContext from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-scope-access'
 import type {} from '@deepseek-ai/dsh-development-task'
@@ -68,6 +69,8 @@ interface Runtime {
   readonly roots: readonly FsTarget[]
   readonly selection: ScopeAgentContributionSelection
   readonly local: boolean
+  /** The accepting receiver lifetime cannot be renewed by an exact capture retry. */
+  readonly automaticReceiver?: { readonly provider: ScopeAgentContext; revoked: boolean; adopted: boolean }
 }
 type CollectionIssue = NonNullable<NonNullable<ScopeAgentContributionStatus['capture']>['collectionIssue']>
 interface Completion {
@@ -84,6 +87,11 @@ interface Pending {
 /** Cordis traces the same provider through distinct caller-context proxies. */
 function filesystemIdentity(filesystem: FileSystem): FileSystem {
   return (filesystem as FileSystem & { [symbols.original]?: FileSystem })[symbols.original] ?? filesystem
+}
+/** Compare the underlying provider while retaining its caller-context proxy for service calls. */
+function receiverIdentity(receiver: ScopeAgentContext | undefined): ScopeAgentContext | undefined {
+  return receiver === undefined ? undefined
+    : (receiver as ScopeAgentContext & { [symbols.original]?: ScopeAgentContext })[symbols.original] ?? receiver
 }
 function selection(capture: NativeCapture | LocalCapture): ScopeAgentContributionSelection
 function selection(capture: NativeCapture | LocalCapture | null | undefined): ScopeAgentContributionSelection | null
@@ -176,6 +184,17 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       catch (error) { ctx.logger.error('scope-agent-contribution: observation rejected: %s', String(error)) }
     }, { global: true })
     ctx.on('session/event', (session, event) => { this.settled(session, event) }, { global: true })
+    ctx.on('internal/service', (name) => {
+      if (name !== 'scopeAgentContext') return
+      const receiver = receiverIdentity(ctx.get('scopeAgentContext'))
+      for (const [id, runtime] of this.runtimes) {
+        const consent = runtime.automaticReceiver
+        if (consent === undefined || consent.adopted || consent.revoked || consent.provider === receiver) continue
+        consent.revoked = true
+        this.receivingDirty.add(id)
+        this.schedule(id)
+      }
+    })
     ctx.on('agent/disposed', ({ agent }) => {
       if (this.runtimes.get(agent.id)?.agent === agent) this.endDetached(agent.id)
     }, { global: true })
@@ -232,6 +251,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
+    const automatic = request.receive?.automatic === undefined
+      ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
     if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry') || entry.sourceKind !== 'tool-observations'
       || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now() || request.roots.length === 0
       || request.tools.length === 0
@@ -243,7 +264,19 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
     const signal = this.invalidate(agent.id, false)
     const command = this.controls.get(agent.id)
+    let stopReceiverWatch: (() => void) | undefined
+    let automaticReceiver: Runtime['automaticReceiver']
     try {
+      if (automatic !== undefined && domain.table('sessions').get(agent.id)?.capture == null) {
+        const provider = receiverIdentity(this.ctx.get('scopeAgentContext'))
+        if (provider === undefined) throw this.invalid(agent.id, 'Native context receiving is unavailable')
+        const consent = { provider, revoked: false, adopted: false }
+        automaticReceiver = consent
+        // Permission belongs to the first receiving instance, including queued and durability waits before source acceptance.
+        stopReceiverWatch = this.ctx.on('internal/service', (name) => {
+          if (name === 'scopeAgentContext' && receiverIdentity(this.ctx.get('scopeAgentContext')) !== provider) consent.revoked = true
+        })
+      }
       const filesystem = agent.ctx.get('fs')
       if (filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
       const roots: FsTarget[] = []
@@ -277,6 +310,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         if (retained != null) {
           if (retained.state === 'ending' || !isDeepStrictEqual(retained.entry, entry) || !isDeepStrictEqual(retained.limits, limits)
             || retained.receiving?.expectedReadStateSeq !== request.receive?.expectedReadStateSeq
+            || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -288,11 +322,20 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           if (request.receive !== undefined) {
             const receiver = this.ctx.get('scopeAgentContext')
             if (receiver === undefined) throw this.invalid(agent.id, 'Native context receiving is unavailable')
+            if (automaticReceiver !== undefined && (automaticReceiver.revoked
+              || receiverIdentity(receiver) !== automaticReceiver.provider)) throw this.superseded(agent.id)
             const receiving = await receiver.status({ agentId: agent.id })
             signal.throwIfAborted()
             if (receiving.eligibility !== 'eligible' || receiving.state.binding !== null
               || receiving.readStateSeq !== request.receive.expectedReadStateSeq) {
               throw this.invalid(agent.id, 'Receiving consent requires the originally observed unbound Session')
+            }
+            if (automatic !== undefined) {
+              if (automatic.activationLimit <= receiving.state.usedBudget) {
+                throw this.invalid(agent.id, 'The automatic activation limit must exceed this Session’s consumed budget')
+              }
+              if (automaticReceiver === undefined || automaticReceiver.revoked
+                || receiverIdentity(this.ctx.get('scopeAgentContext')) !== automaticReceiver.provider) throw this.superseded(agent.id)
             }
           }
           capture = { proposal: { contributorPeerId: identity.peerId,
@@ -301,13 +344,15 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') } },
           roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
           ...(request.receive === undefined ? {} : { receiving: { adoptionId: randomUUID() as ScopeAgentJoinReadId,
-            expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const } }) }
+            expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const,
+            ...(automatic === undefined ? {} : { automatic }) } }) }
         }
         await this.save(current, agent.id, capture, row?.samples ?? [])
         signal.throwIfAborted()
         if (this.ctx.agents.get(agent.id) !== agent) throw this.superseded(agent.id)
         this.requireCompatible(agent.id, entry)
-        this.runtimes.set(agent.id, previousRuntime ?? { agent, filesystem, roots, selection: selection(capture), local: false })
+        this.runtimes.set(agent.id, previousRuntime ?? { agent, filesystem, roots, selection: selection(capture), local: false,
+          ...(automaticReceiver === undefined ? {} : { automaticReceiver }) })
         this.collectionIssues.delete(agent.id)
         this.notify(current, agent.id)
       })
@@ -316,6 +361,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (this.ctx.agents.get(agent.id) !== agent) this.endDetached(agent.id)
       throw error
     } finally {
+      stopReceiverWatch?.()
       if (domain.table('sessions').get(agent.id) === undefined && this.controls.get(agent.id) === command) this.controls.delete(agent.id)
       this.schedule(agent.id)
     }
@@ -853,7 +899,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     return receiving.intent ?? (receiving.leaveAdopted ? 'leave' : ending ? 'cancel-pending' : 'adopt')
   }
   private publicReceiving(receiving: NativeReceiving) {
-    return { adoptionId: receiving.adoptionId, state: receiving.state, invitation: receiving.invitation }
+    return { adoptionId: receiving.adoptionId, state: receiving.state, invitation: receiving.invitation,
+      ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) }
   }
   private receivingSelection(work: NativeReceivingContinuation): ScopeAgentContributionSelection {
     return { captureId: work.proposal.captureId, captureGeneration: work.proposal.captureGeneration }
@@ -872,8 +919,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const work = this.receivingWork(row)
     if (work === undefined || signal.aborted) return
     const intent = this.receivingIntent(work.receiving)
-    if (intent === 'adopt' && row?.capture != null && (row.capture.state !== 'active' || row.capture.application !== undefined)) return
-    if (intent === 'adopt' && row?.capture != null && work.receiving.state === 'active' && work.receiving.routeRecovery === undefined && !this.receivingDirty.has(id)) return
+    const receiverChanged = this.automaticReceiverChanged(id, work.receiving)
+    if (!receiverChanged && intent === 'adopt' && row?.capture != null && (row.capture.state !== 'active' || row.capture.application !== undefined)) return
+    if (!receiverChanged && intent === 'adopt' && row?.capture != null && work.receiving.state === 'active' && work.receiving.routeRecovery === undefined && !this.receivingDirty.has(id)) return
     const key = JSON.stringify([id, work.receiving.adoptionId, intent])
     if (this.receivingOperations.has(key)) return
     this.receivingDirty.delete(id)
@@ -886,7 +934,32 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if ((signal.aborted || this.receivingDirty.has(id)) && !this.lifetime.signal.aborted) this.schedule(id)
     })
   }
+  private automaticReceiverChanged(id: SessionId, receiving: NativeReceiving): boolean {
+    if (receiving.automatic === undefined || this.receivingIntent(receiving) !== 'adopt'
+      || receiving.state === 'active' || receiving.state === 'ended' || receiving.state === 'superseded') return false
+    const consent = this.runtimes.get(id)?.automaticReceiver
+    if (consent === undefined) return true
+    if (consent.adopted) return false
+    if (consent.provider !== receiverIdentity(this.ctx.get('scopeAgentContext'))) consent.revoked = true
+    return consent.revoked
+  }
   private async reconcileReceiving(id: SessionId, selected: NativeReceivingContinuation, signal: AbortSignal): Promise<void> {
+    if (this.automaticReceiverChanged(id, selected.receiving)) {
+      await this.enqueue(async (domain) => {
+        signal.throwIfAborted()
+        const row = domain.table('sessions').get(id)
+        const current = this.receivingWork(row)
+        if (row === undefined || current === undefined || current.receiving.adoptionId !== selected.receiving.adoptionId
+          || !sameSelection(this.receivingSelection(current), this.receivingSelection(selected))
+          || this.receivingIntent(current.receiving) !== 'adopt') return
+        const receiving: NativeReceiving = { ...current.receiving, intent: 'cancel-pending', leaveAdopted: false }
+        if (row.capture !== null) await this.save(domain, id, { ...row.capture, receiving }, row.samples)
+        else if (row.receivingContinuation !== undefined) await this.save(domain, id, null, [], { ...current, receiving })
+      })
+      signal.throwIfAborted()
+      this.scheduleReceiving(id, signal)
+      return
+    }
     const receiving = selected.receiving
     const intent = this.receivingIntent(receiving)
     const runtime = this.runtimes.get(id)
@@ -903,8 +976,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const invitation = route === undefined ? receiving.invitation : { ...receiving.invitation, ownerAddress: route.ownerAddress }
         const result = receiving.state === 'active' && route !== undefined ? { status: 'adopted' as const }
           : await receiver.adoptJoinRead({ agentId: id, adoptionId: receiving.adoptionId,
-            expectedReadStateSeq: receiving.expectedReadStateSeq, invitation })
+            expectedReadStateSeq: receiving.expectedReadStateSeq, invitation,
+            ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) })
         signal.throwIfAborted()
+        if (result.status === 'adopted' && runtime?.automaticReceiver !== undefined) runtime.automaticReceiver.adopted = true
         if (result.status === 'adopted' && route !== undefined) {
           const updated = await receiver.updateJoinReadRoute({ agentId: id, adoptionId: receiving.adoptionId,
             expectedReadStateSeq: route.expectedReadStateSeq, ownerAddress: route.ownerAddress })
@@ -913,6 +988,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       } else {
         const result = await receiver.cancelJoinRead({ agentId: id, adoptionId: receiving.adoptionId, leaveAdopted: intent === 'leave' })
         signal.throwIfAborted()
+        if (result.status === 'adopted' && runtime?.automaticReceiver !== undefined) runtime.automaticReceiver.adopted = true
         if (result.status === 'adopted' && receiving.routeRecovery !== undefined && intent !== 'leave') {
           const updated = await receiver.updateJoinReadRoute({ agentId: id, adoptionId: receiving.adoptionId,
             expectedReadStateSeq: receiving.routeRecovery.expectedReadStateSeq, ownerAddress: receiving.routeRecovery.ownerAddress })
@@ -1046,7 +1122,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const localWork = 'grant' in capture && (capture.state !== 'active' || capture.issue !== undefined
           || this.local().table('sessions').get(id)?.samples.some(item => item.receipt === undefined) === true)
         const receivingWork = !('grant' in capture) && capture.receiving !== undefined
-          && (capture.receiving.state === 'adopting' || capture.receiving.state === 'failed' || capture.receiving.routeRecovery !== undefined)
+          && (capture.receiving.state === 'adopting' || capture.receiving.state === 'failed' || capture.receiving.routeRecovery !== undefined
+            || this.automaticReceiverChanged(id, capture.receiving))
         const work = completionFailed || localWork || receivingWork
           || this.controller.needsWork(store) || (this.completed.get(id)?.size ?? 0) > 0
         if (!work && capture.state !== 'active') return

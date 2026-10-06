@@ -71,7 +71,7 @@ class Recorder extends LlmAdapter {
   }
 }
 
-async function fixture(options: { injector?: boolean; seed?: readonly SessionEvent[] } = {}) {
+async function fixture(options: { injector?: boolean; seed?: readonly SessionEvent[]; maxContextBytes?: number } = {}) {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -89,7 +89,9 @@ async function fixture(options: { injector?: boolean; seed?: readonly SessionEve
   } } as unknown as NonNullable<typeof ctx.loader.internal>
   const directory = await mkdtemp(join(tmpdir(), 'scope-local-context-'))
   directories.push(directory)
-  const yaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
+  const originalYaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
+  const yaml = options.maxContextBytes === undefined ? originalYaml
+    : originalYaml.replace('maxContextBytes: 8000', `maxContextBytes: ${options.maxContextBytes}`)
   const path = join(directory, 'cordis.yml')
   await writeFile(path, options.injector === false ? yaml.replace('disabled: false', 'disabled: true') : yaml)
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
@@ -296,4 +298,62 @@ it('restores local scheduling history paused without transferring authorization 
   expect(restored.agent.session.snapshotEvents().slice(0, seed.length)).toEqual(seed)
   await expect(restored.ctx.scopeAgentContext.resume({ agentId: restored.agent.id,
     expectedBindingId: current.state.binding!.id, automatic: policy })).rejects.toMatchObject({ code: 'scope-agent/task-conflict' })
+})
+
+
+it.each([false, true])('blocks incomplete current local tool evidence before automatic dispatch; duringTool=%s', async (duringTool) => {
+  const value = await fixture({ maxContextBytes: 4000 })
+  const { ctx, agent, target, task, adapter } = value
+  const author = 'other-local-agent' as DevelopmentParticipantId
+  await ctx.developmentRooms.announce({ id: author, kind: 'agent', displayName: 'Contributing Agent' })
+  const checked = await ctx.developmentTasks.checkout({ taskId: task.id, participantId: author })
+  const epoch = ctx.developmentTasks.assignmentLog().at(-1)!
+  const grant = localContributionGrantSchema.parse({ version: 1, taskId: task.id, participantId: author,
+    bindingId: checked.assignment.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq },
+    captureId: randomUUID(), captureGeneration: randomUUID(), source: { kind: 'tool-observations', name: 'peer-work', tools: ['Write', 'Edit'] },
+    expiresAt: Date.now() + 60000, maxSamples: 10, maxSampleBytes: 6000 })
+  await ctx.developmentTasks.openLocalContribution(grant)
+  await ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant, sourceId: '1'.repeat(64), sequence: 1,
+    result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+      fields: { rootIndex: 0, path: 'payment.ts', content: 'LOCAL_BASELINE' }, omissions: [] } }))
+  const publishCorrection = () => ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant,
+    sourceId: '2'.repeat(64), sequence: 2, result: { kind: 'tool-observation', version: 1, tool: 'Edit', reportedStatus: 'success',
+      fields: { rootIndex: 0, path: 'payment.ts', oldString: 'LOCAL_BASELINE', newString: 'CORRECTED'.repeat(450), replaceAll: false }, omissions: [] } }))
+  if (duringTool) {
+    adapter.tool = true
+    ctx.tools.register(defineContentToolFixture({ name: 'local_fixture', description: 'Publish a local correction', parameters: {},
+      async execute() { await publishCorrection(); return [{ type: 'text', text: 'Correction published' }] } }))
+  }
+  await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
+  await idleRequests(value, 1)
+  const baseline = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
+  if (!duringTool) await publishCorrection()
+  await expect.poll(async () => (await status(ctx, agent.id)).state.pauseReason).toBe('coverage')
+  await agent.whenIdle()
+  expect(adapter.requests).toHaveLength(1)
+  expect((await status(ctx, agent.id)).state.usedBudget).toBe(1)
+  expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toEqual(baseline)
+  const blocked = agent.session.snapshotEvents().findLast(event => event.type === 'scope-agent-context/evaluation')
+  expect(blocked).toMatchObject({ data: { decision: 'blocked-current', projection: { activation: { kind: 'exact' },
+    omittedSources: [{ reason: 'budget' }, { reason: 'budget' }] } } })
+  agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Manual follow-up' }] }))
+  await idleRequests(value, 2)
+  expect(currentText(adapter.requests[1]!)).toContain('"budgetOmissions":2')
+  expect(currentText(adapter.requests[1]!)).not.toContain('LOCAL_BASELINE')
+  expect((await status(ctx, agent.id)).state.usedBudget).toBe(1)
+  if (!duringTool) {
+    await ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant,
+      sourceId: '3'.repeat(64), sequence: 3, result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+        fields: { rootIndex: 0, path: 'payment.ts', content: 'COMPACT_CORRECTED_CHECKPOINT' }, omissions: [] } }))
+    const current = await status(ctx, agent.id)
+    await ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: current.state.binding!.id, automatic: policy })
+    await idleRequests(value, 3)
+    expect(currentText(adapter.requests[2]!)).toContain('COMPACT_CORRECTED_CHECKPOINT')
+    expect(currentText(adapter.requests[2]!)).toContain('"supersededOmissions":2')
+    await ctx.developmentTasks.endLocalContribution({ grant, reason: 'left' })
+    await idleRequests(value, 4)
+    expect(currentText(adapter.requests[3]!)).not.toContain('COMPACT_CORRECTED_CHECKPOINT')
+    expect(currentText(adapter.requests[3]!)).toContain('"withdrawnOmissions":3')
+    expect((await status(ctx, agent.id)).state).toMatchObject({ mode: 'enabled', usedBudget: 3, pauseReason: null })
+  }
 })

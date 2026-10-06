@@ -8,11 +8,12 @@ import { contributionRecordSchema } from '@deepseek-ai/dsh-scope-access/contribu
 import type { ContributionRecord, ContributionOutboxItem } from '@deepseek-ai/dsh-scope-access/contribution'
 import { contributionEntrySchema, contributionLimitsSchema, invitationSchema, validateContributionReceipt } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeContributionEntry, ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
+import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
 import { peerContributionSampleSchema, peerContributionAdmissionReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
 
 import type { ScopeAgentContributionReceiving } from './types.ts'
 
-/** Original passive receiving consent and independently recoverable departure intent. */
+/** Original local receiving/execution consent and independently recoverable departure intent. */
 export interface NativeReceiving extends ScopeAgentContributionReceiving {
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly leaveAdopted: boolean
@@ -100,6 +101,7 @@ function consistentRoute(value: NativeRouteState & { readonly entry: ScopeContri
   return value.routeRevision === value.lastRoute.expectedRouteRevision + 1 && value.lastRoute.ownerAddress === value.entry.ownerAddress
 }
 const receivingSchema = z.object({
+  automatic: scopeAgentAutomaticPolicySchema.optional(),
   adoptionId: z.uuid().transform(value => value as NativeReceiving['adoptionId']),
   expectedReadStateSeq: z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeqCursor),
   state: z.enum(['waiting', 'adopting', 'active', 'ended', 'superseded', 'failed']),
@@ -110,6 +112,7 @@ const receivingSchema = z.object({
   }).strict().optional(),
 }).strict().refine(value => value.intent === undefined || value.leaveAdopted === (value.intent === 'leave'),
   { message: 'receiving departure intent disagrees' })
+  .transform(({ automatic, ...receiving }) => automatic === undefined ? receiving : { ...receiving, automatic })
 const captureSchema = contributionRecordSchema.safeExtend({
   ...routeState,
   roots: z.array(z.string().min(1)).min(1), rootUrls: z.array(z.string().startsWith('file:')).min(1),

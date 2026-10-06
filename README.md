@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 **One shared goal for your team and their agents.**
 
-Frontend, backend, and ML engineers need to deliver a feature together. A company owner needs to see how the team's work is progressing and where a decision is needed. AgentHarness puts requirements, published progress, blockers, and decisions in one shared Task, so teammates and their agents can pick up each other's work. This is context engineering for team collaboration.
+Frontend, backend, and ML engineers need to deliver a feature together. A company owner needs to see how the team's work is progressing and where a decision is needed. AgentHarness puts requirements, published progress, blockers, and decisions in one shared Task, so teammates and their agents can pick up each other's work. This is context engineering for team collaboration. Participants bring their own agents because their responsibilities, access, and accountability are already separate. The [product principles](docs/whitepaper.md#human-responsibility) evaluate collaboration across those existing responsibilities without assuming that multiple agents outperform one agent with all the same access.
 
 [Try it](#run) · [User guide](docs/user/guide/index.md) · [Design white paper](docs/whitepaper.md) · [Contribute](CONTRIBUTING.md)
 

@@ -16,6 +16,8 @@ export interface ScopeAgentJoinReadRequest {
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Explicit permission from this Session's user; absence preserves passive adoption. */
+  readonly automatic?: ScopeAgentAutomaticPolicy
 }
 
 /** Replace only the route of an existing native read binding at its observed management cursor. */
@@ -68,16 +70,24 @@ export interface ScopeAgentJoinReadPlan {
   readonly bindingId: ScopeAgentBindingId
 }
 
-/** Non-ignorable local read adoption history; an adopted event atomically installs its passive binding. */
+/** Original joint plan with an explicit finite execution permission from the receiving Session's user. */
+export interface ScopeAgentAutomaticJoinReadPlan extends ScopeAgentJoinReadPlan {
+  readonly automatic: ScopeAgentAutomaticPolicy
+}
+
+type JoinReadTransition<Plan> =
+  | { readonly phase: 'planned'; readonly plan: Plan }
+  | { readonly phase: 'adopted'; readonly plan: Plan }
+  | { readonly phase: 'ended'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
+  | { readonly phase: 'superseded'; readonly plan: Plan | null; readonly leaveAdopted: boolean }
+
+/** Non-ignorable adoption history; version 1 is passive, version 2 atomically installs explicit automatic permission. */
 export type ScopeAgentJoinReadEvent = {
-  readonly version: 1
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
 } & (
-  | { readonly phase: 'planned'; readonly plan: ScopeAgentJoinReadPlan }
-  | { readonly phase: 'adopted'; readonly plan: ScopeAgentJoinReadPlan }
-  | { readonly phase: 'ended'; readonly plan: ScopeAgentJoinReadPlan | null; readonly leaveAdopted: boolean }
-  | { readonly phase: 'superseded'; readonly plan: ScopeAgentJoinReadPlan | null; readonly leaveAdopted: boolean }
+  | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
+  | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
 )
 
 /** One durably reserved automatic activation. */

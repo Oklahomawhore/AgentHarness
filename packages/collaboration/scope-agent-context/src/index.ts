@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { replaceContext, snapshotMessage, validateHistory, visibleContext, withdrawalMessage, withdrawJoinContext } from './messages.ts'
 import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './evidence.ts'
+import { blocksCurrentCoverage } from './coverage.ts'
 import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { joinReadEventSchema, joinReadHistory } from './join-read.ts'
 import { routeEventSchema } from './route.ts'
@@ -29,6 +30,7 @@ import { withJoinSession } from './join-session.ts'
 import type { ScopeAgentRouteEvent, ScopeAgentUpdateRouteRequest, ScopeAgentUpdateJoinReadRouteRequest, ScopeAgentUpdateRouteResult, ScopeAgentJoinReadId, ScopeAgentJoinReadRequest, ScopeAgentCancelJoinReadRequest, ScopeAgentJoinReadResult, ScopeAgentJoinReadEvent, ScopeAgentActivationId, ScopeAgentAutomaticPolicy, ScopeAgentBindRequest, ScopeAgentBindLocalRequest, ScopeAgentLeaveLocalTaskRequest, ScopeAgentLocalTaskTarget, ScopeAgentLocalBinding, ScopeAgentReadProjection, ScopeAgentBindingId, ScopeAgentBindingRequest, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentEvaluation, ScopeAgentPauseReason, ScopeAgentResumeRequest, ScopeAgentStatusResult, ScopeAgentSubscriptionState } from './types.ts'
 
 export type * from './types.ts'
+export { policySchema as scopeAgentAutomaticPolicySchema } from './policy.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -61,6 +63,7 @@ interface Runtime {
   bindingAbort: AbortController
   activationAbort: AbortController
   commandEpoch: number
+  readonly automaticJoins: Map<ScopeAgentJoinReadId, number>
   dirty: boolean
   changeVersion: number
   terminal: 'left' | 'revoked' | 'expired' | undefined
@@ -245,8 +248,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   /**
-   * Adopt a source-owned joint read plan once, with passive permission and no implicit automatic budget.
-   * @param request - live Session, original operation, exact read-state cursor, and pinned owner invitation.
+   * Adopt a source-owned joint read plan once, using only the receiving Session's explicit automatic permission.
+   * @param request - live Session, original operation, exact read-state cursor, invitation, and optional local execution policy.
    * @returns the original adopted, ended, or superseded outcome after Session durability.
    */
   adoptJoinRead(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadResult> {
@@ -257,17 +260,25 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const runtime = this.requireRuntime(request.agentId)
     const command = runtime.commandEpoch
     const invitation = invitationSchema.parse(request.invitation)
+    const automatic = request.automatic === undefined ? undefined : policySchema.parse(request.automatic)
     const plan = await this.joinQueue(request.agentId, () => withJoinSession(this.ctx, request.agentId,
       this.lifetime.signal, async (writer) => {
         const history = joinReadHistory(writer.session)
         let prior = history.records.get(request.adoptionId)
         if (prior !== undefined) {
           if (prior.plan !== null && (prior.plan.expectedReadStateSeq !== request.expectedReadStateSeq
-          || !sameReadGrant(prior.plan.subscription.invitation, invitation))) {
+          || !sameReadGrant(prior.plan.subscription.invitation, invitation)
+          || !isDeepStrictEqual(prior.version === 2 ? prior.plan.automatic : undefined, automatic))) {
             throw new Error('scope-agent-context: adoption retry changes original inputs')
           }
           if (prior.plan !== null && prior.plan.subscription.invitation.ownerAddress !== invitation.ownerAddress) {
             directAddress(invitation.ownerAddress, invitation.ownerPeerId)
+          }
+          if (prior.phase === 'planned' && prior.version === 2
+            && runtime.automaticJoins.get(request.adoptionId) !== command) {
+            prior = { ...prior, phase: 'superseded', leaveAdopted: false }
+            writer.session.append('scope-agent-context/join-read', prior)
+            runtime.automaticJoins.delete(request.adoptionId)
           }
           await writer.flush()
           return prior
@@ -275,16 +286,19 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         this.requireCommand(runtime, command)
         this.requireEligible(runtime)
         this.assertNoTask(runtime)
+        this.requireBudget(runtime, automatic ?? null)
         if (invitation.expiresAt <= Date.now()) {
           prior = { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'ended', plan: null, leaveAdopted: false }
         } else if (history.readStateSeq !== request.expectedReadStateSeq || history.bindingId !== null) {
           prior = { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'superseded', plan: null, leaveAdopted: false }
         } else {
-          prior = { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: {
-            expectedReadStateSeq: request.expectedReadStateSeq, bindingId: randomUUID() as ScopeAgentBindingId,
+          const fields = { expectedReadStateSeq: request.expectedReadStateSeq, bindingId: randomUUID() as ScopeAgentBindingId,
             subscription: { id: randomUUID() as ScopeSubscription['id'], generation: randomUUID() as ScopeSubscription['generation'],
-              invitation, state: 'active' },
-          } }
+              invitation, state: 'active' as const } }
+          prior = automatic === undefined
+            ? { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: fields }
+            : { version: 2, agentId: request.agentId, adoptionId: request.adoptionId, phase: 'planned', plan: { ...fields, automatic } }
+          if (automatic !== undefined) runtime.automaticJoins.set(request.adoptionId, command)
         }
         writer.session.append('scope-agent-context/join-read', joinReadEventSchema.parse(prior))
         await writer.flush()
@@ -317,6 +331,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         const current = history.records.get(request.adoptionId)
         if (current === undefined) throw new Error('scope-agent-context: adoption plan disappeared')
         if (current.phase === 'ended' || current.phase === 'superseded') {
+          runtime.automaticJoins.delete(request.adoptionId)
           await writer.flush()
           await this.cleanupJoinSubscription(current)
           return { status: current.phase }
@@ -326,17 +341,21 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           const ended: ScopeAgentJoinReadEvent = { ...current, phase: 'ended', leaveAdopted: true }
           if (history.bindingId === current.plan.bindingId) { this.stopBinding(runtime); this.withdrawIdle(runtime, 'left') }
           writer.session.append('scope-agent-context/join-read', ended)
+          runtime.automaticJoins.delete(request.adoptionId)
           await writer.flush()
           return { status: 'ended' }
         }
         const valid = this.isCommand(runtime, command) && this.runtimes.get(request.agentId) === runtime
         && history.readStateSeq === current.plan.expectedReadStateSeq && history.bindingId === null
         && this.eligibility(runtime) === 'eligible' && !this.hasTask(runtime)
+        && (current.version === 1 || (runtime.automaticJoins.get(request.adoptionId) === command
+          && current.plan.automatic.activationLimit > this.state(runtime).usedBudget))
         if (!valid || subscription.state !== 'active') {
           const terminal: Extract<ScopeAgentJoinReadEvent, { phase: 'ended' | 'superseded' }> = {
             ...current, phase: subscription.state === 'active' ? 'superseded' : 'ended', leaveAdopted: false,
           }
           writer.session.append('scope-agent-context/join-read', terminal)
+          runtime.automaticJoins.delete(request.adoptionId)
           await writer.flush()
           await this.cleanupJoinSubscription(terminal)
           return { status: terminal.phase }
@@ -357,6 +376,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         await writer.flush()
         if (initialRoute !== undefined) await this.ctx.scopeAccess.updateSubscriptionRoute(initialRoute.subscription)
         this.unflushedBindings.delete(current.plan.bindingId)
+        runtime.automaticJoins.delete(request.adoptionId)
         return await this.joinAdoptedResult(runtime, adopted)
       }))
   }
@@ -365,10 +385,12 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const id = record.plan.bindingId
     const state = this.state(runtime)
     if (state.binding?.id !== id || this.runtimes.get(runtime.agent.id) !== runtime) {
+      runtime.automaticJoins.delete(record.adoptionId)
       await this.cleanupJoinSubscription(record)
       return { status: state.binding === null ? 'ended' : 'superseded' }
     }
     this.unflushedBindings.delete(id)
+    runtime.automaticJoins.delete(record.adoptionId)
     runtime.dirty = true
     runtime.changeVersion++
     this.startWatch(runtime)
@@ -392,6 +414,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         const prior = history.records.get(request.adoptionId)
         if (prior?.phase === 'adopted' && !request.leaveAdopted && history.bindingId === prior.plan.bindingId) {
           await writer.flush()
+          const runtime = this.runtimes.get(request.agentId)
+          if (runtime?.agent.session === writer.session && this.unflushedBindings.has(prior.plan.bindingId)
+            && this.state(runtime).binding?.id === prior.plan.bindingId) {
+            await this.joinAdoptedResult(runtime, prior)
+          }
           return { status: 'adopted' as const, pending: undefined }
         }
         const owns = prior?.plan != null && history.bindingId === prior.plan.bindingId
@@ -400,10 +427,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           ++runtime.commandEpoch
           this.stopBinding(runtime)
         }
-        const terminal: ScopeAgentJoinReadEvent = { version: 1, agentId: request.agentId, adoptionId: request.adoptionId,
-          phase: prior?.phase === 'ended' || prior?.phase === 'superseded' ? prior.phase
-            : prior?.phase === 'adopted' && !owns && history.bindingId !== null ? 'superseded' : 'ended',
-          plan: prior?.plan ?? null, leaveAdopted: request.leaveAdopted || ((prior?.phase === 'ended' || prior?.phase === 'superseded') && prior.leaveAdopted) }
+        const phase = prior?.phase === 'ended' || prior?.phase === 'superseded' ? prior.phase
+          : prior?.phase === 'adopted' && !owns && history.bindingId !== null ? 'superseded' : 'ended'
+        const leaveAdopted = request.leaveAdopted || ((prior?.phase === 'ended' || prior?.phase === 'superseded') && prior.leaveAdopted)
+        const terminal: ScopeAgentJoinReadEvent = prior === undefined
+          ? { version: 1, agentId: request.agentId, adoptionId: request.adoptionId, phase, plan: null, leaveAdopted }
+          : { ...prior, phase, leaveAdopted }
+        runtime?.automaticJoins.delete(request.adoptionId)
         if (!isDeepStrictEqual(prior, terminal)) writer.session.append('scope-agent-context/join-read', joinReadEventSchema.parse(terminal))
         if (owns && request.leaveAdopted) {
           if (runtime?.agent.session === writer.session) this.withdrawIdle(runtime, 'left')
@@ -907,7 +937,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (current !== undefined) this.stopRuntime(current)
     const replayed = validateHistory(agent)
     const runtime: Runtime = { agent, bindingAbort: new AbortController(), activationAbort: new AbortController(),
-      commandEpoch: 0, dirty: false, changeVersion: 0, terminal: undefined, timer: undefined,
+      commandEpoch: 0, automaticJoins: new Map(), dirty: false, changeVersion: 0, terminal: undefined, timer: undefined,
       expiryTimer: undefined, maintenance: false, activating: false, watching: undefined, activeTurn: undefined, unsubmittedInputs: [],
       cancelledActivity: undefined, ownedCancellation: undefined, clearingTarget: undefined,
       localAdmissionSignal: undefined, stopAdmission: undefined, claimed: [],
@@ -1130,6 +1160,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   private stopRuntime(runtime: Runtime): void {
+    runtime.automaticJoins.clear()
     runtime.claimed = []
     ++runtime.commandEpoch
     this.stopBinding(runtime)
@@ -1199,7 +1230,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const state = this.state(runtime)
     if (this.lifetime.signal.aborted || runtime.timer !== undefined || runtime.maintenance || runtime.activating
       || runtime.agent.status !== 'idle' || runtime.agent.inbox.nextTurn.length > 0 || runtime.agent.inbox.nextStep.length > 0
-      || state.mode !== 'enabled' || state.binding === null || state.automatic === null) return
+      || state.mode !== 'enabled' || state.binding === null || state.automatic === null
+      || this.unflushedBindings.has(state.binding.id)) return
     if (state.usedBudget >= state.automatic.activationLimit) { this.pauseRuntime(runtime, 'budget'); return }
     if (!runtime.dirty) return
     const wait = Math.min(2_147_483_647, Math.max(this.config.coalesceMs,
@@ -1287,8 +1319,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     }
     const initialBinding = initial.binding
     this.contextMessage(initialBinding, result.projection)
-    if (('kind' in result.projection || result.projection.version === 2) && result.projection.activation.kind === 'recipient-evidence'
-      && result.projection.activation.coverage === 'blocked-current') {
+    if (blocksCurrentCoverage(result.projection, true)) {
       this.evaluate(runtime, 'blocked-current', result.projection, null)
       this.pauseRuntime(runtime, 'coverage')
       this.withdrawIdle(runtime, 'failed')
@@ -1393,11 +1424,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         this.pauseRuntime(runtime, result.status === 'unavailable' ? 'unavailable' : 'terminal')
         return this.withoutFacts(runtime, decision, messages, external, result.status)
       }
-      if (('kind' in result.projection || result.projection.version === 2) && result.projection.activation.kind === 'recipient-evidence'
-        && result.projection.activation.coverage === 'blocked-current') {
+      const automatic = runtime.activeTurn === turn
+      if (blocksCurrentCoverage(result.projection, automatic)) {
         this.evaluate(runtime, 'blocked-current', result.projection, null)
         this.pauseRuntime(runtime, 'coverage')
-        return this.withoutFacts(runtime, decision, messages, external, 'failed')
+        const withdrawn = this.withoutFacts(runtime, decision, messages, external, 'failed')
+        // Tool continuations still belong to the automatic turn after its pulse has been consumed.
+        return automatic && external.length === 0 ? { kind: 'reject' } : withdrawn
       }
       let message: UserMessage
       try { message = this.contextMessage(state.binding, result.projection) } catch {

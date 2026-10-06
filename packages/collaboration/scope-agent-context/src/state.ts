@@ -1,6 +1,7 @@
 /** Replay validation and the whole-state native scope projection. */
 
 import { z } from 'zod'
+import { policySchema } from './policy.ts'
 import { foldRoute, routeEventSchema } from './route.ts'
 import { foldJoinRead, joinReadEventSchema } from './join-read.ts'
 import { localContextTargetSchema } from '@deepseek-ai/dsh-development-task-context/local'
@@ -8,17 +9,13 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import { invitationSchema, projectionSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentActivationId, ScopeAgentAutomaticPolicy, ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentPulseSource } from './types.ts'
+import type { ScopeAgentActivationId, ScopeAgentBindingId, ScopeAgentBindingStatus, ScopeAgentContextSource, ScopeAgentPulseSource } from './types.ts'
 
 const natural = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const bindingId = z.uuid().transform(value => value as ScopeAgentBindingId)
 const activationId = z.uuid().transform(value => value as ScopeAgentActivationId)
 
-/** Policy admitted by management RPC and Session replay. */
-export const policySchema: z.ZodType<ScopeAgentAutomaticPolicy> = z.object({
-  goal: z.string().trim().min(1).max(8192), activationLimit: natural.positive(),
-  maxStepsPerTurn: natural.positive(), minIntervalMs: natural.max(2_147_483_647),
-}).strict()
+export { policySchema } from './policy.ts'
 
 const schedulingFields = {
   agentId: z.string().min(1).transform(SessionId),
