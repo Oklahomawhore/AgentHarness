@@ -1,7 +1,9 @@
 /** Independent contribution invitations, correlated wire replies, and exact durable receipt associations. */
 import { z } from 'zod'
 import {
-  peerContributionGrantSchema, peerContributionProposalSchema, peerContributionSampleSchema, peerContributionReceiptSchema,
+  peerContributionGrantSchema, peerContributionProposalSchema, legacyPeerContributionSampleSchema,
+  recordedPeerContributionSampleSchema, completedFilePeerContributionSampleSchema, commandPeerContributionSampleSchema,
+  peerContributionReceiptSchema,
   peerContributionAdmissionReceiptSchema, peerContributionPayloadDigest, peerContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {
@@ -10,7 +12,8 @@ import type {
 import type {
   ScopeContributionInvitation, ScopeContributionSample, ScopeContributionStatusResult,
   ScopeContributionSubmitResult, ScopeContributionEndResult, ScopeContributionProposal, ScopeContributionTransfer,
-  ScopeContributionApproveRequest, ScopeContributionRecoverRequest, ScopeContributionEntry, ScopeContributionLimits,
+  ScopeContributionApproveRequest, ScopeContributionRecoverRequest, ScopeContributionEntry, ScopeSingleContributionEntry,
+  ScopeGroupEntry, ScopeContributionLimits,
 } from './types.ts'
 
 /** Write invitations carry their own discriminator and never inherit read-invitation authority. */
@@ -27,12 +30,23 @@ const entryFields = {
   ownerAddress: z.string().min(1).max(2048), expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 }
 /** Single-capture application entrance; legacy entries permit only OpenAPI sources. */
-export const contributionEntrySchema: z.ZodType<ScopeContributionEntry> = z.discriminatedUnion('kind', [
+export const singleContributionEntrySchema: z.ZodType<ScopeSingleContributionEntry> = z.discriminatedUnion('kind', [
   z.strictObject({ ...entryFields, kind: z.literal('openapi-contribution-entry') }),
   z.strictObject({ ...entryFields, kind: z.literal('contribution-entry'), sourceKind: z.enum(['openapi', 'tool-observations']) }),
   z.strictObject({ ...entryFields, kind: z.literal('scope-join-entry'), sourceKind: z.literal('tool-observations') }),
 ]).transform(value => ({ ...value, entryId: value.entryId as ScopeContributionEntry['entryId'],
   taskId: value.taskId as ScopeContributionEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeContributionEntry['ownerPeerId'] }))
+
+/** Explicit version-two group entrance; legacy single-capture parsers never accept it. */
+export const groupEntrySchema: z.ZodType<ScopeGroupEntry> = z.strictObject({
+  ...entryFields, version: z.literal(2), kind: z.literal('scope-group-entry'), sourceKind: z.literal('tool-observations'),
+  maxMembers: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).transform(value => ({ ...value, entryId: value.entryId as ScopeGroupEntry['entryId'],
+  taskId: value.taskId as ScopeGroupEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeGroupEntry['ownerPeerId'] }))
+
+/** Transferable entrances preserve their explicitly selected single-capture or reusable semantics. */
+export const contributionEntrySchema: z.ZodType<ScopeContributionEntry> = z.union([singleContributionEntrySchema, groupEntrySchema])
+
 
 /** All source consent ceilings are positive, explicit, and immutable on retry. */
 export const contributionLimitsSchema: z.ZodType<ScopeContributionLimits> = z.object({
@@ -111,19 +125,59 @@ export const contributionSubmitSchema: z.ZodType<ScopeContributionSubmitResult> 
 /** Strict end result; only a matched receipt permits clearing a pending local end. */
 export const contributionEndSchema: z.ZodType<ScopeContributionEndResult> = z.union([ended, failure])
 
-const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: contributionInvitationSchema }).strict()
-/** Peer requests contain no Task mutation operation other than one bounded sample or interval end. */
+const legacyInvitation = contributionInvitationSchema.refine(value => value.grant.source.kind !== 'tool-observations'
+  || value.grant.source.version !== 4)
+const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: legacyInvitation }).strict()
+/** Version-one peer requests accept only original samples and retain their status/end operations. */
 export const contributionRequestSchema = z.discriminatedUnion('op', [
   request.extend({ op: z.literal('status') }),
-  request.extend({ op: z.literal('sample'), sample: peerContributionSampleSchema }),
+  request.extend({ op: z.literal('sample'), sample: legacyPeerContributionSampleSchema }),
   request.extend({ op: z.literal('end') }),
 ])
+
+/** Version-two contribution requests carry only explicitly attributed recorded-local-tool samples. */
+export const recordedContributionRequestSchema = request.extend({
+  version: z.literal(2), op: z.literal('sample'), sample: recordedPeerContributionSampleSchema,
+})
+
+/** Version-three requests carry only explicitly permitted native completed-file samples. */
+export const completedFileContributionRequestSchema = request.extend({
+  version: z.literal(3), op: z.literal('sample'), sample: completedFilePeerContributionSampleSchema,
+})
+
+const commandRequest = request.extend({ version: z.literal(4),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind === 'tool-observations' && value.grant.source.version === 4),
+})
+/** Version-four command permissions retain their status, file/command samples, and terminal operations without downgrade. */
+export const commandContributionRequestSchema = z.discriminatedUnion('op', [
+  commandRequest.extend({ op: z.literal('status') }),
+  commandRequest.extend({ op: z.literal('sample'), sample: commandPeerContributionSampleSchema }),
+  commandRequest.extend({ op: z.literal('end') }),
+])
+
 const response = z.object({ version: z.literal(1), requestId: z.uuid() }).strict()
 /** A response is correlated to the operation as well as the unique request identifier. */
 export const contributionResponseSchema = z.discriminatedUnion('op', [
   response.extend({ op: z.literal('status'), result: contributionStatusSchema }),
   response.extend({ op: z.literal('sample'), result: contributionSubmitSchema }),
   response.extend({ op: z.literal('end'), result: contributionEndSchema }),
+])
+
+/** Version-two sample replies retain exact receipts and cannot acknowledge legacy operations. */
+export const recordedContributionResponseSchema = response.extend({
+  version: z.literal(2), op: z.literal('sample'), result: contributionSubmitSchema,
+})
+
+/** Version-three replies acknowledge only the exact completed-file sample operation. */
+export const completedFileContributionResponseSchema = response.extend({
+  version: z.literal(3), op: z.literal('sample'), result: contributionSubmitSchema,
+})
+
+/** Version-four replies correlate each operation under the exact command permission. */
+export const commandContributionResponseSchema = z.discriminatedUnion('op', [
+  response.extend({ version: z.literal(4), op: z.literal('status'), result: contributionStatusSchema }),
+  response.extend({ version: z.literal(4), op: z.literal('sample'), result: contributionSubmitSchema }),
+  response.extend({ version: z.literal(4), op: z.literal('end'), result: contributionEndSchema }),
 ])
 
 /**

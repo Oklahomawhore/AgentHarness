@@ -1,11 +1,13 @@
 /** Bounded automatic-goal evidence derived from frozen requests and successful whole turns. */
 
+import { compositeProjectionSchema } from './composite.ts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { scopeAgentActivitySchema, scopeAgentActivityView } from './activity.ts'
 import { localContextProjectionSchema } from '@deepseek-ai/dsh-development-task-context/local'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
-import { projectionSchema } from '@deepseek-ai/dsh-scope-access/schema'
+import { legacyProjectionSchema, captureProjectionSchema } from './projection.ts'
 import type { ScopeAgentActivationId, ScopeAgentBindingId, ScopeAgentCompletedEvidence, ScopeAgentEvaluation, ScopeAgentEvidenceState, ScopeAgentGoalDigest, ScopeAgentRequestEvidence, ScopeAgentReadProjection } from './types.ts'
 
 const natural = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -17,9 +19,13 @@ const baseline = z.object({ requestSeq: seq, turnEndSeq: seq }).strict()
 const evaluationFields = { decision: z.enum(['activate', 'suppress-unchanged', 'blocked-current', 'suppress-reserved']),
   bindingId, goalDigest: goal, maxContextBytes: natural.positive(),
   activationId: activationId.nullable(), baseline: baseline.nullable() }
+const legacyComposite = compositeProjectionSchema.refine(value => value.remote.version !== 3, 'historical combined evidence cannot contain capture attribution')
+const captureEvidence = z.union([captureProjectionSchema, compositeProjectionSchema.refine(value => value.remote.version === 3, 'capture-aware combined evidence requires capture attribution')])
 const evaluationObject = z.discriminatedUnion('version', [
-  z.object({ ...evaluationFields, version: z.literal(1), projection: projectionSchema }).strict(),
+  z.object({ ...evaluationFields, version: z.literal(1), projection: legacyProjectionSchema }).strict(),
   z.object({ ...evaluationFields, version: z.literal(2), projection: localContextProjectionSchema }).strict(),
+  z.object({ ...evaluationFields, version: z.literal(3), projection: legacyComposite }).strict(),
+  z.object({ ...evaluationFields, version: z.literal(4), projection: captureEvidence }).strict(),
 ])
 /** Strict durable scheduling decisions, including the complete evaluated source representation. */
 export const evaluationSchema: z.ZodType<ScopeAgentEvaluation> = evaluationObject.superRefine((value, ctx) => {
@@ -32,9 +38,19 @@ const requestFields = { turn: natural.positive(), step: natural.positive(), bind
   contextSeq: seq, maxContextBytes: natural.positive() }
 /** A dispatch anchor retains the actual projection, not its earlier prefetch candidate. */
 export const requestEvidenceSchema: z.ZodType<ScopeAgentRequestEvidence> = z.discriminatedUnion('version', [
-  z.object({ ...requestFields, version: z.literal(1), projection: projectionSchema }).strict(),
+  z.object({ ...requestFields, version: z.literal(1), projection: legacyProjectionSchema }).strict(),
   z.object({ ...requestFields, version: z.literal(2), projection: localContextProjectionSchema }).strict(),
-])
+  z.object({ ...requestFields, version: z.literal(3), projection: legacyComposite, localContextSeq: seq }).strict(),
+  z.object({ ...requestFields, version: z.literal(4), projection: captureEvidence, localContextSeq: seq.optional() }).strict(),
+]).superRefine((value, ctx) => {
+  if (value.version === 4 && (('kind' in value.projection) !== (value.localContextSeq !== undefined))) {
+    ctx.addIssue({ code: 'custom', message: 'capture-aware combined request requires both exact context sequences' })
+  }
+}).transform((value) => {
+  if (value.version !== 4) return value
+  const { localContextSeq, ...fields } = value
+  return localContextSeq === undefined ? fields : { ...fields, localContextSeq }
+})
 const completedSchema = z.object({ request: requestEvidenceSchema, requestSeq: seq, assistantSeq: seq, turnEndSeq: seq }).strict()
 const evidenceSchema: z.ZodType<ScopeAgentEvidenceState> = z.object({ version: z.literal(1), activeTurn: natural.positive().nullable(),
   reservation: evaluationSchema.nullable(),
@@ -51,6 +67,9 @@ export function goalDigest(value: string): ScopeAgentGoalDigest {
 }
 
 function comparison(projection: ScopeAgentReadProjection, maxContextBytes: number): string {
+  if ('kind' in projection && projection.kind === 'local-task-scope') {
+    return JSON.stringify([comparison(projection.local, maxContextBytes), comparison(projection.remote, maxContextBytes)])
+  }
   if ('kind' in projection) {
     const activation = projection.activation
     return JSON.stringify(['local-task', projection.taskId, projection.ownerNodeId, projection.participantId,
@@ -58,9 +77,10 @@ function comparison(projection: ScopeAgentReadProjection, maxContextBytes: numbe
       activation.kind === 'exact' ? ['exact', projection.projectionId, maxContextBytes]
         : ['recipient-evidence', activation.version, activation.digest, activation.coverage]])
   }
-  const activation = projection.version === 2 ? projection.activation : { kind: 'exact' as const }
+  const activation = projection.version === 2 || projection.version === 3 ? projection.activation : { kind: 'exact' as const }
   return JSON.stringify([projection.taskId, projection.ownerPeerId, projection.recipientPeerId, projection.grantId,
-    projection.grantGeneration, projection.expiresAt, projection.backend.id, projection.backend.revision,
+    projection.grantGeneration, projection.expiresAt, projection.version === 3 ? projection.peerCapture : null,
+    projection.backend.id, projection.backend.revision,
     activation.kind === 'exact' ? ['exact', projection.projectionId, maxContextBytes]
       : ['recipient-evidence', activation.version, activation.digest, activation.coverage]])
 }
@@ -83,10 +103,11 @@ export function completedMatches(completed: ScopeAgentCompletedEvidence | null, 
 /** Only an authorized request followed by a non-interrupted assistant and completed turn advances the baseline. */
 export const scopeAgentEvidenceProjection = {
   key: 'scopeAgentEvidence', stateVersion: 1, stateSchema: evidenceSchema,
+  wire: { viewSchema: scopeAgentActivitySchema, view: scopeAgentActivityView },
   init: () => ({ version: 1, activeTurn: null, reservation: null, dispatched: null, completed: null, lastEvaluation: null }),
   apply: (state, event) => {
     if (event.type === 'scope-agent-context/join-read'
-      && (event.data.phase === 'adopted' || ((event.data.phase === 'ended' || event.data.phase === 'superseded')
+      && ((event.data.phase === 'planned' && (event.data.version === 3 || (event.data.version === 4 && event.data.plan.kind === 'local-task-scope'))) || event.data.phase === 'adopted' || ((event.data.phase === 'ended' || event.data.phase === 'superseded')
         && event.data.leaveAdopted && event.data.plan?.bindingId === state.reservation?.bindingId))) {
       return { ...state, activeTurn: null, reservation: null, dispatched: null }
     }
@@ -116,6 +137,7 @@ export const scopeAgentEvidenceProjection = {
       const reservation = state.reservation
       if (reservation === null || reservation.activationId !== request.activationId || reservation.bindingId !== request.bindingId
         || reservation.goalDigest !== request.goalDigest || request.contextSeq >= event.seq
+        || (request.localContextSeq !== undefined && request.localContextSeq >= event.seq)
         || (state.activeTurn !== null && state.activeTurn !== request.turn)) {
         throw new Error('scope-agent-context: dispatch lacks its matching automatic reservation')
       }

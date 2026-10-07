@@ -11,7 +11,7 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SemanticBackend, { type Config as SemanticConfig } from '@deepseek-ai/dsh-development-task-context/semantic'
 import { localContributionGrantSchema, peerContributionGrantSchema } from '@deepseek-ai/dsh-development-task/schema'
-import type { DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
+import type { DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskObservedSourceId, DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
 import type { ScopeContributionSample } from '../src/types.ts'
 import { cleanup, host, peer } from './helpers.ts'
 
@@ -72,7 +72,7 @@ class ControlledSemanticAdapter extends LlmAdapter {
   }
 }
 
-function sample(sequence: number, canary: string): ScopeContributionSample {
+function sample(sequence: number, canary: string): Omit<ScopeContributionSample, 'result'> & { result: DevelopmentTaskToolObservationResult } {
   return {
     sourceId: createHash('sha256').update(`semantic-tool-${String(sequence)}`).digest('hex') as DevelopmentTaskObservedSourceId,
     sequence,
@@ -255,4 +255,23 @@ it('withholds an in-flight semantic projection after owner-local capture end whi
   const calls = value.adapter.requests.length
   await expect(value.read()).resolves.toEqual(current)
   expect(value.adapter.requests).toHaveLength(calls)
+})
+
+it('passes the negotiated allowance through the semantic backend and its durable request evidence', async () => {
+  const value = await fixture()
+  value.adapter.release.resolve(undefined)
+  const result = await value.c.access.retrieveWithinBudget({ subscriptionId: value.subscription.id, maxContextBytes: 4000 }, signal())
+  if (result.status !== 'active' || result.projection.version !== 2) throw new Error('Expected current semantic result')
+  expect(result.projection.maxContextBytes).toBe(4000)
+  expect(Buffer.byteLength(result.projection.text)).toBeLessThanOrEqual(4000)
+  expect(result.projection.activation.kind).toBe('recipient-evidence')
+  const audit = await value.audit()
+  const request = audit.findLast(event => event.type === 'context/semantic-request')
+  if (request?.type !== 'context/semantic-request') throw new Error('Missing semantic request evidence')
+  expect(request.data.maxContextBytes).toBe(4000)
+  expect(value.adapter.requests).toHaveLength(2)
+  const before = value.adapter.requests.length
+  await expect(value.c.access.retrieveWithinBudget({ subscriptionId: value.subscription.id, maxContextBytes: 4000 }, signal()))
+    .resolves.toEqual(result)
+  expect(value.adapter.requests).toHaveLength(before)
 })

@@ -63,6 +63,26 @@ describe('default deployment (with dsh-fs-observation-policy)', () => {
     fiber = await ctx.plugin(ToolFs)
   })
 
+  it('relates completed LF text to the exact admitted mutation without another tool read', async () => {
+    const starts: ToolFs.ToolFsMutation[] = []
+    const completions: ToolFs.ToolFsCompletion[] = []
+    ctx.on('tool-fs/mutation-start', (mutation) => { starts.push(mutation) })
+    ctx.on('tool-fs/mutation-completed', (completion) => { completions.push(completion) })
+    const reads = vi.spyOn(ctx.fs, 'readText')
+    expect((await call('write', { file_path: 'complete.txt', content: 'unchanged\r\nVALUE_A\r\n' })).isError).toBe(false)
+    expect((await call('edit', { file_path: 'complete.txt', old_string: 'VALUE_A', new_string: 'VALUE_B' })).isError).toBe(false)
+    expect(reads).not.toHaveBeenCalled()
+    expect(starts).toHaveLength(2)
+    expect(completions).toHaveLength(2)
+    expect(completions[0]?.mutation).toBe(starts[0])
+    expect(completions[1]?.mutation).toBe(starts[1])
+    expect(completions.map(item => item.content)).toEqual(['unchanged\nVALUE_A\n', 'unchanged\nVALUE_B\n'])
+    expect(await readFile(join(dir, 'complete.txt'), 'utf8')).toBe('unchanged\r\nVALUE_B\r\n')
+    expect((await call('edit', { file_path: 'complete.txt', old_string: 'absent', new_string: 'unused' })).isError).toBe(true)
+    expect(starts).toHaveLength(3)
+    expect(completions).toHaveLength(2)
+  })
+
   describe('write → disk', () => {
     it('creates a file with exactly the requested bytes', async () => {
       const result = await call('write', { file_path: 'new.txt', content: 'line one\nline two\n' })

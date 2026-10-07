@@ -11,7 +11,7 @@ export interface NativeLocalContributionPort {
   readonly status: (request: { agentId: SessionId }) => Promise<ScopeAgentLocalContributionStatus>
   readonly checkout: (request: DevelopmentTaskCheckoutRequest) => Promise<unknown>
   readonly request: (request: ScopeAgentLocalContributionRequest) => Promise<unknown>
-  readonly stop: (request: ScopeAgentContributionStopRequest) => Promise<unknown>
+  readonly stopLocal: (request: ScopeAgentContributionStopRequest) => Promise<ScopeAgentLocalContributionStatus>
 }
 
 /** Owned local observations and commands using the last confirmed capture and binding. */
@@ -79,7 +79,7 @@ export function createNativeLocalContributionDirectory(
         directory.invalidate(request.agentId)
         return
       }
-      await directory.mutate(request.agentId, () => port.stop(request))
+      await directory.mutate(request.agentId, () => port.stopLocal(request))
     },
     changed(agentId: SessionId, revision?: number): void {
       if (directory.getSnapshot()[agentId] === undefined) return

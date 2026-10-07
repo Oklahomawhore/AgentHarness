@@ -43,6 +43,14 @@
     "./local": {
       "types": "./lib/types/local.d.ts",
       "default": "./lib/types/local.js"
+    },
+    "./reported": {
+      "types": "./lib/types/reported.d.ts",
+      "default": "./lib/types/reported.js"
+    },
+    "./configured": {
+      "types": "./lib/types/configured.d.ts",
+      "default": "./lib/types/configured.js"
     }
   },
   "files": [
@@ -66,7 +74,8 @@
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
-    "@deepseek-ai/dsh-development-room": "workspace:^"
+    "@deepseek-ai/dsh-development-room": "workspace:^",
+    "@deepseek-ai/dsh-settings": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -85,6 +94,9 @@
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
     "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^",
     "@deepseek-ai/dsh-session-query-sqlite": "workspace:^",
-    "@deepseek-ai/dsh-session-projection": "workspace:^"
+    "@deepseek-ai/dsh-session-projection": "workspace:^",
+    "@deepseek-ai/dsh-settings": "workspace:^",
+    "@deepseek-ai/dsh-settings-file": "workspace:^",
+    "@deepseek-ai/dsh-app-boot": "workspace:^"
   }
 }

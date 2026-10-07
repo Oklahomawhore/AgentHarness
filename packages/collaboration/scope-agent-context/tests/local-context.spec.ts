@@ -46,7 +46,7 @@ class UnusedAccess extends Service {
   constructor(ctx: Context) { super(ctx, 'scopeAccess') }
   async list() { return { subscriptions: [], grants: [] } }
   async join(): Promise<never> { throw new Error('local mode attempted a peer join') }
-  async retrieve(): Promise<never> { throw new Error('local mode attempted a peer read') }
+  async retrieveWithinBudget(): Promise<never> { throw new Error('local mode attempted a peer read') }
   async waitForChange(): Promise<never> { throw new Error('local mode attempted a peer watch') }
 }
 
@@ -92,6 +92,7 @@ async function fixture(options: { injector?: boolean; seed?: readonly SessionEve
   const originalYaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
   const yaml = options.maxContextBytes === undefined ? originalYaml
     : originalYaml.replace('maxContextBytes: 8000', `maxContextBytes: ${options.maxContextBytes}`)
+      .replace('maxLocalContextBytes: 4000', `maxLocalContextBytes: ${Math.floor(options.maxContextBytes / 2)}`)
   const path = join(directory, 'cordis.yml')
   await writeFile(path, options.injector === false ? yaml.replace('disabled: false', 'disabled: true') : yaml)
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
@@ -149,10 +150,31 @@ it('keeps local passive reads in one injector, then logs actual automatic comple
   expect(agent.session.eventAt(request.data.contextSeq)).toMatchObject({ type: 'user/message', data: { source: { version: 3, projection: request.data.projection } } })
   const completed = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
   expect(completed?.requestSeq).toBe(request.seq)
+  expect((await status(ctx, agent.id)).activity).toMatchObject({ request: null,
+    completed: { requestSeq: request.seq, taskRevision: request.data.projection.taskRevision, turn: 2 },
+    evaluation: { decision: 'activate', taskRevision: request.data.projection.taskRevision } })
   expect(agent.session.eventAt(completed!.turnEndSeq)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
   await Promise.all(['one', 'two'].map(text => ctx.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text })))
   await idleRequests(value, 3)
   expect(currentText(adapter.requests[2]!)).toContain('two')
+})
+
+it.each(['replaced', 'cleared'] as const)('hides recorded local activity when its Task assignment is %s', async (change) => {
+  const value = await fixture()
+  const { ctx, agent, target, task, participantId } = value
+  await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
+  await idleRequests(value, 1)
+  const completed = (await status(ctx, agent.id)).activity.completed
+  expect(completed).not.toBeNull()
+  if (change === 'replaced') {
+    await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: target.taskBindingId })
+  } else {
+    await ctx.developmentTasks.clear({ bindingId: target.taskBindingId, participantId, expectedBindingEpoch: target.expectedBindingEpoch })
+  }
+  const changed = await status(ctx, agent.id)
+  expect(changed.activity).toEqual({ request: null, completed: null, evaluation: null })
+  expect(changed.eligibility).toBe(change === 'replaced' ? 'task-conflict' : 'eligible')
+  expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed?.requestSeq).toBe(completed!.requestSeq)
 })
 
 it('does not bind or reserve without the real Task admission consumer', async () => {

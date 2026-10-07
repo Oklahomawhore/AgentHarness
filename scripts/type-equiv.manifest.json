@@ -2578,6 +2578,11 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRecordedContext",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentStatusResult",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
     },
@@ -2958,6 +2963,66 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeSingleContributionEntry",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntry",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplicationId",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryResult",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntryStatus",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntrySelection",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntriesRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupEntries",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplication",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplicationsRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeGroupApplications",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeContributionEntry",
       "source": "packages/collaboration/scope-access/src/types.ts"
     },
@@ -3110,6 +3175,11 @@
     {
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionSelection",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionPermissionDraft",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     },
     {
@@ -3351,6 +3421,201 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionRecoverRouteRequest",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityIdentity",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityRequest",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityCompleted",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivityEvaluation",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentActivity",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRetainedLocal",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeBinding",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeProjection",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCompositeJoinReadPlan",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskContextPeerCapture",
+      "source": "packages/collaboration/development-task-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeOriginalCapture",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeSubscriptionFields",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopePlainSubscription",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeCaptureSubscription",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAccessCaptureProjection",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRouteFields",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentCaptureJoinReadPlan",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskRecordedToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskRecordedToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskPeerToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitializationRequest",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitializationSource",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionInitialization",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeRetrieveWithinBudgetRequest",
+      "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeJointId",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeJointSummary",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeLeaveJointRequest",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeRecoverJointRequest",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeJoint",
+      "source": "packages/collaboration/claude-scope/src/joint-state.ts"
+    },
+    {
+      "doc": "docs/subsystems/filesystem.md",
+      "symbol": "ToolFsCompletion",
+      "source": "packages/fs/tool-fs/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedFileToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedFileToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskLocalToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandSelector",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandOutput",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/shell.md",
+      "symbol": "ToolBashExecution",
+      "source": "packages/shell/tool-bash/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/shell.md",
+      "symbol": "ToolBashCompletion",
+      "source": "packages/shell/tool-bash/src/index.ts"
     }
   ]
 }

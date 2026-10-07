@@ -10,12 +10,14 @@
 - button "关闭自动工作，保留读取"
 - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
 - button "退出本地目标"
-- paragraph: 退出会停止自动工作、撤回本会话的文件分享，并断开目标读取。历史记录仍保留。
+- paragraph: 退出会停止自动工作、撤回此本地目标的文件分享，并断开目标读取。历史记录仍保留。
 - status: 正在采集已授权的文件工作
 - term: 本机目标
 - definition: 两位用户共同维护重试行为
 - term: 允许采集的目录
 - definition: {{cwd}}/owner-native/project
+- term: 文件内容范围
+- definition: 原始工具参数及完成状态
 - term: 允许分享的文件操作
 - definition: 写入文件（write）
 - term: 授权到期时间

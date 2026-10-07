@@ -2,6 +2,7 @@
 import { useLayoutEffect } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from '../src/client/NativeLocalContributionPanel.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -11,6 +12,7 @@ import { assigned, binding, localCapture, tasks, unbound } from './native-local-
 afterEach(cleanup)
 function fixture(value = unbound) {
   const actions: NativeLocalContributionActions = { readNativeLocalContribution: vi.fn(),
+    suggestNativeContributionPermission: vi.fn(async () => null),
     checkoutNativeLocalTask: vi.fn(async () => {}), requestNativeLocalContribution: vi.fn(async () => {}),
     stopNativeLocalContribution: vi.fn(async () => {}) }
   const props = { agentId, tasks, catalogReady: true, receivingElsewhere: false, t: makeTranslate(zh), ...actions,
@@ -36,6 +38,77 @@ function fillPermission(): void {
 }
 
 describe('current Session owner-local consent', () => {
+  it('applies local workspace suggestions as editable fields and requires fresh consent after edits', async () => {
+    const f = fixture(assigned)
+    vi.mocked(f.actions.suggestNativeContributionPermission).mockResolvedValue({
+      agentId, roots: ['/workspace'], tools: ['write', 'edit'], durationHours: 3, maxSamples: 12, maxSampleBytes: 2048,
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['native.suggestion.use'] }))
+    await waitFor(() => { expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('/workspace') })
+    for (const [label, value] of [[zh['contribution.hours'], '3'], [zh['contribution.maxSamples'], '12'],
+      [zh['contribution.maxBytes'], '2048']] as const) expect(screen.getByLabelText<HTMLInputElement>(label).value).toBe(value)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.write'] }).checked).toBe(true)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.edit'] }).checked).toBe(true)
+    const consent = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.local.consent'] })
+    expect(consent().checked).toBe(false)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.fileContent.consent'] }).checked).toBe(false)
+    expect(f.actions.requestNativeLocalContribution).not.toHaveBeenCalled()
+    fireEvent.click(consent())
+    fireEvent.change(screen.getByLabelText(zh['contribution.roots']), { target: { value: '/workspace/narrow' } })
+    expect(consent().checked).toBe(false)
+    fireEvent.click(consent())
+    fireEvent.click(screen.getByRole('button', { name: zh['native.local.enable'] }))
+    await waitFor(() => { expect(f.actions.requestNativeLocalContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]?.[0]).toMatchObject({
+      ...binding, roots: ['/workspace/narrow'], tools: ['write', 'edit'], limits: { maxSamples: 12, maxSampleBytes: 2048 },
+    })
+  })
+
+  it('adds complete file contents only when explicitly selected with the current local permission', async () => {
+    const f = fixture(assigned)
+    fillPermission()
+    const full = screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.fileContent.consent'] })
+    expect(full.checked).toBe(false)
+    fireEvent.click(full)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.local.enable'] }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.local.consent'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.local.enable'] }))
+    await waitFor(() => { expect(f.actions.requestNativeLocalContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]?.[0]).toMatchObject({
+      ...binding, fileContent: 'completed-native-file', tools: ['write'], roots: ['/project'],
+    })
+  })
+
+  it('clears full-content consent on scope and capture changes without clearing it on an ordinary status refresh', () => {
+    const f = fixture(assigned)
+    fillPermission()
+    const full = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.fileContent.consent'] })
+    fireEvent.click(full())
+    f.rerender(<NativeLocalContributionPanel {...f.props} entry={{ ...f.props.entry,
+      value: { ...assigned, revision: assigned.revision + 1 } }} />)
+    expect(full().checked).toBe(true)
+    fireEvent.change(screen.getByLabelText(zh['contribution.roots']), { target: { value: '/other' } })
+    expect(full().checked).toBe(false)
+    fireEvent.click(full())
+    f.rerender(<NativeLocalContributionPanel {...f.props} entry={{ ...f.props.entry,
+      value: { ...assigned, capture: localCapture } }} />)
+    expect(screen.getByText(zh['native.fileContent.arguments'])).toBeTruthy()
+    f.rerender(<NativeLocalContributionPanel {...f.props} />)
+    expect(full().checked).toBe(false)
+    fireEvent.click(full())
+    f.rerender(<NativeLocalContributionPanel {...f.props} agentId={'another-session' as SessionId} />)
+    expect(full().checked).toBe(false)
+    expect(f.actions.requestNativeLocalContribution).not.toHaveBeenCalled()
+  })
+
+  it('identifies completed file permission on an active local capture', () => {
+    fixture({ ...assigned, capture: { ...localCapture, grant: { ...localCapture.grant,
+      source: { kind: 'tool-observations', name: 'Completed native file work', tools: ['Edit'],
+        version: 3, fileContent: 'completed-native-file' } } } })
+    expect(screen.getByText(zh['native.fileContent.complete'])).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: zh['native.fileContent.consent'] })).toBeNull()
+  })
+
   it('selects a named local goal and connects without sending file permission', async () => {
     const f = fixture()
     expect(screen.queryByRole('checkbox')).toBeNull()
@@ -60,6 +133,7 @@ describe('current Session owner-local consent', () => {
     expect(vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]?.[0]).toMatchObject({
       agentId, expectedCapture: null, ...binding, roots: ['/project'], tools: ['write'], limits: { maxSamples: 8, maxSampleBytes: 4096 },
     })
+    expect(vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]?.[0].fileContent).toBeUndefined()
     expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
   })
 

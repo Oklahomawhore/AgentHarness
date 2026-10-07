@@ -25,7 +25,7 @@ Use the **Plugins** settings section to configure the plugins exposed by the cur
 <a id="use-this-package"></a>
 ## Use this package
 
-Open the Plugins section in Settings and select the **Plugin configuration** tab to edit the host-plane plugins this deployment composes. The cards appear in this order: the shell executor (`bash`), the agent loop's tool-call parallelism (`agent-loop`), subagent model selection (`subagent-model-selection`), the DeepSeek search provider (`web-search-deepseek`), and collaboration networking (`scope-network`).
+Open the Plugins section in Settings and select the **Plugin configuration** tab to edit the host-plane plugins this deployment composes. The cards appear in this order: the shell executor (`bash`), the agent loop's tool-call parallelism (`agent-loop`), subagent model selection (`subagent-model-selection`), the DeepSeek search provider (`web-search-deepseek`), collaboration networking (`scope-network`), and collaboration summaries (`scope-context`).
 
 ### What appears here
 
@@ -38,6 +38,8 @@ A card stages what the user types and writes it only when they save. Each contro
 The Subagent card stages its permission switch and exact model checkboxes together. Enabling requires at least one selected adapter route. Saving submits `enabled` and `allowedModels` in one mutation fenced by the revision where that draft began; a newer Host revision marks the draft failed instead of restoring a revoked route. Disabling retains the selected routes for later reuse. Available models are grouped by provider, while saved routes absent from the current catalog appear last and remain removable. Adapter names and model descriptions remain live directory metadata and are not stored, and the card refreshes them after adapter changes, settings commits, and reconnects.
 
 The **Collaboration network** card saves listener preferences for the next Host start. Keep **Only the device running AgentHarness**, or explicitly allow other devices and enter a TCP port from 1 to 65535; no external port is chosen automatically. The external mode listens on all IPv4 interfaces. Custom address lists, including IPv6, remain unchanged until a different mode is selected and saved. Saving requires the local Host page and writable settings. A failed or stale save retains the draft. After saving, manually restart the Host and refresh the invitation addresses; only the running service's advertised addresses can be used. Saving does not establish reachability, open Web management access, or authorize any shared Task.
+
+The **Collaboration summaries** card chooses **Reports without model summaries** or **Model summaries**, an installed summary model, and a cumulative call ceiling. It uses the authenticated Host’s settings authority, not a Task-owner-specific permission. A saved route absent from the catalog remains visible as unavailable; model credentials stay in **Models**. Opening or saving makes no model call. Summary controls remain within the settings content column on narrow screens. Save all fields together, then manually restart the Host; the running backend and ordinary Session model remain unchanged until that restart, and the Session model remains unchanged afterward. Disabling and re-enabling summaries does not reset the retained audit allowance. See the [summary guide](../../../docs/user/guide/collaboration-semantic.md) for delivery and failure semantics.
 
 ### Secret-role fields
 

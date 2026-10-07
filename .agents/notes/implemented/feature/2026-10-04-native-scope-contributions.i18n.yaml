@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-04-native-scope-contributions.md
-2026-10-04-native-scope-contributions.md: b3d05022b39a819e53aeebab5b0caae80b39fa32
-2026-10-04-native-scope-contributions.zh.md: 7c78c57979ba7fe3a11fea379dde543f70828b19
+2026-10-04-native-scope-contributions.md: 4d93a5d0684a70fa7173709cf48e65187bcf2a43
+2026-10-04-native-scope-contributions.zh.md: 38baa1e22860dea4b67d3ccc10b0668b2ec9bbb1

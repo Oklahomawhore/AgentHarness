@@ -1,0 +1,23 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - status: 尚未接收共享上下文
+  - paragraph: 保留的本地目标：保留原有客户端职责
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{sharedTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
+  - group:
+    - text: 分享本会话的工作
+    - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+    - status: 尚未允许分享文件工作
+    - button "验证连接"
+    - button "重新读取分享状态"
+  - button "重新读取状态"
+  - button "查看来源"

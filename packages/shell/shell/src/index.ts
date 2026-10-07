@@ -49,6 +49,9 @@ declare module '@deepseek-ai/cordis' {
  * standard duplicate-service behavior).
  *
  * Implementations must honor these semantics:
+ * - Resolved working directories belong to the execution world shared with
+ *   the mounted filesystem and subprocess providers; filesystem process paths
+ *   retain their meaning when passed as `workdir`.
  * - {@link run} rejects only for infrastructure failures. Nonzero exits,
  *   timeout kills, and abort kills resolve with a {@link ShellRunResult}.
  * - {@link start} returns immediately; no timeout applies to background

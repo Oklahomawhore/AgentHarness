@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-04-web-semantic-context-overlay.md
-2026-10-04-web-semantic-context-overlay.md: 3fc6ca73ce36824bcc217d3fe382e227e37718c7
-2026-10-04-web-semantic-context-overlay.zh.md: 296662cc375f69f1c4f282301dc789e924c06294
+2026-10-04-web-semantic-context-overlay.md: c7050732aaedd2c464e06275b782bad5a1ff4441
+2026-10-04-web-semantic-context-overlay.zh.md: b2408c428a4c63e249127b721737e0d3d4c3788c

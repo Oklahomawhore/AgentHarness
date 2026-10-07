@@ -74,7 +74,7 @@ When you launch `dsh --profile web` over SSH, the URL line still prints but the 
 
 Each browser session composes its own agent from the shipped presets (the `standard` preset by default), instead of sharing one process-wide tool set. You can change the default preset or add your own presets under `$DSH_HOME/.agent-presets`.
 
-On macOS and Linux, the bundle also mounts the [Claude scope adapter](../../collaboration/claude-scope/README.md). Hook installation and Task membership remain explicit; merely starting Web grants no access to a Claude session or its files. The shared context backend remains `/text` by default. The Claude adapter is disabled on Windows because its private connection descriptor requires an OS lock not yet supported there; the rest of Web still starts.
+On macOS and Linux, the bundle also mounts the [Claude scope adapter](../../collaboration/claude-scope/README.md). Hook installation and Task membership remain explicit; merely starting Web grants no access to a Claude session or its files. The shared context backend defaults to [`/reported`](../../collaboration/development-task-context/README.md#behavior), which can reconstruct file text from complete authorized live Write/Edit reports without a model call. The Claude adapter is disabled on Windows because its private connection descriptor requires an OS lock not yet supported there; the rest of Web still starts.
 
 -----
 

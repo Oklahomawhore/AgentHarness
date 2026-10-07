@@ -1,9 +1,7 @@
 - group:
-  - text: 分享本会话的文件工作
+  - text: 分享本会话的工作
   - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
   - status: 尚未允许分享文件工作
-  - text: 粘贴协作申请入口
-  - textbox "粘贴协作申请入口": "{\"version\":1,\"entryId\":\"{{entryId}}\",\"taskId\":\"{{taskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"contribution-entry\",\"sourceKind\":\"tool-observations\"}"
   - button "验证连接"
   - status: 连接已确认，可以申请。确认本地权限后还需所有者批准；尚未开始同步。
   - term: 任务所有者设备
@@ -12,6 +10,8 @@
   - definition: {{taskId}}
   - term: 申请入口到期时间
   - definition: {{entryExpiresLocal}}
+  - button "使用当前工作区建议"
+  - paragraph: 按当前会话工作目录、可用文件工具和本机配置生成可编辑草稿。请核对目录、操作和额度；此操作不会申请或授予权限。
   - text: 允许采集的目录
   - textbox "允许采集的目录"
   - group "允许分享的文件操作":
@@ -26,7 +26,17 @@
   - spinbutton "最多样本数"
   - text: 每份样本字节上限
   - spinbutton "每份样本字节上限"
+  - checkbox "分享修改后的完整文件内容" [disabled]
+  - text: 分享修改后的完整文件内容
+  - paragraph: 包含文件未修改的部分。仅分享本会话在获准目录执行原生工具操作时产生的完成文本，不扫描目录或另行读取文件；它不保证发送时仍是磁盘上的当前内容。
+  - checkbox "分享指定命令的执行结果"
+  - text: 分享指定命令的执行结果
   - checkbox "我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。"
   - text: 我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。
+  - checkbox "同时分享本次范围内已记录的工具操作" [disabled]
+  - text: 同时分享本次范围内已记录的工具操作
+  - paragraph: 批准后一次性选取当前本地采集已保存的完成记录。复用上述目录、工具和额度，历史与后续新操作共用样本上限；不会读取或扫描现有文件。
+  - paragraph: 完整文件内容与已有工具记录初始化不能同时选择；已有记录不会因此取得新的内容许可。
+  - paragraph: 当前没有可用于历史分享的有效本地采集。仍可单独申请后续文件工作分享。
   - button "申请并允许批准后自动启用" [disabled]
   - button "重新读取分享状态"

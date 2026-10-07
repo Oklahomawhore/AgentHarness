@@ -7,6 +7,7 @@ import argparse
 import difflib
 import importlib
 import importlib.metadata
+import hashlib
 import json
 import os
 import queue
@@ -740,7 +741,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -759,10 +760,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-owner-idle, sdk-scope-joint-automatic, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-recipient-budget, sdk-scope-reported-file, sdk-scope-completed-file, sdk-scope-command-outcomes, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -778,7 +779,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-owner-idle", "sdk-scope-joint-automatic"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1109,11 +1110,26 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-owner-idle", "scope-joint-automatic"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-completed-file", "scope-command-outcomes", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
-        "scope-owner-idle": "scope-owner-idle-current-evidence",
-        "scope-native-contribution": "scope-native-contribution-current-evidence",
+        "scope-automatic-withdrawal": "scope-automatic-withdrawal-command-outcome-evidence-r2",
+        "scope-capture-self-omission": "scope-capture-self-omission-command-outcome-evidence-r2",
+        "scope-completed-file": "scope-completed-file-command-outcome-evidence-r2",
+        "scope-context-live": "scope-context-live-command-outcome-evidence-r2",
+        "scope-dual-contribution": "scope-dual-contribution-command-outcome-evidence-r2",
+        "scope-group-join": "scope-group-join-command-outcome-evidence-r3",
+        "scope-joint-automatic": "scope-joint-automatic-command-outcome-evidence-r2",
+        "scope-local-joint": "scope-local-joint-command-outcome-evidence-r3",
+        "scope-native-contribution": "scope-native-contribution-command-outcome-evidence-r2",
+        "scope-owner-idle": "scope-owner-idle-command-outcome-evidence-r2",
+        "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",
+        "scope-prejoin-initialization": "scope-prejoin-initialization-command-outcome-evidence-r2",
+        "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
+        "scope-reported-file": "scope-reported-file-command-outcome-evidence-r2",
+        "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
+        "scope-semantic-idle": "scope-semantic-idle-source-tables-r5",
+        "task-context-semantic": "task-context-semantic-source-tables-r6",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -1131,7 +1147,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         root = Path(temporary).resolve()
         prepared = prepare("prepare", root)
         assert isinstance(prepared, dict)
-        if scenario == "scope-joint-automatic":
+        if scenario in {"scope-joint-automatic", "scope-automatic-withdrawal", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission"}:
             shutil.copytree(repository / "snapshots/sdk" / scenario / "workspace", root, dirs_exist_ok=True)
         home = root / ".dsh"
         with DeepSeekHarness(
@@ -1160,6 +1176,19 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     "Inspect the reported failed Write without assuming success.",
                     "Continue after the owner revokes the tool contribution.",
                 )]
+            elif scenario == "scope-automatic-withdrawal":
+                first, last, observed = run_finite_scope_turns(
+                    harness, session,
+                    first_prompt="Retain my existing local responsibility before joining any shared scope.",
+                    last_prompt="Continue my ordinary local work after the owner has revoked shared reading.",
+                    expected_automatic_reason="blocked",
+                )
+            elif scenario == "scope-semantic-idle":
+                first, last, observed = run_finite_scope_turns(
+                    harness, session,
+                    first_prompt="Join the shared Task and observe authorized implementation reports.",
+                    last_prompt="Finish this verification and leave the Task.", completed_turn=5,
+                )
             elif scenario in {"scope-owner-idle", "scope-joint-automatic"}:
                 first_prompt, last_prompt = (
                     ("Authorize bounded owner work for the connected local Task.", "Continue after leaving the local Task.")
@@ -1171,6 +1200,53 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
+            elif scenario == "scope-command-outcomes":
+                turns = [session.run(prompt) for prompt in (
+                    "Inspect the authorized foreground command outcome.",
+                    "Inspect the later outcome of the same command.",
+                    "Continue after the source stops sharing.",
+                )]
+            elif scenario in {"scope-reported-file", "scope-completed-file"}:
+                turns = [session.run(prompt) for prompt in (
+                    "Use the initially permitted file work.",
+                    "Use subsequent permitted file changes.",
+                    "Continue after the source stops sharing.",
+                )]
+            elif scenario == "scope-recipient-budget":
+                turns = [session.run(prompt) for prompt in (
+                    "Continue my existing local responsibility before joining.",
+                    "Use approved shared facts within my existing context allowance.",
+                    "Publish my permitted result without changing my local responsibility.",
+                    "Leave sharing and continue my original local work.",
+                )]
+            elif scenario == "scope-prejoin-initialization":
+                turns = [session.run(prompt) for prompt in (
+                    "Record my permitted local work before joining any shared goal.",
+                    "Request sharing of my recorded observations and continue while approval is pending.",
+                    "Use the approved historical context without rereading files.",
+                    "Publish a subsequent live change within my original responsibility.",
+                    "Use the other member’s newly approved work.",
+                    "Leave the shared goal and continue my original local work.",
+                )]
+            elif scenario == "scope-capture-self-omission":
+                turns = [session.run(prompt) for prompt in (
+                    "Retain my original local responsibility before joining the shared goal.",
+                    "Join the shared goal and publish my permitted implementation.",
+                    "Read independent changes without repeating my own capture.",
+                    "Stop only my contribution and inspect the retained receiving permission.",
+                    "Leave the shared goal and continue my original local work.",
+                )]
+            elif scenario == "scope-group-join":
+                turns, observed = run_group_join_turns(harness, session)
+            elif scenario == "scope-local-joint":
+                turns, observed = run_local_joint_turns(harness, session)
+            elif scenario == "scope-dual-contribution":
+                turns = [session.run(prompt) for prompt in (
+                    "Continue my existing local responsibility before sharing any tool reports.",
+                    "Share this permitted Write with the remote owner while retaining my local Task.",
+                    "Stop remote sharing and continue writing for my local Task.",
+                    "Stop local collection while keeping my local Task and history.",
+                )]
             elif scenario == "scope-owner-participation":
                 turns = [session.run(prompt) for prompt in (
                     "Use the peer update and write the owner result.",
@@ -1194,6 +1270,17 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             if set(audits) != {"task-context-semantic-audit"}:
                 raise AssertionError("semantic runtime must retain one separately owned auxiliary audit Session")
             result = semantic_snapshot_result(records, turns, audits["task-context-semantic-audit"])
+        elif scenario == "scope-semantic-idle":
+            audits = read_session_logs(home / "semantic-audit")
+            if set(audits) != {"scope-semantic-idle-audit"}:
+                raise AssertionError("semantic idle run must retain its separate auxiliary audit")
+            result = semantic_idle_snapshot_result(records, first, last, observed, audits["scope-semantic-idle-audit"])
+        elif scenario == "scope-automatic-withdrawal":
+            result = automatic_withdrawal_snapshot_result(records, first, last, observed)
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            sentinel = "permission-sentinel.txt"
+            if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
+                raise AssertionError("revoked automatic work changed the read-only workspace file")
         elif scenario == "scope-owner-idle":
             result = owner_idle_snapshot_result(records, first, last, observed)
         elif scenario == "scope-joint-automatic":
@@ -1202,6 +1289,48 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-command-outcomes":
+            result = command_outcomes_snapshot_result(records, turns, json.loads((home / "command-outcomes-audit.json").read_text()))
+        elif scenario == "scope-completed-file":
+            result = completed_file_snapshot_result(records, turns, json.loads((home / "completed-file-audit.json").read_text()))
+        elif scenario == "scope-reported-file":
+            result = reported_file_snapshot_result(records, turns, json.loads((home / "reported-file-audit.json").read_text()))
+        elif scenario == "scope-recipient-budget":
+            result = recipient_budget_snapshot_result(records, turns, json.loads((home / "recipient-budget-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("recipient budget changed the expected B workspace result")
+        elif scenario == "scope-prejoin-initialization":
+            result = prejoin_initialization_snapshot_result(records, turns, json.loads((home / "prejoin-initialization-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("initialization changed the expected B workspace result")
+        elif scenario == "scope-capture-self-omission":
+            result = capture_self_snapshot_result(records, turns, json.loads((home / "capture-self-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("capture omission changed the expected B workspace result")
+        elif scenario == "scope-group-join":
+            result = group_join_snapshot_result(records, turns, observed, json.loads((home / "group-join-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("group join changed the expected B workspace result")
+        elif scenario == "scope-local-joint":
+            result = local_joint_snapshot_result(records, turns, observed, json.loads((home / "local-joint-audit.json").read_text()))
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("local joint work changed the expected workspace result")
+        elif scenario == "scope-dual-contribution":
+            result = dual_contribution_snapshot_result(records, turns)
+            expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
+            for expected_file in expected_workspace.rglob("*"):
+                if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
+                    raise AssertionError("dual contribution changed the expected local workspace result")
         elif scenario == "scope-owner-participation":
             result = owner_participation_snapshot_result(records, turns)
         elif scenario == "scope-native-contribution":
@@ -1230,6 +1359,636 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         normalized = normalized_result["session"]
         compare_snapshot_files({"result.json": json.dumps(result, indent=2) + "\n", "session.v3.jsonl": normalized},
                                update_snapshots, expected, ("result.json", "session.v3.jsonl"))
+
+
+def command_outcomes_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check actual foreground outcomes against durable receiver evidence without parsing rendered status markers."""
+    requests, reports, actual = audit["requests"], audit["reports"], audit["actualRuns"]
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 6:
+        raise AssertionError("command evidence requires two independent executing Hosts and six source model requests")
+    if len(turns) != 3 or len(requests) != 3 or len(reports) != 2 or len(actual) != 2:
+        raise AssertionError("two actual command attempts must reach three receiving requests including withdrawal")
+    if audit["ownerToolNames"] != ["write", "bash", "write", "bash"]:
+        raise AssertionError("each actual script change must precede its actual foreground command")
+    if any(record.get("type") == "tool/call" for record in records):
+        raise AssertionError("the receiver must not recall command output or execute the source command")
+    logged = [record["data"]["source"]["projection"] for record in records
+              if record.get("type") == "user/message"
+              and record["data"].get("source", {}).get("kind") == "scope-agent-context"
+              and record["data"]["source"].get("form") == "snapshot"]
+    if logged != [request["projection"] for request in requests]:
+        raise AssertionError("actual request projections differ from durable shared-context messages")
+    authority = reports[0]["localContribution"]
+    source = authority["grant"]["source"]
+    if source.get("version") != 4 or source["tools"] or source["commands"] != [{"command": "bash verify.sh", "rootIndex": 0}]:
+        raise AssertionError("command-only consent must name the exact command and working-directory ordinal")
+    for index, report in enumerate(reports):
+        observed, provider = report["localToolObservation"], actual[index]
+        if report["localContribution"] != authority or report["publishedBy"] != reports[0]["publishedBy"]:
+            raise AssertionError("a command report changed the original capture authority")
+        if observed["kind"] != "command-observation" or observed["version"] != 4 or observed["tool"] != "Bash":
+            raise AssertionError("the source did not retain typed foreground command evidence")
+        if observed["fields"] != {"command": "bash verify.sh", "rootIndex": 0} or observed["sequence"] != index + 1:
+            raise AssertionError("the exact command identity or capture ordering changed")
+        if observed["state"] != "completed" or provider["exitCode"] != index:
+            raise AssertionError("the real command must first exit zero and then exit one")
+        for field, expected in {"exitCode": index, "signal": None, "timedOut": False, "aborted": False, "timeoutMs": 10000}.items():
+            if observed[field] != expected or provider[field] != expected:
+                raise AssertionError(f"the actual provider and published command disagree on {field}")
+        for stream, text in {"stdout": "COMMAND_PASS\n" if index == 0 else "COMMAND_FAILED\n",
+                             "stderr": "" if index == 0 else "check failed\n"}.items():
+            if provider[stream] != {"text": text, "truncated": False}:
+                raise AssertionError("the actual process output differs from the independent expected command result")
+            if observed[stream] != {"state": "included", "text": text, "truncated": False}:
+                raise AssertionError("the command report lost exact typed output or its truncation marker")
+    for index, request in enumerate(requests):
+        projection = request["projection"]
+        if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
+            raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
+        if projection["backend"] != {"id": "text", "revision": "9"}:
+            raise AssertionError("the current exact-command selection provider was not used")
+        if "PRIVATE_SCRIPT_DETAIL" in request["text"]:
+            raise AssertionError("unshared script content entered the receiving context")
+        refs = [{"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
+                 "publicationId": report["id"]} for report in reports]
+        selected = [item for item in projection["selectedSources"] if item["kind"] == "publication"]
+        payload = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        if len(payload["publications"]) != 1:
+            raise AssertionError("each request must carry one exact command outcome or its terminal notice")
+        if index < 2:
+            if selected != [refs[index]] or projection["omittedSources"] != [
+                {"source": ref, "reason": "superseded"} for ref in refs[:index]
+            ]:
+                raise AssertionError("the latest failure must supersede the earlier success without losing exact references")
+            if payload["publications"][0]["text"] != reports[index]["text"]:
+                raise AssertionError("the request did not retain the admitted typed command outcome verbatim")
+            if index == 1 and "COMMAND_PASS" in request["text"]:
+                raise AssertionError("the old successful result survived the newer failure")
+        elif len(selected) != 1 or projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in refs]:
+            raise AssertionError("the original command capture was not independently withdrawn")
+        elif not payload["publications"][0]["localContribution"].get("ended"):
+            raise AssertionError("withdrawal must retain the exact attributed terminal notice")
+        elif "COMMAND_PASS" in request["text"] or "COMMAND_FAILED" in request["text"]:
+            raise AssertionError("a prior command result survived withdrawal")
+    expected_script = '# PRIVATE_SCRIPT_DETAIL\nprintf "COMMAND_FAILED\\n"\nprintf "check failed\\n" >&2\nexit 1\n'
+    if audit["finalContent"] != expected_script or audit["diskReconstructed"] is not True:
+        raise AssertionError("the real source script or all three receiving disk reconstructions differ")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
+            "requestCounts": {"owner": 6, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
+            "contextBytes": [request["bytes"] for request in requests], "commandExitCodes": [0, 1],
+            "explicitCommandOnlyPermission": True, "failedHeadSupersedesSuccess": True,
+            "exactSourceWithdrawal": True, "receiverDiskReconstruction": True, "noRecall": True}
+
+
+def completed_file_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check explicitly permitted native operation outputs without a preceding Write or receiver recall."""
+    requests, reports = audit["requests"], audit["reports"]
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 6:
+        raise AssertionError("completed-file evidence must use two executing Hosts and six source requests")
+    if len(turns) != 3 or len(requests) != 3 or audit["ownerToolNames"] != ["read", "edit", "edit", "edit"]:
+        raise AssertionError("an actual Read and three actual Edits must operate on the preexisting file without Write")
+    if any(record.get("type") == "tool/call" for record in records):
+        raise AssertionError("the receiver must not recall or reread the source file")
+    logged = [record["data"]["source"]["projection"] for record in records
+              if record.get("type") == "user/message"
+              and record["data"].get("source", {}).get("kind") == "scope-agent-context"
+              and record["data"]["source"].get("form") == "snapshot"]
+    if logged != [request["projection"] for request in requests]:
+        raise AssertionError("actual receiving projections differ from the durable shared-context messages")
+    values = ["COMPLETED_INITIAL", "COMPLETED_FIRST", "COMPLETED_SECOND", "COMPLETED_FINAL"]
+    contents = [f'export const current = "{value}";\nexport const retained = "PREEXISTING_UNCHANGED";\n'
+                for value in values]
+    if len(reports) != 3:
+        raise AssertionError("only the three permitted Edit outcomes should produce reports")
+    authority = {"kind": "local", **reports[0]["localContribution"]}
+    source = authority["grant"]["source"]
+    if source.get("version") != 3 or source.get("fileContent") != "completed-native-file":
+        raise AssertionError("complete content requires the explicit source permission")
+    for index, report in enumerate(reports):
+        observed = report["localToolObservation"]
+        if report["localContribution"] != reports[0]["localContribution"] or report["publishedBy"] != reports[0]["publishedBy"]:
+            raise AssertionError("a completed output changed the original capture authority")
+        if observed["version"] != 3 or observed["tool"] != "Edit" or observed["reportedStatus"] != "success":
+            raise AssertionError("complete content must retain the successful original Edit report")
+        if observed["sequence"] != index + 1 or observed["omissions"]:
+            raise AssertionError("the original completed report sequence or fields were changed")
+        if observed["fields"] != {"rootIndex": 0, "path": "state.ts", "replaceAll": False,
+                                  "oldString": values[index], "newString": values[index + 1]}:
+            raise AssertionError("the completion report lost its original Edit arguments")
+        sha256 = hashlib.sha256(contents[index + 1].encode("utf-8")).hexdigest()
+        if observed["completedFile"] != {"state": "included", "content": contents[index + 1], "sha256": sha256}:
+            raise AssertionError("the complete operation output or its independent SHA-256 differs")
+    for index, request in enumerate(requests):
+        projection = request["projection"]
+        if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
+            raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
+        if projection["backend"] != {"id": "reported-files", "revision": "3"}:
+            raise AssertionError("the request did not use the current reported-file provider")
+        if "PRIVATE_UNTOUCHED" in request["text"]:
+            raise AssertionError("an untouched private file entered the receiving context")
+        refs = [{"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
+                 "publicationId": report["id"]} for report in reports]
+        selected = [item for item in projection["selectedSources"] if item["kind"] == "publication"]
+        payload = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        if index == 2:
+            if projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in refs]:
+                raise AssertionError("the exact completed-output capture interval was not withdrawn")
+            if len(selected) != 1 or any(item.get("kind") == "completed-native-file" for item in payload["publications"]):
+                raise AssertionError("withdrawal must retain its terminal publication and remove completed content")
+            if "COMPLETED_" in request["text"] or "PREEXISTING_UNCHANGED" in request["text"]:
+                raise AssertionError("previously shared file content survived withdrawal")
+            continue
+        latest = 0 if index == 0 else 2
+        if selected != [refs[latest]] or projection["omittedSources"] != [
+            {"source": ref, "reason": "superseded"} for ref in refs[:latest]
+        ]:
+            raise AssertionError("the completed file must select its exact latest source and supersede only earlier reports")
+        if len(payload["publications"]) != 1:
+            raise AssertionError("one latest complete operation output should enter the model request")
+        file = payload["publications"][0]
+        if file.get("kind") != "completed-native-file" or file.get("version") != 1:
+            raise AssertionError("the complete operation output lost its explicit provenance kind")
+        if file.get("content") != contents[latest + 1] or file.get("sha256") != hashlib.sha256(contents[latest + 1].encode("utf-8")).hexdigest():
+            raise AssertionError("the selected complete output differs from the independently expected text")
+        if file.get("file") != {"rootIndex": 0, "path": "state.ts"} or file.get("authority") != authority:
+            raise AssertionError("the selected file or original full-content authority differs")
+        if file.get("source") != refs[latest] or file.get("sequence") != latest + 1 or file.get("publishedBy") != reports[latest]["publishedBy"]:
+            raise AssertionError("the selected output lost its exact original source")
+        if "not a verified current file snapshot" not in file.get("warning", ""):
+            raise AssertionError("operation output must not claim verified current filesystem state")
+        if any(previous in request["text"] for previous in values[:latest + 1]):
+            raise AssertionError("an obsolete value remains in the selected complete output")
+    if audit["finalContent"] != contents[3] or audit["diskReconstructed"] is not True:
+        raise AssertionError("the actual source file or full receiving log reconstruction differs")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
+            "requestCounts": {"owner": 6, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
+            "contextBytes": [request["bytes"] for request in requests], "originalReportCount": 3,
+            "completedContentDigest": hashlib.sha256(contents[3].encode("utf-8")).hexdigest(),
+            "explicitCompleteFilePermission": True, "exactSourceWithdrawal": True,
+            "receiverDiskReconstruction": True, "noRecall": True}
+
+
+def reported_file_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check actual reported content, exact original dependencies, withdrawal, and the flushed receiver log."""
+    requests = audit["requests"]
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 6:
+        raise AssertionError("reported-file evidence must use two executing Hosts and six source requests")
+    if len(turns) != 3 or len(requests) != 3 or audit["ownerToolNames"] != ["write", "edit", "edit", "edit"]:
+        raise AssertionError("one actual Write and three actual Edits must precede source withdrawal")
+    if any(record.get("type") == "tool/call" for record in records):
+        raise AssertionError("the receiver must not recall or reread the source file")
+    logged = [record["data"]["source"]["projection"] for record in records
+              if record.get("type") == "user/message"
+              and record["data"].get("source", {}).get("kind") == "scope-agent-context"
+              and record["data"]["source"].get("form") == "snapshot"]
+    if logged != [request["projection"] for request in requests]:
+        raise AssertionError("actual receiver projections differ from durable shared-context messages")
+    for request in requests:
+        if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
+            raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
+        if request["projection"]["backend"] != {"id": "reported-files", "revision": "3"}:
+            raise AssertionError("the recorded requests did not use the selected reported-file provider")
+    current = requests[1]["projection"]
+    payload = json.loads(current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+    if len(payload["publications"]) != 1:
+        raise AssertionError("the complete supported report chain must produce one reported file")
+    file = payload["publications"][0]
+    reports = audit["reports"]
+    refs = [{"kind": "publication", "taskId": current["taskId"], "revision": current["taskRevision"],
+             "publicationId": report["id"]} for report in reports]
+    selected = [source for source in current["selectedSources"] if source["kind"] == "publication"]
+    if len(reports) != 4 or selected != refs or current["omittedSources"]:
+        raise AssertionError("all four original source records must remain selected without false supersession")
+    expected_content = 'export const current = "REPORTED_FINAL";\nexport const retained = "unchanged";\n'
+    if file.get("kind") != "reported-file" or file.get("version") != 1 or file.get("content") != expected_content:
+        raise AssertionError("the actual managed context does not contain the complete current reported text")
+    if audit["finalContent"] != expected_content or file.get("file") != {"rootIndex": 0, "path": "state.ts"}:
+        raise AssertionError("reported file identity or independently checked source text differs")
+    authority = {"kind": "local", **reports[0]["localContribution"]}
+    if file["authority"] != authority or file.get("publishedBy") != reports[0].get("publishedBy"):
+        raise AssertionError("the derived file lost its original source authority")
+    dependencies = [{"source": ref, "sequence": report["localToolObservation"]["sequence"],
+                     "sourceId": report["localToolObservation"]["sourceId"]} for ref, report in zip(refs, reports)]
+    digest = hashlib.sha256(json.dumps(dependencies, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if file["dependencies"] != {"count": 4, "digest": digest, "first": {"source": refs[0], "sequence": 1},
+                                "last": {"source": refs[3], "sequence": 4}}:
+        raise AssertionError("the recorded dependency proof differs from the exact ordered tool reports")
+    for marker in ("REPORTED_INITIAL", "REPORTED_FIRST", "REPORTED_SECOND"):
+        if marker in requests[1]["text"]:
+            raise AssertionError("an obsolete value remains in current reported context")
+    withdrawn = requests[2]["projection"]
+    withdrawn_refs = [{**ref, "revision": withdrawn["taskRevision"]} for ref in refs]
+    if withdrawn["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in withdrawn_refs]:
+        raise AssertionError("the exact source interval was not withdrawn")
+    if "REPORTED_" in requests[2]["text"] or audit["diskReconstructed"] is not True:
+        raise AssertionError("withdrawal or disk reconstruction failed")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
+            "requestCounts": {"owner": 6, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
+            "contextBytes": [request["bytes"] for request in requests], "dependencyCount": 4,
+            "dependencyDigest": digest, "completeReportedFile": True, "exactSourceWithdrawal": True,
+            "receiverDiskReconstruction": True, "noRecall": True}
+
+
+def recipient_budget_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check real complete facts and budget omissions while first-use receiving preserves local work."""
+    members = {item["key"]: item for item in audit["members"]}
+    a, b = members["a"], members["b"]
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["rawProjectionBytes"] <= 8000:
+        raise AssertionError("two executing Hosts must exercise an owner projection larger than the receiver allowance")
+    if audit["maxContextBytes"] != 8000 or audit["maxLocalContextBytes"] != 4000:
+        raise AssertionError("the receiver allowance must remain unchanged")
+    counts = {key: len(item["requests"]) for key, item in members.items()}
+    if counts != {"a": 6, "b": 7} or len(turns) != 4:
+        raise AssertionError("joining must not start an implicit automatic turn")
+    admitted = next(item for item in b["requests"] if item["phase"] == "turn-2-step-1")
+    projection = admitted["projection"]
+    if admitted["remoteForm"] != "snapshot" or not projection:
+        raise AssertionError("ordinary work must receive useful facts rather than a withdrawn frame")
+    payload = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+    reports = {item["id"]: item for item in audit["ownerReports"]}
+    selected = [item for item in payload["publications"] if item["id"] in reports]
+    omitted = [item for item in projection["omittedSources"] if item["reason"] == "budget"]
+    if not 1 <= len(selected) < 3 or not omitted or payload["coverage"]["budgetOmissions"] != len(omitted):
+        raise AssertionError("whole admitted facts and explicit budget omissions must appear in actual model context")
+    for publication in selected:
+        if publication["text"] != reports[publication["id"]]["text"]:
+            raise AssertionError("a selected file report was truncated or rewritten")
+    for request in b["requests"]:
+        local_bytes = len(request["localText"].encode("utf-8"))
+        remote_frame_bytes = len((request["remoteText"] or "").encode("utf-8"))
+        if request["localBytes"] != local_bytes or request["remoteFrameBytes"] != remote_frame_bytes:
+            raise AssertionError("request byte evidence must match the actual UTF-8 text")
+        if request["bytes"] != local_bytes + remote_frame_bytes or request["bytes"] > 8000:
+            raise AssertionError("the full combined context exceeded the receiver allowance")
+        if request["remoteForm"] == "snapshot":
+            remote_projection_bytes = len(request["projection"]["text"].encode("utf-8"))
+            framing_bytes = remote_frame_bytes - remote_projection_bytes
+            if local_bytes > 4000 or framing_bytes <= 0:
+                raise AssertionError("local context and complete remote framing must be measured independently")
+            if request["remoteProjectionBytes"] != remote_projection_bytes or request["framingBytes"] != framing_bytes:
+                raise AssertionError("the remote framing evidence must match the actual request")
+            if request["projection"]["maxContextBytes"] != 8000 - local_bytes - framing_bytes:
+                raise AssertionError("the owner must receive the exact remainder after actual local context and full framing")
+        if any(marker in (request["remoteText"] or "") for marker in ("B_BEFORE_PRIVATE", "B_SHARED_LIVE")):
+            raise AssertionError("private history or exact own capture echoed into the remote frame")
+    if b["requests"][-1]["remoteForm"] != "withdrawn" or b["state"]["binding"]["kind"] != "local-task":
+        raise AssertionError("leaving must retain only the original local responsibility")
+    if any(item["state"]["automatic"] is not None or item["state"]["usedBudget"] != 0 for item in members.values()):
+        raise AssertionError("passive joining cannot grant automatic work")
+    if [event["data"]["name"] for event in records if event.get("type") == "tool/call"] != ["write", "write", "write"]:
+        raise AssertionError("the source must use ordinary tools without recall")
+    retained = ("originalTaskRetained", "originalHistoryRetained", "originalToolsRetained", "localCaptureAbsent")
+    if not all(audit[key] is True for key in retained):
+        raise AssertionError("first-use receiving replaced an existing local property")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
+            "requestCounts": counts, "rawProjectionBytes": audit["rawProjectionBytes"], "maxContextBytes": 8000,
+            "maxLocalContextBytes": 4000, "selectedGroups": len(selected), "budgetOmissions": len(omitted),
+            "contextBytes": {key: [request["bytes"] for request in item["requests"]] for key, item in members.items()},
+            "remoteAllowances": [request["projection"]["maxContextBytes"] for request in b["requests"] if request["projection"]],
+            "measuredFramingBytes": [request["framingBytes"] for request in b["requests"] if request["projection"]],
+            "bidirectionalActualRequests": True, "completeFactsPreserved": True, "noRecall": True,
+            **{key: audit[key] for key in retained}}
+
+
+def prejoin_initialization_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Verify recorded-work consent and exact frozen requests from three actual Hosts."""
+    members = {item["key"]: item for item in audit["members"]}
+    b, c = members["b"], members["c"]
+    coverage = audit["initialization"]["coverage"]
+    if coverage != {"recorded": 5, "selected": 4, "omitted": 1, "unconfirmed": 0, "inFlight": 0, "acknowledged": 4}:
+        raise AssertionError("historical selection and real owner receipts must describe the same fixed coverage")
+    if audit["hostCount"] != 3 or audit["executingSessionCount"] != 2 or audit["fileOperations"]:
+        raise AssertionError("three real Hosts initialize recorded observations without reading or scanning files")
+    historical = next(item for item in c["requests"] if item["phase"] == "historical")["remoteText"]
+    latest = next(item for item in c["requests"] if item["phase"] == "latest")["remoteText"]
+    if "B_RECORDED_V2" not in historical or "B_BEFORE_APPROVAL" not in historical or "failure" not in historical:
+        raise AssertionError("C must receive completed Write/Edit/failure evidence recorded before owner approval")
+    if "B_LIVE_LATEST" not in latest:
+        raise AssertionError("subsequent live work must supersede historical evidence")
+    for member in members.values():
+        for request in member["requests"]:
+            if request["bytes"] > 12000:
+                raise AssertionError("full local and framed remote context exceeds its byte budget")
+            remote = request.get("remoteText") or ""
+            if any(marker in remote for marker in ("C_PREJOIN_NOT_CONSENTED", "B_PRIVATE_NOT_SHARED", "DISK_ONLY_UNRECORDED")):
+                raise AssertionError("unapproved history, private roots, and unrecorded disk contents cannot enter remote context")
+    if b["state"]["binding"]["kind"] != "local-task" or c["state"]["binding"]["kind"] != "local-task-scope":
+        raise AssertionError("B leaves only remote collaboration while C stays connected")
+    if len(turns) != 6 or [event["data"]["name"] for event in records if event.get("type") == "tool/call"] != [
+        "write", "edit", "edit", "write", "write", "read", "write", "write",
+    ]:
+        raise AssertionError("real production tools must execute without recall or historical re-execution")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "coverage": coverage,
+            "hostCount": 3, "executingSessionCount": 2,
+            "requestCounts": {key: len(item["requests"]) for key, item in members.items()},
+            "contextBytes": {key: [request["bytes"] for request in item["requests"]] for key, item in members.items()},
+            "noFileScan": True, "noConsentHistoryOmitted": True, "localTaskRetained": True,
+            "subsequentLiveWorkVisible": True, "otherMemberContinues": True}
+
+
+def capture_self_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check exact source omission, same-peer Sessions, and independent stop/leave from the native request audit."""
+    members = {item["key"]: item for item in audit["members"]}
+    b, c1, c2 = members["b"], members["c1"], members["c2"]
+    if (c1["peerId"] != c2["peerId"] or c1["capture"] == c2["capture"] or
+            len({item["localTaskId"] for item in members.values()}) != 3):
+        raise AssertionError("same peer must retain distinct actual Sessions, captures, and local Tasks")
+    markers = {"b": "B_OWN_REPORT_", "c1": "C1_INDEPENDENT_REPORT", "c2": "C2_SAME_PEER_OTHER_SESSION"}
+    for key, member in members.items():
+        if member["state"]["usedBudget"] != 0:
+            raise AssertionError("passive joining must not grant automatic work")
+        for request in member["requests"]:
+            if request["bytes"] > 8000:
+                raise AssertionError("complete local plus framed remote context exceeds its byte budget")
+            if request.get("remoteForm") == "snapshot":
+                projection = request["projection"]
+                if (projection["version"] != 3 or projection["peerCapture"]["captureId"] != member["capture"]["captureId"] or
+                        projection["peerCapture"]["captureGeneration"] != member["capture"]["captureGeneration"] or
+                        markers[key] in request["remoteText"]):
+                    raise AssertionError("remote snapshot must omit only its exact authorized capture")
+    c1_cross = next(item for item in c1["requests"] if item["phase"] == "cross-read")
+    if markers["c2"] not in c1_cross["remoteText"] or markers["b"] not in c1_cross["remoteText"]:
+        raise AssertionError("same-peer other Session and different-peer reports must both survive")
+    b_cross = next(item for item in b["requests"] if item["phase"] == "turn-3-step-1")
+    if any(markers[key] not in b_cross["remoteText"] for key in ("c1", "c2")):
+        raise AssertionError("B must retain both independent source reports")
+    stopped = next(item for item in b["requests"] if item["phase"] == "stopped")
+    if not any(item["reason"] == "withdrawn" for item in stopped["projection"]["omittedSources"]):
+        raise AssertionError("stopping collection must retain withdrawal evidence in adopted reading")
+    if b["state"]["binding"]["kind"] != "local-task" or any(item["state"]["binding"]["kind"] != "local-task-scope" for item in (c1, c2)):
+        raise AssertionError("B leave must preserve its local task and both other members")
+    if "C2_AFTER_B_LEFT" not in c1["requests"][-1]["remoteText"]:
+        raise AssertionError("C1 must receive C2 changes after B leaves")
+    calls = [event["data"]["name"] for event in records if event.get("type") == "tool/call"]
+    if calls != ["write"] * 3 or len(turns) != 5:
+        raise AssertionError("B must execute five ordinary turns and three real Writes without recall")
+    applications = {item["proposal"]["captureId"]: item for item in audit["applications"]}
+    if (applications[b["capture"]["captureId"]]["result"]["readState"] != "active" or
+            any(applications[item["capture"]["captureId"]]["result"]["status"] != "approved" for item in (c1, c2))):
+        raise AssertionError("local leave and owner grant revocation remain distinct")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response,
+            "requestCounts": {key: len(item["requests"]) for key, item in members.items()},
+            "contextBytes": {key: [request["bytes"] for request in item["requests"]] for key, item in members.items()},
+            "exactOwnCaptureOmitted": True, "samePeerOtherSessionVisible": True,
+            "ownerSourceRetained": any(markers["b"] in item["text"] for item in audit["ownerPublications"]),
+            "withdrawalRetained": True, "otherMembersContinue": True, "bOwnerReadState": "active"}
+
+
+def run_group_join_turns(
+    harness: DeepSeekHarness, session: Session,
+) -> tuple[list[RunResult], list[dict[str, object]]]:
+    """Drive three owner prompts and wait for the three actual bounded automatic turns."""
+    with harness.client.subscribe_session_notifications(session.id) as subscription:
+        deadline = threading.Timer(110, harness.close)
+        deadline.start()
+        observed: list[dict[str, object]] = []
+
+        def wait_completed(turn: int) -> None:
+            while True:
+                notification = subscription.next()
+                if notification.method != "session.event":
+                    continue
+                event = notification.payload.get("event")
+                if not isinstance(event, dict):
+                    continue
+                observed.append(event)
+                if event.get("type") == "turn/end" and event["data"]["turn"] == turn:
+                    if event["data"]["reason"] != {"kind": "completed"}:
+                        raise AssertionError(f"group join turn {turn} did not complete")
+                    return
+
+        try:
+            first = session.run("Continue my existing B responsibility and save my local baseline.")
+            if first.finish_reason != "completed":
+                raise AssertionError("group join setup failed before automatic work")
+            wait_completed(2)
+            joined = session.run("Join the shared goal with C while preserving my local Task and allowing two more automatic responses.")
+            if joined.finish_reason != "completed":
+                raise AssertionError("group join approval failed before automatic work")
+            wait_completed(5)
+            last = session.run("Leave the group scope and finish my local work while C stays joined.")
+            wait_completed(6)
+        finally:
+            deadline.cancel()
+            deadline.join()
+    return [first, joined, last], observed
+
+
+def run_local_joint_turns(
+    harness: DeepSeekHarness, session: Session,
+) -> tuple[list[RunResult], list[dict[str, object]]]:
+    """Drive three owner prompts and wait for the three actual bounded automatic turns."""
+    with harness.client.subscribe_session_notifications(session.id) as subscription:
+        deadline = threading.Timer(110, harness.close)
+        deadline.start()
+        observed: list[dict[str, object]] = []
+
+        def wait_completed(turn: int) -> None:
+            while True:
+                notification = subscription.next()
+                if notification.method != "session.event":
+                    continue
+                event = notification.payload.get("event")
+                if not isinstance(event, dict):
+                    continue
+                observed.append(event)
+                if event.get("type") == "turn/end" and event["data"]["turn"] == turn:
+                    if event["data"]["reason"] != {"kind": "completed"}:
+                        raise AssertionError(f"local joint turn {turn} did not complete")
+                    return
+
+        try:
+            first = session.run("Continue my existing client responsibility and save the local baseline.")
+            if first.finish_reason != "completed":
+                raise AssertionError("local joint setup failed before automatic work")
+            wait_completed(2)
+            joined = session.run("Join the API owner while retaining my local Task and approve two further automatic responses.")
+            if joined.finish_reason != "completed":
+                raise AssertionError("local joint approval failed before automatic work")
+            wait_completed(5)
+            last = session.run("Leave the shared scope and finish my local work.")
+            wait_completed(6)
+        finally:
+            deadline.cancel()
+            deadline.join()
+    return [first, joined, last], observed
+
+
+def local_joint_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], observed: list[dict[str, object]],
+    audit: dict[str, object], *, remote_marker: str = "REMOTE_API",
+) -> dict[str, object]:
+    """Verify retained local responsibility, both frozen request inputs and monotonic automatic allowance."""
+    ends = [event["data"] for event in records if event.get("type") == "turn/end"]
+    if ends != [{"turn": turn, "reason": {"kind": "completed"}} for turn in range(1, 7)]:
+        raise AssertionError("local joint scenario must complete six actual turns")
+    users, pulses, active_turn = [], [], None
+    for event in records:
+        if event.get("type") == "turn/start":
+            active_turn = event["data"]["turn"]
+        if event.get("type") == "user/message":
+            source = event["data"]["source"]
+            if source["kind"] == "user":
+                users.append(active_turn)
+            if source["kind"] == "scope-agent-pulse":
+                pulses.append(active_turn)
+    if users != [1, 3, 6] or pulses != [2, 4, 5]:
+        raise AssertionError("only local response and two joined responses may run automatically")
+    calls = [event["data"] for event in records if event.get("type") == "tool/call"]
+    if [item["name"] for item in calls] != ["write"] * 4:
+        raise AssertionError("local joint work must execute four real Writes without recall")
+    dispatches = [event for event in records if event.get("type") == "scope-agent-context/request"]
+    expected = [(2, 1, 2), (4, 1, 4), (4, 2, 4), (5, 1, 4), (5, 2, 4)]
+    if [(item["data"]["turn"], item["data"]["step"], item["data"]["version"]) for item in dispatches] != expected:
+        raise AssertionError("automatic requests must retain one local and four composite evidence anchors")
+    wire_dispatches = [event["data"] for event in observed if event.get("type") == "scope-agent-context/request"]
+    if wire_dispatches != [event["data"] for event in dispatches]:
+        raise AssertionError("Python notifications lost exact request evidence")
+    by_seq = {event["seq"]: event for event in records if "seq" in event}
+    budgets = []
+    for event in dispatches[1:]:
+        request = event["data"]
+        remote = by_seq[request["contextSeq"]]["data"]
+        local = by_seq[request["localContextSeq"]]["data"]
+        projection = request["projection"]
+        if (request["contextSeq"] == request["localContextSeq"] or
+                remote["source"]["kind"] != "scope-agent-context" or
+                local["source"]["kind"] != "development-task-context" or
+                projection["remote"] != remote["source"]["projection"] or
+                projection["local"] != local["source"]["projection"]):
+            raise AssertionError("composite evidence must identify both exact model-visible contexts")
+        byte_count = sum(len(block["text"].encode("utf-8")) for message in (local, remote)
+                         for block in message["content"] if block["type"] == "text")
+        if byte_count > 8000 or request["maxContextBytes"] != 8000:
+            raise AssertionError("combined local and remote messages exceeded the complete text budget")
+        budgets.append(byte_count)
+        text = "\n".join(block["text"] for block in remote["content"] if block["type"] == "text")
+        expected_version = 2 if request["turn"] == 5 else 1
+        if f"{remote_marker}_V{expected_version}" not in text or (expected_version == 2 and f"{remote_marker}_V1" in text):
+            raise AssertionError("the current API correction must supersede its predecessor")
+    joins = [event["data"] for event in records if event.get("type") == "scope-agent-context/join-read"]
+    adopted = [item for item in joins if item["phase"] == "adopted"]
+    if len(adopted) != 1 or adopted[0]["version"] != 4:
+        raise AssertionError("one owner approval must adopt one combined local and remote interval")
+    plan = adopted[0]["plan"]
+    states = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"]
+    final = audit["state"]
+    if (final["binding"]["kind"] != "local-task" or final["binding"]["id"] != plan["retainedLocal"]["bindingId"] or
+            final["binding"]["target"] != plan["target"] or final["automatic"] != plan["retainedLocal"]["automatic"] or
+            final["automatic"]["activationLimit"] != 4 or final["mode"] != "paused" or
+            final["usedBudget"] != 3 or final["pendingActivation"] is not None):
+        raise AssertionError("departure must restore the original paused local policy without refunding work")
+    if (joins[-1]["phase"] != "ended" or joins[-1]["leaveAdopted"] is not True or joins[-1]["plan"] != plan or
+            states[-1]["usedBudget"] != final["usedBudget"] or
+            audit["localCapture"] != audit["originalLocalCapture"] or audit["localCaptureCollecting"] is not True or
+            audit["localAssignment"]["taskId"] != plan["target"]["taskId"] or
+            audit["localAssignment"]["bindingId"] != plan["target"]["taskBindingId"] or
+            audit["localAssignment"]["expectedBindingEpoch"] != plan["target"]["bindingEpoch"]):
+        raise AssertionError("joint departure must preserve the original capture and exact local assignment")
+    if plan["automatic"]["activationLimit"] != 3 or plan["expectedBindingId"] == final["binding"]["id"]:
+        raise AssertionError("joint allowance is an absolute total and departure requires a new local interval")
+    final_start = next(event["seq"] for event in records if event.get("type") == "turn/start" and event["data"]["turn"] == 6)
+    final_contexts = [event["data"] for event in records if event.get("type") == "user/message"
+                      and event["seq"] > final_start and event["data"]["source"]["kind"] in
+                      {"development-task-context", "scope-agent-context"}]
+    if any(f"{remote_marker}_V{version}" in block["text"] for message in final_contexts for block in message["content"]
+           if block["type"] == "text" for version in (1, 2, 3)):
+        raise AssertionError("departed context retained remote API facts")
+    authority = [event for event in records if event.get("type") in {"permission/preset", "sandbox/mode", "approval/policy"}]
+    if len(authority) != 3:
+        raise AssertionError("joining must retain the original Session authority")
+    return {
+        "responses": [{"text": item.final_response, "finishReason": item.finish_reason} for item in turns],
+        "completedTurns": [item["turn"] for item in ends], "userTurns": users, "automaticTurns": pulses,
+        "writeCalls": [item["callId"] for item in calls], "automaticRequestVersions": [item[2] for item in expected],
+        "combinedContextBytes": budgets, "wirePreservesRequestEvidence": True,
+        "joinAdoptions": 1, "jointAbsoluteLimit": 3, "restoredLocalLimit": 4,
+        "finalMode": final["mode"], "usedBudget": final["usedBudget"], "originalAuthorityEvents": len(authority),
+        "retainedOriginalTask": True, "restoredNewLocalInterval": True, "remoteFactsAfterLeave": [],
+    }
+
+
+def group_join_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], observed: list[dict[str, object]],
+    audit: dict[str, object],
+) -> dict[str, object]:
+    """Validate independent B/C authorization and passive C requests after B leaves the shared goal."""
+    result = local_joint_snapshot_result(records, turns, observed, audit, remote_marker="C_SHARED")
+    activations = {event["data"]["activationId"]: event["data"] for event in records
+                   if event.get("type") == "scope-agent-context/evaluation" and event["data"]["decision"] == "activate"}
+    for event in records:
+        if event.get("type") != "scope-agent-context/request" or event["data"]["turn"] not in (4, 5):
+            continue
+        request = event["data"]
+        candidate = activations[request["activationId"]]["projection"]["remote"]["text"]
+        if f"C_SHARED_V{request['turn'] - 3}" not in candidate or (request["turn"] == 5 and "C_SHARED_V1" in candidate):
+            raise AssertionError("B automatic reservation must already be caused by the independent current C update")
+    entry = audit["entry"]
+    applications = audit["applications"]
+    if (entry["entry"]["kind"] != "scope-group-entry" or entry["entry"]["version"] != 2 or
+            entry["entry"]["maxMembers"] != 2 or entry["state"] != "closed" or entry["applicationCount"] != 2):
+        raise AssertionError("one explicitly reusable entry must retain two applicants after it closes")
+    if len(applications) != 2 or len({item["applicationId"] for item in applications}) != 2:
+        raise AssertionError("B and C require distinct retained applications")
+    by_peer = {item["proposal"]["contributorPeerId"]: item for item in applications}
+    b, c = by_peer[audit["bPeer"]], by_peer[audit["cPeer"]]
+    if (b["result"]["status"] != "ended" or b["result"]["reason"] != "left" or
+            b["result"]["readState"] != "active" or c["result"]["status"] != "approved" or
+            c["result"]["readState"] != "active"):
+        raise AssertionError("B departure must retain C independent active contribution and read permission: " +
+                                 repr([{key: member["result"].get(key) for key in ("status", "reason", "readState")} for member in (b, c)]))
+    if (any(item["entry"] != entry["entry"] for item in applications) or
+            len({item["result"]["invitation"]["grant"]["grantId"] for item in applications}) != 2 or
+            len({item["result"]["readInvitation"]["grantId"] for item in applications}) != 2):
+        raise AssertionError("same-entry approvals must issue separate exact read and contribution grants")
+    if (audit["bSubscription"]["state"] != "left" or audit["cSubscription"]["state"] != "active" or
+            audit["bSubscription"]["invitation"]["grantId"] != b["result"]["readInvitation"]["grantId"]):
+        raise AssertionError("B must end its exact subscription while C remains subscribed")
+    c_state = audit["cState"]
+    if (c_state["binding"]["kind"] != "local-task-scope" or c_state["automatic"] is not None or
+            c_state["mode"] != "passive" or c_state["usedBudget"] != 0 or
+            c_state["binding"]["target"]["taskId"] in {audit["sharedTaskId"], audit["state"]["binding"]["target"]["taskId"]} or
+            audit["cLocalCapture"] != audit["cOriginalLocalCapture"]):
+        raise AssertionError("C must retain its original different local Task and passive permission")
+    if audit["cTurns"] != [{"turn": turn, "reason": {"kind": "completed"}} for turn in range(1, 5)]:
+        raise AssertionError("passive C must execute exactly its four ordinary user turns")
+    c_requests = audit["cRequests"]
+    if [(item["turn"], item["step"]) for item in c_requests] != [(turn, step) for turn in range(1, 5) for step in (1, 2)]:
+        raise AssertionError("C must make eight actual requests through the native AgentLoop")
+    for item in c_requests:
+        if item["bytes"] > 8000:
+            raise AssertionError("passive C also requires one complete combined context budget")
+        text = item["remoteText"]
+        if item["turn"] == 3 and "B_SHARED_V1" not in text:
+            raise AssertionError("C requests must contain the real independently published B Write")
+        if item["turn"] == 4 and any(marker in text for marker in ("B_SHARED_V1", "B_SHARED_V2")):
+            raise AssertionError("C kept B facts after that member left")
+    result["group"] = {
+        "entryVersion": 2, "entryState": entry["state"], "retainedApplications": 2,
+        "separateContributionGrants": 2, "separateReadGrants": 2,
+        "memberOutcomes": [b["result"]["status"], c["result"]["status"]],
+        "bSubscriptionState": audit["bSubscription"]["state"], "cSubscriptionState": audit["cSubscription"]["state"],
+        "bOwnerReadGrantState": b["result"]["readState"],
+        "cMode": c_state["mode"], "cUsedBudget": c_state["usedBudget"],
+        "cOrdinaryTurns": [item["turn"] for item in audit["cTurns"]],
+        "cCombinedContextBytes": [item["bytes"] for item in c_requests],
+        "cActualRequests": 8, "bActualRequests": 10, "totalControlledRequests": 18,
+        "retainedDistinctLocalTasks": True, "cReceivesBWrite": True, "bReceivesCWrite": True,
+        "cContinuesAfterBLeave": True, "cRemoteBFactsAfterLeave": [], "cChangesPrecedeBActivations": True,
+    }
+    return result
 
 
 def run_native_scope_turns(harness: DeepSeekHarness, session: Session) -> tuple[RunResult, RunResult, list[dict[str, object]]]:
@@ -1317,9 +2076,9 @@ def native_scope_snapshot_result(
 
 def run_finite_scope_turns(
     harness: DeepSeekHarness, session: Session, *, first_prompt: str, last_prompt: str,
-    coverage_revision: int | None = None,
+    coverage_revision: int | None = None, completed_turn: int = 2, expected_automatic_reason: str = "completed",
 ) -> tuple[RunResult, RunResult, list[dict[str, object]]]:
-    """Wait for automatic completion and an optional coverage pause before the final user request."""
+    """Wait for the expected automatic terminal reason and optional coverage pause before user work."""
     with harness.client.subscribe_session_notifications(session.id) as subscription:
         deadline = threading.Timer(110, harness.close)
         deadline.start()
@@ -1337,9 +2096,9 @@ def run_finite_scope_turns(
                 if not isinstance(event, dict):
                     continue
                 observed.append(event)
-                if event.get("type") == "turn/end" and event["data"]["turn"] == 2:
-                    if event["data"]["reason"] != {"kind": "completed"}:
-                        raise AssertionError("scope automatic turn did not complete")
+                if event.get("type") == "turn/end" and event["data"]["turn"] == completed_turn:
+                    if event["data"]["reason"] != {"kind": expected_automatic_reason}:
+                        raise AssertionError("scope automatic turn ended with an unexpected reason")
                     completed = True
                 if coverage_revision is not None:
                     data = event.get("data", {})
@@ -1354,6 +2113,145 @@ def run_finite_scope_turns(
             deadline.cancel()
             deadline.join()
     return first, last, observed
+
+
+def semantic_idle_snapshot_result(
+    records: list[dict[str, object]], first: RunResult, last: RunResult, observed: list[dict[str, object]],
+    audit: list[dict[str, object]],
+) -> dict[str, object]:
+    """Check actual automatic responses, suppressed evidence and independent Python wire delivery."""
+    dispatches = [event["data"] for event in records if event.get("type") == "scope-agent-context/request"]
+    wire_dispatches = [event["data"] for event in observed if event.get("type") == "scope-agent-context/request"]
+    if [(item["turn"], item["step"]) for item in dispatches] != [(2, 1), (3, 1), (4, 1), (5, 1)]:
+        raise AssertionError("the initial report, correction, failure and withdrawal must each receive one automatic response")
+    if dispatches != wire_dispatches:
+        raise AssertionError("Python notifications lost exact semantic request evidence")
+    suppressed = [event for event in records if event.get("type") == "scope-agent-context/evaluation"
+                  and event["data"]["decision"] == "suppress-unchanged"]
+    suppressed_revisions = [event["data"]["projection"]["taskRevision"] for event in suppressed]
+    if suppressed_revisions != [4, 5]:
+        raise AssertionError("the unrelated report and its complete overwrite must both be suppressed")
+    for index, suppression in enumerate(suppressed):
+        data = suppression["data"]
+        baseline = next(event for event in records if event.get("seq") == data["baseline"]["requestSeq"])
+        if baseline["type"] != "scope-agent-context/request" or baseline["data"]["turn"] != 2:
+            raise AssertionError("both suppressions must point to the same completed automatic request")
+        current, previous = data["projection"], baseline["data"]["projection"]
+        if current["activation"] != previous["activation"] or current["projectionId"] == previous["projectionId"]:
+            raise AssertionError("current exact projection must change while recipient evidence stays identical")
+        if current["activation"]["kind"] != "recipient-evidence" or current["activation"]["coverage"] != "complete":
+            raise AssertionError("suppression requires complete semantic recipient evidence")
+        irrelevant = [item for item in current["omittedSources"] if item["reason"] == "recipient-irrelevant"]
+        if len(irrelevant) != 1:
+            raise AssertionError("each current unrelated report must remain in source accounting")
+        if index == 1:
+            first_projection = suppressed[0]["data"]["projection"]
+            old_irrelevant = next(item["source"] for item in first_projection["omittedSources"]
+                                  if item["reason"] == "recipient-irrelevant")
+            identity_keys = ("kind", "taskId", "publicationId")
+            old_identity = tuple(old_irrelevant[key] for key in identity_keys)
+            superseded = [item["source"] for item in current["omittedSources"] if item["reason"] == "superseded"
+                          and tuple(item["source"][key] for key in identity_keys) == old_identity]
+            if len(superseded) != 1:
+                raise AssertionError("the complete overwrite must retain the original unrelated report as superseded")
+            if old_irrelevant["revision"] != 4 or superseded[0]["revision"] != 5 or irrelevant[0]["source"]["revision"] != 5:
+                raise AssertionError("both original and overwritten provenance must name their current Task revision")
+            if (current["projectionId"] == first_projection["projectionId"]
+                    or tuple(irrelevant[0]["source"][key] for key in identity_keys) == old_identity):
+                raise AssertionError("the overwrite must change exact provenance without waking the recipient")
+        preceding_states = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"
+                            and event["seq"] < suppression["seq"]]
+        if preceding_states[-1]["usedBudget"] != 1 or data["activationId"] is not None:
+            raise AssertionError("neither unrelated report may reserve another automatic turn")
+    wire_suppressed = [event["data"] for event in observed if event.get("type") == "scope-agent-context/evaluation"
+                       and event["data"]["decision"] == "suppress-unchanged"]
+    if wire_suppressed != [event["data"] for event in suppressed]:
+        raise AssertionError("Python wire must preserve both complete suppression decisions")
+    contexts = [event["data"] for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "development-task-context"]
+    if len(contexts) != 6 or contexts[-1]["source"]["form"] != "disconnected":
+        raise AssertionError("the six requests must retain current context and final departure")
+    projections = [item["source"]["projection"] for item in contexts[:-1]]
+    revisions = [item["taskRevision"] for item in projections]
+    if revisions != [2, 3, 6, 7, 8]:
+        raise AssertionError("unrelated revision must not create another automatic model request")
+    if any("UNRELATED_ADMIN" in item["text"] for item in projections):
+        raise AssertionError("the unrelated report body leaked into receiving context")
+    if "RETRY_LIMIT_1" not in projections[2]["text"] or "FAILED_RETRY_9" not in projections[3]["text"]:
+        raise AssertionError("correction and failure must reach actual automatic requests")
+    terminal = projections[-1]
+    if any(marker in terminal["text"] for marker in ("RETRY_LIMIT_3", "RETRY_LIMIT_1", "FAILED_RETRY_9", "src/retry.ts")):
+        raise AssertionError("withdrawal must remove prior report bodies from current context")
+    if len([item for item in terminal["omittedSources"] if item["reason"] == "withdrawn"]) != 5:
+        raise AssertionError("withdrawal must account for every admitted report")
+    users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
+    pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
+    if len(users) != 2 or len(pulses) != 4:
+        raise AssertionError("automatic responses must use finite permission without intermediate human prompts")
+    state = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"][-1]
+    if state["mode"] != "left" or state["usedBudget"] != 4 or state["pendingActivation"] is not None:
+        raise AssertionError("departure must retain spent allowance and end scheduling")
+    requests = [event for event in audit if event.get("type") == "context/semantic-request"]
+    results = [event for event in audit if event.get("type") == "context/semantic-result"]
+    if len(requests) != 5 or len(results) != 5:
+        raise AssertionError("suppression can still spend an auxiliary call; empty or withdrawn-only evidence cannot")
+    for request, result in zip(requests, results, strict=True):
+        output = result["data"]
+        if output["version"] != 4 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
+            raise AssertionError("semantic audit must retain version 4 results for their exact requests")
+        if output["status"] != "completed" or output["projection"]["activation"]["kind"] != "recipient-evidence":
+            raise AssertionError("semantic audit must retain completed evidence")
+    if any(result["data"]["projection"]["activation"] != results[0]["data"]["projection"]["activation"] for result in results[1:3]):
+        raise AssertionError("both unrelated audited summaries must preserve completed evidence")
+    if any(str(event.get("type", "")).startswith("context/semantic-") for event in records):
+        raise AssertionError("auxiliary audit must remain separate from the receiving Session")
+    if first.finish_reason != "completed" or last.finish_reason != "completed":
+        raise AssertionError("explicit join and leave requests must complete")
+    return {"first": {"text": first.final_response, "finishReason": first.finish_reason},
+            "last": {"text": last.final_response, "finishReason": last.finish_reason},
+            "contextRevisions": revisions, "suppressedRevisions": suppressed_revisions, "spentBeforeSuppression": 1,
+            "automaticRequests": len(dispatches), "automaticPulses": len(pulses), "humanRequests": len(users),
+            "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
+            "auditResultVersion": 4, "realModelCalls": 0, "withdrawnSources": 5,
+            "wirePreservesExactEvidence": True}
+
+
+def automatic_withdrawal_snapshot_result(
+    records: list[dict[str, object]], first: RunResult, last: RunResult, observed: list[dict[str, object]],
+) -> dict[str, object]:
+    """Check revocation after an actual tool and identical automatic request evidence over the Python wire."""
+    requests = [event["data"] for event in records if event.get("type") == "scope-agent-context/request"]
+    wire_requests = [event["data"] for event in observed if event.get("type") == "scope-agent-context/request"]
+    if [(item["turn"], item["step"]) for item in requests] != [(2, 1)] or wire_requests != requests:
+        raise AssertionError("revocation must stop further automatic requests and preserve the one actual request")
+    ends = [event["data"] for event in records if event.get("type") == "turn/end"]
+    if [(item["turn"], item["reason"]["kind"]) for item in ends] != [(1, "completed"), (2, "blocked"), (3, "completed")]:
+        raise AssertionError("only the automatic continuation must be blocked; ordinary turns must complete")
+    wire_ends = [event["data"] for event in observed if event.get("type") == "turn/end"]
+    if not any(item == ends[1] for item in wire_ends):
+        raise AssertionError("Python notifications omitted the blocked automatic turn")
+    outcomes = [event["data"] for event in records if event.get("type") == "tool/result"]
+    if len(outcomes) != 1 or outcomes[0]["message"]["content"][0]["isError"]:
+        raise AssertionError("the actual authorized file read must finish before the automatic continuation is blocked")
+    users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
+    pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
+    if len(users) != 2 or len(pulses) != 1:
+        raise AssertionError("revocation must not fabricate ordinary input or renew the automatic pulse")
+    state = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"][-1]
+    if state["mode"] != "paused" or state["pauseReason"] != "terminal" or state["usedBudget"] != 1:
+        raise AssertionError("revocation must preserve the consumed allowance and terminal pause")
+    contexts = [event["data"]["source"] for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "scope-agent-context"]
+    if contexts[-1] != {"kind": "scope-agent-context", "version": 1, "form": "withdrawn", "reason": "revoked"}:
+        raise AssertionError("the ordinary request must receive withdrawal instead of the old snapshot")
+    if first.finish_reason != "completed" or last.finish_reason != "completed":
+        raise AssertionError("ordinary work must remain available after automatic authority ends")
+    return {"first": {"text": first.final_response, "finishReason": first.finish_reason},
+            "last": {"text": last.final_response, "finishReason": last.finish_reason},
+            "automaticRequests": len(requests), "automaticTurnReason": ends[1]["reason"]["kind"],
+            "automaticPulses": len(pulses), "ordinaryInputs": len(users), "allowedRead": True,
+            "mode": state["mode"], "pauseReason": state["pauseReason"], "usedBudget": state["usedBudget"],
+            "finalContext": contexts[-1], "wirePreservesAutomaticRequestAndBlock": True}
 
 
 def joint_automatic_snapshot_result(
@@ -1463,6 +2361,51 @@ def owner_idle_snapshot_result(
             "wirePreservesExactLocalRequestEvidence": True}
 
 
+def dual_contribution_snapshot_result(records: list[dict[str, object]], turns: list[RunResult]) -> dict[str, object]:
+    """Check unchanged local responsibility and exact withdrawal through the Python SDK stream."""
+    contexts = [event for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "development-task-context"]
+    wire_contexts = [event for turn in turns for event in turn.events if event.get("type") == "user/message"
+                     and event["data"]["source"]["kind"] == "development-task-context"]
+    if len(contexts) != 4 or [event["data"] for event in contexts] != [event["data"] for event in wire_contexts]:
+        raise AssertionError("Python wire must preserve four exact local context revisions")
+    sources = [event["data"]["source"] for event in contexts]
+    if len({source["taskId"] for source in sources}) != 1 or len({source["bindingId"] for source in sources}) != 1:
+        raise AssertionError("remote contribution replaced the original local Task or assignment")
+    if any(source["bindingEpoch"] != sources[0]["bindingEpoch"] for source in sources):
+        raise AssertionError("capture management changed the local assignment epoch")
+    if [source["revision"] for source in sources] != [2, 3, 4, 5]:
+        raise AssertionError("local context must advance for two real Writes and local withdrawal")
+    for event in contexts:
+        text = event["data"]["content"][0]["text"]
+        if "Keep the existing local implementation responsibility." not in text:
+            raise AssertionError("the original local goal disappeared from model-visible context")
+        if "DUAL_SHARED_RESULT" in text or "LOCAL_ONLY_RESULT" in text:
+            raise AssertionError("self-published tool bodies must not be reinjected as other-source facts")
+    if [sum(item["reason"] == "self-published" for item in source["omittedSources"]) for source in sources] != [0, 1, 2, 0]:
+        raise AssertionError("both tool reports need local self-publication provenance")
+    withdrawn = [item for item in sources[-1]["omittedSources"] if item["reason"] == "withdrawn"]
+    if len(withdrawn) != 2 or "ended" not in contexts[-1]["data"]["content"][0]["text"]:
+        raise AssertionError("stopLocal must retain exact current withdrawal evidence")
+    if any(event.get("type", "").startswith("scope-agent-context/") for event in records):
+        raise AssertionError("contribution-only authorization must not install remote reading or automatic work")
+    calls = [event["data"] for event in records if event.get("type") == "tool/call"]
+    if [(call["turn"], call["name"]) for call in calls] != [(2, "write"), (3, "write")]:
+        raise AssertionError("ordinary history must precede two real Writes without recall tools")
+    expected_responses = [
+        "The existing local Task and ordinary work history are retained.",
+        "One real Write reached both independently authorized Tasks.",
+        "Remote sharing ended; local collection received the next Write.",
+        "Both captures ended independently; the local Task and history remain.",
+    ]
+    if [turn.final_response for turn in turns] != expected_responses or any(turn.finish_reason != "completed" for turn in turns):
+        raise AssertionError("the Python runtime did not complete the four controlled local turns")
+    return {"turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
+            "contextRevisions": [source["revision"] for source in sources], "realWriteTurns": [2, 3],
+            "withdrawnSources": len(withdrawn), "localAssignmentPreserved": True,
+            "wirePreservesExactContextMessages": True, "remoteReadingEvents": 0}
+
+
 def owner_participation_snapshot_result(records: list[dict[str, object]], turns: list[RunResult]) -> dict[str, object]:
     """Check owner-local contribution and independent peer work in the actual Python SDK stream."""
     contexts = [event for event in records if event.get("type") == "user/message"
@@ -1518,7 +2461,7 @@ def native_contribution_snapshot_result(records: list[dict[str, object]], turns:
     projections = [event["data"]["source"]["projection"] for event in contexts]
     if [projection["taskRevision"] for projection in projections] != [5, 7, 8]:
         raise AssertionError("native source reports and withdrawal must identify the owner commit revision")
-    if any(projection["backend"] != {"id": "text", "revision": "7"} for projection in projections):
+    if any(projection["backend"] != {"id": "text", "revision": "9"} for projection in projections):
         raise AssertionError("native contribution must use the production text provider")
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("native updates must replace current context while preserving historical events")
@@ -1585,6 +2528,45 @@ def peer_facts_snapshot_result(records: list[dict[str, object]], turns: list[Run
     }
 
 
+def expand_semantic_delivery(value: dict[str, object]) -> dict[str, object]:
+    """Expand current delivered tables independently before comparing Python wire source metadata."""
+    def at(table: list[dict[str, object]], index: int) -> dict[str, object]:
+        if type(index) is not int or not 0 <= index < len(table):
+            raise AssertionError("semantic delivery index must be a zero-based integer within its table")
+        return table[index]
+
+    def source(index: int) -> dict[str, object]:
+        entry = at(value["sourceTable"], index)
+        if entry["kind"] == "task":
+            return {"kind": "task", "taskId": entry["taskId"], "revision": entry["revision"]}
+        if entry["kind"] != "publication":
+            raise AssertionError("semantic source table must identify a Task or publication")
+        task = at(value["sourceTable"], entry["taskSourceIndex"])
+        if task["kind"] != "task":
+            raise AssertionError("publication references must identify their exact Task revision")
+        return {"kind": "publication", "taskId": task["taskId"], "revision": task["revision"],
+                "publicationId": entry["publicationId"]}
+
+    def attribution(index: int) -> dict[str, object]:
+        entry = at(value["sourceTable"], index)["attribution"]
+        result = dict(entry)
+        for key in ("authorization", "localAuthorization"):
+            if key not in entry:
+                continue
+            if set(entry[key]) != {"authorizationIndex"}:
+                raise AssertionError("fixture authorization must reference the complete authorization table")
+            result[key] = at(value["authorizationTable"], entry[key]["authorizationIndex"])
+        return result
+
+    return {**value, "coverage": {
+        "selectedSources": [source(index) for index in value["coverage"]["selectedSources"]],
+        "omittedSources": [{"source": source(item["sourceIndex"]), "reason": item["reason"]}
+                           for item in value["coverage"]["omittedSources"]],
+    }, "updates": [{**update, "sources": [
+        {"source": source(item["sourceIndex"]), "quote": item["quote"], "attribution": attribution(item["sourceIndex"])}
+        for item in update["sources"]]} for update in value["updates"]]}
+
+
 def semantic_snapshot_result(
     records: list[dict[str, object]], turns: list[RunResult], audit: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -1596,15 +2578,17 @@ def semantic_snapshot_result(
     if len(contexts) != 4 or [event["data"] for event in wire_contexts] != [event["data"] for event in contexts]:
         raise AssertionError("Python wire events must preserve all four exact semantic context messages")
     revisions = [event["data"]["source"]["revision"] for event in contexts]
-    if revisions != [4, 5, 6, 7] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
+    if revisions != [5, 6, 7, 8] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
         raise AssertionError("Python runtime must consume the real semantic backend at each owner revision")
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("semantic updates and withdrawal must replace the current native surface")
     texts = [event["data"]["content"][0]["text"] for event in contexts]
-    projections = [json.loads(text.split("<shared-work-updates>\n")[1].split("\n</shared-work-updates>")[0]) for text in texts]
+    projections = [expand_semantic_delivery(json.loads(text.split("<shared-work-updates>\n")[1].split("\n</shared-work-updates>")[0])) for text in texts]
     update_counts = [len(projection["updates"]) for projection in projections]
-    if update_counts != [1, 2, 3, 0]:
-        raise AssertionError("semantic updates must include each report until its source authorization ends")
+    if update_counts != [2, 2, 3, 0]:
+        raise AssertionError("semantic updates must retain the current complete Write and later reports until source withdrawal")
+    if any("WRITE_ALPHA" in text for text in texts[1:]) or any("WRITE_CURRENT" not in text for text in texts[1:3]):
+        raise AssertionError("a complete replacement must remove the superseded Write from current semantic text")
     for event, projection in zip(contexts, projections, strict=True):
         source = event["data"]["source"]
         if projection["coverage"] != {"selectedSources": source["selectedSources"], "omittedSources": source["omittedSources"]}:
@@ -1617,10 +2601,10 @@ def semantic_snapshot_result(
                 raise AssertionError("each semantic update must cite its selected original publication")
     if any("UNRELATED_ADMIN" in text for text in texts):
         raise AssertionError("the irrelevant source body leaked into an adopted semantic projection")
-    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md")):
+    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "WRITE_CURRENT", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md")):
         raise AssertionError("source withdrawal must exclude old semantic text and quotes")
-    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 3:
-        raise AssertionError("withdrawal must account for all three original tool observations")
+    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 4:
+        raise AssertionError("withdrawal must account for all four original tool observations")
     if len(projections[-1]["mandatory"]) != 1 or projections[-1]["mandatory"][0]["kind"] != "withdrawal":
         raise AssertionError("the controlled model cannot erase the deterministic withdrawal notice")
     requests = [event for event in audit if event.get("type") == "context/semantic-request"]
@@ -1634,6 +2618,8 @@ def semantic_snapshot_result(
             raise AssertionError("semantic audit result must identify its exact completed model request")
         if request["data"]["purpose"] != "context-summary" or request["data"]["call"]["provider"] != "semantic-snapshot":
             raise AssertionError("semantic runtime must use the dedicated controlled auxiliary route")
+        if output["version"] != 4 or output["projection"]["activation"]["kind"] != "recipient-evidence":
+            raise AssertionError("current semantic audit must record versioned recipient evidence")
         if output["projection"]["text"] != context["data"]["content"][0]["text"]:
             raise AssertionError("actual native context must equal the durably completed semantic projection")
         audit_links.append({"requestSeq": request["seq"], "status": output["status"],
@@ -1643,7 +2629,7 @@ def semantic_snapshot_result(
     return {
         "turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
         "contextRevisions": revisions, "backend": "semantic", "updateCounts": update_counts,
-        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 3,
+        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 4,
         "controlledSemanticRequests": len(requests), "realModelRequests": 0,
         "auditResults": audit_links, "wirePreservesExactContextMessages": True,
         "isolatedAuditMatchesNativeContext": True,

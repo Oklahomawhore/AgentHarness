@@ -25,8 +25,19 @@ class SourceAdapter extends LlmAdapter {
 }
 
 /** Create a private Loader tree with real disk storage and native tools. */
-export async function host(root, role) {
+export async function host(root, role, overrides = {}) {
   const ctx = new Context()
+  try {
+    return await initializeHost(ctx, root, role, overrides)
+  } catch (error) {
+    try { await ctx.fiber.dispose() } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Native fixture initialization and cleanup failed', { cause: error })
+    }
+    throw error
+  }
+}
+
+async function initializeHost(ctx, root, role, overrides) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
   const workspace = join(root, 'workspace')
@@ -48,8 +59,9 @@ export async function host(root, role) {
     { name: 'storage-domain', config: { backend: 'json' } },
     { name: 'rooms', config: { nodeId: `snapshot-native-${role}`, presenceTtlMs: 60000, maxParticipants: 32, maxRooms: 32, maxTextBytes: 65536 } },
     { name: 'tasks', config: { maxTasks: 32, maxEventsPerTask: 128, maxMergeParents: 8, maxContextBlockBytes: 65536,
-      maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000 } },
-    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${role}-peer` } }, { name: 'access', config: accessConfig },
+      maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000, ...overrides.task } },
+    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${role}-peer` } },
+    { name: 'access', config: { ...accessConfig, ...overrides.access } },
   ]
   if (role === 'source') {
     await add('agents', '@deepseek-ai/dsh-agent')
@@ -88,7 +100,7 @@ export async function host(root, role) {
 
 /** Explicit test-only transport and source retention budgets, not product defaults. */
 export const accessConfig = {
-  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768,
+  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152,
   requestTimeoutMs: 5000, maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
   waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
   maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000,

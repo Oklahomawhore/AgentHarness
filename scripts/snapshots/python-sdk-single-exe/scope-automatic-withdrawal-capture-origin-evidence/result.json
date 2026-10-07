@@ -1,0 +1,25 @@
+{
+  "first": {
+    "text": "My existing local responsibility remains in this Session.",
+    "finishReason": "completed"
+  },
+  "last": {
+    "text": "Ordinary local work continues without the revoked shared facts.",
+    "finishReason": "completed"
+  },
+  "automaticRequests": 1,
+  "automaticTurnReason": "blocked",
+  "automaticPulses": 1,
+  "ordinaryInputs": 2,
+  "allowedRead": true,
+  "mode": "paused",
+  "pauseReason": "terminal",
+  "usedBudget": 1,
+  "finalContext": {
+    "kind": "scope-agent-context",
+    "version": 1,
+    "form": "withdrawn",
+    "reason": "revoked"
+  },
+  "wirePreservesAutomaticRequestAndBlock": true
+}

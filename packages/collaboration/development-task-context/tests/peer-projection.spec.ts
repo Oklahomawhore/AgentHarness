@@ -6,6 +6,8 @@ import type {
 import { afterEach, expect, it } from 'vitest'
 import FactsBackend from '../src/facts.ts'
 import TextBackend from '../src/text.ts'
+import { prepareSemanticInput, semanticModelInput } from '../src/semantic-input.ts'
+import { semanticCapturedInputSchema } from '../src/semantic-schema.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
 
 type PeerPublication = Extract<DevelopmentTaskContextPublication, { readonly peerContribution: { readonly version: 1 } }>
@@ -411,7 +413,7 @@ it('budgets the complete compact tool report exactly and still withdraws it with
   expect(withdrawn.text).not.toContain('TOOL_VALUE')
   expect(withdrawn.omittedSources.map(item => item.reason)).toEqual(['withdrawn'])
   expect(withdrawn.text).toContain('The owner ended this peer contribution.')
-  expect(provider.identity).toEqual({ id: 'text', revision: '7' })
+  expect(provider.identity).toEqual({ id: 'text', revision: '9' })
 })
 
 function canonicalToolReport(publication: PeerPublication): PeerPublication {
@@ -420,3 +422,80 @@ function canonicalToolReport(publication: PeerPublication): PeerPublication {
     + 'The Task owner has not independently verified the tool execution or file contents.\n'
     + JSON.stringify(publication.peerToolObservation) }
 }
+
+
+it('omits only the exact original peer capture and retains other Sessions, Tasks and grant generations', async () => {
+  const authorization: DevelopmentTaskPeerContributionGrant = { ...grant(),
+    source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } }
+  const result: DevelopmentTaskToolObservationResult = { kind: 'tool-observation', version: 1,
+    tool: 'Write', reportedStatus: 'success', fields: { rootIndex: 0, path: 'same.md', content: 'IDENTICAL_BODY' }, omissions: [] }
+  const changes = {
+    ownerPeerId: 'other-owner', contributorPeerId: 'other-peer', taskId: 'other-task', grantId: 'other-grant',
+    generation: 'other-grant-generation', captureId: 'other-session', captureGeneration: 'other-capture-generation',
+  } as const
+  const publications = [toolSample('self', 1, authorization, result),
+    ...Object.entries(changes).map(([key, value]) => toolSample(key, 1, { ...authorization, [key]: value }, result))]
+  const original = structuredClone(publications)
+  const current = input(publications)
+  const own = { ...current, recipient: { ...current.recipient, peerCapture: authorization } }
+  const projected = await services().text.compute(own)
+  expect(projected.omittedSources).toEqual([
+    { source: { kind: 'publication', taskId: 'orders', revision: 12, publicationId: 'self' }, reason: 'self-published' },
+  ])
+  expect(projected.selectedSources.filter(source => source.kind === 'publication').map(source => source.publicationId))
+    .toEqual(Object.keys(changes))
+  expect(publications).toEqual(original)
+  const semantic = prepareSemanticInput(own)
+  expect(semantic.omitted).toEqual(projected.omittedSources)
+  expect(semantic.sources.map(source => source.source)).toEqual(projected.selectedSources.filter(source => source.kind === 'publication'))
+  expect(semantic.recipient).toEqual(current.recipient)
+  expect(semanticCapturedInputSchema.safeParse(JSON.parse(semanticModelInput(semantic))).success).toBe(true)
+  const manual = await services().text.compute(current)
+  expect(manual.omittedSources).toEqual([])
+  expect(prepareSemanticInput(current).sources).toHaveLength(publications.length)
+})
+
+it('keeps exact-capture withdrawals and typed OpenAPI evidence instead of treating them as ordinary self reports', async () => {
+  const authorization: DevelopmentTaskPeerContributionGrant = { ...grant(),
+    source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } }
+  const publication = toolSample('self', 1, authorization, { kind: 'tool-observation', version: 1,
+    tool: 'Write', reportedStatus: 'success', fields: { rootIndex: 0, path: 'notes.md', content: 'WITHDRAWN_BODY' }, omissions: [] })
+  const base = input([publication, ended(authorization)])
+  const own = { ...base, recipient: { ...base.recipient, peerCapture: authorization } }
+  const text = await services().text.compute(own)
+  expect(text.omittedSources.map(source => source.reason)).toEqual(['withdrawn'])
+  expect(text.text).toContain('The owner ended this peer contribution.')
+  expect(text.text).not.toContain('WITHDRAWN_BODY')
+  const semantic = prepareSemanticInput(own)
+  expect(semantic.omitted).toEqual(text.omittedSources)
+  expect(semantic.mandatory).toHaveLength(1)
+  const typedBase = input([sample('typed', 1, 'KEEP_TYPED_DECLARATION')])
+  const typed = { ...typedBase, recipient: { ...typedBase.recipient, peerCapture: grant() } }
+  const providers = services()
+  expect((await providers.text.compute(typed)).text).toContain('KEEP_TYPED_DECLARATION')
+  expect((await providers.facts.compute(typed)).text).toContain('KEEP_TYPED_DECLARATION')
+  expect(prepareSemanticInput(typed).mandatory).toHaveLength(1)
+})
+
+it('frees complete UTF-8 delivery space for an independent report without deleting owner sources', async () => {
+  const authorization: DevelopmentTaskPeerContributionGrant = { ...grant(),
+    source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } }
+  const make = (id: string, at: number, selected: DevelopmentTaskPeerContributionGrant, body: string) =>
+    canonicalToolReport(toolSample(id, at, selected, { kind: 'tool-observation', version: 1, tool: 'Write',
+      reportedStatus: 'success', fields: { rootIndex: 0, path: '同名.md', content: body }, omissions: [] }))
+  const other = make('other', 1, { ...authorization, captureId: 'other-session' as typeof authorization.captureId }, 'OTHER_CURRENT_REPORT' + '事实'.repeat(100))
+  const own = make('self', 2, authorization, 'OWN_LARGE_REPORT' + '本地'.repeat(140))
+  const base = input([other, own])
+  const provider = services().text
+  const fullOwn = await provider.compute(input([own]))
+  const budget = Buffer.byteLength(fullOwn.text, 'utf8') + 128
+  const manual = await provider.compute({ ...base, maxContextBytes: budget })
+  expect(manual.text).toContain('OWN_LARGE_REPORT')
+  expect(manual.text).not.toContain('OTHER_CURRENT_REPORT')
+  const exact = await provider.compute({ ...base, recipient: { ...base.recipient, peerCapture: authorization }, maxContextBytes: budget })
+  expect(exact.text).not.toContain('OWN_LARGE_REPORT')
+  expect(exact.text).toContain('OTHER_CURRENT_REPORT')
+  expect(exact.omittedSources.map(source => source.reason)).toEqual(['self-published'])
+  expect(Buffer.byteLength(exact.text, 'utf8')).toBeLessThanOrEqual(budget)
+  expect(base.view.task.context).toEqual([other, own])
+})

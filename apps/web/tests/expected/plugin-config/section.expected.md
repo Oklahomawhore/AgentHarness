@@ -44,3 +44,7 @@
         - 'button "展开设置: 协作网络"':
           - text: 协作网络 选择其他 AgentHarness 实例在 Host 重启后可连接的范围。
           - img
+      - listitem:
+        - 'button "展开设置: 协作摘要"':
+          - text: 协作摘要 选择此 Host 向已授权协作者提供上下文的方式。
+          - img

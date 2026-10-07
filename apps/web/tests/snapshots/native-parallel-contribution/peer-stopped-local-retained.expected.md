@@ -1,0 +1,35 @@
+- paragraph: 把当前会话连接到本机创建的目标，再单独决定是否分享文件工作。其他会话不会自动加入。
+- status: 已连接：独立维护客户端重试实现
+- paragraph: 正常工作时会读取这个目标的当前上下文。自动工作和文件分享需要分别允许。
+- status: 自动协作已暂停
+- paragraph: 你已暂停自动启动。正常工作时仍会更新上下文。
+- paragraph: 累计已用 1 / 2 次 · 每轮最多 2 步
+- paragraph: 本地目标：继续维护我负责的重试实现；外发文件工作不改变本地目标。
+- group: 连接详情
+- paragraph: 自动工作会在空闲时为这个目标调用模型，并可能执行已允许的工具；不会因此允许分享文件。
+- button "恢复自动工作（剩余 1 次）"
+- button "关闭自动工作，保留读取"
+- checkbox "允许此会话为当前目标开始有限自动工作"
+- text: 允许此会话为当前目标开始有限自动工作
+- paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+- button "退出本地目标"
+- paragraph: 退出会停止自动工作、撤回此本地目标的文件分享，并断开目标读取。历史记录仍保留。
+- status: 正在采集已授权的文件工作
+- term: 本机目标
+- definition: 独立维护客户端重试实现
+- term: 允许采集的目录
+- definition: {{cwd}}/parallel-source/project
+- term: 文件内容范围
+- definition: 原始工具参数及完成状态
+- term: 允许分享的文件操作
+- definition: 写入文件（write）
+- term: 授权到期时间
+- definition: {{permissionExpiresLocal}}
+- term: 最多样本数
+- definition: "8"
+- term: 每份样本字节上限
+- definition: "8192"
+- paragraph: 等待提交的观察：0
+- button "停止分享并撤回"
+- paragraph: 停止分享会撤回此来源，保留当前会话与目标的读取连接。
+- button "重新读取分享状态"

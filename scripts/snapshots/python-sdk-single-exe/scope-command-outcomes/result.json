@@ -1,0 +1,30 @@
+{
+  "turns": 3,
+  "finalResponse": "Stopped command sharing no longer supplies command outcomes.",
+  "hostCount": 2,
+  "executingSessionCount": 2,
+  "requestCounts": {
+    "owner": 6,
+    "receiver": 3
+  },
+  "sourceTools": [
+    "write",
+    "bash",
+    "write",
+    "bash"
+  ],
+  "contextBytes": [
+    2455,
+    2496,
+    2051
+  ],
+  "commandExitCodes": [
+    0,
+    1
+  ],
+  "explicitCommandOnlyPermission": true,
+  "failedHeadSupersedesSuccess": true,
+  "exactSourceWithdrawal": true,
+  "receiverDiskReconstruction": true,
+  "noRecall": true
+}

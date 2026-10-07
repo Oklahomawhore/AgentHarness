@@ -26,6 +26,42 @@ type ClaudeScopeSessionKey = Branded<'ClaudeScopeSessionKey'>
 ```
 
 ```ts type-equiv
+/** One source user's joint receiving consent, independent of capture lifetime. */
+type ClaudeScopeJointId = Branded<'ClaudeScopeJointId'>
+```
+
+```ts type-equiv
+/** Receiving retained by one joint application; active means local adoption, not model admission. */
+interface ClaudeScopeJointSummary {
+  readonly id: ClaudeScopeJointId
+  readonly capture: ClaudeScopeContributionSelection
+  /** Original consent revision, reused unchanged when retrying a pending application. */
+  readonly expectedReadRevision: number
+  readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
+  readonly intent: 'adopt' | 'cancel-pending' | 'leave'
+  /** Either original permission still has locally retained termination work. */
+  readonly cleanupPending: boolean
+  readonly subscriptionId?: ScopeSubscriptionId
+}
+```
+
+```ts type-equiv
+/** Withdraw only the receiving and contribution identities owned by this joint application. */
+interface ClaudeScopeLeaveJointRequest {
+  readonly sessionKey: ClaudeScopeSessionKey
+  readonly jointId: ClaudeScopeJointId
+}
+```
+
+```ts type-equiv
+/** Change only the address of this joint application's retained grants; never reopen stopped work. */
+interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {
+  readonly expectedReadRevision: number
+  readonly ownerAddress: string
+}
+```
+
+```ts type-equiv
 /** Explicit deployment inputs for project-local hook installation. */
 interface ClaudeScopeSetupConfig {
   /** Absolute Harness home used for the shared profile and the hook's DSH_HOME. */
@@ -139,6 +175,10 @@ interface ClaudeScopeSessionSummary {
   readonly cwd?: string
   readonly observedAt: number
   readonly ended: boolean
+  /** Monotonic local receive-management revision; unrelated Hook observations do not advance it. */
+  readonly readRevision: number
+  /** Latest joint operation remains visible after its contribution stops. */
+  readonly joint?: ClaudeScopeJointSummary
   readonly taskId?: DevelopmentTaskId
   readonly responsibility?: string
   /** Omitted when sharing has stopped and no owner confirmation remains pending. */
@@ -311,7 +351,7 @@ interface ScopeArtifactChain {
 
 ```ts type-equiv
 /** Local-only observed identity and its current authorization, if any. */
-interface ScopeSession {
+type ScopeSession = {
   readonly sessionKey: ClaudeScopeSessionKey
   readonly sessionId: string
   readonly participantId: DevelopmentParticipantId
@@ -329,6 +369,42 @@ interface ScopeSession {
     readonly receipt?: DevelopmentTaskObservedReceipt | undefined
   } | undefined
   readonly sharingIssue?: 'owner-unavailable' | 'capacity' | 'rejected' | undefined
+} & ({
+  readonly version?: undefined
+  readonly readRevision?: undefined
+  readonly joint?: undefined
+} | {
+  readonly version: 2
+  readonly readRevision: number
+  readonly joint?: ScopeJoint | undefined
+})
+```
+
+```ts type-equiv
+/** Original authorization plus independently retryable receiving and route work. */
+interface ScopeJoint {
+  readonly id: ClaudeScopeJointId
+  readonly proposal: ClaudeScopeContributionProposal
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  readonly expectedReadRevision: number
+  readonly authorizedReadRevision: number
+  readonly cleanupPending: boolean
+  readonly state: ClaudeScopeJointSummary['state']
+  readonly intent: ClaudeScopeJointSummary['intent']
+  /** Set only after the exact contribution grant is verified active or its terminal receipt is accepted. */
+  readonly ready: boolean
+  readonly subscription?: ScopeCaptureSubscription | undefined
+  readonly contributionInvitation?: ScopeContributionInvitation | undefined
+  readonly adoptedReadRevision?: number | undefined
+  readonly routeRevision: number
+  readonly routePending: boolean
+  /** The last explicit route selection permits an exact retry after its management reply is lost. */
+  readonly routeRequest?: {
+    readonly expectedReadRevision: number
+    readonly appliedReadRevision: number
+    readonly ownerAddress: string
+  } | undefined
 }
 ```
 
@@ -617,6 +693,12 @@ The backend input identifies a captured Task revision, recipient binding interva
 Source: [`packages/collaboration/development-task-context/src/types.ts`](../../packages/collaboration/development-task-context/src/types.ts)
 
 ```ts type-equiv
+/** Exact owner-authorized source interval of the recipient's original joint capture. */
+type DevelopmentTaskContextPeerCapture = Pick<DevelopmentTaskPeerContributionGrant,
+  'ownerPeerId' | 'contributorPeerId' | 'taskId' | 'grantId' | 'generation' | 'captureId' | 'captureGeneration'>
+```
+
+```ts type-equiv
 /** Durable identity of the task-bound event that began one binding interval. */
 interface DevelopmentTaskBindingEpoch {
   readonly nodeId: DevelopmentNodeId
@@ -647,6 +729,8 @@ interface DevelopmentTaskContextInput {
     readonly participantId: DevelopmentParticipantId
     /** Routing inputs only; the consumer owns authorization and delivery identity. */
     readonly sessionLabel?: string
+    /** Original joint capture verified by the consumer; omission identifies authorship, not retained model memory. */
+    readonly peerCapture?: DevelopmentTaskContextPeerCapture
   }
   /** Maximum UTF-8 bytes of the complete model-visible text, including framing. */
   readonly maxContextBytes: number
@@ -820,7 +904,48 @@ Presence remains a transient lease outside durable logs. Room creation, join, an
 
 ## Independent device read scopes
 
-[Scope access](../../packages/collaboration/scope-access/README.md) authorizes and computes a single Root Task projection on its owner; [transport](../../packages/collaboration/scope-transport/README.md) authenticates device identity. Receivers retain invitations and exact projections without replicating Task or Room logs.
+[Scope access](../../packages/collaboration/scope-access/README.md) authorizes and computes a single Root Task projection on its owner; [transport](../../packages/collaboration/scope-transport/README.md) authenticates device identity. Receivers retain invitations and exact projections without replicating Task or Room logs. Read protocol version 4 separates complete wire and decoded-response limits from model text budgets; lossless encoding preserves exact projection text and source coverage. The package README owns encoding and protocol-version behavior.
+
+```ts type-equiv
+/** Immutable original source selected by a joint receiving operation, never inferred from its peer. */
+type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, 'captureId' | 'captureGeneration'>
+```
+
+```ts type-equiv
+interface ScopeSubscriptionFields {
+  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
+  readonly routeRevision?: number
+  readonly id: ScopeSubscriptionId
+  readonly generation: ScopeGeneration
+  readonly invitation: ScopeInvitation
+  readonly state: 'active' | 'left' | 'revoked' | 'expired'
+}
+```
+
+```ts type-equiv
+/** Historical or manual receiving intent without a source-association claim. */
+interface ScopePlainSubscription extends ScopeSubscriptionFields {
+  readonly version?: never
+  readonly originalCapture?: never
+}
+```
+
+```ts type-equiv
+/** Joint receiving intent whose original capture cannot change across retries or route recovery. */
+interface ScopeCaptureSubscription extends ScopeSubscriptionFields {
+  readonly version: 2
+  readonly originalCapture: ScopeOriginalCapture
+}
+```
+
+```ts type-equiv
+/** Exact owner-verified original source included in both projection attribution and its digest. */
+interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {
+  readonly version: 3
+  readonly activation: DevelopmentTaskContextActivation
+  readonly peerCapture: DevelopmentTaskContextPeerCapture
+}
+```
 
 ```ts type-equiv
 /** Owner-issued read authorization identity, never reused after revocation. */
@@ -866,15 +991,8 @@ interface ScopeReadGrant {
 ```
 
 ```ts type-equiv
-/** Explicit receiver intent; active means locally enabled, not remotely verified. */
-interface ScopeSubscription {
-  /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
-  readonly routeRevision?: number
-  readonly id: ScopeSubscriptionId
-  readonly generation: ScopeGeneration
-  readonly invitation: ScopeInvitation
-  readonly state: 'active' | 'left' | 'revoked' | 'expired'
-}
+/** Active means locally enabled, not remotely verified; only version 2 identifies the original joint source. */
+type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription
 ```
 
 ```ts type-equiv
@@ -885,6 +1003,15 @@ interface ScopeInviteRequest {
   readonly ownerAddress: string
   readonly expiresAt: number
   readonly responsibility: string
+}
+```
+
+```ts type-equiv
+/** Consumer-selected backend text allowance; callers reserve model framing and other context separately. */
+interface ScopeRetrieveWithinBudgetRequest {
+  readonly subscriptionId: ScopeSubscriptionId
+  /** Positive safe-integer UTF-8 byte ceiling, further narrowed by both Hosts' configured limits. */
+  readonly maxContextBytes: number
 }
 ```
 
@@ -1008,17 +1135,69 @@ interface ScopeAccessCurrentProjection extends ScopeAccessProjectionContent {
 ```
 
 ```ts type-equiv
-/** Strict legacy replay and current owner-produced projections. */
-type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection
+/** Strict historical replay and current owner-produced projections, including explicit joint-source attribution. */
+type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection
 ```
 
-## Native file-work contribution
+## Native work contribution
 
-[Native source contribution](../../packages/collaboration/scope-agent-contribution/README.md) collects permitted file-tool completions from one existing ordinary Agent after explicit local consent and independent owner approval. Its authenticated management methods return local durable state without exposing captured content. Mutations compare capture identity; change events invalidate Client observations, and neither collecting state nor revision proves model adoption.
+[Native source contribution](../../packages/collaboration/scope-agent-contribution/README.md) collects permitted file-tool completions and explicitly selected foreground command outcomes from one existing ordinary Agent after explicit local consent and independent owner approval. Its authenticated management methods return local durable state without exposing captured content. Mutations compare capture identity; change events invalidate Client observations, and neither collecting state nor revision proves model adoption.
 
 ```ts type-equiv
 /** One source capture identity, never reused after termination. */
 type ScopeAgentContributionSelection = Pick<ScopeContributionProposal, 'captureId' | 'captureGeneration'>
+```
+
+```ts type-equiv
+/** One explicit historical export selection, independent of local recording and remote reading permission. */
+interface ScopeAgentContributionInitializationRequest {
+  readonly kind: 'recorded-local-tools'
+  readonly expectedLocalCapture: ScopeAgentContributionSelection
+  readonly localTask: ScopeAgentLocalContributionBinding
+}
+```
+
+```ts type-equiv
+/** Current retained local observations; recording capacity exhaustion does not remove initialization eligibility. */
+interface ScopeAgentContributionInitializationSource {
+  readonly eligible: boolean
+  readonly recordedSamples: number
+  readonly unconfirmedSamples: number
+}
+```
+
+```ts type-equiv
+/** Frozen initialization covers recorded observations, not current file contents or every past execution. */
+interface ScopeAgentContributionInitialization {
+  readonly state: 'pending' | 'frozen' | 'unavailable'
+  readonly request: ScopeAgentContributionInitializationRequest
+  readonly cutoff: { readonly localSequence: number; readonly sessionSeq: SessionSeqCursor } | null
+  readonly coverage: {
+    readonly recorded: number
+    readonly selected: number
+    readonly omitted: number
+    readonly unconfirmed: number
+    /** In-progress mutations or settled completions not yet persisted at the cutoff. */
+    readonly inFlight: number
+    /** Owner-confirmed seed receipts; selected records alone do not establish delivery. */
+    readonly acknowledged: number
+  }
+  readonly reason: 'source-unavailable' | 'source-changed' | 'coverage-invalid' | 'capacity' | null
+}
+```
+
+```ts type-equiv
+/** Editable, uncommitted defaults for one live Session; no collection or receiving permission. */
+interface ScopeAgentContributionPermissionDraft {
+  readonly agentId: SessionId
+  /** Only the current Session's absolute working directory; empty when it is unavailable. */
+  readonly roots: string[]
+  /** File-tool names currently visible to this Agent; actual collection still requires native mutation evidence. */
+  readonly tools: ('write' | 'edit')[]
+  readonly durationHours: number
+  readonly maxSamples: number
+  readonly maxSampleBytes: number
+}
 ```
 
 ```ts type-equiv
@@ -1029,10 +1208,18 @@ interface ScopeAgentContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
-  /** Explicit receiving consent for a joint entry; automatic work requires its own finite local policy. */
+  /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
+  readonly initialization?: ScopeAgentContributionInitializationRequest
+  /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
   readonly receive?: {
     readonly expectedReadStateSeq: SessionSeqCursor
+    /** Exact existing local assignment retained by this additional scope permission. */
+    readonly localTask?: ScopeAgentLocalTaskTarget
     /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
     readonly automatic?: ScopeAgentAutomaticPolicy
   }
@@ -1055,7 +1242,7 @@ interface ScopeAgentContributionRecoverRouteRequest {
 ```
 
 ```ts type-equiv
-/** Stop sharing and pending read/automatic adoption; preserve already adopted reading and its execution policy. */
+/** Select the exact local or remote capture accepted by the called stop method. */
 interface ScopeAgentContributionStopRequest {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection
@@ -1070,6 +1257,7 @@ interface ScopeAgentContributionCapture {
   readonly proposal: ScopeContributionProposal
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
   readonly invitation: ScopeContributionInvitation | null
@@ -1080,6 +1268,8 @@ interface ScopeAgentContributionCapture {
   readonly collecting: boolean
   readonly application: 'applying' | 'waiting' | 'cancelling' | 'rejected' | 'expired' | null
   readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
+  /** Separately approved recorded-tool initialization and receipt-derived delivery progress. */
+  readonly initialization?: ScopeAgentContributionInitialization
   /** Source-local collection or persistence problem; independent of the owner's response. */
   readonly collectionIssue: 'retention-limit' | 'sample-limit' | 'attribution-budget'
     | 'durability-unavailable' | 'durability-failed' | null
@@ -1091,7 +1281,7 @@ interface ScopeAgentContributionCapture {
 /** Read-only live eligibility and one durable-domain revision; never an online authorization or model-adoption claim. */
 interface ScopeAgentContributionStatus {
   readonly agentId: SessionId
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'task-conflict'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork'
   readonly revision: number
   readonly capture: ScopeAgentContributionCapture | null
   readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation
@@ -1101,6 +1291,8 @@ interface ScopeAgentContributionStatus {
 ```ts type-equiv
 /** Local adoption of a joint entry's separate read permission; active describes a retained local binding. */
 interface ScopeAgentContributionReceiving {
+  /** Original local assignment retained by this join; absence selects an unbound Session. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Original local consent; current mode and consumed budget belong to scopeAgentContext status. */
   readonly automatic?: ScopeAgentAutomaticPolicy
   readonly adoptionId: ScopeAgentJoinReadId
@@ -1122,7 +1314,7 @@ interface ScopeAgentContributionReceivingContinuation {
 
 ## Independent scope receipt in native Sessions
 
-[The native consumer](../../packages/collaboration/scope-agent-context/README.md) binds an independent read invitation to one live ordinary Agent. Change hints contain no facts; pre-step reads online and logs the exact projection in the Session. Passive mode waits for ordinary work, while automatic mode requires a local goal and finite budget; restored automatic execution is paused.
+[The native consumer](../../packages/collaboration/scope-agent-context/README.md) binds an independent read invitation to one live ordinary Agent, optionally retaining its explicitly confirmed local Task assignment under one context budget and scheduler. Change hints contain no facts; pre-step reads online and logs the exact projection in the Session. Passive mode waits for ordinary work, while automatic mode requires a local goal and finite budget; restored automatic execution is paused.
 
 ```ts type-equiv
 /** Opaque change comparison tied to one subscription and authorized owner state; not a read lease. */
@@ -1149,6 +1341,27 @@ interface ScopeTransportLimits {
 ```
 
 ```ts type-equiv
+/** Durable route intent preserves the exact subscription, binding, and execution permission. */
+interface ScopeAgentRouteFields {
+  readonly agentId: SessionId
+  readonly bindingId: ScopeAgentBindingId
+  readonly expectedReadStateSeq: SessionSeqCursor
+  readonly previousOwnerAddress: string
+}
+```
+
+```ts type-equiv
+/** Exact source identity is carried only by the original joint subscription and its immutable plan. */
+type ScopeAgentCaptureJoinReadPlan = {
+  readonly subscription: ScopeCaptureSubscription & { readonly state: 'active' }
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+} & (
+  | (Omit<ScopeAgentJoinReadPlan, 'subscription'> & { readonly kind: 'scope' })
+  | (Omit<ScopeAgentCompositeJoinReadPlan, 'subscription'> & { readonly kind: 'local-task-scope' })
+)
+```
+
+```ts type-equiv
 /** One native-session binding interval, independent of a remote grant's lifetime. */
 type ScopeAgentBindingId = Branded<'ScopeAgentBindingId'>
 ```
@@ -1159,12 +1372,16 @@ type ScopeAgentJoinReadId = Branded<'ScopeAgentJoinReadId'>
 ```
 
 ```ts type-equiv
-/** Adopt one joint operation's read permission into an initially unbound live Session. */
+/** Adopt one joint operation’s read permission while retaining an explicitly selected local responsibility. */
 interface ScopeAgentJoinReadRequest {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
   readonly expectedReadStateSeq: SessionSeqCursor
   readonly invitation: ScopeInvitation
+  /** Original source-owned capture; omitted historical operations retain their original full read. */
+  readonly originalCapture?: ScopeOriginalCapture
+  /** Exact existing local responsibility retained by this additional read permission. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Explicit permission from this Session's user; absence preserves passive adoption. */
   readonly automatic?: ScopeAgentAutomaticPolicy
 }
@@ -1198,15 +1415,11 @@ interface ScopeAgentUpdateRouteResult {
 ```
 
 ```ts type-equiv
-/** Durable route intent preserves the exact subscription, binding, and execution permission. */
-interface ScopeAgentRouteEvent {
-  readonly version: 1
-  readonly agentId: SessionId
-  readonly bindingId: ScopeAgentBindingId
-  readonly expectedReadStateSeq: SessionSeqCursor
-  readonly previousOwnerAddress: string
-  readonly subscription: ScopeSubscription & { readonly state: 'active'; readonly routeRevision: number }
-}
+/** Same-authority route intent preserves a legacy subscription or its original capture association. */
+type ScopeAgentRouteEvent = ScopeAgentRouteFields & (
+  | { readonly version: 1; readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active'; readonly routeRevision: number } }
+  | { readonly version: 2; readonly subscription: ScopeCaptureSubscription & { readonly state: 'active'; readonly routeRevision: number } }
+)
 ```
 
 ```ts type-equiv
@@ -1229,7 +1442,7 @@ interface ScopeAgentJoinReadResult {
 /** Original durable operation inputs and receiver identities; retries cannot replace them. */
 interface ScopeAgentJoinReadPlan {
   readonly expectedReadStateSeq: SessionSeqCursor
-  readonly subscription: ScopeSubscription & { readonly state: 'active' }
+  readonly subscription: Exclude<ScopeSubscription, ScopeCaptureSubscription> & { readonly state: 'active' }
   readonly bindingId: ScopeAgentBindingId
 }
 ```
@@ -1250,13 +1463,15 @@ type JoinReadTransition<Plan> =
 ```
 
 ```ts type-equiv
-/** Non-ignorable adoption history; version 1 is passive, version 2 atomically installs explicit automatic permission. */
+/** Non-ignorable adoption history retains passive v1, automatic v2, composite v3, and exact-capture v4 plans. */
 type ScopeAgentJoinReadEvent = {
   readonly agentId: SessionId
   readonly adoptionId: ScopeAgentJoinReadId
 } & (
   | ({ readonly version: 1 } & JoinReadTransition<ScopeAgentJoinReadPlan>)
   | ({ readonly version: 2 } & JoinReadTransition<ScopeAgentAutomaticJoinReadPlan>)
+  | ({ readonly version: 3 } & JoinReadTransition<ScopeAgentCompositeJoinReadPlan>)
+  | ({ readonly version: 4 } & JoinReadTransition<ScopeAgentCaptureJoinReadPlan>)
 )
 ```
 
@@ -1281,8 +1496,10 @@ interface ScopeAgentAutomaticPolicy {
 interface ScopeAgentBindRequest {
   readonly agentId: SessionId
   readonly invitation: ScopeInvitation
-  /** Current binding observed by the caller; null requires an unbound Session. */
+  /** Current scheduling binding observed by the caller; null requires no scheduling binding. */
   readonly expectedBindingId: ScopeAgentBindingId | null
+  /** Required when retaining an existing local Root Task assignment. */
+  readonly localTask?: ScopeAgentLocalTaskTarget
   /** Null enables request-time reads without authorizing idle turns. */
   readonly automatic: ScopeAgentAutomaticPolicy | null
 }
@@ -1321,6 +1538,8 @@ interface ScopeAgentRemoteBinding {
   readonly id: ScopeAgentBindingId
   readonly subscriptionId: ScopeSubscriptionId
   readonly invitation: ScopeInvitation
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
 }
 ```
 
@@ -1334,13 +1553,59 @@ interface ScopeAgentLocalBinding {
 ```
 
 ```ts type-equiv
-/** Exact local or remote projection used by the shared scheduler. */
-type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection
+/** Local scheduling permission restored as a new paused interval after remote departure. */
+interface ScopeAgentRetainedLocal {
+  readonly bindingId: ScopeAgentBindingId
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+}
 ```
 
 ```ts type-equiv
-/** One local execution interval selects either local Task authority or a remote subscription. */
-type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding
+/** One additional remote read preserves the exact local responsibility and its prior permission. */
+interface ScopeAgentCompositeBinding {
+  readonly kind: 'local-task-scope'
+  readonly id: ScopeAgentBindingId
+  readonly target: DevelopmentTaskLocalContextTarget
+  readonly subscriptionId: ScopeSubscriptionId
+  readonly invitation: ScopeInvitation
+  readonly retainedLocal: ScopeAgentRetainedLocal
+  /** Present only for a version-4 state adopted by the original source Session. */
+  readonly originalCapture?: ScopeOriginalCapture
+}
+```
+
+```ts type-equiv
+/** Both exact inputs admitted under a single complete UTF-8 message budget. */
+interface ScopeAgentCompositeProjection {
+  readonly kind: 'local-task-scope'
+  readonly version: 1
+  readonly local: DevelopmentTaskLocalContextProjection
+  readonly remote: ScopeAccessProjection
+  readonly maxContextBytes: number
+  readonly projectionId: ScopeAccessProjection['projectionId']
+  /** Remote revision; local.taskRevision remains independently attributable. */
+  readonly taskRevision: ScopeAccessProjection['taskRevision']
+}
+```
+
+```ts type-equiv
+/** A joint operation captures the original local responsibility and scheduling interval. */
+interface ScopeAgentCompositeJoinReadPlan extends ScopeAgentJoinReadPlan {
+  readonly expectedBindingId: ScopeAgentBindingId | null
+  readonly target: DevelopmentTaskLocalContextTarget
+  readonly retainedLocal: ScopeAgentRetainedLocal
+  readonly automatic: ScopeAgentAutomaticPolicy | null
+}
+```
+
+```ts type-equiv
+/** Exact local or remote projection used by the shared scheduler. */
+type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection | ScopeAgentCompositeProjection
+```
+
+```ts type-equiv
+/** One execution interval owns one policy and either or both explicitly selected information sources. */
+type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding | ScopeAgentCompositeBinding
 ```
 
 ```ts type-equiv
@@ -1351,7 +1616,7 @@ type ScopeAgentPauseReason = 'user' | 'restored' | 'cancelled' | 'turn-ended' | 
 ```ts type-equiv
 /** Whole durable scheduling state. It records reservations, never model adoption. */
 interface ScopeAgentBindingStatus {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3 | 4
   readonly agentId: SessionId
   readonly binding: ScopeAgentBinding | null
   readonly automatic: ScopeAgentAutomaticPolicy | null
@@ -1384,6 +1649,28 @@ type ScopeAgentSubscriptionState = 'unbound' | 'active' | 'left' | 'revoked' | '
 ```
 
 ```ts type-equiv
+/** Current recorded shared snapshot metadata; neither request dispatch nor current remote authorization. */
+interface ScopeAgentRecordedContext {
+  readonly contextSeq: SessionSeq
+  readonly bindingId: ScopeAgentBindingId
+  readonly subscriptionId: ScopeSubscriptionId
+  /** UTF-8 bytes of this shared message’s text blocks, including consumer framing; excludes non-text payloads. */
+  readonly sharedBytes: number
+  readonly taskRevision: number
+  /** Represented source references, not a count of facts, files, or understood material. */
+  readonly selectedSourceCount: number
+  readonly omittedSourceCounts: {
+    readonly 'self-published': number
+    readonly budget: number
+    readonly unsupported: number
+    readonly superseded: number
+    readonly withdrawn: number
+    readonly 'recipient-irrelevant': number
+  }
+}
+```
+
+```ts type-equiv
 /** A read-only live-Agent observation and its consistent Session projection watermark. */
 type ScopeAgentStatusResult =
   | { readonly agentId: SessionId; readonly eligibility: 'not-live' }
@@ -1396,13 +1683,18 @@ type ScopeAgentStatusResult =
     readonly readStateSeq: SessionSeqCursor
     readonly subscriptionState: ScopeAgentSubscriptionState
     readonly localTask: ScopeAgentLocalTaskTarget | null
+    /** Recorded automatic activity for the current eligible binding and goal; never a current authorization check. */
+    readonly activity: ScopeAgentActivity
+    /** Current matching shared snapshot on the logged surface, or null after withdrawal or binding changes. */
+    readonly recordedContext: ScopeAgentRecordedContext | null
   }
 ```
 
 ```ts type-equiv
 /** Logged native context is sufficient to reconstruct the exact request without a network read. */
 type ScopeAgentContextSource =
-  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessProjection }
+  | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: Exclude<ScopeAccessProjection, ScopeAccessCaptureProjection> }
+  | { readonly kind: 'scope-agent-context'; readonly version: 2; readonly form: 'snapshot'; readonly bindingId: ScopeAgentBindingId; readonly subscriptionId: ScopeSubscriptionId; readonly projection: ScopeAccessCaptureProjection }
   | { readonly kind: 'scope-agent-context'; readonly version: 1; readonly form: 'withdrawn'; readonly reason: 'left' | 'revoked' | 'expired' | 'unavailable' | 'conflict' | 'failed' }
 ```
 
@@ -1424,7 +1716,7 @@ type ScopeAgentGoalDigest = Branded<'ScopeAgentGoalDigest'>
 ```ts type-equiv
 /** Online scheduling decision with the exact projection that was evaluated. */
 interface ScopeAgentEvaluation {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3 | 4
   readonly decision: 'activate' | 'suppress-unchanged' | 'blocked-current' | 'suppress-reserved'
   readonly bindingId: ScopeAgentBindingId
   readonly goalDigest: ScopeAgentGoalDigest
@@ -1438,7 +1730,7 @@ interface ScopeAgentEvaluation {
 ```ts type-equiv
 /** Actual loop-built frozen request containing the authorized pulse and exact logged scope snapshot. */
 interface ScopeAgentRequestEvidence {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3 | 4
   readonly turn: number
   readonly step: number
   readonly bindingId: ScopeAgentBindingId
@@ -1446,6 +1738,8 @@ interface ScopeAgentRequestEvidence {
   readonly goalDigest: ScopeAgentGoalDigest
   readonly projection: ScopeAgentReadProjection
   readonly contextSeq: SessionSeq
+  /** Required for combined projections in versions 3 and 4; contextSeq identifies the remote snapshot. */
+  readonly localContextSeq?: SessionSeq
   readonly maxContextBytes: number
 }
 ```
@@ -1461,7 +1755,56 @@ interface ScopeAgentCompletedEvidence {
 ```
 
 ```ts type-equiv
-/** Bounded Host-only evidence fold preserving both remote and owner-local request attribution. */
+/** Recorded projection identity without shared text, source bodies, or the goal text. */
+interface ScopeAgentActivityIdentity {
+  readonly bindingId: ScopeAgentBindingId
+  readonly goalDigest: ScopeAgentGoalDigest
+  readonly taskRevision: ScopeAgentReadProjection['taskRevision']
+  /** Local revision when the projection combines independent local and remote Tasks. */
+  readonly localTaskRevision?: ScopeAgentReadProjection['taskRevision']
+  readonly projectionId: ScopeAgentReadProjection['projectionId']
+}
+```
+
+```ts type-equiv
+/** An actual automatic request retained by the current turn; absence does not mean no earlier request. */
+interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {
+  readonly activationId: ScopeAgentActivationId
+  readonly requestSeq: SessionSeq
+  readonly contextSeq: SessionSeq
+  readonly localContextSeq?: SessionSeq
+  readonly turn: number
+  readonly step: number
+}
+```
+
+```ts type-equiv
+/** Most recent successfully completed automatic turn for this recorded projection. */
+interface ScopeAgentActivityCompleted extends ScopeAgentActivityRequest {
+  readonly assistantSeq: SessionSeq
+  readonly turnEndSeq: SessionSeq
+}
+```
+
+```ts type-equiv
+/** Most recent recorded scheduling decision; activation does not attest a dispatched request. */
+interface ScopeAgentActivityEvaluation extends ScopeAgentActivityIdentity {
+  readonly decision: ScopeAgentEvaluation['decision']
+  readonly activationId: ScopeAgentActivationId | null
+}
+```
+
+```ts type-equiv
+/** Cropped wire evidence. Status filters it by current eligibility, binding, and local goal. */
+interface ScopeAgentActivity {
+  readonly request: ScopeAgentActivityRequest | null
+  readonly completed: ScopeAgentActivityCompleted | null
+  readonly evaluation: ScopeAgentActivityEvaluation | null
+}
+```
+
+```ts type-equiv
+/** Complete Host evidence fold; its wire view exposes only ScopeAgentActivity metadata. */
 interface ScopeAgentEvidenceState {
   readonly version: 1
   readonly activeTurn: number | null
@@ -1513,7 +1856,9 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 
 ```ts type-equiv
 /** Immutable source permission without local filesystem roots or session identifiers. */
-type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource
+type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
+  | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
 ```
 
 ```ts type-equiv
@@ -1577,7 +1922,7 @@ interface DevelopmentTaskPeerContributionRequest {
   readonly grant: DevelopmentTaskPeerContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskToolObservationResult
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerToolObservationResult
 }
 ```
 
@@ -2068,16 +2413,16 @@ type ScopeContributionEndResult = ScopeContributionEnded | ScopeContributionFail
 
 ### Online contribution applications
 
-An owner-issued entry accepts one authenticated source capture and its explicit automatic-activation limits. The source retains local file permission; the owner grants contribution through the Task authority. Read access and automatic model work remain separate permissions. The [online approval decision](../../.agents/notes/implemented/architecture/2026-10-03-online-contribution-approval.md) explains durable cancellation and recovery.
+Single-capture entries retain one authenticated application. A reusable group entry retains independently selected applicants for the same owned Task; closing admission preserves their existing permissions. The source retains local file and automatic-response consent, while the owner controls contribution and reading. The [online approval decision](../../.agents/notes/implemented/architecture/2026-10-03-online-contribution-approval.md) and [group-entry decision](../../.agents/notes/implemented/feature/2026-10-07-reusable-scope-group-entry.md) explain authorization, retained capacity and recovery.
 
 ```ts type-equiv
-/** One owner-issued, single-capture application entry; possession grants no Task access. */
+/** Owner-issued application entrance identity; possession grants no Task access. */
 type ScopeContributionEntryId = Branded<'ScopeContributionEntryId'>
 ```
 
 ```ts type-equiv
 /** Addressed application entry, distinct from read and contribution grants. */
-type ScopeContributionEntry = {
+type ScopeSingleContributionEntry = {
   readonly version: 1
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
@@ -2092,6 +2437,106 @@ type ScopeContributionEntry = {
 ```
 
 ```ts type-equiv
+/** Reusable application entrance; each source receives independently approved grants. */
+interface ScopeGroupEntry {
+  readonly version: 2
+  readonly kind: 'scope-group-entry'
+  readonly sourceKind: 'tool-observations'
+  readonly entryId: ScopeContributionEntryId
+  readonly taskId: DevelopmentTaskId
+  readonly ownerPeerId: ScopePeerId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  /** Retained applicants, including cancelled, rejected, and expired members. */
+  readonly maxMembers: number
+}
+```
+
+```ts type-equiv
+/** Owner-assigned durable identity of one exact group applicant. */
+type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
+```
+
+```ts type-equiv
+/** Explicitly create a reusable entry for one owned Root Task. */
+interface ScopeGroupEntryRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  readonly maxMembers: number
+}
+```
+
+```ts type-equiv
+/** Shared entry text without any member's permission. */
+interface ScopeGroupEntryResult {
+  readonly entry: ScopeGroupEntry
+  readonly text: string
+}
+```
+
+```ts type-equiv
+/** Closing an entry blocks new applicants while retained applicants keep their independent permissions. */
+interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {
+  readonly state: 'open' | 'closed' | 'expired'
+  readonly applicationCount: number
+}
+```
+
+```ts type-equiv
+/** Select an owner-local reusable entry; closure is irreversible. */
+interface ScopeGroupEntrySelection {
+  readonly entryId: ScopeContributionEntryId
+}
+```
+
+```ts type-equiv
+/** Stable entry-identity pagination within one owned Task. */
+interface ScopeGroupEntriesRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly afterEntryId?: ScopeContributionEntryId
+}
+```
+
+```ts type-equiv
+/** Complete UTF-8-bounded page of retained reusable entries. */
+interface ScopeGroupEntries {
+  readonly entries: readonly ScopeGroupEntryStatus[]
+  readonly nextEntryId: ScopeContributionEntryId | null
+}
+```
+
+```ts type-equiv
+/** One independently selected applicant; entry text remains common to the group. */
+interface ScopeGroupApplication extends ScopeContributionApplication {
+  readonly entry: ScopeGroupEntry
+  readonly applicationId: ScopeGroupApplicationId
+  readonly proposal: ScopeContributionProposal
+  readonly result: ScopeContributionApplicationResult
+}
+```
+
+```ts type-equiv
+/** Stable applicant-identity pagination within one reusable entry. */
+interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {
+  readonly afterApplicationId?: ScopeGroupApplicationId
+}
+```
+
+```ts type-equiv
+/** Complete UTF-8-bounded page; an applicant cursor never selects a different entry. */
+interface ScopeGroupApplications {
+  readonly entries: readonly ScopeGroupApplication[]
+  readonly nextApplicationId: ScopeGroupApplicationId | null
+}
+```
+
+```ts type-equiv
+/** Single-capture entries retain version one; reusable groups require an explicit version-two entry. */
+type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry
+```
+
+```ts type-equiv
 /** Inspect one addressed entry before granting any local collection permission. */
 interface ScopeContributionEntryProbeRequest {
   readonly entry: ScopeContributionEntry
@@ -2101,7 +2546,7 @@ interface ScopeContributionEntryProbeRequest {
 ```ts type-equiv
 /** A momentary owner observation, not an application, reservation, or authorization. */
 interface ScopeContributionEntryProbeResult {
-  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  /** An available group stays ready until full or closed; single-capture claims are claimed and decisions are closed. */
   readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
 }
 ```
@@ -2199,6 +2644,8 @@ interface ScopeContributionApplicationsRequest {
 ```ts type-equiv
 /** Approval names the exact displayed claimant and an equal or narrower permission. */
 interface ScopeContributionApplicationApprovalRequest {
+  /** Required for a group member and forbidden for a single-capture entry. */
+  readonly applicationId?: ScopeGroupApplicationId
   /** Required only for a joint entry; read expiry equals the approved contribution expiry. */
   readonly read?: { readonly responsibility: string }
   readonly entryId: ScopeContributionEntryId
@@ -2211,6 +2658,8 @@ interface ScopeContributionApplicationApprovalRequest {
 ```ts type-equiv
 /** Rejection cannot accidentally stop another capture; null selects an unclaimed entry. */
 interface ScopeContributionApplicationRejectRequest {
+  /** Select only this group member; group entry closure uses closeGroupEntry instead. */
+  readonly applicationId?: ScopeGroupApplicationId
   readonly entryId: ScopeContributionEntryId
   readonly expectedProposal: ScopeContributionProposal | null
 }
@@ -2229,6 +2678,8 @@ interface ScopeContributionEntryRecoverRequest {
 interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
+  /** Required for joint entries; grants passive receiving only at the displayed local read revision. */
+  readonly receive?: { readonly expectedReadRevision: number }
 }
 ```
 
@@ -2255,6 +2706,9 @@ interface DevelopmentTaskOpenApiContributionSource {
 /** Tools approved for observations from a locally permitted collection of files. */
 interface DevelopmentTaskToolObservationSource {
   readonly kind: 'tool-observations'
+  readonly version?: never
+  readonly initialization?: never
+  readonly fileContent?: never
   readonly name: string
   readonly tools: readonly ('Write' | 'Edit')[]
 }
@@ -2287,8 +2741,119 @@ type DevelopmentTaskToolObservationResult = {
 ```
 
 ```ts type-equiv
+/** Explicit approval for prior recorded observations as well as subsequent live reports. */
+type DevelopmentTaskRecordedToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'initialization'> & {
+  readonly version: 2
+  readonly initialization: 'recorded-local-tools'
+}
+```
+
+```ts type-equiv
+/** Prior recorded tool report; digests identify source evidence without disclosing local Session or directory identifiers. */
+type DevelopmentTaskRecordedToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 2
+  readonly origin: {
+    readonly kind: 'recorded-local-tools'
+    readonly planDigest: string
+    readonly executionDigest: string
+  }
+}
+```
+
+```ts type-equiv
+/** Explicit permission to share the LF text produced by future native file operations. */
+type DevelopmentTaskCompletedFileToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'fileContent'> & {
+  readonly version: 3
+  readonly fileContent: 'completed-native-file'
+}
+```
+
+```ts type-equiv
+/** Native completion text is a separate whole-field disclosure from the original tool arguments. */
+type DevelopmentTaskCompletedFileToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 3
+  readonly completedFile:
+    | { readonly state: 'included'; readonly content: string; readonly sha256: string }
+    | { readonly state: 'omitted'; readonly reason: 'tool-failed' | 'budget' | 'unavailable' }
+}
+```
+
+Command outcomes preserve independent exit, signal, timeout and abort facts. Included output retains the provider’s truncation flag; a sharing-budget omission removes the whole output field. These observations describe a completed execution, not a verification claim about current code.
+
+```ts type-equiv
+/** One exact foreground command and its explicitly selected local working-directory root. */
+interface DevelopmentTaskCommandSelector {
+  readonly command: string
+  readonly rootIndex: number
+}
+```
+
+```ts type-equiv
+/** Explicit command-outcome permission, optionally combined with future file observations. */
+interface DevelopmentTaskCommandToolObservationSource {
+  readonly kind: 'tool-observations'
+  readonly version: 4
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
+}
+```
+
+```ts type-equiv
+/** One complete provider-returned output field, or explicit whole-field omission for the sharing budget. */
+type DevelopmentTaskCommandOutput =
+  | { readonly state: 'included'; readonly text: string; readonly truncated: boolean }
+  | { readonly state: 'omitted'; readonly reason: 'budget'; readonly truncated: boolean }
+```
+
+```ts type-equiv
+/** Foreground execution evidence; a completed report does not assert that current code passes verification. */
+type DevelopmentTaskCommandObservationResult = {
+  readonly kind: 'command-observation'
+  readonly version: 4
+  readonly tool: 'Bash'
+  readonly fields: DevelopmentTaskCommandSelector
+} & (
+  | {
+    readonly state: 'completed'
+    readonly exitCode: number | null
+    readonly signal: string | null
+    readonly timedOut: boolean
+    readonly aborted: boolean
+    readonly timeoutMs: number
+    readonly stdout: DevelopmentTaskCommandOutput
+    readonly stderr: DevelopmentTaskCommandOutput
+  }
+  | { readonly state: 'unavailable'; readonly reason: 'tool-failed' | 'completion-unavailable' }
+)
+```
+
+```ts type-equiv
+/** Local reports require explicit permission before carrying a native completion's full text. */
+type DevelopmentTaskLocalToolObservationResult =
+  | DevelopmentTaskToolObservationResult
+  | DevelopmentTaskCompletedFileToolObservationResult
+  | DevelopmentTaskCommandObservationResult
+```
+
+```ts type-equiv
+/** Peer reports preserve separate live, recorded-work, and completed-file permissions. */
+type DevelopmentTaskPeerToolObservationResult =
+  | DevelopmentTaskLocalToolObservationResult
+  | DevelopmentTaskRecordedToolObservationResult
+```
+
+```ts type-equiv
 /** Owner-attributed ordered tool event, distinct from a replaceable OpenAPI artifact sample. */
-type DevelopmentTaskPeerToolObservation = DevelopmentTaskToolObservationResult & {
+type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {
   readonly sourceName: string
   readonly grantId: DevelopmentTaskContributionGrantId
   readonly sequence: number
@@ -2325,7 +2890,8 @@ interface DevelopmentTaskLocalContributionGrant {
   readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
-  readonly source: DevelopmentTaskToolObservationSource
+  readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
+    | DevelopmentTaskCommandToolObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -2369,7 +2935,7 @@ interface DevelopmentTaskLocalContributionRequest {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: DevelopmentTaskToolObservationResult
+  readonly result: DevelopmentTaskLocalToolObservationResult
 }
 ```
 
@@ -2411,7 +2977,7 @@ interface DevelopmentTaskLocalContributionMetadata {
 
 ```ts type-equiv
 /** Ordered local tool evidence; source Session execution remains the original execution authority. */
-type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {
+type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
 }
@@ -2424,12 +2990,16 @@ type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionG
 ```
 
 ```ts type-equiv
-/** Explicit file permission for the selected Agent's current owner-local Root Task. */
+/** Explicit native file and command sharing permission for the selected Agent's current owner-local Root Task. */
 interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection | null
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
 }
 ```
@@ -2441,6 +3011,7 @@ interface ScopeAgentLocalContributionCapture {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly state: 'opening' | 'active' | 'ending'
   readonly collecting: boolean
   readonly pendingSamples: number
@@ -2454,10 +3025,11 @@ interface ScopeAgentLocalContributionCapture {
 interface ScopeAgentLocalContributionStatus {
   readonly agentId: SessionId
   readonly participantId: DevelopmentParticipantId | null
-  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task' | 'remote-capture'
+  readonly eligibility: 'not-live' | 'eligible' | 'delegated' | 'fork' | 'no-local-task'
   readonly assignment: ScopeAgentLocalContributionBinding | null
   readonly revision: number
   readonly capture: ScopeAgentLocalContributionCapture | null
+  readonly initialization: ScopeAgentContributionInitializationSource
 }
 ```
 
@@ -2526,7 +3098,7 @@ Local authenticated management and command-hook service; no external Session is 
 
 /**
  * Retain local file permission and bounded consent, then reconcile the owner application without blocking other sessions.
- * @param request - exact local selection, single-capture owner entry, and accepted automatic-activation limits.
+ * @param request - exact local selection, owner entry, optional passive joint consent, and accepted automatic-activation limits.
  * @returns committed local intent; session-changed notifications report later waiting, active, or cancellation state.
  */
 @Remote('requestContribution') requestContribution(request: ClaudeScopeRequestContributionRequest): Promise<ClaudeScopeSessionSummary>
@@ -2544,6 +3116,20 @@ Local authenticated management and command-hook service; no external Session is 
  * @returns local stop state; withdrawal remains pending until the owner confirms it. Read details after a lost reply.
  */
 @Remote('contributionLeave') contributionLeave(request: ClaudeScopeContributionLeaveRequest): Promise<ClaudeScopeSessionSummary>
+
+/**
+ * Stop only the contribution and receiving interval created by the selected joint operation.
+ * @param request - original joint identity; later manual reading and later captures remain independent.
+ * @returns durable local stop state while exact remote cleanup continues in the background.
+ */
+@Remote('leaveJoint') async leaveJoint(request: ClaudeScopeLeaveJointRequest): Promise<ClaudeScopeSessionSummary>
+
+/**
+ * Retain one replacement owner address for both permissions of the original joint operation.
+ * @param request - displayed joint and read revision; only an identical lost-response retry bypasses the current revision.
+ * @returns committed route intent; background adoption preserves all grant and capture identities.
+ */
+@Remote('recoverJoint') async recoverJoint(request: ClaudeScopeRecoverJointRequest): Promise<ClaudeScopeSessionSummary>
 
 /**
  * Join a device-bound read invitation without collecting tools or creating a Task replica.
@@ -3326,6 +3912,30 @@ async updateSubscriptionRoute(plan: ScopeSubscription & { readonly routeRevision
  */
 @Remote('createContributionEntry') createContributionEntry(request: ScopeContributionEntryRequest): Promise<ScopeContributionEntryResult>
 
+/** Create a reusable target entrance with independent owner approval for each applicant.
+ * @param request - owned Task, explicit route, deadline, and retained member limit.
+ * @returns version-two entry text after durability; no grant is issued by creation.
+ */
+@Remote('createGroupEntry') createGroupEntry(request: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult>
+
+/** List reusable entrances separately from their independent member decisions.
+ * @param request - owned Task and optional stable entry cursor.
+ * @returns a complete byte-bounded page, including closed and expired entrances.
+ */
+@Remote('groupEntries') groupEntries(request: ScopeGroupEntriesRequest): Promise<ScopeGroupEntries>
+
+/** List one group's independently retained applicants and reconciled Task grants.
+ * @param request - exact entrance and optional applicant cursor belonging to it.
+ * @returns a complete byte-bounded page of member decisions.
+ */
+@Remote('groupApplications') groupApplications(request: ScopeGroupApplicationsRequest): Promise<ScopeGroupApplications>
+
+/** Permanently stop new applicants without revoking members or cancelling existing pending applications.
+ * @param request - exact retained reusable entrance.
+ * @returns durable closure; pending approval still obeys the original deadline.
+ */
+@Remote('closeGroupEntry') closeGroupEntry(request: ScopeGroupEntrySelection): Promise<ScopeGroupEntryStatus>
+
 /** Recover an original entry through a current owner address without reopening it.
  * @param request - retained entry and explicitly confirmed advertised address.
  * @returns original entry identity and canonical text with the selected route.
@@ -3380,7 +3990,7 @@ cancelContributionApplication(request: ScopeContributionApplicationRequest, sign
 contributionStatus(request: { readonly invitation: ScopeContributionInvitation }, signal: AbortSignal) : Promise<ScopeContributionStatusResult>
 
 /**
- * Submit a complete durable sample to its authenticated owner.
+ * Submit a complete durable sample on its explicit protocol version; recorded history requires separate source permission.
  * @param request - pinned invitation and exact retained outbox sample; callers must not rebuild a retry.
  * @param signal - consumer cancellation; a failed response does not prove that admission failed.
  * @returns a matched original receipt or explicit refusal, terminal, or temporary status.
@@ -3402,6 +4012,14 @@ endContribution(request: { readonly invitation: ScopeContributionInvitation }, s
  * @returns current projection or an explicit inactive/unknown state; never an offline cached projection.
  */
 retrieve(subscriptionId: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult>
+
+/**
+ * Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.
+ * @param request - subscription and positive backend text allowance, excluding consumer-owned model framing.
+ * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
+ * @returns exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.
+ */
+async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult>
 
 /**
  * Wait online for a bounded change hint without retrieving facts or occupying the mutation queue.
@@ -3488,12 +4106,12 @@ updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<Scop
 /**
  * Stop bound automatic work and end its subscription, or discard a stale local binding after its Task is cleared.
  * @param request - live Session and its observed binding interval.
- * @returns committed unbound state with lifetime reservations retained.
+ * @returns unbound remote-only state, or a fresh local interval with retained permission paused and lifetime reservations unchanged.
  */
 @Remote('leave') async leave(request: ScopeAgentBindingRequest): Promise<ScopeAgentBindingStatus>
 
 /**
- * Observe live eligibility, exact Session state, and locally known subscription intent.
+ * Observe live eligibility, exact Session state, recorded context and automatic activity, and local subscription intent.
  * @param request - Session identity; lookup never starts or restores a cold Agent.
  * @returns a consistent projection watermark or not-live; no remote authorization is performed.
  */
@@ -3508,7 +4126,7 @@ Source: [`packages/collaboration/scope-agent-context/src/index.ts`](../../packag
 
 ### `ctx.scopeAgentContributions` — `ScopeAgentContributions`
 
-Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.
+Actual native execution observations become durable original reports, then the existing owner protocol delivers them.
 
 ```ts cordis-catalog
 /**
@@ -3519,8 +4137,17 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('status') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionStatus>
 
 /**
- * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.
- * @param request - exact capture expectation, owner entry, local files, tools, and accepted limits.
+ * Suggest editable file permission from this Session's directory, visible tools, and configured limits.
+ * @param request - exact live ordinary Session selected by the user.
+ * @returns an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.
+ */
+@Remote('permissionDraft') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>
+
+/**
+ * Persist one Session's explicit file and command sharing permission and request automatic activation
+ * of an equal or narrower owner approval.
+ * @param request - exact capture expectation, owner entry, file and command selections, limits,
+ * and optional recorded-local-tool export consent.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>
@@ -3534,7 +4161,7 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('recoverRoute') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>
 
 /**
- * Stop future collection immediately and retain any owner cancellation until it is confirmed.
+ * Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.
  * @param request - exact displayed capture, including for an inactive source Session.
  * @returns durable sharing termination and pending-read cancellation; already adopted reading is retained.
  */
@@ -3548,6 +4175,13 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('leaveJoin') leaveJoin(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>
 
 /**
+ * Stop only the selected owner-local capture and withdraw its reports from the original Task.
+ * @param request - exact displayed local capture, including for an inactive source Session.
+ * @returns durable local termination; unrelated remote sharing and receiving remain unchanged.
+ */
+@Remote('stopLocal') stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus>
+
+/**
  * Inspect the live Agent's local Task binding without changing assignment or consent.
  * @param request - existing Session selected by the local user.
  * @returns exact assignment epoch and retained local source permission.
@@ -3555,8 +4189,8 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('localStatus') async localStatus(request: { readonly agentId: SessionId }): Promise<ScopeAgentLocalContributionStatus>
 
 /**
- * Authorize actual file tools for the selected Agent's current owner-local Root Task.
- * @param request - exact assignment and capture expectations, local roots, tools, and finite limits.
+ * Authorize native file and foreground command reports for the selected Agent's current owner-local Root Task.
+ * @param request - exact assignment and capture expectations, local roots, file tools, commands, and finite limits.
  * @returns durable opening intent; collection starts only after Task commits the same permission.
  */
 @Remote('requestLocal') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>

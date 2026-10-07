@@ -1,0 +1,63 @@
+- text: 入口用途
+- combobox "入口用途":
+  - option "邀请多人加入同一目标" [selected]
+  - option "邀请一个会话加入"
+  - option "仅申请文件贡献"
+- text: 累计申请名额
+- spinbutton "累计申请名额": "2"
+- paragraph: 每个新申请都会占用一个名额；拒绝、取消或到期后也不返还。此数值还受 Host 的总申请容量限制。
+- text: 申请入口有效期（小时）
+- spinbutton "申请入口有效期（小时）": "1"
+- paragraph: 把同一入口交给多位协作者。每个会话独立确认读取和文件范围，你再逐人批准；入口本身不授予权限。
+- button "邀请多人加入同一目标"
+- heading "多人协作入口" [level=4]
+- status: 入口已关闭，不再接受新申请
+- paragraph: 累计申请：2 / 2
+- group: 将此入口交给来源用户
+- paragraph: "申请入口到期时间: {{expiresLocal}}"
+- paragraph: 关闭仅停止新申请。已提交的申请仍可在入口到期前获批，现有成员权限不变。结束某位成员的协作会撤销该成员的读取与贡献权限；也可单独管理各项权限。
+- button "用当前地址恢复入口"
+- status: 已批准，来源将自动取回授权
+- paragraph: 联合申请：读取整个目标的共享上下文，并提交已选工具的文件工作。
+- status: 读取仍获授权；贡献结束不会自动撤销读取权限。
+- term: 来源设备
+- definition: {{listedMember1Peer}}
+- term: 来源采集标识
+- definition: {{listedMember1Capture}}
+- term: 采集代际
+- definition: {{listedMember1Generation}}
+- term: 来源名称
+- definition: session-work
+- term: 贡献来源
+- definition: 授权目录内的 Write/Edit
+- term: 允许采集的工具
+- definition: Write
+- term: 授权到期时间
+- definition: {{expiresLocal}}
+- term: 最多样本数
+- definition: "8"
+- term: 每份样本字节上限
+- definition: "8192"
+- button "结束该成员协作"
+- status: 已批准，来源将自动取回授权
+- paragraph: 联合申请：读取整个目标的共享上下文，并提交已选工具的文件工作。
+- status: 读取仍获授权；贡献结束不会自动撤销读取权限。
+- term: 来源设备
+- definition: {{listedMember2Peer}}
+- term: 来源采集标识
+- definition: {{listedMember2Capture}}
+- term: 采集代际
+- definition: {{listedMember2Generation}}
+- term: 来源名称
+- definition: session-work
+- term: 贡献来源
+- definition: 授权目录内的 Write/Edit
+- term: 允许采集的工具
+- definition: Write
+- term: 授权到期时间
+- definition: {{expiresLocal}}
+- term: 最多样本数
+- definition: "8"
+- term: 每份样本字节上限
+- definition: "8192"
+- button "结束该成员协作"

@@ -16,12 +16,14 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { activationSchema, projectionSchema, projectionDigest } from '@deepseek-ai/dsh-scope-access/schema'
-import type { ScopeAccessProjection, ScopeChangeCursor, ScopeInvitation, ScopeRetrieveResult, ScopeSubscription, ScopeSubscriptionId, ScopeWaitResult } from '@deepseek-ai/dsh-scope-access/types'
+import type { ScopeAccessProjection, ScopeChangeCursor, ScopeInvitation, ScopeRetrieveResult, ScopeSubscription, ScopeSubscriptionId, ScopeRetrieveWithinBudgetRequest, ScopeWaitResult } from '@deepseek-ai/dsh-scope-access/types'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScopeAgentContext from '../src/index.ts'
 import { goalDigest } from '../src/evidence.ts'
-import { replaceContext, snapshotMessage } from '../src/messages.ts'
+import { scopeAgentActivitySchema } from '../src/activity.ts'
+import { recordedScopeContext } from '../src/recorded-context.ts'
+import { replaceContext, snapshotMessage, scopeContextFramingBytes, withdrawalMessage } from '../src/messages.ts'
 import { scopeAgentProjection } from '../src/state.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentBindingId } from '../src/types.ts'
 
@@ -122,7 +124,8 @@ class ControlledAccess extends Service {
     this.subscriptions.set(value.id, { ...value, state: 'left' })
     for (const wake of this.waiting) wake()
   }
-  async retrieve(id: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult> {
+  async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult> {
+    const id = request.subscriptionId
     this.reads++
     const captured = this.result
     if (this.readGate !== undefined) await this.readGate
@@ -215,10 +218,13 @@ function requiredBindingId(ctx: Context, agentId: ReturnType<typeof SessionId>):
   if (id === null) throw new Error('fixture expects a bound Session')
   return id
 }
-async function state(ctx: Context, agentId: ReturnType<typeof SessionId>) {
+async function observation(ctx: Context, agentId: ReturnType<typeof SessionId>) {
   const result = await ctx.scopeAgentContext.status({ agentId })
   if (result.eligibility === 'not-live') throw new Error('fixture expects a live Session')
-  return result.state
+  return result
+}
+async function state(ctx: Context, agentId: ReturnType<typeof SessionId>) {
+  return (await observation(ctx, agentId)).state
 }
 
 function user(text: string) { return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }) }
@@ -229,6 +235,106 @@ async function requests(adapter: RecordingAdapter, count: number): Promise<void>
 }
 
 describe('native scope context through real Loader and AgentLoop', () => {
+  it.each([0, 1])('rejects a combined local ceiling that consumes remote framing and text, excess=%s', (excess) => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    expect(() => new ScopeAgentContext(ctx, { maxContextBytes: 512,
+      maxLocalContextBytes: 512 - scopeContextFramingBytes() + excess, coalesceMs: 1, retryDelayMs: 1000 }))
+      .toThrow('maxLocalContextBytes must leave room')
+  })
+
+  it('offers only bytes left after remote framing and additional owned withdrawals', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const read = vi.spyOn(access, 'retrieveWithinBudget')
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic: null })
+    agent.followup(user('Receive the current scope'))
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    expect(read.mock.calls[0]![0].maxContextBytes).toBe(8000 - scopeContextFramingBytes())
+    const owned = agent.session.deriveMessages().find(message => message.role === 'user'
+      && message.source.kind === 'scope-agent-context')
+    if (owned?.role !== 'user') throw new Error('Missing original owned scope context')
+    await agent.runMaintenance(async () => {
+      agent.session.append('user/message', createUserMessage({ source: owned.source, content: owned.content }), { surfaceOp: 'append' })
+    })
+    agent.followup(user('Refresh both owned nodes'))
+    await agent.whenIdle()
+    const withdrawalBytes = withdrawalMessage('left').content.reduce((sum, block) => sum
+      + (block.type === 'text' ? Buffer.byteLength(block.text, 'utf8') : 0), 0)
+    expect(read.mock.calls[1]![0].maxContextBytes).toBe(8000 - scopeContextFramingBytes() - withdrawalBytes)
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it.each([false, true])('rejects a natural request when owned withdrawals exhaust the budget, departed=%s', async (departed) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const read = vi.spyOn(access, 'retrieveWithinBudget')
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic: null })
+    agent.followup(user('Receive the original scope'))
+    await agent.whenIdle()
+    const owned = agent.session.deriveMessages().find(message => message.role === 'user'
+      && message.source.kind === 'scope-agent-context')
+    if (owned?.role !== 'user') throw new Error('Missing original owned scope context')
+    const withdrawalBytes = withdrawalMessage('left').content.reduce((sum, block) => sum
+      + (block.type === 'text' ? Buffer.byteLength(block.text, 'utf8') : 0), 0)
+    await agent.runMaintenance(async () => {
+      for (let index = 0; index <= Math.ceil(8000 / withdrawalBytes); index++) {
+        agent.session.append('user/message', createUserMessage({ source: owned.source, content: owned.content }), { surfaceOp: 'append' })
+      }
+    })
+    if (departed) await ctx.scopeAgentContext.leave({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    agent.followup(user('Do not dispatch an oversized withdrawal surface'))
+    await agent.whenIdle()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(adapter.requests).toHaveLength(1)
+    if (departed) expect((await state(ctx, agent.id)).binding).toBeNull()
+    else expect((await state(ctx, agent.id)).pauseReason).toBe('failed')
+  })
+
+  it('distinguishes a reservation, an actual automatic request, and completed history without exposing shared text', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const admission = barrier()
+    const streaming = barrier()
+    ctx.on('agent/inbox/inserted', ({ message }) => {
+      if (message.source.kind === 'scope-agent-pulse') access.readGate = admission.promise
+    })
+    adapter.gate = streaming.promise
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await expect.poll(() => access.reads).toBe(2)
+    const reserved = await observation(ctx, agent.id)
+    expect(reserved.activity).toMatchObject({ request: null, completed: null,
+      evaluation: { decision: 'activate', taskRevision: 1, activationId: reserved.state.pendingActivation!.id } })
+    expect(adapter.requests).toHaveLength(0)
+    admission.resolve(undefined)
+    await requests(adapter, 1)
+    const dispatched = await observation(ctx, agent.id)
+    const request = agent.session.snapshotEvents().findLast(event => event.type === 'scope-agent-context/request')!
+    expect(dispatched.activity.request).toMatchObject({ requestSeq: request.seq, turn: 1, step: 1, taskRevision: 1,
+      bindingId: dispatched.state.binding!.id, activationId: dispatched.state.pendingActivation!.id,
+      goalDigest: goalDigest(automatic.goal) })
+    expect(dispatched.activity.completed).toBeNull()
+    const snapshot = ctx.sessionProjections.snapshot(agent.session, ['scopeAgentContext', 'scopeAgentEvidence'])
+    expect(dispatched.asOfSeq).toBe(snapshot.asOfSeq)
+    expect(snapshot.values.scopeAgentEvidence).toEqual(dispatched.activity)
+    expect(Object.keys(dispatched.activity.request!).sort()).toEqual([
+      'activationId', 'bindingId', 'contextSeq', 'goalDigest', 'projectionId', 'requestSeq', 'step', 'taskRevision', 'turn',
+    ])
+    expect(JSON.stringify(dispatched.activity)).not.toContain('API state one')
+    expect(JSON.stringify(dispatched.activity)).not.toContain(automatic.goal)
+    streaming.resolve(undefined)
+    await agent.whenIdle()
+    const completed = await observation(ctx, agent.id)
+    expect(completed.activity.request).toBeNull()
+    expect(completed.activity.completed).toMatchObject(dispatched.activity.request!)
+    const wire = { request: { ...dispatched.activity.request!, localTaskRevision: undefined, localContextSeq: undefined },
+      completed: { ...completed.activity.completed!, localTaskRevision: undefined, localContextSeq: undefined },
+      evaluation: { ...completed.activity.evaluation!, localTaskRevision: undefined } }
+    expect(scopeAgentActivitySchema.parse(wire)).toStrictEqual({
+      request: dispatched.activity.request, completed: completed.activity.completed, evaluation: completed.activity.evaluation })
+    expect(agent.session.eventAt(completed.activity.completed!.turnEndSeq)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    const detached = Session.create(agent.id, agent.session.snapshotEvents(), agent.session.header)
+    expect(ctx.sessionProjections.snapshot(detached, ['scopeAgentEvidence']).values.scopeAgentEvidence).toEqual(completed.activity)
+  })
+
   it.each([false, true])('lets a later Stop supersede resume after its own cancellation, reentrant=%s', async (reentrant) => {
     const { ctx, agent, adapter } = await fixture()
     const gate = barrier()
@@ -510,6 +616,7 @@ describe('native scope context through real Loader and AgentLoop', () => {
     agent.followup(user('An unrelated ordinary task'))
     await agent.whenIdle()
     expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request')).toHaveLength(0)
+    expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
     await ctx.scopeAgentContext.resume({ expectedBindingId: requiredBindingId(ctx, agent.id), agentId: agent.id, automatic })
     await requests(adapter, 2)
     await agent.whenIdle()
@@ -529,15 +636,27 @@ describe('native scope context through real Loader and AgentLoop', () => {
     await expect.poll(() => agent.session.snapshotEvents().some(event => event.type === 'scope-agent-context/evaluation'
       && event.data.decision === 'suppress-unchanged')).toBe(true)
     expect(adapter.requests).toHaveLength(1)
+    const changedGoal = barrier()
+    access.readGate = changedGoal.promise
     await ctx.scopeAgentContext.resume({ expectedBindingId: requiredBindingId(ctx, agent.id), agentId: agent.id,
       automatic: { ...automatic, goal: 'Run the QA checks' } })
+    expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
+    changedGoal.resolve(undefined)
     await requests(adapter, 2)
     await agent.whenIdle()
+    const rebound = barrier()
+    access.readGate = rebound.promise
     await ctx.scopeAgentContext.bind({ expectedBindingId: requiredBindingId(ctx, agent.id), agentId: agent.id, invitation,
       automatic: { ...automatic, goal: 'Run the QA checks' } })
+    expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
+    rebound.resolve(undefined)
     await requests(adapter, 3)
     await agent.whenIdle()
     expect((await state(ctx, agent.id)).usedBudget).toBe(3)
+    const history = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
+    await ctx.scopeAgentContext.leave({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
+    expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toEqual(history)
   })
 
   it.each(['error', 'max-tokens', 'cancelled'] as const)('does not complete evidence after %s and retries only after explicit resume', async (ending) => {
@@ -551,6 +670,7 @@ describe('native scope context through real Loader and AgentLoop', () => {
     if (gate !== undefined) { agent.cancel({ kind: 'user' }); gate.resolve(undefined) }
     await agent.whenIdle()
     expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')?.completed).toBeNull()
+    expect((await observation(ctx, agent.id)).activity).toMatchObject({ request: null, completed: null })
     expect((await state(ctx, agent.id)).mode).toBe('paused')
     adapter.gate = undefined
     adapter.finish = 'stop'
@@ -644,6 +764,8 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(text(adapter.requests[0]!)).toContain(incomplete.text)
     expect((await state(ctx, agent.id))).toMatchObject({ mode: 'passive', usedBudget: 0, pauseReason: null })
     expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/evaluation')).toEqual([])
+    expect((await observation(ctx, agent.id)).recordedContext?.omittedSourceCounts.budget)
+      .toBe(incomplete.omittedSources.filter(item => item.reason === 'budget').length)
   })
 
   it.each([false, true])('rechecks real Text coverage for a reserved pulse while retaining human input=%s', async (withUser) => {
@@ -685,7 +807,93 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(adapter.requests).toHaveLength(1)
     expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
     expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toBeNull()
+    expect((await observation(ctx, agent.id)).activity).toMatchObject({ request: null, completed: null,
+      evaluation: { decision: 'blocked-current', taskRevision: incomplete.taskRevision } })
     expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+  })
+
+  it.each(['unavailable', 'revoked', 'expired', 'left', 'read-error', 'oversized', 'recovered'] as const)(
+    'ends an automatic tool continuation after %s without spending another request', async (failure) => {
+      const { ctx, agent, adapter, access } = await fixture()
+      adapter.toolCalls = 3
+      ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
+        parameters: {}, execute: async () => {
+          if (failure === 'read-error') {
+            vi.spyOn(access, 'retrieveWithinBudget').mockRejectedValue(new Error('controlled read failure'))
+          } else if (failure === 'oversized') {
+            access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
+          } else if (failure === 'recovered') {
+            access.change({ status: 'unavailable' })
+            await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+            access.result = { status: 'active', projection: projection('Recovered current facts', 2) }
+          } else access.result = { status: failure }
+          return [{ type: 'text', text: 'Connection observation retained' }]
+        } }))
+      await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+      await expect.poll(() => adapter.requests.length).toBeGreaterThanOrEqual(1)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
+      expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1, pendingActivation: null })
+      expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toBeNull()
+      expect(agent.session.snapshotEvents().some(event => event.type === 'user/message'
+        && event.data.source.kind === 'scope-agent-context' && event.data.source.form === 'withdrawn')).toBe(true)
+    })
+
+  it.each(['unavailable', 'revoked', 'read-error', 'oversized', 'recovered'] as const)(
+    'keeps newly claimed human input when an automatic tool continuation encounters %s', async (failure) => {
+      const { ctx, agent, adapter, access } = await fixture()
+      adapter.toolCalls = 1
+      const human = user('Continue my own work after the connection change')
+      ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Observe the owner connection change',
+        parameters: {}, execute: async () => {
+          if (failure === 'read-error') vi.spyOn(access, 'retrieveWithinBudget').mockRejectedValue(new Error('controlled read failure'))
+          else if (failure === 'oversized') access.result = { status: 'active', projection: projection('TOO_LARGE'.repeat(1100), 2) }
+          else if (failure === 'recovered') {
+            access.change({ status: 'unavailable' })
+            await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+            access.result = { status: 'active', projection: projection('Recovered current facts', 2) }
+          } else access.result = { status: failure }
+          agent.inbox.append('next-step', human)
+          return [{ type: 'text', text: 'Connection observation retained' }]
+        } }))
+      await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+      await requests(adapter, 2)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(2)
+      expect(text(adapter.requests[1]!)).toContain('Continue my own work after the connection change')
+      expect(text(adapter.requests[1]!)).not.toContain('API state one')
+      expect(text(adapter.requests[1]!)).toContain(failure === 'recovered' ? 'Recovered current facts' : 'No current shared scope facts')
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === human.id)).toHaveLength(1)
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request')).toHaveLength(1)
+      expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1 })
+    })
+
+  it.each([false, true])('rechecks a watcher pause during the automatic continuation read with human input=%s', async (withHuman) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const reading = barrier()
+    adapter.toolCalls = 1
+    ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Wait for the next owner read',
+      parameters: {}, execute: async () => {
+        access.readGate = reading.promise
+        if (withHuman) agent.inbox.append('next-step', user('Continue my own work after the paused read'))
+        return [{ type: 'text', text: 'Tool result before the paused read' }]
+      } }))
+    await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    await expect.poll(() => access.reads).toBe(3)
+    access.change({ status: 'unavailable' })
+    await expect.poll(async () => (await state(ctx, agent.id)).pauseReason).toBe('unavailable')
+    reading.resolve(undefined)
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(withHuman ? 2 : 1)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toHaveLength(1)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/request')).toHaveLength(1)
+    expect((await state(ctx, agent.id))).toMatchObject({ mode: 'paused', usedBudget: 1 })
+    if (withHuman) {
+      expect(text(adapter.requests[1]!)).toContain('Continue my own work after the paused read')
+      expect(text(adapter.requests[1]!)).toContain('No current shared scope facts')
+      expect(text(adapter.requests[1]!)).not.toContain('API state one')
+    }
   })
 
   it('pauses blocked current coverage before reserving and withdraws older current facts', async () => {
@@ -727,7 +935,11 @@ describe('native scope context through real Loader and AgentLoop', () => {
     await first.agent.whenIdle()
     const restored = await fixture(first.agent.session.snapshotEvents())
     restored.access.result = { status: 'active', projection: evidenceProjection('Equivalent after restart', 2, 'one') }
-    expect((await state(restored.ctx, restored.agent.id)).pauseReason).toBe('restored')
+    const original = await observation(first.ctx, first.agent.id)
+    const restoredStatus = await observation(restored.ctx, restored.agent.id)
+    expect(restoredStatus.state).toMatchObject({ mode: 'paused', pauseReason: 'restored', pendingActivation: null })
+    expect(restoredStatus.activity).toEqual(original.activity)
+    expect(restoredStatus.activity.completed?.taskRevision).toBe(1)
     expect(restored.adapter.requests).toHaveLength(0)
     await restored.ctx.scopeAgentContext.resume({ expectedBindingId: requiredBindingId(restored.ctx, restored.agent.id),
       agentId: restored.agent.id, automatic })
@@ -743,11 +955,23 @@ describe('native scope context through real Loader and AgentLoop', () => {
     await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
     await requests(adapter, 1)
     await agent.whenIdle()
+    const baseline = await observation(ctx, agent.id)
+    const changes: { key: string; value: unknown; seq: number }[] = []
+    const stop = ctx.sessionProjections.onChanged((changed, key, value, seq) => {
+      if (changed === agent.session) changes.push({ key, value, seq })
+    })
     access.change({ status: 'active', projection: evidenceProjection('API newer observation with identical fact', 2, 'same fact') })
     await expect.poll(() => agent.session.snapshotEvents().some(event => event.type === 'scope-agent-context/evaluation'
       && event.data.decision === 'suppress-unchanged' && event.data.projection.taskRevision === 2)).toBe(true)
     expect(adapter.requests).toHaveLength(1)
-    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+    const suppressed = await observation(ctx, agent.id)
+    expect(suppressed.state).toEqual(baseline.state)
+    expect(suppressed.activity).toMatchObject({ request: null, completed: baseline.activity.completed,
+      evaluation: { decision: 'suppress-unchanged', taskRevision: 2, activationId: null } })
+    expect(suppressed.activity.evaluation?.projectionId).not.toBe(baseline.activity.evaluation?.projectionId)
+    expect(changes.filter(change => change.key === 'scopeAgentContext')).toEqual([])
+    expect(changes.at(-1)).toEqual({ key: 'scopeAgentEvidence', value: suppressed.activity, seq: suppressed.asOfSeq })
+    stop()
     agent.followup(user('Use the newest exact source'))
     await agent.whenIdle()
     expect(text(adapter.requests[1]!)).toContain('API newer observation with identical fact')
@@ -776,6 +1000,83 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(text(adapter.requests[1]!)).toContain('API state two')
     expect(text(adapter.requests[1]!)).not.toContain('API state one')
     expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context')).toHaveLength(2)
+  })
+
+  it('observes passive recorded context at the status watermark without a new dispatch or remote read', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    agent.followup(user('Read ordinary shared work'))
+    await agent.whenIdle()
+    const first = await observation(ctx, agent.id)
+    expect(first.recordedContext).toMatchObject({ bindingId: bound.binding?.id, taskRevision: 1 })
+    expect(first.activity).toEqual({ request: null, completed: null, evaluation: null })
+    const reads = access.reads
+    const events = agent.session.snapshotEvents()
+    const detached = Session.create(agent.id, events, agent.session.header)
+    expect(recordedScopeContext(detached, first.state.binding)).toEqual(first.recordedContext)
+    expect(first.asOfSeq).toBe(agent.session.seq - 1)
+    expect(await observation(ctx, agent.id)).toEqual(first)
+    expect(agent.session.snapshotEvents()).toEqual(events)
+    expect(access.reads).toBe(reads)
+    expect(adapter.requests).toHaveLength(1)
+    await ctx.scopeAgentContext.pause({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    expect((await observation(ctx, agent.id)).recordedContext).toEqual(first.recordedContext)
+    agent.followup(user('Read the unchanged shared work again'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.contextSeq).toBe(first.recordedContext?.contextSeq)
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('clears recorded metadata when a passive read withdraws, then requires a snapshot for the replacement binding', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    agent.followup(user('Read shared work'))
+    await agent.whenIdle()
+    const first = await observation(ctx, agent.id)
+    expect(first.recordedContext).not.toBeNull()
+    access.result = { status: 'unavailable' }
+    agent.followup(user('Continue despite an unavailable owner'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    expect(text(adapter.requests[1]!)).toContain('Shared scope context withdrawn')
+    access.result = { status: 'active', projection: projection('Recovered shared work', 2) }
+    agent.followup(user('Continue with recovered shared work'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.taskRevision).toBe(2)
+    await ctx.scopeAgentContext.bind({
+      agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id), invitation, automatic: null,
+    })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    agent.followup(user('Read under the new local receiving interval'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.bindingId).not.toBe(first.recordedContext?.bindingId)
+    await ctx.scopeAgentContext.leave({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+  })
+
+  it('reports recorded surface replacements without claiming they were dispatched to the held ordinary request', async () => {
+    const { ctx, agent, adapter } = await fixture()
+    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    const binding = bound.binding
+    if (binding === null || binding.kind === 'local-task') throw new Error('Expected a remote binding')
+    const gate = barrier()
+    adapter.gate = gate.promise
+    agent.followup(user('Hold this ordinary request'))
+    try {
+      await requests(adapter, 1)
+      const first = await observation(ctx, agent.id)
+      replaceContext(agent, snapshotMessage(binding, projection('Recorded after dispatch', 2), 8000))
+      const recorded = await observation(ctx, agent.id)
+      expect(recorded.recordedContext?.taskRevision).toBe(2)
+      expect(recorded.recordedContext?.contextSeq).toBeGreaterThan(first.recordedContext!.contextSeq)
+      expect(recorded.asOfSeq).toBe(agent.session.seq - 1)
+      expect(text(adapter.requests[0]!)).not.toContain('Recorded after dispatch')
+      expect(recorded.activity).toEqual({ request: null, completed: null, evaluation: null })
+    } finally {
+      gate.resolve(undefined)
+      await agent.whenIdle()
+    }
   })
 
   it('starts one idle turn for coalesced change and does not repeat an unchanged projection', async () => {
@@ -1323,7 +1624,10 @@ describe('native scope management and Client projection', () => {
 
   it.each(['left', 'revoked', 'expired', 'missing'] as const)('keeps %s subscriptions paused when resume is requested', async (terminal) => {
     const { ctx, agent, access, adapter } = await fixture()
-    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic })
+    await requests(adapter, 1)
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).activity.completed).not.toBeNull()
     const binding = bound.binding!
     if (binding.kind === 'local-task') throw new Error('fixture expects a remote subscription')
     if (terminal === 'missing') access.subscriptions.delete(binding.subscriptionId)
@@ -1331,7 +1635,10 @@ describe('native scope management and Client projection', () => {
     await expect(ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: binding.id, automatic }))
       .rejects.toMatchObject({ code: 'scope-agent/terminal-subscription', details: { state: terminal } })
     expect(await ctx.scopeAgentContext.status({ agentId: agent.id })).toMatchObject({ subscriptionState: terminal, state: { mode: 'paused', pauseReason: 'terminal', pendingActivation: null } })
-    expect(adapter.requests).toHaveLength(0)
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
+    expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).not.toBeNull()
+    expect(adapter.requests).toHaveLength(1)
   })
 
   it('retries status after a concurrent bind and couples exact wire state with its event sequence', async () => {

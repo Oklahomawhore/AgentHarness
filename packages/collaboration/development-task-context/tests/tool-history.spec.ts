@@ -5,7 +5,7 @@ import type {
 } from '@deepseek-ai/dsh-development-task/types'
 import { afterEach, expect, it } from 'vitest'
 import TextBackend from '../src/text.ts'
-import { prepareSemanticInput, semanticModelInput } from '../src/semantic-input.ts'
+import { prepareSemanticInput, semanticModelInput, projectSemanticReply } from '../src/semantic-input.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
 
 type PeerPublication = Extract<DevelopmentTaskContextPublication, { readonly peerContribution: { readonly version: 1 } }>
@@ -270,4 +270,44 @@ it('budgets separate frozen snapshots independently even when their parent refer
   expect(selectedIds(result)).toEqual(['small'])
   expect(result.omittedSources.map(item => item.reason)).toEqual(['budget'])
   expect(semanticIds(value)).toEqual(['small', 'large'])
+})
+
+it('keeps recorded origin in recipient summaries and supersedes it only with a later complete Write', async () => {
+  const original = publication('peer', 'recorded', 1, write('RECORDED_BEFORE_JOIN'))
+  if (original.peerContribution === undefined || original.peerToolObservation === undefined
+    || original.peerToolObservation.kind !== 'tool-observation') throw new Error('expected peer file publication')
+  const observed = { ...original.peerToolObservation, version: 2 as const,
+    origin: { kind: 'recorded-local-tools' as const, planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } }
+  const authorization: DevelopmentTaskPeerContributionGrant = { ...original.peerContribution.grant,
+    source: { kind: 'tool-observations', version: 2, initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write', 'Edit'] } }
+  const recorded: PeerPublication = { ...original, peerContribution: { version: 1, grant: authorization },
+    peerToolObservation: observed,
+    text: 'Previously recorded tool attempt; not re-executed or checked against the current file.\n' + JSON.stringify(observed) }
+  const value = input([recorded])
+  const text = await backend().compute(value)
+  expect(text.text).toContain('Previously recorded tool attempt')
+  expect(text.text).toContain('RECORDED_BEFORE_JOIN')
+  expect(text.text).toContain(JSON.stringify(JSON.stringify(observed)).slice(1, -1))
+  const prepared = prepareSemanticInput(value)
+  const origin = prepared.sources[0]!
+  const summary = projectSemanticReply(prepared, { version: 1,
+    decisions: [{ sourceId: origin.sourceId, relevant: true }],
+    updates: [{ text: 'The source reported earlier work.', sources: [{ sourceId: origin.sourceId, quote: 'RECORDED_BEFORE_JOIN' }] }],
+  }, value.maxContextBytes)
+  expect(summary.text).toContain('"observationOrigin"')
+  expect(summary.text).toContain('Previously recorded tool attempt; not re-executed or checked against the current file.')
+  expect(summary.text).toContain(observed.origin.planDigest)
+  const later = publication('peer', 'live', 2, write('LIVE_AFTER_JOIN'))
+  if (later.peerContribution === undefined) throw new Error('expected peer publication')
+  const newer: PeerPublication = { ...later, peerContribution: { version: 1, grant: authorization } }
+  const current = input([newer, recorded])
+  const advanced = await backend().compute(current)
+  expect(advanced.text).toContain('LIVE_AFTER_JOIN')
+  expect(advanced.text).not.toContain('RECORDED_BEFORE_JOIN')
+  expect(advanced.omittedSources).toContainEqual({ source: { kind: 'publication', taskId: value.view.task.id,
+    revision: current.view.task.revision, publicationId: recorded.id }, reason: 'superseded' })
+  expect(semanticModelInput(prepareSemanticInput(current))).not.toContain('RECORDED_BEFORE_JOIN')
+  const own = { ...value, recipient: { ...value.recipient, peerCapture: authorization } }
+  expect((await backend().compute(own)).text).not.toContain('RECORDED_BEFORE_JOIN')
+  expect(prepareSemanticInput(own).omitted.map(item => item.reason)).toEqual(['self-published'])
 })

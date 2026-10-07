@@ -1,4 +1,5 @@
 /** Frozen registration checks do not open credentials, allocate Hosts, or dispatch model calls. */
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,8 @@ import { inspectDataStudy, prepareDataStudy, runDataPhase } from './data-cli.ts'
 
 const owned: string[] = []
 afterEach(async () => { for (const root of owned.splice(0)) await rm(root, { recursive: true, force: true }) })
-const route = { provider: 'deepseek-official', model: 'explicitly-selected-model', endpoint: 'https://api.deepseek.com/',
+const route = { provider: 'deepseek-official', endpointSource: { kind: 'deepseek-official' },
+  network: { kind: 'direct' }, model: 'explicitly-selected-model', endpoint: 'https://api.deepseek.com/',
   apiKeyEnv: 'UNUSED_DATA_STUDY_KEY', credentialsPath: '/missing/data-study-credentials.yaml',
   maxCalls: 4, maxInputBytes: 32768, maxOutputTokens: 2048, maxOutputBytes: 16384, timeoutMs: 30000 }
 const config = { ordinary: route, semantic: { ...route, maxCalls: 2 }, limits: { contextBytes: 8192,
@@ -31,6 +33,42 @@ describe.skipIf(process.env['DSH_NATIVE_EVALUATION'] !== '1')('ordinary data reg
     expect((await readdir(join(root, 'preflight')))).toEqual(['result.json'])
     await expect(runDataPhase('preflight', root)).rejects.toThrow()
     await expect(prepareDataStudy({ root, seed: 31, execution: 'live', config })).rejects.toThrow()
+  })
+
+  it('freezes the named gateway separately from its adapter without opening credentials or dispatching', async () => {
+    const root = await fresh()
+    const gateway = { ...route, endpointSource: { kind: 'openai-compatible-gateway', name: 'temorouter' },
+      endpoint: 'https://gateway.example/api/v1', apiKeyEnv: 'OPENAI_API_KEY', maxCalls: 12 }
+    const selected = { ...config, ordinary: gateway, semantic: { ...gateway, maxCalls: 6 } }
+    const manifest = await prepareDataStudy({ root, seed: 35, execution: 'live', protocol: 'continuity', config: selected })
+    expect(manifest.maximumDispatches).toBe(30)
+    expect(manifest.config).toEqual(selected)
+    const inspected = await inspectDataStudy(root)
+    expect(inspected.study.runtime.ordinary).toEqual(gateway)
+    expect(inspected.study.runtime.semantic).toEqual({ ...gateway, maxCalls: 6 })
+    expect(await runDataPhase('preflight', root)).toMatchObject({ failed: false, credentialRead: false,
+      hostsStarted: 0, modelDispatches: 0, liveModelDispatches: 0, maximumDispatches: 30 })
+    const manifestPath = join(root, 'manifest.json')
+    for (const ordinary of [{ ...gateway, endpointSource: { kind: 'deepseek-official' } },
+      { ...gateway, endpoint: 'https://different-gateway.example/v1' },
+      { ...gateway, endpointSource: { kind: 'openai-compatible-gateway', name: 'different-gateway' } }]) {
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, config: { ...selected, ordinary } }) + '\n')
+      await expect(runDataPhase('execute', root)).rejects.toThrow()
+      expect(await readdir(root)).not.toContain('execute')
+    }
+  })
+
+  it('preflights an unresolved proxy reference but refuses execution before any condition or Host starts', async () => {
+    const root = await fresh()
+    const urlEnv = `DSH_STUDY_UNSET_PROXY_${randomUUID().replaceAll('-', '')}`
+    const semantic = { ...route, network: { kind: 'env-proxy', urlEnv } }
+    const selected = { ...config, semantic }
+    const manifest = await prepareDataStudy({ root, seed: 36, execution: 'live', protocol: 'continuity', config: selected })
+    expect(manifest.config).toEqual(selected)
+    expect(await runDataPhase('preflight', root)).toMatchObject({ failed: false, credentialRead: false,
+      hostsStarted: 0, modelDispatches: 0, liveModelDispatches: 0 })
+    await expect(runDataPhase('execute', root)).rejects.toThrow(/proxy.*(?:unavailable|Node support)/)
+    expect(await readdir(root)).not.toContain('execute')
   })
 
   it('refuses changed fixture registration, node identity, and source fingerprints before creating an execute directory', async () => {

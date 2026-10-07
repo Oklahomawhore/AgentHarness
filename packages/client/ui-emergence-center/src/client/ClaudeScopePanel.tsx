@@ -46,7 +46,7 @@ function actionError(error: unknown) {
  */
 export function ClaudeScopePanel({ state, taskId, localTask, setup, check, remove, join, leave, refresh,
   contributions, readContribution, requestContribution, prepareContribution, activateContribution, stopContribution,
-  previewContributionText, t,
+  leaveJointContribution, recoverJointContribution, probeContributionEntry, previewContributionText, t,
 }: ClaudeScopePanelProps) {
   const id = useId()
   const [projectPath, setProjectPath] = useState('')
@@ -121,7 +121,9 @@ export function ClaudeScopePanel({ state, taskId, localTask, setup, check, remov
         {state.sessions.map(item => <label key={item.sessionKey} className={css.session}
           data-selected={selected === item.sessionKey || undefined}>
           <input type="radio" name={`${id}-session`} value={item.sessionKey} checked={selected === item.sessionKey}
-            disabled={item.ended && item.sharingState !== 'withdrawal-pending' && item.contributionState !== 'withdrawal-pending'} onChange={() => { choose(item) }} />
+            disabled={item.ended && item.sharingState !== 'withdrawal-pending' && item.contributionState !== 'withdrawal-pending'
+              && (item.joint === undefined || !item.joint.cleanupPending
+                && (item.joint.state === 'ended' || item.joint.state === 'superseded'))} onChange={() => { choose(item) }} />
           <span className={css.sessionBody}>
             <span className={css.sessionLine}><code>{item.sessionId}</code><span>{t(item.sharingState === 'withdrawal-pending' ? 'claude.withdrawalPending' : item.ended ? 'claude.ended' : item.sharingState === 'awaiting-approval' ? 'claude.awaitingApproval' : item.sharingState === 'active' ? 'claude.active' : item.taskId === undefined ? 'claude.observed' : 'claude.joined')}</span></span>
             <span className={css.path}>{item.cwd ?? t('claude.cwdUnknown')}</span>
@@ -135,8 +137,12 @@ export function ClaudeScopePanel({ state, taskId, localTask, setup, check, remov
         session={session} entry={contributions[session.sessionKey]}
         readContribution={readContribution} requestContribution={requestContribution}
         prepareContribution={prepareContribution} activateContribution={activateContribution}
-        stopContribution={stopContribution} previewContributionText={previewContributionText} t={t} />}
-      {taskId !== undefined && session !== undefined && !session.ended && session.contributionState === undefined &&
+        stopContribution={stopContribution} leaveJointContribution={leaveJointContribution}
+        recoverJointContribution={recoverJointContribution} probeContributionEntry={probeContributionEntry}
+        previewContributionText={previewContributionText} t={t} />}
+      {taskId !== undefined && session !== undefined && !session.ended && session.contributionState === undefined
+        && session.receiveSubscriptionId === undefined
+        && (session.joint === undefined || session.joint.state === 'ended' || session.joint.state === 'superseded') &&
         <form className={css.form} onSubmit={(event) => {
           event.preventDefault()
           void perform('join', () => join({ sessionKey: session.sessionKey, taskId, responsibility: responsibility.trim(), roots: parsedRoots, bashCommands: [] }))

@@ -8,3 +8,5 @@ header:
   pin: true
 replay:
   override: true
+writer: separate
+writerRevision: 2

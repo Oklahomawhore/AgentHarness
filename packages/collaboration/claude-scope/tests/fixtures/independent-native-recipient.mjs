@@ -10,7 +10,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 export async function mountNativeRecipient(ctx) {
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })
-  await ctx.plugin(ScopeAgentContext, { maxContextBytes: 8000, coalesceMs: 1, retryDelayMs: 10000 })
+  await ctx.plugin(ScopeAgentContext, { maxContextBytes: 8000, maxLocalContextBytes: 4000, coalesceMs: 1, retryDelayMs: 10000 })
   const llm = ctx.get('llm')
   const agents = ctx.get('agents')
   const webServer = ctx.get('webServer')

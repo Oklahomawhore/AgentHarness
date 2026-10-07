@@ -1,0 +1,15 @@
+version: 1
+scenario: scope-recipient-budget
+profile: sdk
+composition: sdk-scope-recipient-budget
+recording: authored
+writer: separate
+writerRevision: 2
+header:
+  class: scope-recipient-budget
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+workspace:
+  final: true

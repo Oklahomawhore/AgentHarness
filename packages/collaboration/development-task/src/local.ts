@@ -1,5 +1,6 @@
 /** Canonical owner-local capture identities, reports, and terminal notices. */
 import { createHash } from 'node:crypto'
+import { commandResultValues, freezeCommandResult } from './command.ts'
 import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContributionRequest,
   DevelopmentTaskContextPublication, DevelopmentTaskContributionEndReason, DevelopmentTaskLocalToolObservation,
@@ -27,7 +28,11 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
   return Object.freeze({ version: grant.version, taskId: grant.taskId, participantId: grant.participantId, bindingId: grant.bindingId,
     expectedBindingEpoch: Object.freeze({ nodeId: grant.expectedBindingEpoch.nodeId, seq: grant.expectedBindingEpoch.seq }),
     captureId: grant.captureId, captureGeneration: grant.captureGeneration,
-    source: Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]) }),
+    source: Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
+      ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent }
+        : grant.source.version === 4 ? { version: 4 as const,
+          commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))),
+          ...(grant.source.fileContent === undefined ? {} : { fileContent: grant.source.fileContent }) } : {}) }),
     expiresAt: grant.expiresAt, maxSamples: grant.maxSamples, maxSampleBytes: grant.maxSampleBytes })
 }
 
@@ -38,11 +43,21 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
  */
 export function localContributionPayloadDigest(request: DevelopmentTaskLocalContributionRequest): string {
   const { grant, result } = request
+  if (result.kind === 'command-observation') {
+    if (grant.source.version !== 4) throw new Error('command outcome requires command authorization')
+    return digest([localContributionId(grant), grant.version, grant.source.kind, grant.source.name, grant.source.tools,
+      grant.source.version, grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null,
+      grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, commandResultValues(result)])
+  }
   return digest([localContributionId(grant), grant.version, grant.source.kind, grant.source.name, grant.source.tools,
+    ...grant.source.version === 4 ? [grant.source.version,
+      grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null] : [],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence,
     result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
     ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
-    result.fields.error ?? null, result.omissions])
+    result.fields.error ?? null, result.omissions,
+    ...result.version === 3 ? [grant.source.version, grant.source.fileContent, result.completedFile.state,
+      ...result.completedFile.state === 'included' ? [result.completedFile.content, result.completedFile.sha256] : [result.completedFile.reason]] : []])
 }
 
 /**
@@ -60,8 +75,12 @@ export function localContributionPublicationId(request: DevelopmentTaskLocalCont
  * @returns deeply frozen report with canonical property order.
  */
 export function freezeLocalToolObservation(tool: DevelopmentTaskLocalToolObservation): DevelopmentTaskLocalToolObservation {
-  const common = { kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus,
-    omissions: Object.freeze([...tool.omissions]) }
+  if (tool.kind === 'command-observation') {
+    return Object.freeze({ ...freezeCommandResult(tool), sourceId: tool.sourceId, sequence: tool.sequence })
+  }
+  const common = { kind: tool.kind,
+    ...(tool.version === 3 ? { version: 3 as const, completedFile: Object.freeze({ ...tool.completedFile }) } : { version: 1 as const }),
+    reportedStatus: tool.reportedStatus, omissions: Object.freeze([...tool.omissions]) }
   const location = { rootIndex: tool.fields.rootIndex, path: tool.fields.path }
   const error = tool.fields.error === undefined ? {} : { error: tool.fields.error }
   const source = { sourceId: tool.sourceId, sequence: tool.sequence }
@@ -84,7 +103,9 @@ export function localPublication(request: DevelopmentTaskLocalContributionReques
   const observation = freezeLocalToolObservation({ ...request.result, sourceId: request.sourceId, sequence: request.sequence })
   return { id: localContributionPublicationId(request), publishedAt: at, publishedBy: request.grant.participantId,
     localContribution: { version: 1, grant: request.grant }, localToolObservation: observation,
-    text: `Local Agent tool observation. This is a reported event, not a current file snapshot.\n${JSON.stringify(observation)}` }
+    text: observation.kind === 'command-observation'
+      ? `Local Agent foreground command outcome. This records one execution, not verification of current code.\n${JSON.stringify(observation)}`
+      : `Local Agent tool observation. This is a reported event, not a current file snapshot.\n${JSON.stringify(observation)}` }
 }
 
 /**
@@ -96,8 +117,12 @@ export function localPublicationRequest(publication: DevelopmentTaskContextPubli
   const grant = publication.localContribution?.grant
   const tool = publication.localToolObservation
   if (grant === undefined || tool === undefined) throw new Error('local sample publication is required')
+  if (tool.kind === 'command-observation') {
+    return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: freezeCommandResult(tool) }
+  }
   return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-    kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+    kind: tool.kind, ...(tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
+    reportedStatus: tool.reportedStatus, omissions: tool.omissions,
     ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
   } }
 }

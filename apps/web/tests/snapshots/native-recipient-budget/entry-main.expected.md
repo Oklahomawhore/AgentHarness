@@ -1,0 +1,26 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - status: 尚未接收共享上下文
+  - paragraph: 保留的本地目标：保留原有客户端职责
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口"
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "只在我工作时更新" [checked]
+    - text: 只在我工作时更新
+    - radio "允许自动协作"
+    - text: 允许自动协作
+  - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
+  - button "连接此会话" [disabled]
+  - group: 分享本会话的工作
+  - button "重新读取状态"
+  - button "查看来源"

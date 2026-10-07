@@ -71,7 +71,9 @@ async function fixture(approve = true, joint = false) {
   await run(source, agent)
   const changeRoute = async (port: number) => {
     address = originalAddress.replace('/tcp/1/', `/tcp/${port}/`)
-    return (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    const recovered = (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    if (recovered.version !== 1) throw new Error('The fixture must recover its original single-use entry')
+    return recovered
   }
   const recover = (replacement: ScopeContributionEntry, expectedOwnerAddress = originalAddress, expectedRouteRevision = 0) =>
     source.ctx.scopeAgentContributions.recoverRoute({ agentId: agent.id, expectedCapture: selection,
@@ -270,8 +272,13 @@ it('recovers the original joint read binding after a lost route reply and uses t
   expect(after.state.usedBudget).toBe(before.state.usedBudget)
   expect((await f.source.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
   expect((await stored(f.source, f.agent.id)).capture?.receiving?.routeRecovery).toBeUndefined()
+  await f.owner.ctx.developmentTasks.publishContext({ taskId: f.task.id, participantId: f.task.createdBy, text: 'OWNER_ROUTE_FACT' })
   await run(f.source, f.agent)
-  expect(requestText(f.source.adapter.requests.at(-1)!)).toContain('JOIN_ROUTE_RESTORED')
+  const request = f.source.adapter.requests.at(-1)!
+  expect(requestText(request)).toContain('OWNER_ROUTE_FACT')
+  const scope = request.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+  expect(JSON.stringify(scope)).not.toContain('JOIN_ROUTE_RESTORED')
+  expect(scope).toMatchObject([{ source: { version: 2, projection: { version: 3 } } }])
 })
 
 it('recovers detached receiving through its original entry without recreating contribution permission', async () => {

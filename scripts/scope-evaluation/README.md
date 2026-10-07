@@ -8,6 +8,8 @@ This reference covers controlled artifact checking and native Session calibratio
 
 The separate [existing Session protocol](continuity-study/README.md) checks automatic adoption across initial work, correction and contribution withdrawal in one continuing receiver.
 
+The separate [per-device Web calibration](two-device/README.md) uses independent shipped Web processes, ordinary file tools and read-only actual-request evidence.
+
 ## Table of Contents
 
 - [Offline verification](#offline-verification)

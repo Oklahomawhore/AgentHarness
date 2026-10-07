@@ -1,0 +1,13 @@
+version: 1
+scenario: scope-semantic-idle
+profile: sdk
+composition: sdk-scope-semantic-idle
+recording: authored
+header:
+  class: scope-semantic-idle
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+writer: separate
+writerRevision: 5

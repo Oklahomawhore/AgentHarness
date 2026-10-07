@@ -1,7 +1,9 @@
 /** Current-Session read subscription and explicit, finite automatic-work permission. */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ScopeInvitation, ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus } from '@deepseek-ai/dsh-api-remotes/client'
+import type {
+  ScopeAgentContributionStatus, ScopeAgentLocalContributionStatus,
+} from '@deepseek-ai/dsh-api-remotes/client'
 import {
   Button, IconLinkOutline14, IconChevronDownOutline14, IconCloseOutline16,
   StateDot, useAnchoredPosition, useDismissOnOutsidePointer,
@@ -10,6 +12,8 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { NativeReadRoute } from './NativeReadRoute.tsx'
+import { NativeScopeActivity } from './NativeScopeActivity.tsx'
+import { NativeRecordedContext } from './NativeRecordedContext.tsx'
 import { NativeContributionPanel, type NativeContributionActions } from './NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
 import type { DevelopmentTaskDirectory } from './task-directory.ts'
@@ -17,6 +21,8 @@ import type { ParticipantDirectory } from './participant-directory.ts'
 import type { ContributionDirectory } from './contribution-directory.ts'
 import type { NativeScopeAction, NativeScopeSource } from './native-scopes.ts'
 import type { EmergenceCenterKey } from './locales.ts'
+import { nativePauseKey } from './native-scope-copy.ts'
+import { previewNativeEntry } from './native-entry.ts'
 import { automaticPolicy, NativeAutomaticPermission } from './NativeAutomaticPermission.tsx'
 import css from './NativeScopeAction.module.css'
 
@@ -36,20 +42,6 @@ export interface NativeScopeInjected extends NativeContributionActions, NativeLo
 /** Header standard kit, source, and localized controls. */
 export type NativeScopeActionProps = PropsRuntime<'conversation.session.header.actions'>
   & InjectFace<NativeScopeInjected> & PropsLocale<'emergenceCenter'>
-
-/** Validate the invitation fields used for preview; the generated Remote validates the submitted document. */
-function parseInvitation(text: string): ScopeInvitation | undefined {
-  try {
-    const value: unknown = JSON.parse(text)
-    if (value === null || typeof value !== 'object') return undefined
-    const fields = value as Record<string, unknown>
-    const strings = ['ownerPeerId', 'ownerAddress', 'recipientPeerId', 'taskId', 'grantId', 'generation', 'responsibility'] as const
-    if (!strings.every(key => typeof fields[key] === 'string' && fields[key].trim() !== '')) return undefined
-    if (!('version' in value) || value.version !== 1 || !('expiresAt' in value)
-      || typeof value.expiresAt !== 'number' || !Number.isSafeInteger(value.expiresAt) || value.expiresAt < 1) return undefined
-    return value as ScopeInvitation
-  } catch { return undefined }
-}
 
 /** Map stable RPC codes to localized recovery instructions, never raw Host messages. */
 function issueKey(issue: string): EmergenceCenterKey {
@@ -77,7 +69,7 @@ export function NativeScopeAction(props: NativeScopeActionProps) {
 function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeLocalContributions, useNativeTasks, useNativeParticipants,
   refreshNativeScope, actNativeScope,
   readNativeContribution, requestNativeContribution, stopNativeContribution, leaveNativeJoin,
-  previewNativeContribution, probeNativeContribution, recoverNativeContributionRoute,
+  previewNativeContribution, probeNativeContribution, recoverNativeContributionRoute, suggestNativeContributionPermission,
   readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution, t, ...runtime
 }: NativeScopeActionProps) {
   const snapshot = useNativeScope(value => value)
@@ -85,12 +77,14 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const localContribution = useNativeLocalContributions(value => value[runtime.sessionId])
   const tasks = useNativeTasks(value => value)
   const participants = useNativeParticipants(value => value)
-  const [local, setLocal] = useState(false)
+  const [selectedLocal, setLocal] = useState<boolean>()
+  const local = selectedLocal ?? (localContribution?.value?.assignment != null || localContribution?.value?.capture != null)
   const [open, setOpen] = useState(false)
-  useEffect(() => { if (open) readNativeLocalContribution(runtime.sessionId) }, [open, readNativeLocalContribution, runtime.sessionId])
   useEffect(() => {
-    if (localContribution?.value?.assignment != null || localContribution?.value?.capture != null) setLocal(true)
-  }, [localContribution?.value?.assignment?.bindingId, localContribution?.value?.capture?.selection.captureId])
+    if (!open) return
+    readNativeLocalContribution(runtime.sessionId)
+    readNativeContribution(runtime.sessionId)
+  }, [open, readNativeContribution, readNativeLocalContribution, runtime.sessionId])
   const [invitationText, setInvitationText] = useState('')
   const [automaticSelection, setAutomaticSelection] = useState<string | null>(null)
   const [goal, setGoal] = useState('')
@@ -127,23 +121,33 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const bound = state?.binding?.kind === 'local-task' ? null : state?.binding ?? null
   const expectedBindingId = state?.binding?.id ?? null
   useEffect(() => { setAutomaticSelection(null) }, [expectedBindingId])
-  const automaticKey = `${expectedBindingId ?? ''}/${invitationText}`
+  const automaticKey = `${expectedBindingId ?? ''}/${invitationText}/${JSON.stringify(observation?.eligibility === 'not-live' ? null : observation?.localTask)}`
   const automatic = automaticSelection === automaticKey
-  const eligible = observation?.eligibility === 'eligible' && observation.localTask === null
+  const eligible = observation?.eligibility === 'eligible'
   const orphanLocal = state?.binding?.kind === 'local-task'
     && observation?.eligibility !== 'not-live' && observation?.localTask === null ? state.binding : null
   const terminal = observation !== null && observation.eligibility !== 'not-live'
     && !['active', 'unbound'].includes(observation.subscriptionState)
   const ready = snapshot.phase === 'ready' && !snapshot.pending
-  const invitation = parseInvitation(invitationText)
-  const policy = automaticPolicy({ goal, extra, steps, interval }, state?.usedBudget ?? 0)
+  const recorded = ready && observation?.eligibility === 'eligible' && observation.subscriptionState === 'active'
+    && observation.state.mode !== 'left'
+    && bound !== null && observation.recordedContext?.bindingId === bound.id
+    && observation.recordedContext.subscriptionId === bound.subscriptionId ? observation.recordedContext : null
+  const capacityLimited = recorded !== null && recorded.omittedSourceCounts.budget > 0
+  const entryPreview = previewNativeEntry(invitationText)
+  const invitation = entryPreview.kind === 'read' ? entryPreview.invitation : undefined
+  const sharingEntry = entryPreview.kind === 'contribution'
+  const usedBudget = state?.usedBudget ?? 0
+  const grantedAutomatic = state?.automatic
+  const policy = automaticPolicy({ goal, extra, steps, interval }, usedBudget)
   const editable = ready && eligible && !terminal
   const mode = state?.mode ?? 'left'
-  const label = snapshot.phase === 'ready' ? t(`native.mode.${mode}`) : t(`native.phase.${snapshot.phase}`)
+  const displayMode = mode === 'paused' && state?.automatic === null ? 'passive' : mode
+  const label = snapshot.phase === 'ready' ? t(`native.mode.${displayMode}`) : t(`native.phase.${snapshot.phase}`)
   const localStatus = localContribution?.value
   const localBound = localStatus?.assignment != null || localStatus?.capture != null
   const localLabel = localContribution?.status !== 'ready' ? t('contribution.loading')
-    : state?.binding?.kind === 'local-task' && (mode === 'enabled' || mode === 'paused') ? label
+    : (state?.binding?.kind === 'local-task' || state?.binding?.kind === 'local-task-scope') && (mode === 'enabled' || mode === 'paused') ? label
       : localStatus?.capture?.state === 'ending' ? t('native.local.trigger.ending')
         : localStatus?.capture?.collecting ? t('native.local.trigger.sharing') : t('native.local.trigger.connected')
   const act = async (action: NativeScopeAction): Promise<boolean> => {
@@ -158,17 +162,29 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   }
   const close = (): void => { setOpen(false); trigger.current?.focus() }
   return <div ref={root} data-native-scope className={css.root}>
-    <button ref={trigger} type="button" className={css.trigger} aria-label={t('native.trigger')}
-      aria-expanded={open} aria-controls={`${id}-panel`} onClick={() => {
+    <button ref={trigger} type="button" className={capacityLimited ? `${css.trigger} ${css.capacityTrigger}` : css.trigger} aria-label={t('native.trigger')}
+      aria-expanded={open} aria-controls={`${id}-panel`} aria-describedby={capacityLimited ? `${id}-capacity` : undefined}
+      onClick={() => {
         setOpen(value => !value)
-        if (!open) refreshNativeScope()
+        if (!open) {
+          if (capacityLimited) setLocal(false)
+          refreshNativeScope()
+        }
       }}>
-      <IconLinkOutline14 /><span>{t('native.trigger')}</span>
+      <IconLinkOutline14 /><span className={css.triggerCaption}>{t('native.trigger')}</span>
       {localBound ? <><StateDot state={localStatus.capture?.collecting ? 'ongoing' : 'done'} />
         <span className={css.triggerState}>{localLabel}</span></> : bound !== null && <><StateDot state={mode === 'enabled' ? 'ongoing' : mode === 'paused' ? 'warning' : 'done'} />
         <span className={css.triggerState}>{label}</span></>}
+      {capacityLimited && <span data-native-recorded-budget className={css.capacity}>
+        <StateDot state="warning" />
+        <span className={css.capacityFull}>{t('native.recorded.capacity')}</span>
+        <span className={css.capacityShort}>{t('native.recorded.capacityShort')}</span>
+      </span>}
       <IconChevronDownOutline14 />
     </button>
+    {capacityLimited && <span id={`${id}-capacity`} className={css.capacityDescription}>
+      {t('native.recorded.capacityDescription', { count: recorded.omittedSourceCounts.budget })}
+    </span>}
     {open && createPortal(<section ref={panel} id={`${id}-panel`} data-native-scope-panel role="dialog"
       aria-label={t('native.title')} className={css.panel} style={position ?? { visibility: 'hidden', left: 0, top: 0 }}>
       <div className={css.heading}><h2>{t('native.title')}</h2><Button size="sm" aria-label={t('native.close')} onClick={close}><IconCloseOutline16 /></Button></div>
@@ -176,6 +192,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         <label><input type="radio" name={`${id}-target`} checked={local} onChange={() => { setLocal(true) }} />{t('native.target.local')}</label>
         <label><input type="radio" name={`${id}-target`} checked={!local} onChange={() => { setLocal(false) }} />{t('native.target.remote')}</label>
       </fieldset>
+      {localStatus?.capture != null && contribution?.value?.capture != null
+        && <p className={css.hint}>{t('native.share.parallel')}</p>}
       {orphanLocal !== null && <div className={css.form}>
         <p className={css.hint}>{t('native.local.orphanHint')}</p>
         <Button disabled={!ready} onClick={() => { void act({ kind: 'leave', expectedBindingId: orphanLocal.id }) }}>
@@ -184,16 +202,22 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
       </div>}
       {local ? <NativeLocalContributionPanel agentId={runtime.sessionId} entry={localContribution} t={t}
         tasks={tasks.tasks.filter(task => task.origin.kind === 'root' && task.ownerNodeId === participants.nodeId)}
-        receivingElsewhere={bound !== null && state?.mode !== 'left'} scope={snapshot} actScope={act}
+        receivingElsewhere={bound !== null && bound.kind !== 'local-task-scope' && state?.mode !== 'left'} scope={snapshot} actScope={act}
         catalogReady={snapshot.phase === 'ready' && tasks.read && participants.read && tasks.error === undefined && participants.error === undefined}
+        suggestNativeContributionPermission={suggestNativeContributionPermission}
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
-        <p className={css.state} role="status">{label}</p>
-        {state?.pauseReason != null && <p className={css.hint}>{t(`native.pause.${state.pauseReason}`)}</p>}
-        {state !== undefined && <p className={css.budget}>{state.automatic === null
+        <p className={css.state} role="status">{state?.binding?.kind === 'local-task' ? t('native.mode.left') : label}</p>
+        {state?.binding?.kind !== 'local-task' && state?.pauseReason != null && <p className={css.hint}>{t(nativePauseKey(state.pauseReason, state.automatic))}</p>}
+        {state !== undefined && state.binding?.kind !== 'local-task' && <p className={css.budget}>{state.automatic === null
           ? t('native.used', { used: state.usedBudget })
           : t('native.budget', { used: state.usedBudget, limit: state.automatic.activationLimit, steps: state.automatic.maxStepsPerTurn })}</p>}
-        {observation !== null && observation.eligibility !== 'eligible' && <p className={css.notice}>{t(`native.eligibility.${observation.eligibility}`)}</p>}
+        {observation !== null && (observation.eligibility !== 'eligible'
+          ? <p className={css.notice}>{t(`native.eligibility.${observation.eligibility}`)}</p>
+          : observation.localTask !== null && <div className={css.hint}>
+            <p>{t('native.local.retainedTask', { task: tasks.tasks.find(task => task.id === observation.localTask?.taskId)?.objective ?? observation.localTask.taskId })}</p>
+            <p>{t('native.local.scopeAdded')}</p>
+          </div>)}
         {snapshot.phase === 'unavailable' && <p className={css.hint}>{t('native.unavailable')}</p>}
         {terminal && <p className={css.notice}>{t(`native.subscription.${observation.subscriptionState}`)}</p>}
         {bound !== null && <>
@@ -201,12 +225,15 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             <dt>{t('native.owner')}</dt><dd>{bound.invitation.ownerPeerId}</dd>
             <dt>{t('native.responsibility')}</dt><dd>{bound.invitation.responsibility}</dd></dl>
           {state?.automatic !== null && state?.automatic !== undefined && <p className={css.goal}>{t('native.currentGoal', { goal: state.automatic.goal })}</p>}
+          {bound.kind === 'local-task-scope' && bound.retainedLocal.automatic !== null
+            && <p className={css.hint}>{t('native.local.retainedPolicy', { goal: bound.retainedLocal.automatic.goal })}</p>}
           <p className={css.hint}>{t('native.receiving')}</p>
+          {recorded !== null && <NativeRecordedContext recorded={recorded} t={t} />}
           <div className={css.actions}>
-            {mode === 'paused' && !terminal && state?.automatic != null && state.automatic.activationLimit > state.usedBudget
+            {mode === 'paused' && !terminal && grantedAutomatic != null && grantedAutomatic.activationLimit > usedBudget
               && <Button disabled={!editable} onClick={() => {
-                if (state.automatic !== null) void act({ kind: 'resume', expectedBindingId: bound.id, automatic: state.automatic })
-              }}>{t('native.resumeRemaining', { count: state.automatic.activationLimit - state.usedBudget })}</Button>}
+                void act({ kind: 'resume', expectedBindingId: bound.id, automatic: grantedAutomatic })
+              }}>{t('native.resumeRemaining', { count: grantedAutomatic.activationLimit - usedBudget })}</Button>}
             {mode === 'enabled' && <Button disabled={!ready} onClick={() => { void act({ kind: 'pause', expectedBindingId: bound.id }) }}>{t('native.pause')}</Button>}
             <Button disabled={!ready} onClick={() => { void act({ kind: 'leave', expectedBindingId: bound.id }) }}>{t('native.leave')}</Button>
           </div>
@@ -216,44 +243,49 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             current={bound.invitation.ownerAddress} ready={ready} t={t} update={ownerAddress => act({ kind: 'updateRoute',
               request: { expectedBindingId: bound.id, expectedReadStateSeq: observation.readStateSeq, ownerAddress } })} />}
         </>}
-        {(!bound || (mode !== 'enabled' && !terminal)) && <form className={css.form} onSubmit={(event) => {
+        <label className={css.field} htmlFor={`${id}-invitation`}>{t('native.invitation')}
+          <textarea id={`${id}-invitation`} rows={4} value={invitationText} onChange={(event) => {
+            setInvitationText(event.target.value); setAutomaticSelection(null); setSuccess(false)
+          }} /></label>
+        {entryPreview.kind === 'invalid' && <p role="alert" className={css.notice}>{t(entryPreview.reason === 'json'
+          ? 'native.invalidInvitation' : entryPreview.reason === 'unsupported' ? 'native.entry.unsupported' : 'native.entry.incomplete')}</p>}
+        {((!bound && !sharingEntry) || (bound !== null && mode !== 'enabled' && !terminal)) && <form className={css.form} onSubmit={(event) => {
           event.preventDefault()
           if (!editable) return
           if (bound !== null) {
             if (automatic && policy !== undefined) void act({ kind: 'resume', expectedBindingId: bound.id, automatic: policy })
           } else if (invitation !== undefined) {
             const permission = automatic ? policy : null
-            if (permission !== undefined) void act({ kind: 'bind', request: { invitation, expectedBindingId, automatic: permission } })
+            if (permission !== undefined) void act({ kind: 'bind', request: { invitation, expectedBindingId, automatic: permission,
+              ...(observation.localTask !== null ? { localTask: observation.localTask } : {}) } })
           }
         }}>
-          {!bound && <>
-            <label className={css.field} htmlFor={`${id}-invitation`}>{t('native.invitation')}
-              <textarea id={`${id}-invitation`} rows={4} value={invitationText} onChange={(event) => { setInvitationText(event.target.value); setAutomaticSelection(null); setSuccess(false) }} /></label>
-            {invitationText.trim() !== '' && invitation === undefined && <p className={css.notice}>{t('native.invalidInvitation')}</p>}
-            {invitation !== undefined && <dl className={css.details}><dt>{t('native.task')}</dt><dd>{invitation.taskId}</dd>
-              <dt>{t('native.owner')}</dt><dd>{invitation.ownerPeerId}</dd><dt>{t('native.responsibility')}</dt><dd>{invitation.responsibility}</dd>
-              <dt>{t('native.expires')}</dt><dd>{new Date(invitation.expiresAt).toLocaleString()}</dd></dl>}
-          </>}
+          {!bound && invitation !== undefined && <dl className={css.details}><dt>{t('native.task')}</dt><dd>{invitation.taskId}</dd>
+            <dt>{t('native.owner')}</dt><dd>{invitation.ownerPeerId}</dd><dt>{t('native.responsibility')}</dt><dd>{invitation.responsibility}</dd>
+            <dt>{t('native.expires')}</dt><dd>{new Date(invitation.expiresAt).toLocaleString()}</dd></dl>}
           <fieldset className={css.modes}><legend>{t('native.permission')}</legend>
             {!bound && <label><input type="radio" name={`${id}-mode`} checked={!automatic} onChange={() => { setAutomaticSelection(null) }} />{t('native.passive')}</label>}
             <label><input type="radio" name={`${id}-mode`} checked={automatic} onChange={() => { setAutomaticSelection(automaticKey) }} />{t('native.automatic')}</label>
           </fieldset>
           <p className={css.hint}>{t(automatic ? 'native.automaticHint' : 'native.passiveHint')}</p>
           {automatic && <NativeAutomaticPermission id={id} draft={{ goal, extra, steps, interval }}
-            used={state?.usedBudget ?? 0} disabled={!editable} t={t} change={(draft) => {
+            used={usedBudget} disabled={!editable} t={t} change={(draft) => {
               setGoal(draft.goal); setExtra(draft.extra); setSteps(draft.steps); setInterval(draft.interval)
             }} />}
           <Button type="submit" variant="primary" disabled={!editable || (bound === null && invitation === undefined) || ((automatic || bound !== null) && (!automatic || policy === undefined))}>
             {bound === null ? t('native.bind') : t('native.resume')}
           </Button>
         </form>}
-        {success && snapshot.phase === 'ready' && <p className={css.hint}>{t('native.saved')}</p>}
-        <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} scope={snapshot} t={t}
+        {success && snapshot.phase === 'ready' && state?.binding?.kind !== 'local-task' && <p className={css.hint}>{t('native.saved')}</p>}
+        <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} localEntry={localContribution} scope={snapshot} t={t}
+          entryText={sharingEntry ? invitationText : undefined}
+          suggestNativeContributionPermission={suggestNativeContributionPermission}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}
           previewNativeContribution={previewNativeContribution} probeNativeContribution={probeNativeContribution}
           recoverNativeContributionRoute={recoverNativeContributionRoute} />
       </>}
+      <NativeScopeActivity snapshot={snapshot} local={local} t={t} />
       {snapshot.issue !== null && <p ref={error} tabIndex={-1} className={css.notice} role="alert">{t(issueKey(snapshot.issue))}</p>}
       <div className={css.footer}><Button disabled={snapshot.pending} size="sm" onClick={refreshNativeScope}>{t('native.refresh')}</Button>
         <Button size="sm" onClick={() => { runtime.selectView('trajectory'); close() }}>{t('native.sources')}</Button></div>

@@ -1,8 +1,8 @@
 /** Task-owner approval and recovery of independently authorized contributions. */
 import { useEffect, useId, useRef, useState } from 'react'
-import type { DevelopmentTaskId, ScopeAccessIdentity, ScopeContributionInventory, ScopeContributionTransfer,
+import type { DevelopmentTaskId, ScopeContributionTransfer,
   ScopeContributionApproveRequest, ScopeContributionRecoverRequest, ScopeContributionApproval,
-  ScopeContributionInvitation, ScopeContributionProposal, ScopeContributionApplications } from '@deepseek-ai/dsh-api-remotes/client'
+  ScopeContributionInvitation, ScopeContributionProposal } from '@deepseek-ai/dsh-api-remotes/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
@@ -11,12 +11,8 @@ import css from './ClaudeScopePanel.module.css'
 import { ScopeOwnerAddress, resolveOwnerAddress } from './ScopeOwnerAddress.tsx'
 import { OwnerContributionApplications, type OwnerApplicationActions } from './OwnerContributionApplications.tsx'
 
-/** Owner-local inventory with the currently advertised addresses. */
-export interface OwnerContributionValue {
-  readonly identity: ScopeAccessIdentity
-  readonly inventory: ScopeContributionInventory
-  readonly applications: ScopeContributionApplications
-}
+import type { OwnerContributionValue } from './owner-contributions.ts'
+export type { OwnerContributionValue } from './owner-contributions.ts'
 
 /** Typed local management, separate from read-grant controls. */
 export interface OwnerContributionActions extends OwnerApplicationActions {
@@ -34,7 +30,7 @@ export interface OwnerContributionActions extends OwnerApplicationActions {
  */
 export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, moreOwnedContributions, approveContribution,
   recoverContribution, revokeContribution, previewContributionText, createContributionEntry, recoverContributionEntry,
-  approveContributionApplication, rejectContributionApplication, t }: OwnerContributionActions & PropsLocale<'emergenceCenter'> & {
+  approveContributionApplication, rejectContributionApplication, createGroupEntry, closeGroupEntry, t }: OwnerContributionActions & PropsLocale<'emergenceCenter'> & {
     taskId: DevelopmentTaskId | undefined
     entry: ContributionEntry<OwnerContributionValue> | undefined
   }) {
@@ -83,9 +79,10 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
       {entry?.status === 'error' && <p role="alert" className={css.error}>{t('contribution.loadFailed')}</p>}
       <ScopeOwnerAddress id={`${id}-address`} addresses={addresses} value={currentAddress}
         disabled={pending} onChange={setAddress} t={t} />
-      <OwnerContributionApplications taskId={taskId} applications={entry?.value?.applications}
+      <OwnerContributionApplications taskId={taskId} applications={entry?.value?.applications} groups={entry?.value?.groups.entries}
         ownerAddress={currentAddress} pending={pending}
         createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}
+        createGroupEntry={createGroupEntry} closeGroupEntry={closeGroupEntry}
         approveContributionApplication={approveContributionApplication}
         rejectContributionApplication={rejectContributionApplication} t={t} />
       <details data-contribution-manual-owner><summary>{t('contribution.application.manual')}</summary>
@@ -122,7 +119,8 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
           {item.state === 'active' && <Button variant="ghost" disabled={pending} onClick={() => { setApproval(undefined); void revokeContribution({ grant: item.grant }) }}>{t('contribution.revoke')}</Button>}
         </div>
       </div>)}
-      {(entry?.value?.inventory.nextGrantId != null || entry?.value?.applications.nextEntryId != null) && <Button variant="outline" disabled={entry.pending} onClick={() => { moreOwnedContributions(taskId) }}>{t('contribution.more')}</Button>}
+      {(entry?.value?.inventory.nextGrantId != null || entry?.value?.applications.nextEntryId != null
+        || entry?.value?.groups.nextEntryId != null || entry?.value?.groups.entries.some(group => group.applications.nextApplicationId !== null)) && <Button variant="outline" disabled={entry.pending} onClick={() => { moreOwnedContributions(taskId) }}>{t('contribution.more')}</Button>}
       {entry?.status === 'ready' && entry.value?.inventory.entries.length === 0 && <p className={css.empty}>{t('contribution.noGrants')}</p>}
     </>}
     {invalid && <p role="alert" className={css.error}>{t('contribution.error.text')}</p>}

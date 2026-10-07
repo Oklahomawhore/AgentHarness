@@ -1,6 +1,6 @@
 import type { ScopeAccessProjection as AccessProjection } from '@deepseek-ai/dsh-scope-access/types'
 import { afterEach, expect, it, vi } from 'vitest'
-import { receivedScopeProjection } from '../src/receive.ts'
+import { receivedScopeProjection, remainingReceiveContextBytes } from '../src/receive.ts'
 import type { ScopeReceive, ScopeSession } from '../src/state.ts'
 
 const receive: ScopeReceive = {
@@ -49,4 +49,33 @@ it('checks expiry after owner authorization and measures the complete UTF-8 fram
   const expired = receivedScopeProjection(session, { status: 'active', projection }, 4000)
   expect(expired.receive?.status).toBe('expired')
   expect(expired.text).not.toContain('displayName')
+})
+
+it.each([undefined, 'claude-projection-' + 'a'.repeat(64)])(
+  'reserves complete framing before a full owner allowance with predecessor %s', (lastProjectionId) => {
+    vi.spyOn(Date, 'now').mockReturnValue(100)
+    const current = { ...session, receive: { ...receive, taskId: 'task-界-"-\\' as ScopeReceive['taskId'] },
+      ...(lastProjectionId === undefined ? {} : { lastProjectionId }) }
+    const totalBytes = 2400
+    const available = remainingReceiveContextBytes(current, totalBytes)
+    const content = '界🙂'
+    const bounded: AccessProjection = { ...projection, taskId: current.receive.taskId,
+      projectionId: 'b'.repeat(64) as AccessProjection['projectionId'], taskRevision: Number.MAX_SAFE_INTEGER,
+      maxContextBytes: available, text: content + 'x'.repeat(available - Buffer.byteLength(content, 'utf8')) }
+    const rendered = receivedScopeProjection(current, { status: 'active', projection: bounded }, totalBytes)
+    expect(available).toBeGreaterThan(0)
+    expect(available).toBeLessThan(totalBytes)
+    expect(Buffer.byteLength(rendered.text, 'utf8')).toBe(totalBytes)
+    expect(rendered.text.endsWith(bounded.text)).toBe(true)
+    expect(rendered.selectedSources).toEqual(bounded.selectedSources)
+    expect(() => receivedScopeProjection(current, { status: 'active', projection: { ...bounded, text: bounded.text + 'x' } }, totalBytes))
+      .toThrow('complete Hook budget')
+  },
+)
+
+it('rejects an allowance with no room for any owner context before requesting it', () => {
+  const allowance = 3000
+  const frameBytes = allowance - remainingReceiveContextBytes(session, allowance)
+  expect(() => remainingReceiveContextBytes(session, frameBytes)).toThrow('receiving framing exceeds maxContextBytes')
+  expect(remainingReceiveContextBytes(session, frameBytes + 1)).toBe(1)
 })

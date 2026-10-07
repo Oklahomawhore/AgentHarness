@@ -14,7 +14,8 @@ const { peerContributionPayloadDigest } = await import(pathToFileURL(packageRequ
 /** Loader fixture identity. */
 export const name = 'task-context-semantic-snapshot'
 /** Shared application services and this group's isolated audit persistence. */
-export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'sessionPersistence', 'developmentTaskContextBackend']
+export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'settings',
+  'sessionPersistence', 'developmentTaskContextBackend']
 
 const now = 1790985600000
 const auditId = 'task-context-semantic-audit'
@@ -49,6 +50,44 @@ const summaries = [
 const digest = value => createHash('sha256').update(value).digest('hex')
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const content = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+
+// Expand delivered references independently of the production renderer before checking persisted source metadata.
+function expandDelivery(value) {
+  const at = (table, index) => {
+    assert.ok(Number.isInteger(index) && index >= 0 && index < table.length)
+    return table[index]
+  }
+  const source = index => {
+    const entry = at(value.sourceTable, index)
+    assert.ok(entry)
+    if (entry.kind === 'task') return { kind: entry.kind, taskId: entry.taskId, revision: entry.revision }
+    assert.equal(entry.kind, 'publication')
+    const task = at(value.sourceTable, entry.taskSourceIndex)
+    assert.equal(task.kind, 'task')
+    return { kind: entry.kind, taskId: task.taskId, revision: task.revision, publicationId: entry.publicationId }
+  }
+  const attribution = index => {
+    const entry = at(value.sourceTable, index).attribution
+    const result = { ...entry }
+    for (const key of ['authorization', 'localAuthorization']) {
+      if (entry[key] === undefined) continue
+      assert.deepEqual(Object.keys(entry[key]), ['authorizationIndex'])
+      const authorization = at(value.authorizationTable, entry[key].authorizationIndex)
+      assert.ok(authorization)
+      result[key] = authorization
+    }
+    return result
+  }
+  return { ...value,
+    coverage: {
+      selectedSources: value.coverage.selectedSources.map(source),
+      omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
+    },
+    updates: value.updates.map(update => ({ ...update, sources: update.sources.map(item => ({
+      source: source(item.sourceIndex), quote: item.quote, attribution: attribution(item.sourceIndex),
+    })) })),
+  }
+}
 
 class ControlledSummaryAdapter extends LlmAdapter {
   constructor(readAudit) { super(); this.readAudit = readAudit; this.requests = [] }
@@ -94,8 +133,16 @@ export async function apply(ctx) {
     await using handle = await ctx.sessionPersistence.open(auditId, 'read')
     return (await handle.read()).events
   }
+  const selection = ctx.settings.describe().find(descriptor => descriptor.ns === 'scope-context')
+  assert.ok(selection, 'the shipped SDK composition must mount the configured backend')
+  assert.equal(selection.applies, 'restart')
+  assert.deepEqual(selection.value, { mode: 'semantic', provider: 'semantic-snapshot',
+    model: 'controlled-summary', maxCalls: 8 })
+  assert.equal(ctx.developmentTaskContextBackend.identity.id, 'semantic')
+  assert.deepEqual(await readAudit(), [], 'startup must not reserve or dispatch a summary call')
   const adapter = new ControlledSummaryAdapter(readAudit)
   ctx.effect(() => ctx.llm.registerAdapter(['semantic-snapshot'], adapter))
+  assert.equal(adapter.requests.length, 0)
   const owner = 'snapshot-human-owner'
   await ctx.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Snapshot owner' })
   const unrelated = { id: 'publication-unrelated-admin', publishedBy: owner, publishedAt: now,
@@ -153,7 +200,7 @@ export async function apply(ctx) {
     assert.equal(message.source.revision, observedTurn + 4)
     const json = content(message).split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
     assert.ok(json)
-    const projection = JSON.parse(json)
+    const projection = expandDelivery(JSON.parse(json))
     assert.deepEqual(projection.coverage.omittedSources, message.source.omittedSources)
     assert.deepEqual(projection.coverage.selectedSources, message.source.selectedSources)
     assert.ok(message.source.omittedSources.some(item => item.reason === 'recipient-irrelevant'

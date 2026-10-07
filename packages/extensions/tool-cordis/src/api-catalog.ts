@@ -643,7 +643,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: '@Remote(\'requestContribution\') requestContribution(request: ClaudeScopeRequestContributionRequest): Promise<ClaudeScopeSessionSummary>',
         description: 'Retain local file permission and bounded consent, then reconcile the owner application without blocking other sessions.',
-        parameters: [{ name: 'request', description: 'exact local selection, single-capture owner entry, and accepted automatic-activation limits.' }],
+        parameters: [{ name: 'request', description: 'exact local selection, owner entry, optional passive joint consent, and accepted automatic-activation limits.' }],
         returns: 'committed local intent; session-changed notifications report later waiting, active, or cancellation state.',
       },
       {
@@ -657,6 +657,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Stop only the selected contribution locally, retaining the independent read subscription.',
         parameters: [{ name: 'request', description: 'observed session, exact capture generation, and optional updated address for its identical retained grant.' }],
         returns: 'local stop state; withdrawal remains pending until the owner confirms it. Read details after a lost reply.',
+      },
+      {
+        signature: '@Remote(\'leaveJoint\') async leaveJoint(request: ClaudeScopeLeaveJointRequest): Promise<ClaudeScopeSessionSummary>',
+        description: 'Stop only the contribution and receiving interval created by the selected joint operation.',
+        parameters: [{ name: 'request', description: 'original joint identity; later manual reading and later captures remain independent.' }],
+        returns: 'durable local stop state while exact remote cleanup continues in the background.',
+      },
+      {
+        signature: '@Remote(\'recoverJoint\') async recoverJoint(request: ClaudeScopeRecoverJointRequest): Promise<ClaudeScopeSessionSummary>',
+        description: 'Retain one replacement owner address for both permissions of the original joint operation.',
+        parameters: [{ name: 'request', description: 'displayed joint and read revision; only an identical lost-response retry bypasses the current revision.' }],
+        returns: 'committed route intent; background adoption preserves all grant and capture identities.',
       },
       {
         signature: '@Remote(\'receive\') receive(request: ClaudeScopeReceiveRequest): Promise<ClaudeScopeSessionSummary>',
@@ -2227,6 +2239,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable entry and canonical copyable text.',
       },
       {
+        signature: '@Remote(\'createGroupEntry\') createGroupEntry(request: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult>',
+        description: 'Create a reusable target entrance with independent owner approval for each applicant.',
+        parameters: [{ name: 'request', description: 'owned Task, explicit route, deadline, and retained member limit.' }],
+        returns: 'version-two entry text after durability; no grant is issued by creation.',
+      },
+      {
+        signature: '@Remote(\'groupEntries\') groupEntries(request: ScopeGroupEntriesRequest): Promise<ScopeGroupEntries>',
+        description: 'List reusable entrances separately from their independent member decisions.',
+        parameters: [{ name: 'request', description: 'owned Task and optional stable entry cursor.' }],
+        returns: 'a complete byte-bounded page, including closed and expired entrances.',
+      },
+      {
+        signature: '@Remote(\'groupApplications\') groupApplications(request: ScopeGroupApplicationsRequest): Promise<ScopeGroupApplications>',
+        description: 'List one group\'s independently retained applicants and reconciled Task grants.',
+        parameters: [{ name: 'request', description: 'exact entrance and optional applicant cursor belonging to it.' }],
+        returns: 'a complete byte-bounded page of member decisions.',
+      },
+      {
+        signature: '@Remote(\'closeGroupEntry\') closeGroupEntry(request: ScopeGroupEntrySelection): Promise<ScopeGroupEntryStatus>',
+        description: 'Permanently stop new applicants without revoking members or cancelling existing pending applications.',
+        parameters: [{ name: 'request', description: 'exact retained reusable entrance.' }],
+        returns: 'durable closure; pending approval still obeys the original deadline.',
+      },
+      {
         signature: '@Remote(\'recoverContributionEntry\') recoverContributionEntry(request: ScopeContributionEntryRecoverRequest): Promise<ScopeContributionEntryResult>',
         description: 'Recover an original entry through a current owner address without reopening it.',
         parameters: [{ name: 'request', description: 'retained entry and explicitly confirmed advertised address.' }],
@@ -2276,7 +2312,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'contribute(request: { readonly invitation: ScopeContributionInvitation; readonly sample: ScopeContributionSample }, signal: AbortSignal): Promise<ScopeContributionSubmitResult>',
-        description: 'Submit a complete durable sample to its authenticated owner.',
+        description: 'Submit a complete durable sample on its explicit protocol version; recorded history requires separate source permission.',
         parameters: [{ name: 'request', description: 'pinned invitation and exact retained outbox sample; callers must not rebuild a retry.' }, { name: 'signal', description: 'consumer cancellation; a failed response does not prove that admission failed.' }],
         returns: 'a matched original receipt or explicit refusal, terminal, or temporary status.',
       },
@@ -2291,6 +2327,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Verify current owner authorization and persist exact text before returning it.',
         parameters: [{ name: 'subscriptionId', description: 'local receive binding identity; no Task assignment is created.' }, { name: 'signal', description: 'consumer cancellation, combined with service disposal and the configured deadline.' }],
         returns: 'current projection or an explicit inactive/unknown state; never an offline cached projection.',
+      },
+      {
+        signature: 'async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult>',
+        description: 'Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.',
+        parameters: [{ name: 'request', description: 'subscription and positive backend text allowance, excluding consumer-owned model framing.' }, { name: 'signal', description: 'consumer cancellation, combined with service disposal and the configured deadline.' }],
+        returns: 'exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.',
       },
       {
         signature: 'waitForChange(subscriptionId: ScopeSubscriptionId, cursor: ScopeChangeCursor | undefined, signal: AbortSignal): Promise<ScopeWaitResult>',
@@ -2363,11 +2405,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote(\'leave\') async leave(request: ScopeAgentBindingRequest): Promise<ScopeAgentBindingStatus>',
         description: 'Stop bound automatic work and end its subscription, or discard a stale local binding after its Task is cleared.',
         parameters: [{ name: 'request', description: 'live Session and its observed binding interval.' }],
-        returns: 'committed unbound state with lifetime reservations retained.',
+        returns: 'unbound remote-only state, or a fresh local interval with retained permission paused and lifetime reservations unchanged.',
       },
       {
         signature: '@Remote(\'status\') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentStatusResult>',
-        description: 'Observe live eligibility, exact Session state, and locally known subscription intent.',
+        description: 'Observe live eligibility, exact Session state, recorded context and automatic activity, and local subscription intent.',
         parameters: [{ name: 'request', description: 'Session identity; lookup never starts or restores a cold Agent.' }],
         returns: 'a consistent projection watermark or not-live; no remote authorization is performed.',
       },
@@ -2375,8 +2417,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'scopeAgentContributions',
-    summary: 'Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.',
-    description: 'Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.',
+    summary: 'Actual native execution observations become durable original reports, then the existing owner protocol delivers them.',
+    description: 'Actual native execution observations become durable original reports, then the existing owner protocol delivers them.',
     methods: [
       {
         signature: '@Remote(\'status\') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionStatus>',
@@ -2385,9 +2427,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one committed source-domain revision and current live eligibility.',
       },
       {
+        signature: '@Remote(\'permissionDraft\') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>',
+        description: 'Suggest editable file permission from this Session\'s directory, visible tools, and configured limits.',
+        parameters: [{ name: 'request', description: 'exact live ordinary Session selected by the user.' }],
+        returns: 'an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.',
+      },
+      {
         signature: '@Remote(\'request\') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>',
-        description: 'Persist one Session\'s explicit file permission and request automatic activation of an equal or narrower owner approval.',
-        parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, local files, tools, and accepted limits.' }],
+        description: 'Persist one Session\'s explicit file and command sharing permission and request automatic activation of an equal or narrower owner approval.',
+        parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, file and command selections, limits, and optional recorded-local-tool export consent.' }],
         returns: 'durable local intent; later changed notifications describe owner reconciliation.',
       },
       {
@@ -2398,7 +2446,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'stop\') stop(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>',
-        description: 'Stop future collection immediately and retain any owner cancellation until it is confirmed.',
+        description: 'Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.',
         parameters: [{ name: 'request', description: 'exact displayed capture, including for an inactive source Session.' }],
         returns: 'durable sharing termination and pending-read cancellation; already adopted reading is retained.',
       },
@@ -2409,6 +2457,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable departure intent or confirmed cleanup; failed cleanup remains retryable.',
       },
       {
+        signature: '@Remote(\'stopLocal\') stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus>',
+        description: 'Stop only the selected owner-local capture and withdraw its reports from the original Task.',
+        parameters: [{ name: 'request', description: 'exact displayed local capture, including for an inactive source Session.' }],
+        returns: 'durable local termination; unrelated remote sharing and receiving remain unchanged.',
+      },
+      {
         signature: '@Remote(\'localStatus\') async localStatus(request: { readonly agentId: SessionId }): Promise<ScopeAgentLocalContributionStatus>',
         description: 'Inspect the live Agent\'s local Task binding without changing assignment or consent.',
         parameters: [{ name: 'request', description: 'existing Session selected by the local user.' }],
@@ -2416,8 +2470,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'requestLocal\') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>',
-        description: 'Authorize actual file tools for the selected Agent\'s current owner-local Root Task.',
-        parameters: [{ name: 'request', description: 'exact assignment and capture expectations, local roots, tools, and finite limits.' }],
+        description: 'Authorize native file and foreground command reports for the selected Agent\'s current owner-local Root Task.',
+        parameters: [{ name: 'request', description: 'exact assignment and capture expectations, local roots, file tools, commands, and finite limits.' }],
         returns: 'durable opening intent; collection starts only after Task commits the same permission.',
       },
     ],
@@ -3130,7 +3184,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'shell',
     summary: 'Abstract bash execution service.',
-    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
+    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Resolved working directories belong to the execution world shared with the mounted filesystem and subprocess providers; filesystem process paths retain their meaning when passed as `workdir`.\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
     methods: [
       {
         signature: 'abstract resolve(request: ShellExecRequest): ShellExecSpec',
@@ -4616,6 +4670,30 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'tool-bash/foreground-completed',
+    mode: 'emit',
+    signature: '\'tool-bash/foreground-completed\'(completion: ToolBashCompletion): void',
+    summary: 'Observe returned provider facts, including timeout or abort, before the tool pipeline settles.',
+    description: 'Observe returned provider facts, including timeout or abort, before the tool pipeline settles. Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.',
+    parameters: [{ name: 'completion', description: 'original operation identity and its actual provider result; no spill file is read.' }],
+  },
+  {
+    name: 'tool-bash/foreground-start',
+    mode: 'emit',
+    signature: '\'tool-bash/foreground-start\'(operation: ToolBashExecution): void',
+    summary: 'Observe an admitted foreground invocation immediately before its actual provider run.',
+    description: 'Observe an admitted foreground invocation immediately before its actual provider run. This does not establish process startup or completion. Observers own asynchronous work; failures are contained.',
+    parameters: [{ name: 'operation', description: 'exact registry execution, provider, and resolved command settings.' }],
+  },
+  {
+    name: 'tool-fs/mutation-completed',
+    mode: 'emit',
+    signature: '\'tool-fs/mutation-completed\'(completion: ToolFsCompletion): void',
+    summary: 'Observe the same provider\'s successful result before tool settlement; later failure or cancellation remains possible.',
+    description: 'Observe the same provider\'s successful result before tool settlement; later failure or cancellation remains possible. Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.',
+    parameters: [{ name: 'completion', description: 'Original mutation identity and produced text, without a second filesystem read.' }],
+  },
+  {
     name: 'tool-fs/mutation-start',
     mode: 'emit',
     signature: '\'tool-fs/mutation-start\'(mutation: ToolFsMutation): void',
@@ -5040,6 +5118,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ClaudeScopeJoinRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly taskId: DevelopmentTaskId;\n    readonly responsibility: string;\n    readonly roots: readonly string[];\n    readonly bashCommands: readonly string[];\n    readonly openApiSources?: readonly ClaudeScopeOpenApiSource[];\n}',
   },
   {
+    name: 'ClaudeScopeJointId',
+    declaration: 'export type ClaudeScopeJointId = Branded<\'ClaudeScopeJointId\'>;',
+  },
+  {
+    name: 'ClaudeScopeJointSummary',
+    declaration: 'export interface ClaudeScopeJointSummary {\n    readonly id: ClaudeScopeJointId;\n    readonly capture: ClaudeScopeContributionSelection;\n    readonly expectedReadRevision: number;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly intent: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly cleanupPending: boolean;\n    readonly subscriptionId?: ScopeSubscriptionId;\n}',
+  },
+  {
+    name: 'ClaudeScopeLeaveJointRequest',
+    declaration: 'export interface ClaudeScopeLeaveJointRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly jointId: ClaudeScopeJointId;\n}',
+  },
+  {
     name: 'ClaudeScopeLeaveRequest',
     declaration: 'export interface ClaudeScopeLeaveRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n}',
   },
@@ -5064,12 +5154,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ClaudeScopeReceiveStatus = \'pending\' | \'active\' | \'revoked\' | \'expired\' | \'unavailable\' | \'left\';',
   },
   {
+    name: 'ClaudeScopeRecoverJointRequest',
+    declaration: 'export interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {\n    readonly expectedReadRevision: number;\n    readonly ownerAddress: string;\n}',
+  },
+  {
     name: 'ClaudeScopeRemoveSetupResult',
     declaration: 'export interface ClaudeScopeRemoveSetupResult {\n    readonly projectPath: string;\n    readonly settingsPath: string;\n    readonly profileName: string;\n    readonly outcome: \'removed\' | \'already-removed\';\n}',
   },
   {
     name: 'ClaudeScopeRequestContributionRequest',
-    declaration: 'export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n}',
+    declaration: 'export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly receive?: {\n        readonly expectedReadRevision: number;\n    };\n}',
   },
   {
     name: 'ClaudeScopeSessionKey',
@@ -5077,7 +5171,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ClaudeScopeSessionSummary',
-    declaration: 'export interface ClaudeScopeSessionSummary {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly sessionId: string;\n    readonly cwd?: string;\n    readonly observedAt: number;\n    readonly ended: boolean;\n    readonly taskId?: DevelopmentTaskId;\n    readonly responsibility?: string;\n    readonly sharingState?: \'awaiting-approval\' | \'active\' | \'withdrawal-pending\';\n    readonly withdrawalTaskId?: DevelopmentTaskId;\n    readonly receiveSubscriptionId?: ScopeSubscriptionId;\n    readonly receiveTaskId?: DevelopmentTaskId;\n    readonly receiveOwnerPeerId?: ScopePeerId;\n    readonly receiveState?: ClaudeScopeReceiveStatus;\n    readonly sharingIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n    readonly contributionState?: \'prepared\' | \'active\' | \'withdrawal-pending\';\n    readonly contributionApplicationState?: ClaudeScopeContributionApplication[\'state\'];\n    readonly contributionTaskId?: DevelopmentTaskId;\n    readonly contributionOwnerPeerId?: ScopePeerId;\n    readonly contributionIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n}',
+    declaration: 'export interface ClaudeScopeSessionSummary {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly sessionId: string;\n    readonly cwd?: string;\n    readonly observedAt: number;\n    readonly ended: boolean;\n    readonly readRevision: number;\n    readonly joint?: ClaudeScopeJointSummary;\n    readonly taskId?: DevelopmentTaskId;\n    readonly responsibility?: string;\n    readonly sharingState?: \'awaiting-approval\' | \'active\' | \'withdrawal-pending\';\n    readonly withdrawalTaskId?: DevelopmentTaskId;\n    readonly receiveSubscriptionId?: ScopeSubscriptionId;\n    readonly receiveTaskId?: DevelopmentTaskId;\n    readonly receiveOwnerPeerId?: ScopePeerId;\n    readonly receiveState?: ClaudeScopeReceiveStatus;\n    readonly sharingIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n    readonly contributionState?: \'prepared\' | \'active\' | \'withdrawal-pending\';\n    readonly contributionApplicationState?: ClaudeScopeContributionApplication[\'state\'];\n    readonly contributionTaskId?: DevelopmentTaskId;\n    readonly contributionOwnerPeerId?: ScopePeerId;\n    readonly contributionIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n}',
   },
   {
     name: 'ClaudeScopeSetupRequest',
@@ -5560,6 +5654,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskClearRequest {\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly expectedBindingEpoch?: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n}',
   },
   {
+    name: 'DevelopmentTaskCommandObservationResult',
+    declaration: 'export type DevelopmentTaskCommandObservationResult = {\n    readonly kind: \'command-observation\';\n    readonly version: 4;\n    readonly tool: \'Bash\';\n    readonly fields: DevelopmentTaskCommandSelector;\n} & ({\n    readonly state: \'completed\';\n    readonly exitCode: number | null;\n    readonly signal: string | null;\n    readonly timedOut: boolean;\n    readonly aborted: boolean;\n    readonly timeoutMs: number;\n    readonly stdout: DevelopmentTaskCommandOutput;\n    readonly stderr: DevelopmentTaskCommandOutput;\n} | {\n    readonly state: \'unavailable\';\n    readonly reason: \'tool-failed\' | \'completion-unavailable\';\n});',
+  },
+  {
+    name: 'DevelopmentTaskCommandOutput',
+    declaration: 'export type DevelopmentTaskCommandOutput = {\n    readonly state: \'included\';\n    readonly text: string;\n    readonly truncated: boolean;\n} | {\n    readonly state: \'omitted\';\n    readonly reason: \'budget\';\n    readonly truncated: boolean;\n};',
+  },
+  {
+    name: 'DevelopmentTaskCommandSelector',
+    declaration: 'export interface DevelopmentTaskCommandSelector {\n    readonly command: string;\n    readonly rootIndex: number;\n}',
+  },
+  {
+    name: 'DevelopmentTaskCommandToolObservationSource',
+    declaration: 'export interface DevelopmentTaskCommandToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly version: 4;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n    readonly commands: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly initialization?: never;\n}',
+  },
+  {
+    name: 'DevelopmentTaskCompletedFileToolObservationResult',
+    declaration: 'export type DevelopmentTaskCompletedFileToolObservationResult = (Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Write\';\n}>, \'version\'> | Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Edit\';\n}>, \'version\'>) & {\n    readonly version: 3;\n    readonly completedFile: {\n        readonly state: \'included\';\n        readonly content: string;\n        readonly sha256: string;\n    } | {\n        readonly state: \'omitted\';\n        readonly reason: \'tool-failed\' | \'budget\' | \'unavailable\';\n    };\n};',
+  },
+  {
+    name: 'DevelopmentTaskCompletedFileToolObservationSource',
+    declaration: 'export type DevelopmentTaskCompletedFileToolObservationSource = Omit<DevelopmentTaskToolObservationSource, \'version\' | \'fileContent\'> & {\n    readonly version: 3;\n    readonly fileContent: \'completed-native-file\';\n};',
+  },
+  {
     name: 'DevelopmentTaskContextActivation',
     declaration: 'export type DevelopmentTaskContextActivation = {\n    readonly kind: \'exact\';\n} | {\n    readonly kind: \'recipient-evidence\';\n    readonly version: 1;\n    readonly digest: DevelopmentTaskContextEvidenceId;\n    readonly coverage: \'complete\' | \'blocked-current\';\n};',
   },
@@ -5581,11 +5699,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContextInput',
-    declaration: 'export interface DevelopmentTaskContextInput {\n    readonly view: DevelopmentTaskContextView;\n    readonly recipient: {\n        readonly participantId: DevelopmentParticipantId;\n        readonly sessionLabel?: string;\n    };\n    readonly maxContextBytes: number;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface DevelopmentTaskContextInput {\n    readonly view: DevelopmentTaskContextView;\n    readonly recipient: {\n        readonly participantId: DevelopmentParticipantId;\n        readonly sessionLabel?: string;\n        readonly peerCapture?: DevelopmentTaskContextPeerCapture;\n    };\n    readonly maxContextBytes: number;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'DevelopmentTaskContextOmission',
     declaration: 'export interface DevelopmentTaskContextOmission {\n    readonly source: DevelopmentTaskContextSourceRef;\n    readonly reason: \'self-published\' | \'budget\' | \'unsupported\' | \'superseded\' | \'withdrawn\' | \'recipient-irrelevant\';\n}',
+  },
+  {
+    name: 'DevelopmentTaskContextPeerCapture',
+    declaration: 'export type DevelopmentTaskContextPeerCapture = Pick<DevelopmentTaskPeerContributionGrant, \'ownerPeerId\' | \'contributorPeerId\' | \'taskId\' | \'grantId\' | \'generation\' | \'captureId\' | \'captureGeneration\'>;',
   },
   {
     name: 'DevelopmentTaskContextProjection',
@@ -5617,7 +5739,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContributionSource',
-    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource;',
+    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource;',
   },
   {
     name: 'DevelopmentTaskCreateRequest',
@@ -5668,6 +5790,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskListRequest {\n    readonly participantId?: DevelopmentParticipantId;\n    readonly limit?: number;\n}',
   },
   {
+    name: 'DevelopmentTaskLocalContextProjection',
+    declaration: 'export interface DevelopmentTaskLocalContextProjection extends DevelopmentTaskContextProjection, DevelopmentTaskLocalContextTarget {\n    readonly version: 1;\n    readonly kind: \'local-task\';\n    readonly projectionId: DevelopmentTaskLocalContextProjectionId;\n    readonly taskRevision: number;\n    readonly ownerNodeId: DevelopmentNodeId;\n    readonly backend: {\n        readonly id: string;\n        readonly revision: string;\n    };\n    readonly maxContextBytes: number;\n}',
+  },
+  {
+    name: 'DevelopmentTaskLocalContextProjectionId',
+    declaration: 'export type DevelopmentTaskLocalContextProjectionId = Branded<\'DevelopmentTaskLocalContextProjectionId\'>;',
+  },
+  {
     name: 'DevelopmentTaskLocalContextTarget',
     declaration: 'export interface DevelopmentTaskLocalContextTarget {\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly taskBindingId: DevelopmentTaskBindingId;\n    readonly bindingEpoch: DevelopmentTaskBindingEpoch;\n}',
   },
@@ -5681,7 +5811,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalContributionGrant',
-    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
+    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
   },
   {
     name: 'DevelopmentTaskLocalContributionId',
@@ -5697,7 +5827,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalContributionRequest',
-    declaration: 'export interface DevelopmentTaskLocalContributionRequest {\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: DevelopmentTaskToolObservationResult;\n}',
+    declaration: 'export interface DevelopmentTaskLocalContributionRequest {\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: DevelopmentTaskLocalToolObservationResult;\n}',
   },
   {
     name: 'DevelopmentTaskLocalContributionResult',
@@ -5705,7 +5835,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalToolObservation',
-    declaration: 'export type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n};',
+    declaration: 'export type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n};',
+  },
+  {
+    name: 'DevelopmentTaskLocalToolObservationResult',
+    declaration: 'export type DevelopmentTaskLocalToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskCompletedFileToolObservationResult | DevelopmentTaskCommandObservationResult;',
   },
   {
     name: 'DevelopmentTaskLogChange',
@@ -5801,7 +5935,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskPeerContributionRequest',
-    declaration: 'export interface DevelopmentTaskPeerContributionRequest {\n    readonly grant: DevelopmentTaskPeerContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, {\n        readonly state: \'revoked\';\n    }> | DevelopmentTaskToolObservationResult;\n}',
+    declaration: 'export interface DevelopmentTaskPeerContributionRequest {\n    readonly grant: DevelopmentTaskPeerContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, {\n        readonly state: \'revoked\';\n    }> | DevelopmentTaskPeerToolObservationResult;\n}',
   },
   {
     name: 'DevelopmentTaskPeerContributionResult',
@@ -5813,11 +5947,23 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskPeerToolObservation',
-    declaration: 'export type DevelopmentTaskPeerToolObservation = DevelopmentTaskToolObservationResult & {\n    readonly sourceName: string;\n    readonly grantId: DevelopmentTaskContributionGrantId;\n    readonly sequence: number;\n    readonly observerPeerId: ScopePeerId;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly capture: {\n        readonly id: DevelopmentTaskCaptureId;\n        readonly generation: DevelopmentTaskCaptureGeneration;\n    };\n};',
+    declaration: 'export type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {\n    readonly sourceName: string;\n    readonly grantId: DevelopmentTaskContributionGrantId;\n    readonly sequence: number;\n    readonly observerPeerId: ScopePeerId;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly capture: {\n        readonly id: DevelopmentTaskCaptureId;\n        readonly generation: DevelopmentTaskCaptureGeneration;\n    };\n};',
+  },
+  {
+    name: 'DevelopmentTaskPeerToolObservationResult',
+    declaration: 'export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskLocalToolObservationResult | DevelopmentTaskRecordedToolObservationResult;',
   },
   {
     name: 'DevelopmentTaskPublishContextRequest',
     declaration: 'export interface DevelopmentTaskPublishContextRequest {\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly text: string;\n    readonly uri?: string;\n}',
+  },
+  {
+    name: 'DevelopmentTaskRecordedToolObservationResult',
+    declaration: 'export type DevelopmentTaskRecordedToolObservationResult = (Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Write\';\n}>, \'version\'> | Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Edit\';\n}>, \'version\'>) & {\n    readonly version: 2;\n    readonly origin: {\n        readonly kind: \'recorded-local-tools\';\n        readonly planDigest: string;\n        readonly executionDigest: string;\n    };\n};',
+  },
+  {
+    name: 'DevelopmentTaskRecordedToolObservationSource',
+    declaration: 'export type DevelopmentTaskRecordedToolObservationSource = Omit<DevelopmentTaskToolObservationSource, \'version\' | \'initialization\'> & {\n    readonly version: 2;\n    readonly initialization: \'recorded-local-tools\';\n};',
   },
   {
     name: 'DevelopmentTaskRevokeObservedArtifactRequest',
@@ -5833,7 +5979,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskToolObservationSource',
-    declaration: 'export interface DevelopmentTaskToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n}',
+    declaration: 'export interface DevelopmentTaskToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly version?: never;\n    readonly initialization?: never;\n    readonly fileContent?: never;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n}',
   },
   {
     name: 'DevWorkbenchEntryId',
@@ -6848,6 +6994,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScheduledToolPreparation = {\n    kind: \'dispatch\';\n    exec: ToolRunContext;\n} | {\n    kind: \'post-result\';\n    exec: ToolRunContext;\n    result: ToolExecutionResult;\n} | {\n    kind: \'final-result\';\n    exec: ToolRunContext;\n    result: ToolExecutionResult;\n};',
   },
   {
+    name: 'ScopeAccessCaptureProjection',
+    declaration: 'export interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {\n    readonly version: 3;\n    readonly activation: DevelopmentTaskContextActivation;\n    readonly peerCapture: DevelopmentTaskContextPeerCapture;\n}',
+  },
+  {
     name: 'ScopeAccessCurrentProjection',
     declaration: 'export interface ScopeAccessCurrentProjection extends ScopeAccessProjectionContent {\n    readonly version: 2;\n    readonly activation: DevelopmentTaskContextActivation;\n}',
   },
@@ -6865,7 +7015,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAccessProjection',
-    declaration: 'export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection;',
+    declaration: 'export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection;',
   },
   {
     name: 'ScopeAccessProjectionContent',
@@ -6876,12 +7026,32 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeAgentActivationId = Branded<\'ScopeAgentActivationId\'>;',
   },
   {
+    name: 'ScopeAgentActivity',
+    declaration: 'export interface ScopeAgentActivity {\n    readonly request: ScopeAgentActivityRequest | null;\n    readonly completed: ScopeAgentActivityCompleted | null;\n    readonly evaluation: ScopeAgentActivityEvaluation | null;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityCompleted',
+    declaration: 'export interface ScopeAgentActivityCompleted extends ScopeAgentActivityRequest {\n    readonly assistantSeq: SessionSeq;\n    readonly turnEndSeq: SessionSeq;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityEvaluation',
+    declaration: 'export interface ScopeAgentActivityEvaluation extends ScopeAgentActivityIdentity {\n    readonly decision: ScopeAgentEvaluation[\'decision\'];\n    readonly activationId: ScopeAgentActivationId | null;\n}',
+  },
+  {
+    name: 'ScopeAgentActivityIdentity',
+    declaration: 'export interface ScopeAgentActivityIdentity {\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly taskRevision: ScopeAgentReadProjection[\'taskRevision\'];\n    readonly localTaskRevision?: ScopeAgentReadProjection[\'taskRevision\'];\n    readonly projectionId: ScopeAgentReadProjection[\'projectionId\'];\n}',
+  },
+  {
+    name: 'ScopeAgentActivityRequest',
+    declaration: 'export interface ScopeAgentActivityRequest extends ScopeAgentActivityIdentity {\n    readonly activationId: ScopeAgentActivationId;\n    readonly requestSeq: SessionSeq;\n    readonly contextSeq: SessionSeq;\n    readonly localContextSeq?: SessionSeq;\n    readonly turn: number;\n    readonly step: number;\n}',
+  },
+  {
     name: 'ScopeAgentAutomaticPolicy',
     declaration: 'export interface ScopeAgentAutomaticPolicy {\n    readonly goal: string;\n    readonly activationLimit: number;\n    readonly maxStepsPerTurn: number;\n    readonly minIntervalMs: number;\n}',
   },
   {
     name: 'ScopeAgentBinding',
-    declaration: 'export type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding;',
+    declaration: 'export type ScopeAgentBinding = ScopeAgentRemoteBinding | ScopeAgentLocalBinding | ScopeAgentCompositeBinding;',
   },
   {
     name: 'ScopeAgentBindingId',
@@ -6893,7 +7063,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentBindingStatus',
-    declaration: 'export interface ScopeAgentBindingStatus {\n    readonly version: 1 | 2;\n    readonly agentId: SessionId;\n    readonly binding: ScopeAgentBinding | null;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n    readonly mode: \'passive\' | \'enabled\' | \'paused\' | \'left\';\n    readonly pauseReason: ScopeAgentPauseReason | null;\n    readonly usedBudget: number;\n    readonly lastActivationAt: number | null;\n    readonly pendingActivation: {\n        readonly id: ScopeAgentActivationId;\n        readonly bindingId: ScopeAgentBindingId;\n    } | null;\n}',
+    declaration: 'export interface ScopeAgentBindingStatus {\n    readonly version: 1 | 2 | 3 | 4;\n    readonly agentId: SessionId;\n    readonly binding: ScopeAgentBinding | null;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n    readonly mode: \'passive\' | \'enabled\' | \'paused\' | \'left\';\n    readonly pauseReason: ScopeAgentPauseReason | null;\n    readonly usedBudget: number;\n    readonly lastActivationAt: number | null;\n    readonly pendingActivation: {\n        readonly id: ScopeAgentActivationId;\n        readonly bindingId: ScopeAgentBindingId;\n    } | null;\n}',
   },
   {
     name: 'ScopeAgentBindLocalRequest',
@@ -6901,19 +7071,43 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentBindRequest',
-    declaration: 'export interface ScopeAgentBindRequest {\n    readonly agentId: SessionId;\n    readonly invitation: ScopeInvitation;\n    readonly expectedBindingId: ScopeAgentBindingId | null;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n}',
+    declaration: 'export interface ScopeAgentBindRequest {\n    readonly agentId: SessionId;\n    readonly invitation: ScopeInvitation;\n    readonly expectedBindingId: ScopeAgentBindingId | null;\n    readonly localTask?: ScopeAgentLocalTaskTarget;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n}',
   },
   {
     name: 'ScopeAgentCancelJoinReadRequest',
     declaration: 'export interface ScopeAgentCancelJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly leaveAdopted: boolean;\n}',
   },
   {
+    name: 'ScopeAgentCompositeBinding',
+    declaration: 'export interface ScopeAgentCompositeBinding {\n    readonly kind: \'local-task-scope\';\n    readonly id: ScopeAgentBindingId;\n    readonly target: DevelopmentTaskLocalContextTarget;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly retainedLocal: ScopeAgentRetainedLocal;\n    readonly originalCapture?: ScopeOriginalCapture;\n}',
+  },
+  {
+    name: 'ScopeAgentCompositeProjection',
+    declaration: 'export interface ScopeAgentCompositeProjection {\n    readonly kind: \'local-task-scope\';\n    readonly version: 1;\n    readonly local: DevelopmentTaskLocalContextProjection;\n    readonly remote: ScopeAccessProjection;\n    readonly maxContextBytes: number;\n    readonly projectionId: ScopeAccessProjection[\'projectionId\'];\n    readonly taskRevision: ScopeAccessProjection[\'taskRevision\'];\n}',
+  },
+  {
     name: 'ScopeAgentContributionCapture',
-    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
+    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly initialization?: ScopeAgentContributionInitialization;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
+  },
+  {
+    name: 'ScopeAgentContributionInitialization',
+    declaration: 'export interface ScopeAgentContributionInitialization {\n    readonly state: \'pending\' | \'frozen\' | \'unavailable\';\n    readonly request: ScopeAgentContributionInitializationRequest;\n    readonly cutoff: {\n        readonly localSequence: number;\n        readonly sessionSeq: SessionSeqCursor;\n    } | null;\n    readonly coverage: {\n        readonly recorded: number;\n        readonly selected: number;\n        readonly omitted: number;\n        readonly unconfirmed: number;\n        readonly inFlight: number;\n        readonly acknowledged: number;\n    };\n    readonly reason: \'source-unavailable\' | \'source-changed\' | \'coverage-invalid\' | \'capacity\' | null;\n}',
+  },
+  {
+    name: 'ScopeAgentContributionInitializationRequest',
+    declaration: 'export interface ScopeAgentContributionInitializationRequest {\n    readonly kind: \'recorded-local-tools\';\n    readonly expectedLocalCapture: ScopeAgentContributionSelection;\n    readonly localTask: ScopeAgentLocalContributionBinding;\n}',
+  },
+  {
+    name: 'ScopeAgentContributionInitializationSource',
+    declaration: 'export interface ScopeAgentContributionInitializationSource {\n    readonly eligible: boolean;\n    readonly recordedSamples: number;\n    readonly unconfirmedSamples: number;\n}',
+  },
+  {
+    name: 'ScopeAgentContributionPermissionDraft',
+    declaration: 'export interface ScopeAgentContributionPermissionDraft {\n    readonly agentId: SessionId;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly durationHours: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
   },
   {
     name: 'ScopeAgentContributionReceiving',
-    declaration: 'export interface ScopeAgentContributionReceiving {\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly invitation: ScopeInvitation | null;\n}',
+    declaration: 'export interface ScopeAgentContributionReceiving {\n    readonly localTask?: ScopeAgentLocalTaskTarget;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly invitation: ScopeInvitation | null;\n}',
   },
   {
     name: 'ScopeAgentContributionReceivingContinuation',
@@ -6925,7 +7119,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionRequest',
-    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
+    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n    readonly initialization?: ScopeAgentContributionInitializationRequest;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly localTask?: ScopeAgentLocalTaskTarget;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
   },
   {
     name: 'ScopeAgentContributionSelection',
@@ -6933,11 +7127,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionStatus',
-    declaration: 'export interface ScopeAgentContributionStatus {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly revision: number;\n    readonly capture: ScopeAgentContributionCapture | null;\n    readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation;\n}',
+    declaration: 'export interface ScopeAgentContributionStatus {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\';\n    readonly revision: number;\n    readonly capture: ScopeAgentContributionCapture | null;\n    readonly receivingContinuation?: ScopeAgentContributionReceivingContinuation;\n}',
   },
   {
     name: 'ScopeAgentContributionStopRequest',
     declaration: 'export interface ScopeAgentContributionStopRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection;\n}',
+  },
+  {
+    name: 'ScopeAgentEvaluation',
+    declaration: 'export interface ScopeAgentEvaluation {\n    readonly version: 1 | 2 | 3 | 4;\n    readonly decision: \'activate\' | \'suppress-unchanged\' | \'blocked-current\' | \'suppress-reserved\';\n    readonly bindingId: ScopeAgentBindingId;\n    readonly goalDigest: ScopeAgentGoalDigest;\n    readonly projection: ScopeAgentReadProjection;\n    readonly maxContextBytes: number;\n    readonly activationId: ScopeAgentActivationId | null;\n    readonly baseline: {\n        readonly requestSeq: SessionSeq;\n        readonly turnEndSeq: SessionSeq;\n    } | null;\n}',
+  },
+  {
+    name: 'ScopeAgentGoalDigest',
+    declaration: 'export type ScopeAgentGoalDigest = Branded<\'ScopeAgentGoalDigest\'>;',
   },
   {
     name: 'ScopeAgentJoinReadId',
@@ -6945,7 +7147,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentJoinReadRequest',
-    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n}',
+    declaration: 'export interface ScopeAgentJoinReadRequest {\n    readonly agentId: SessionId;\n    readonly adoptionId: ScopeAgentJoinReadId;\n    readonly expectedReadStateSeq: SessionSeqCursor;\n    readonly invitation: ScopeInvitation;\n    readonly originalCapture?: ScopeOriginalCapture;\n    readonly localTask?: ScopeAgentLocalTaskTarget;\n    readonly automatic?: ScopeAgentAutomaticPolicy;\n}',
   },
   {
     name: 'ScopeAgentJoinReadResult',
@@ -6965,15 +7167,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentLocalContributionCapture',
-    declaration: 'export interface ScopeAgentLocalContributionCapture {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly state: \'opening\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly pendingSamples: number;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: ScopeAgentContributionCapture[\'collectionIssue\'];\n}',
+    declaration: 'export interface ScopeAgentLocalContributionCapture {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly state: \'opening\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly pendingSamples: number;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: ScopeAgentContributionCapture[\'collectionIssue\'];\n}',
   },
   {
     name: 'ScopeAgentLocalContributionRequest',
-    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n}',
+    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n}',
   },
   {
     name: 'ScopeAgentLocalContributionStatus',
-    declaration: 'export interface ScopeAgentLocalContributionStatus {\n    readonly agentId: SessionId;\n    readonly participantId: DevelopmentParticipantId | null;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'no-local-task\' | \'remote-capture\';\n    readonly assignment: ScopeAgentLocalContributionBinding | null;\n    readonly revision: number;\n    readonly capture: ScopeAgentLocalContributionCapture | null;\n}',
+    declaration: 'export interface ScopeAgentLocalContributionStatus {\n    readonly agentId: SessionId;\n    readonly participantId: DevelopmentParticipantId | null;\n    readonly eligibility: \'not-live\' | \'eligible\' | \'delegated\' | \'fork\' | \'no-local-task\';\n    readonly assignment: ScopeAgentLocalContributionBinding | null;\n    readonly revision: number;\n    readonly capture: ScopeAgentLocalContributionCapture | null;\n    readonly initialization: ScopeAgentContributionInitializationSource;\n}',
   },
   {
     name: 'ScopeAgentLocalTaskTarget',
@@ -6984,16 +7186,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeAgentPauseReason = \'user\' | \'restored\' | \'cancelled\' | \'turn-ended\' | \'step-limit\' | \'budget\' | \'conflict\' | \'unavailable\' | \'terminal\' | \'failed\' | \'coverage\';',
   },
   {
+    name: 'ScopeAgentReadProjection',
+    declaration: 'export type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection | ScopeAgentCompositeProjection;',
+  },
+  {
+    name: 'ScopeAgentRecordedContext',
+    declaration: 'export interface ScopeAgentRecordedContext {\n    readonly contextSeq: SessionSeq;\n    readonly bindingId: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly sharedBytes: number;\n    readonly taskRevision: number;\n    readonly selectedSourceCount: number;\n    readonly omittedSourceCounts: {\n        readonly \'self-published\': number;\n        readonly budget: number;\n        readonly unsupported: number;\n        readonly superseded: number;\n        readonly withdrawn: number;\n        readonly \'recipient-irrelevant\': number;\n    };\n}',
+  },
+  {
     name: 'ScopeAgentRemoteBinding',
-    declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n}',
+    declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly originalCapture?: ScopeOriginalCapture;\n}',
   },
   {
     name: 'ScopeAgentResumeRequest',
     declaration: 'export interface ScopeAgentResumeRequest extends ScopeAgentBindingRequest {\n    readonly automatic: ScopeAgentAutomaticPolicy;\n}',
   },
   {
+    name: 'ScopeAgentRetainedLocal',
+    declaration: 'export interface ScopeAgentRetainedLocal {\n    readonly bindingId: ScopeAgentBindingId;\n    readonly automatic: ScopeAgentAutomaticPolicy | null;\n}',
+  },
+  {
     name: 'ScopeAgentStatusResult',
-    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n};',
+    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n    readonly activity: ScopeAgentActivity;\n    readonly recordedContext: ScopeAgentRecordedContext | null;\n};',
   },
   {
     name: 'ScopeAgentSubscriptionState',
@@ -7012,6 +7226,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ScopeAgentUpdateRouteResult {\n    readonly status: \'updated\' | \'ended\' | \'superseded\';\n}',
   },
   {
+    name: 'ScopeCaptureSubscription',
+    declaration: 'export interface ScopeCaptureSubscription extends ScopeSubscriptionFields {\n    readonly version: 2;\n    readonly originalCapture: ScopeOriginalCapture;\n}',
+  },
+  {
     name: 'ScopeChangeCursor',
     declaration: 'export type ScopeChangeCursor = Branded<\'ScopeChangeCursor\'>;',
   },
@@ -7021,11 +7239,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionApplicationApprovalRequest',
-    declaration: 'export interface ScopeContributionApplicationApprovalRequest {\n    readonly read?: {\n        readonly responsibility: string;\n    };\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal;\n    readonly limits: ScopeContributionLimits;\n    readonly ownerAddress: string;\n}',
+    declaration: 'export interface ScopeContributionApplicationApprovalRequest {\n    readonly applicationId?: ScopeGroupApplicationId;\n    readonly read?: {\n        readonly responsibility: string;\n    };\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal;\n    readonly limits: ScopeContributionLimits;\n    readonly ownerAddress: string;\n}',
   },
   {
     name: 'ScopeContributionApplicationRejectRequest',
-    declaration: 'export interface ScopeContributionApplicationRejectRequest {\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal | null;\n}',
+    declaration: 'export interface ScopeContributionApplicationRejectRequest {\n    readonly applicationId?: ScopeGroupApplicationId;\n    readonly entryId: ScopeContributionEntryId;\n    readonly expectedProposal: ScopeContributionProposal | null;\n}',
   },
   {
     name: 'ScopeContributionApplicationRequest',
@@ -7065,7 +7283,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionEntry',
-    declaration: 'export type ScopeContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\';\n});',
+    declaration: 'export type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry;',
   },
   {
     name: 'ScopeContributionEntryId',
@@ -7148,6 +7366,50 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeGrantId = Branded<\'ScopeGrantId\'>;',
   },
   {
+    name: 'ScopeGroupApplication',
+    declaration: 'export interface ScopeGroupApplication extends ScopeContributionApplication {\n    readonly entry: ScopeGroupEntry;\n    readonly applicationId: ScopeGroupApplicationId;\n    readonly proposal: ScopeContributionProposal;\n    readonly result: ScopeContributionApplicationResult;\n}',
+  },
+  {
+    name: 'ScopeGroupApplicationId',
+    declaration: 'export type ScopeGroupApplicationId = Branded<\'ScopeGroupApplicationId\'>;',
+  },
+  {
+    name: 'ScopeGroupApplications',
+    declaration: 'export interface ScopeGroupApplications {\n    readonly entries: readonly ScopeGroupApplication[];\n    readonly nextApplicationId: ScopeGroupApplicationId | null;\n}',
+  },
+  {
+    name: 'ScopeGroupApplicationsRequest',
+    declaration: 'export interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {\n    readonly afterApplicationId?: ScopeGroupApplicationId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntries',
+    declaration: 'export interface ScopeGroupEntries {\n    readonly entries: readonly ScopeGroupEntryStatus[];\n    readonly nextEntryId: ScopeContributionEntryId | null;\n}',
+  },
+  {
+    name: 'ScopeGroupEntriesRequest',
+    declaration: 'export interface ScopeGroupEntriesRequest {\n    readonly taskId: DevelopmentTaskId;\n    readonly afterEntryId?: ScopeContributionEntryId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntry',
+    declaration: 'export interface ScopeGroupEntry {\n    readonly version: 2;\n    readonly kind: \'scope-group-entry\';\n    readonly sourceKind: \'tool-observations\';\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryRequest',
+    declaration: 'export interface ScopeGroupEntryRequest {\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryResult',
+    declaration: 'export interface ScopeGroupEntryResult {\n    readonly entry: ScopeGroupEntry;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'ScopeGroupEntrySelection',
+    declaration: 'export interface ScopeGroupEntrySelection {\n    readonly entryId: ScopeContributionEntryId;\n}',
+  },
+  {
+    name: 'ScopeGroupEntryStatus',
+    declaration: 'export interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {\n    readonly state: \'open\' | \'closed\' | \'expired\';\n    readonly applicationCount: number;\n}',
+  },
+  {
     name: 'ScopeInvitation',
     declaration: 'export interface ScopeInvitation {\n    readonly version: 1;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly recipientPeerId: ScopePeerId;\n    readonly taskId: DevelopmentTaskId;\n    readonly grantId: ScopeGrantId;\n    readonly generation: ScopeGeneration;\n    readonly expiresAt: number;\n    readonly responsibility: string;\n}',
   },
@@ -7160,8 +7422,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeKey = object;',
   },
   {
+    name: 'ScopeOriginalCapture',
+    declaration: 'export type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, \'captureId\' | \'captureGeneration\'>;',
+  },
+  {
     name: 'ScopePeerId',
     declaration: 'export type ScopePeerId = Branded<\'ScopePeerId\'>;',
+  },
+  {
+    name: 'ScopePlainSubscription',
+    declaration: 'export interface ScopePlainSubscription extends ScopeSubscriptionFields {\n    readonly version?: never;\n    readonly originalCapture?: never;\n}',
   },
   {
     name: 'ScopeProjectionId',
@@ -7176,8 +7446,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeRetrieveResult = {\n    readonly status: \'active\';\n    readonly projection: ScopeAccessProjection;\n} | {\n    readonly status: \'revoked\' | \'expired\' | \'unavailable\' | \'left\';\n};',
   },
   {
+    name: 'ScopeRetrieveWithinBudgetRequest',
+    declaration: 'export interface ScopeRetrieveWithinBudgetRequest {\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly maxContextBytes: number;\n}',
+  },
+  {
+    name: 'ScopeSingleContributionEntry',
+    declaration: 'export type ScopeSingleContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\';\n});',
+  },
+  {
     name: 'ScopeSubscription',
-    declaration: 'export interface ScopeSubscription {\n    readonly routeRevision?: number;\n    readonly id: ScopeSubscriptionId;\n    readonly generation: ScopeGeneration;\n    readonly invitation: ScopeInvitation;\n    readonly state: \'active\' | \'left\' | \'revoked\' | \'expired\';\n}',
+    declaration: 'export type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription;',
   },
   {
     name: 'ScopeSubscriptionId',
@@ -7784,6 +8062,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ShellExecSpec {\n    command: string;\n    workdir: string;\n    timeoutMs: number;\n    stdoutMaxBytes: number;\n    signal?: AbortSignal | undefined;\n    stdin?: string | undefined;\n    env?: Record<string, string> | undefined;\n    dshEnv?: DshEnvironment | undefined;\n    sandboxPolicy: SandboxExecutionPolicy | undefined;\n}',
   },
   {
+    name: 'ShellExecutor',
+    declaration: 'export abstract class ShellExecutor extends Service {\n    constructor(ctx: Context);\n    get sandboxMode(): SandboxMode | undefined;\n    abstract resolve(request: ShellExecRequest): ShellExecSpec;\n    abstract run(spec: ShellExecSpec): Promise<ShellRunResult>;\n    abstract start(spec: ShellExecSpec): ShellProcess;\n}',
+  },
+  {
     name: 'ShellProcess',
     declaration: 'export interface ShellProcess {\n    status: ShellProcessStatus;\n    exitCode: number | null;\n    signal: NodeJS.Signals | null;\n    readonly done: Promise<void>;\n    sandbox?: ShellSandboxInfo;\n    readOutput(): ShellProcessRead;\n    kill(): boolean;\n}',
   },
@@ -8224,6 +8506,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TokenUsage {\n    inputTokens: number;\n    outputTokens: number;\n    totalTokens?: number;\n    cacheReadTokens?: number;\n    cacheWriteTokens?: number;\n    reasoningTokens?: number;\n}',
   },
   {
+    name: 'ToolBashCompletion',
+    declaration: 'export interface ToolBashCompletion {\n    readonly operation: ToolBashExecution;\n    readonly result: Readonly<ShellRunResult>;\n}',
+  },
+  {
+    name: 'ToolBashExecution',
+    declaration: 'export interface ToolBashExecution {\n    readonly execution: Readonly<ToolExecution>;\n    readonly shell: ShellExecutor;\n    readonly command: string;\n    readonly workdir: string;\n    readonly timeoutMs: number;\n}',
+  },
+  {
     name: 'ToolCallKind',
     declaration: 'export type ToolCallKind = \'read\' | \'edit\' | \'delete\' | \'move\' | \'search\' | \'execute\' | \'fetch\' | \'other\';',
   },
@@ -8274,6 +8564,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ToolFailure',
     declaration: 'export interface ToolFailure {\n    message: string;\n    info?: ToolErrorInfo;\n}',
+  },
+  {
+    name: 'ToolFsCompletion',
+    declaration: 'export interface ToolFsCompletion {\n    readonly mutation: ToolFsMutation;\n    readonly content: string;\n}',
   },
   {
     name: 'ToolFsMutation',

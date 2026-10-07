@@ -18,7 +18,8 @@ export async function mountNativeSession(ctx, config, modules) {
   await ctx.plugin(modules.Jsonl.default, { root: config.sessionRoot, compression: 'none' })
   await ctx.plugin(modules.Loop.default, { agents: [] })
   if (config.mode !== 'data-source') await ctx.plugin(modules.Native.default, {
-    maxContextBytes: config.contextBytes ?? 10000, coalesceMs: 50, retryDelayMs: 1000 })
+    maxContextBytes: config.contextBytes ?? 10000,
+    maxLocalContextBytes: Math.floor((config.contextBytes ?? 10000) / 2), coalesceMs: 50, retryDelayMs: 1000 })
   if (config.mode === 'data-source') {
     await ctx.plugin(modules.FsLocal.LocalFileSystem, { cwd: config.project })
     await ctx.plugin(modules.FsPolicy)

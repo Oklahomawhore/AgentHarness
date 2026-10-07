@@ -13,7 +13,7 @@ const invitation: ScopeInvitation = {
   expiresAt: 9999999999999, responsibility: 'frontend',
 }
 const session: ClaudeScopeSessionSummary = { sessionKey: 'session' as ClaudeScopeSessionSummary['sessionKey'],
-  sessionId: 'claude-recipient', observedAt: 1, ended: false }
+  sessionId: 'claude-recipient', observedAt: 1, ended: false, readRevision: 0 }
 const inventory: Awaited<ReturnType<ScopeAccessPanelProps['readScopeAccess']>> = {
   identity: { peerId: invitation.recipientPeerId, addresses: [invitation.ownerAddress] },
   access: { grants: [], subscriptions: [] },

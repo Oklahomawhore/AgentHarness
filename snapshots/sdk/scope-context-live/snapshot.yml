@@ -3,6 +3,8 @@ scenario: scope-context-live
 profile: sdk
 composition: sdk-scope-context-live
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-context-live
   pin: true

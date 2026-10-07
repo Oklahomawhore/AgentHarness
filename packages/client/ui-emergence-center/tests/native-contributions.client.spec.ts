@@ -71,7 +71,7 @@ describe('native contribution management', () => {
   })
 
   it('rejects stale capture actions and permits exact stop when the Agent is no longer eligible', async () => {
-    const { source, port } = fixture(vi.fn(async () => ({ ...capturedStatus, eligibility: 'task-conflict' as const })))
+    const { source, port } = fixture(vi.fn(async () => ({ ...capturedStatus, eligibility: 'fork' as const })))
     try {
       await source.directory.refresh(agentId)
       await source.stop({ agentId, expectedCapture: { ...capture.selection,

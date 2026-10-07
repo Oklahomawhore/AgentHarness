@@ -258,6 +258,7 @@ it('rebuilds cached output from the raw reply and refuses a valid-shaped unrelat
   const recordedResult = events.find(event => event.type === 'context/semantic-result')
   const request = semanticRequestSchema.parse(recordedRequest?.data)
   const result = semanticResultSchema.parse(recordedResult?.data)
+  if (result.version !== 4) throw new Error('new computations must persist result version four')
   const projection = result.projection
   if (projection === null) throw new Error('missing completed projection')
   expect(restoreSemanticProjection(request, result)).toEqual(projection)
@@ -326,4 +327,44 @@ it.each(['missing', 'max-tokens'] as const)('refuses a complete-looking JSON rep
   await expect(value.backend.compute(input())).rejects.toThrow('incomplete model finish')
   const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
   expect(result?.data).toMatchObject({ status: 'failed', projection: null })
+})
+
+
+it('audits exact-capture omissions while delivering another Session on the same peer and reusing the recorded result', async () => {
+  const grant: DevelopmentTaskPeerContributionGrant = {
+    version: 1, taskId: 'orders' as DevelopmentTaskPeerContributionGrant['taskId'],
+    ownerPeerId: 'owner' as DevelopmentTaskPeerContributionGrant['ownerPeerId'],
+    contributorPeerId: 'source' as DevelopmentTaskPeerContributionGrant['contributorPeerId'],
+    grantId: 'grant' as DevelopmentTaskPeerContributionGrant['grantId'], generation: 'generation' as DevelopmentTaskPeerContributionGrant['generation'],
+    captureId: 'capture' as DevelopmentTaskPeerContributionGrant['captureId'], captureGeneration: 'capture-generation' as DevelopmentTaskPeerContributionGrant['captureGeneration'],
+    source: { kind: 'tool-observations', name: 'work', tools: ['Write'] }, expiresAt: 4_000_000_000_000,
+    maxSamples: 10, maxSampleBytes: 20_000,
+  }
+  const publication = (id: string, selected: DevelopmentTaskPeerContributionGrant): DevelopmentTaskContextPublication => ({
+    id, text: `code: ${id} report`, publishedAt: 1, peerContribution: { version: 1, grant: selected },
+    peerToolObservation: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+      fields: { rootIndex: 0, path: 'same.ts', content: `${id} report` }, omissions: [],
+      sourceName: 'work', grantId: selected.grantId, sequence: 1, observerPeerId: selected.contributorPeerId,
+      sourceId: id as NonNullable<DevelopmentTaskContextPublication['peerToolObservation']>['sourceId'],
+      capture: { id: selected.captureId, generation: selected.captureGeneration } },
+  })
+  const base = input('frontend', [publication('ORIGINAL_CAPTURE', grant),
+    publication('OTHER_SESSION', { ...grant, captureId: 'other' as typeof grant.captureId })])
+  const request = { ...base, recipient: { ...base.recipient, peerCapture: grant } }
+  const value = await harness()
+  const result = await value.backend.compute(request)
+  expect(result.text).toContain('OTHER_SESSION report')
+  expect(result.text).not.toContain('ORIGINAL_CAPTURE report')
+  expect(result.omittedSources).toContainEqual({ reason: 'self-published',
+    source: { kind: 'publication', taskId: 'orders', revision: 2, publicationId: 'ORIGINAL_CAPTURE' } })
+  expect(value.adapter.requests).toHaveLength(1)
+  expect(JSON.stringify(value.adapter.requests[0]?.messages)).not.toContain('ORIGINAL_CAPTURE report')
+  await value.fork.dispose()
+  const reopened = await harness({}, value.root)
+  expect(await reopened.backend.compute(request)).toEqual(result)
+  expect(reopened.adapter.requests).toHaveLength(0)
+  const manual = await reopened.backend.compute(base)
+  expect(manual.text).toContain('ORIGINAL_CAPTURE report')
+  expect(manual.text).toContain('OTHER_SESSION report')
+  expect(reopened.adapter.requests).toHaveLength(1)
 })

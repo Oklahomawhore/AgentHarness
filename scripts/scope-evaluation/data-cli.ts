@@ -9,6 +9,7 @@ import { gradeDataArtifacts } from './data-artifacts.ts'
 import { createDataStudy, dataStudyConditions, parseDataStudyConfig } from './data-study.ts'
 import { createContinuityStudy, gradeContinuityPhase, continuityConditions, continuityAutomatic } from './continuity-study.ts'
 import { resolveNativeModules } from './native-dependencies.ts'
+import { resolveDataNetwork } from './data-network.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '../..')
@@ -130,6 +131,11 @@ export async function inspectDataStudy(root: string): Promise<{ manifest: Manife
  */
 export async function runDataPhase(command: 'preflight' | 'execute', root: string): Promise<{ readonly failed: boolean; readonly [key: string]: unknown }> {
   const { manifest, study } = await inspectDataStudy(root)
+  if (command === 'execute') {
+    for (const route of [study.runtime.ordinary, study.runtime.semantic]) {
+      resolveDataNetwork(route.network, process.env, process.allowedNodeEnvironmentFlags.has('--use-env-proxy'))
+    }
+  }
   const output = join(root, command)
   await mkdir(output, { mode: 0o700 })
   if (command === 'preflight') {

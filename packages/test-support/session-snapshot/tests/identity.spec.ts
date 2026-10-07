@@ -27,12 +27,12 @@ describe('session snapshot identity redaction', () => {
     expect(redactSessionSnapshotIds([output!])).toEqual([output])
   })
 
-  it('preserves local route subscription relationships while comparing authority and revision fields', () => {
+  it.each([1, 2])('preserves route v%s subscription relationships while comparing authority and revision fields', (version) => {
     const logs = (generation: string, nextGeneration = generation): string[] => {
       const route = (subscriptionGeneration: string, routeRevision: number) => ({
         type: 'scope-agent-context/route',
         data: {
-          version: 1, agentId: parentId, bindingId: approvalId, expectedReadStateSeq: 19,
+          version, agentId: parentId, bindingId: approvalId, expectedReadStateSeq: 19,
           previousOwnerAddress: '/ip4/127.0.0.1/tcp/1',
           subscription: {
             id: runId, generation: subscriptionGeneration, state: 'active', routeRevision,
@@ -65,7 +65,7 @@ describe('session snapshot identity redaction', () => {
   it('does not discover arbitrary generation fields or unrecognized route versions', () => {
     const source = [
       { type: 'session', id: parentId },
-      { type: 'scope-agent-context/route', data: { version: 2, subscription: { generation: messageId } } },
+      { type: 'scope-agent-context/route', data: { version: 3, subscription: { generation: messageId } } },
       { type: 'scope-agent-context/route', data: { version: 1, generation: approvalId } },
       { type: 'scope-agent-context/state', data: { version: 1, subscription: { generation: runId } } },
       { type: 'example', data: { source: { generation: otherId }, text: proseUuid } },

@@ -1,62 +1,56 @@
-# Use semantic summaries for a shared Task
+# Use model summaries for shared Task context
 
 English | [中文](collaboration-semantic.zh.md)
 
-Use this optional configuration when the Task owner wants a model to summarize authorized work reports for each recipient’s responsibility. Without it, the Web profile selects bounded original reports with the text backend. Semantic summaries are not enabled by selecting a chat model.
+Choose model summaries when this Host should organize authorized work reports for each recipient’s responsibility. The Web profile defaults to **Reports without model summaries**, using [`/reported`](../../../packages/collaboration/development-task-context/README.md#behavior) to deliver bounded reports and reconstruct eligible file-report groups without a summary call. Choosing an ordinary chat model does not enable summaries.
 
-## 1. Prepare the owner’s model
+## 1. Select the summary model
 
-On the owner’s Host, configure a usable route in **Models**. Copy the [semantic overlay](../../../apps/cli/config/examples/scope-context/semantic.cordis.yml) to a file you control, then set its `provider` and `model` to that route. The example names `deepseek-official` and `deepseek-flash`; leaving those names requires that exact route to be configured and usable. Do not put API keys in the overlay.
+On the Host that supplies the context, configure a usable route in **Models**. Open **Settings → Plugins → Collaboration summaries**, select **Model summaries** under **Context delivery**, and choose the **Summary model**. This authenticated management page controls the Host configuration; access is not limited to the owner of one Task. The selection applies to this Host’s context backend, not to just one invitation.
 
-Review the explicit limits before enabling it. The example allows at most 100 cumulative summary-call reservations, including across restarts, and at most two concurrent calls. Each model computation allows up to 20 seconds. A failure does not substitute an older summary. Token, byte, and call limits are not a guaranteed monetary spending cap.
+Review **Cumulative summary call limit**, then select **Save**. The Web default permits 100 cumulative reservations and at most two concurrent calls. Each computation allows 20 seconds, with bounded input and output. These limits are not a monetary spending cap. Opening, editing, and saving the card make no summary call, and saving does not change the running backend.
 
-Summary calls use the owner’s configured model and credentials. Each participant’s ordinary Agent work still uses that Agent’s own selected model and can incur its own charges. The summary provider receives authorized source text; keeping the audit out of ordinary chat does not hide that text from the provider.
+The selected provider receives authorized source text using its configured credentials and may charge for calls. The card neither displays nor stores credentials. Each ordinary Agent keeps its own selected model and can incur separate charges. A model listed in the catalog does not prove that its credentials or account allowance will work; an unavailable route fails when a computation needs it, without substituting report delivery or an older summary.
 
-## 2. Start both sides with compatible deadlines
+## 2. Restart the same Host
 
-The CLI ships the [deadline](../../../apps/cli/config/examples/scope-context/deadlines.cordis.yml) and [semantic](../../../apps/cli/config/examples/scope-context/semantic.cordis.yml) overlays under `config/examples/scope-context/`; in a checkout they are under `apps/cli/`. Copy them to paths you control, then replace the absolute paths below. These examples run the dsh CLI from the root of an already built checkout. An installed `dsh` can replace `node apps/cli/lib/bin.js`; no separate semantic flag exists. Keep the same Harness home and Task storage when restarting. If Claude hooks are already installed, remove them under the old configuration as described below before stopping that Host.
+Manually restart the Host with the same Harness home and Task storage. The saved choice applies at startup; starting the Host alone makes no summary call. The next admitted context computation can use the selected model. Existing Sessions retain their ordinary model. Inspect collection and automatic-work states after restarting: restored reads do not authorize a new capture, and automatic work remains paused until explicitly resumed.
 
-The Task owner loads both overlays:
-
-```sh
-node apps/cli/lib/bin.js web --patch "/absolute/path/to/deadlines.cordis.yml" --patch "/absolute/path/to/my-semantic.cordis.yml"
-```
-
-A Host that only receives this owner’s context loads the deadline overlay, without enabling its own summary provider:
-
-```sh
-node apps/cli/lib/bin.js web --patch "/absolute/path/to/deadlines.cordis.yml"
-```
-
-Each overlay replaces complete plugin configurations. If your Web composition customizes these limits or Claude setup fields, carry those values into your copy while retaining the longer deadlines and distinct hook profile. Saved collaboration listener preferences still take precedence.
-
-Both sides need the deadline overlay: changing only the owner’s model timeout does not extend the recipient’s waiting time. Put launcher `--patch` options before app options such as `--no-open` or `--port`. Keep these overlays in subsequent launch commands; selecting a file for one launch does not save a new setting.
-
-The semantic overlay selects the owner Host’s context backend, not a backend for just one invitation. Changing it creates no read grant, file permission, or automatic-work permission. Follow the [collaboration join flow](collaboration-network.md). After a restart, inspect collection and automatic-work states: restored reads do not authorize a new capture, and automatic work remains paused until explicitly resumed.
+The shipped Web profile allows 30 seconds for scope reads and 35 seconds for transport requests, accommodating the default 20-second summary computation. Both peers need compatible deadlines; a custom or older receiving deployment can time out before the owner finishes. Native peers using the current Web defaults need no deadline overlay. Changing backend configuration creates no read grant, collection permission, or automatic-work permission; continue to use the [collaboration join flow](collaboration-network.md).
 
 ### Existing Claude Code hooks
 
-The deadline overlay uses the distinct command profile `claude-hook-summaries`. Existing hooks are not migrated automatically. On supported macOS or Linux Hosts, pause Claude work during the change and follow this order for each configured project; selecting a Task is not required:
+The [deadline overlay](../../../apps/cli/config/examples/scope-context/deadlines.cordis.yml) supplies a 45-second hook request timeout and the distinct command profile `claude-hook-summaries`. Saving summary settings does not update installed Claude hooks. On supported macOS or Linux Hosts, pause Claude work and apply this sequence to each configured project; selecting a Task is not required:
 
-1. While the old Web configuration is still running, choose **Open the Emergence Center** in the sidebar, find **Claude Code**, enter the original **Project path**, then select **Check configuration**. Once it reports **Project hooks configured**, select **Remove project hooks**.
-2. Stop the old Host and launch its replacement with the overlays above. In the same Claude Code section, enter the project path and select **Configure hooks**. This installs hooks using `claude-hook-summaries`.
-3. Open or restart Claude Code in that project, send the next message, then select **Refresh sessions**. Claude controls when changed hook settings are loaded; configuration success alone does not prove that a running Claude session has loaded them or received context.
+1. While the original Host configuration is running, open **Open the Emergence Center → Claude Code**, enter the original **Project path**, and select **Check configuration**. After **Project hooks configured** appears, select **Remove project hooks**.
+2. Restart that Host with your reviewed copy of the deadline overlay, retaining the same home and saved summary settings. In the Claude Code section, enter the project path and select **Configure hooks**.
+3. Open or restart Claude Code in that project, send the next message, then select **Refresh sessions**. Claude determines when changed hook settings load; configuration success does not prove that a running Claude session received context.
 
-Removing hooks retains the shared command profile and existing session grants. It does not stop ongoing sharing or receiving; use the relevant session’s stop or leave controls if that is your intent. If the new configuration reports a conflict with old hooks, return to the original Host configuration to remove its matching hooks first. Do not overwrite unrelated project settings. Switching back to the old deadline configuration requires the same remove-before-reconfigure order.
+Removing hooks retains the command profile and existing session grants. Use the relevant stop or leave control to end sharing or receiving. If installation conflicts with existing hooks, remove the matching hooks under their original Host configuration first; do not overwrite unrelated project settings. Reverting the hook configuration requires the same remove-before-reconfigure sequence.
 
-## 3. Inspect the configuration and recorded summary
+### Deployment overlays
 
-Before booting, add `--dump-config` to the owner command to inspect the composed configuration. Confirm that the text row is disabled, semantic is selected, and the model route and limits match your choice. A configuration preview makes no model call and does not prove credentials work.
+The CLI publishes the [semantic](../../../apps/cli/config/examples/scope-context/semantic.cordis.yml) and deadline examples under `config/examples/scope-context/`. The semantic example sets deployment defaults for the existing configured backend; saved `scope-context` preferences take precedence. It does not add a second backend or audit group. Review the complete replaced configuration and select your installed route; do not put API keys in the overlay. Put launcher patch options before application options and retain the patch on subsequent launches. For a built checkout, a Claude Host can use:
 
-After authorized file work and the receiving native Session’s next request, open **Current session collaboration → View sources**. In Trajectory, select the `scope-agent-context` message and open its **Source** tab. Expand `projection` and `backend`: `id` identifies the provider used for that recorded delivery, and must be `semantic`. Inspect the message content and source references as well. This identifies the selected recorded projection, including historical projections that may have been replaced or withdrawn. To verify adoption by a particular model request, inspect that request’s context as well; this Source tab is not a live status indicator. A connected binding or approved application alone does not confirm adoption.
+```sh
+node apps/cli/lib/bin.js --profile web --patch "/absolute/path/to/deadlines.cordis.yml" --no-open
+```
 
-Responsibility guides summarization; it is not a privacy ACL. A successful request and exact source quotes do not prove that the model interpreted corrections, failures, or negation correctly. This configuration does not add embeddings, latent exchange, or internet discovery.
+Keep exactly one context backend and preserve the original audit directory and Session ID when adapting a custom deployment. The settings plugin does not discover or migrate arbitrary existing audit logs. A configuration preview makes no inference call and does not establish credential availability; saved preferences are not proof of the currently mounted backend.
 
-## 4. Stop summaries or handle an exhausted allowance
+## 3. Inspect recorded context
 
-To stop summary computation, restart the owner without the semantic overlay and confirm that the selected backend is text. Keep the deadline overlay if this Host also receives summaries from another owner. Selecting a backend grants no new permission; the restart rules for ending captures and pausing automatic work still apply. Do not delete the audit directory or change its stable Session ID to reset the allowance.
+After authorized work and the receiving native Session’s next request, open **Current session collaboration → View sources**. In Trajectory, select the `scope-agent-context` message and open **Source**. Expand `projection` and `backend`: `id` identifies the provider used for that recorded delivery and reads `semantic` for a model summary. Inspect the content and source references too. This is a recorded projection, including historical projections that may have been replaced or withdrawn. To confirm adoption by a particular model request, inspect that request’s context; an approved application or connected binding alone does not prove adoption.
 
-If the cumulative allowance is exhausted, review prior use, then explicitly raise `maxCalls` in the same semantic configuration and restart with the same audit identity, or turn semantic off. The audit stays at `dshHomePath('scope-context-audit')` with Session ID `scope-context-audit`; failed and unknown reserved attempts can still consume allowance. Ordinary Agent automatic-work allowance is separate.
+For a Session with finite automatic permission, unchanged selected summary and evidence can suppress another automatic response to the same local goal. The next ordinary request still receives current context. Changed wording or relevant evidence can trigger another response, and summary calls retain their separate cost and allowance. Recorded completed turns do not prove correct work.
+
+Responsibility guides relevance, not privacy access. Successful delivery and exact source quotes do not prove that the model interpreted corrections, failures, or negation correctly. This setting adds no embeddings, latent exchange, or internet discovery.
+
+## 4. Disable summaries or change the allowance
+
+Select **Reports without model summaries**, save, and manually restart the Host to stop summary computation. Retain compatible hook deadlines when receiving summaries from another Host. Disabling and re-enabling summaries, changing model routes, and restarting retain cumulative reservations in `dshHomePath('scope-context-audit')`, Session ID `scope-context-audit`. Do not delete that directory or change the stable ID to reset the allowance.
+
+When the allowance is exhausted, review prior use, then explicitly raise **Cumulative summary call limit** and restart, or disable summaries. Failed and unknown reserved attempts still consume the retained allowance. Ordinary Agent automatic-work allowance is separate.
 
 ## Dev Note
 

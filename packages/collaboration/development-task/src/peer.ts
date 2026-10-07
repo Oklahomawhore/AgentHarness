@@ -1,6 +1,7 @@
 /** Deterministic independent-peer evidence, receipt identity, and terminal publications. */
 
 import { createHash } from 'node:crypto'
+import { commandResultValues, freezeCommandResult } from './command.ts'
 import type {
   DevelopmentTaskArtifactId, DevelopmentTaskContextPublication, DevelopmentTaskObservedSourceId,
   DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskPeerOpenApiObservation,
@@ -16,7 +17,10 @@ function digest(value: unknown): string { return createHash('sha256').update(JSO
  */
 export function freezePeerGrant(grant: DevelopmentTaskPeerContributionGrant): DevelopmentTaskPeerContributionGrant {
   return Object.freeze({ ...grant, source: Object.freeze({ ...grant.source,
-    ...grant.source.kind === 'tool-observations' ? { tools: Object.freeze([...grant.source.tools]) } : {},
+    ...grant.source.kind === 'tool-observations' ? { tools: Object.freeze([...grant.source.tools]),
+      ...grant.source.version === 4
+        ? { commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))) } : {},
+    } : {},
   }) })
 }
 
@@ -48,16 +52,23 @@ export function peerContributionPublicationId(request: DevelopmentTaskPeerContri
 export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContributionRequest): string {
   const { grant, result } = request
   const values = 'kind' in result
-    ? [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
+    ? result.kind === 'command-observation' ? commandResultValues(result) : [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
       ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
-      result.fields.error ?? null, result.omissions]
+      result.fields.error ?? null, result.omissions,
+      ...result.version === 2 ? [result.origin.kind, result.origin.planDigest, result.origin.executionDigest] : [],
+      ...result.version === 3 ? [result.completedFile.state, ...result.completedFile.state === 'included'
+        ? [result.completedFile.content, result.completedFile.sha256] : [result.completedFile.reason]] : []]
     : result.state === 'valid'
       ? [result.state, result.sha256, result.facts.operationId ?? null, result.facts.requestBodyRequired,
         result.facts.requiredRequestFields, result.facts.responseStatuses, result.facts.deprecated]
       : result.state === 'invalid' ? [result.state, result.sha256, result.reason] : [result.state, result.reason]
   return digest([grant.version, grant.taskId, grant.grantId, grant.generation, grant.ownerPeerId, grant.contributorPeerId,
     grant.captureId, grant.captureGeneration,
-    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools]
+    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
+      ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : [],
+      ...grant.source.version === 3 ? [grant.source.version, grant.source.fileContent] : [],
+      ...grant.source.version === 4 ? [grant.source.version,
+        grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null] : []]
       : [grant.source.name, grant.source.method, grant.source.path],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, values])
 }
@@ -71,7 +82,16 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
 export function peerPublication(request: DevelopmentTaskPeerContributionRequest, at: number): DevelopmentTaskContextPublication {
   const { grant } = request
   if ('kind' in request.result) {
-    if (grant.source.kind !== 'tool-observations') throw new Error('tool report requires tool observation authorization')
+    const result = request.result
+    if (grant.source.kind !== 'tool-observations' || (grant.source.version === 4
+      ? result.kind === 'command-observation'
+        ? !grant.source.commands.some(selector => selector.command === result.fields.command
+          && selector.rootIndex === result.fields.rootIndex)
+        : result.version !== (grant.source.fileContent === undefined ? 1 : 3)
+      : result.version === 4 || (grant.source.version === 3 ? result.version !== 3
+        : result.version === 3 || (result.version === 2 && grant.source.version !== 2)))) {
+      throw new Error('tool report requires its matching live or recorded observation authorization')
+    }
     const observation: DevelopmentTaskPeerToolObservation = {
       ...request.result, sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
       observerPeerId: grant.contributorPeerId, sourceId: request.sourceId,
@@ -79,7 +99,9 @@ export function peerPublication(request: DevelopmentTaskPeerContributionRequest,
     }
     return { id: peerContributionPublicationId(request), publishedAt: at, peerContribution: { version: 1, grant },
       peerToolObservation: observation,
-      text: `Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
+      text: request.result.kind === 'command-observation'
+        ? `Authenticated peer foreground command outcome. This records one execution, not verification of current code. The Task owner has not independently verified this execution.\n${JSON.stringify(observation)}`
+        : `${request.result.version === 2 ? 'Previously recorded tool attempt shared with this scope. It was not re-executed or checked against the current file. Only selected completed records are shared; omitted or unfinished work is not included. ' : ''}Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
     }
   }
   if (grant.source.kind === 'tool-observations') throw new Error('artifact report requires OpenAPI authorization')
@@ -106,8 +128,13 @@ export function peerPublicationRequest(publication: DevelopmentTaskContextPublic
   const grant = publication.peerContribution?.grant
   const tool = publication.peerToolObservation
   if (grant !== undefined && tool !== undefined) {
+    if (tool.kind === 'command-observation') {
+      return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: freezeCommandResult(tool) }
+    }
     return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-      kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+      kind: tool.kind, ...(tool.version === 2 ? { version: 2, origin: tool.origin }
+        : tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
+      reportedStatus: tool.reportedStatus, omissions: tool.omissions,
       ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
     } }
   }

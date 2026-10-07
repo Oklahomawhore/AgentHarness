@@ -10,7 +10,7 @@ A read invitation and a local goal permit receiving context and limited executio
 
 ## Decision
 
-The [native contribution consumer](../../../../packages/collaboration/scope-agent-contribution/README.md) accepts one explicit current-Session selection of filesystem roots, write/edit operations, an owner entry, and source limits. Owner approval may narrow these limits. The service preserves the same immutable proposal during approval and route retries; local read and source selections must name the same owner and Task. It never inherits permission into another Agent instance, fork, or delegated Agent.
+The [native contribution consumer](../../../../packages/collaboration/scope-agent-contribution/README.md) accepts one explicit current-Session selection of filesystem roots, write/edit operations, an owner entry, and source limits. Owner approval may narrow these limits. The service preserves the same immutable proposal during approval and route retries; remote read and peer source selections must name the same owner and Task; separately authorized local capture follows its own Task. It never inherits permission into another Agent instance, fork, or delegated Agent.
 
 The [filesystem tools](../../../../packages/fs/tool-fs/README.md) emit their actual normalized mutation attempt after policy and intent checks, with the executing filesystem provider and resolved target. The source checks that provider's identity and canonical containment, then associates the attempt with the ordinary tool log or PTC sub-dispatch log. A final logged failure remains a failure report. A Session durability checkpoint precedes atomic source sequence and sample persistence. No transcript scan, file resampling, or raw error message is required.
 

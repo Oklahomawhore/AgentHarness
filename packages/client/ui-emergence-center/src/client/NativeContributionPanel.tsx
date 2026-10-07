@@ -1,24 +1,28 @@
 /** Explicit sharing permission for the current native Session. */
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest, ScopeAgentContributionReceiving,
   ScopeContributionEntry, ScopeContributionTransfer, ScopeAgentContributionRecoverRouteRequest,
-  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult,
+  ScopeContributionEntryProbeRequest, ScopeContributionEntryProbeResult, ScopeAgentLocalTaskTarget,
+  ScopeAgentLocalContributionStatus, ScopeAgentContributionInitializationRequest,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
-import type { NativeScopeSnapshot } from './native-scopes.ts'
-import { ContributionGrantSummary, contributionErrorKey } from './contribution-ui.tsx'
+import { sameLocalTarget, type NativeScopeSnapshot } from './native-scopes.ts'
+import { ContributionGrantSummary, contributionErrorKey, NativeCommandSummary } from './contribution-ui.tsx'
 import type { EmergenceCenterKey } from './locales.ts'
 import { NativeContributionRoute } from './NativeContributionRoute.tsx'
+import { NativeContributionInitialization } from './NativeContributionInitialization.tsx'
+import { emptyNativeCommands, nativeCommandSelectors } from './NativeCommandPermission.tsx'
 import { NativeContributionPermission } from './NativeContributionPermission.tsx'
 import { automaticPolicy, NativeAutomaticPermission, type NativeAutomaticDraft } from './NativeAutomaticPermission.tsx'
+import { NativePermissionSuggestion, type NativePermissionSuggestionActions } from './NativePermissionSuggestion.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Local management callbacks supplied by the apply-owned directory. */
-export interface NativeContributionActions {
+export interface NativeContributionActions extends NativePermissionSuggestionActions {
   readonly readNativeContribution: (agentId: SessionId) => void
   readonly recoverNativeContributionRoute: (request: ScopeAgentContributionRecoverRouteRequest) => Promise<void>
   readonly requestNativeContribution: (request: ScopeAgentContributionRequest) => Promise<void>
@@ -32,7 +36,6 @@ function issueKey(code: string): EmergenceCenterKey {
   switch (code) {
     case 'scope-agent-contribution/not-live': return 'native.share.notLive'
     case 'scope-agent-contribution/ineligible': return 'native.share.ineligible'
-    case 'scope-agent-contribution/task-conflict': return 'native.share.conflict'
     case 'scope-agent-contribution/stale-route': case 'scope-agent-contribution/stale-capture': case 'scope-agent-contribution/superseded': return 'contribution.error.stale'
     case 'scope-agent-contribution/invalid-permission': return 'contribution.error.permission'
     case 'scope-agent-contribution/unavailable':
@@ -85,18 +88,23 @@ export function NativeContributionPanel(props: NativeContributionActions & Props
   agentId: SessionId
   scope: NativeScopeSnapshot
   entry: ContributionEntry<ScopeAgentContributionStatus> | undefined
+  localEntry?: ContributionEntry<ScopeAgentLocalContributionStatus> | undefined
+  /** Main entrance draft; changes discard its preview and consent without replacing existing permissions. */
+  entryText?: string | undefined
 }) {
   return <SessionContributionPanel key={props.agentId} {...props} />
 }
 
 function SessionContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
   stopNativeContribution, leaveNativeJoin, previewNativeContribution, probeNativeContribution,
-  recoverNativeContributionRoute, scope, t,
+  recoverNativeContributionRoute, suggestNativeContributionPermission, localEntry, entryText, scope, t,
 }: Parameters<typeof NativeContributionPanel>[0]) {
   const id = useId()
   const previewRevision = useRef(0)
   const actionPending = useRef(false)
-  const [text, setText] = useState('')
+  const permissionEdited = useRef(false)
+  const prefilled = useRef(false)
+  const details = useRef<HTMLDetailsElement>(null)
   const [preview, setPreview] = useState<ScopeContributionEntry>()
   const [previewing, setPreviewing] = useState(false)
   const [invalid, setInvalid] = useState(false)
@@ -108,7 +116,19 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const [samples, setSamples] = useState('')
   const [bytes, setBytes] = useState('')
   const [consent, setConsent] = useState(false)
-  const [readConsent, setReadConsent] = useState<{ entry: ScopeContributionEntry; seq: SessionSeqCursor } | null>(null)
+  const [fileContent, setFileContent] = useState(false)
+  const [commandDraft, setCommandDraft] = useState(emptyNativeCommands)
+  const [initializationConsent, setInitializationConsent] = useState<{
+    entry: ScopeContributionEntry
+    scope: string
+    source: string
+    request: ScopeAgentContributionInitializationRequest
+  } | null>(null)
+  const [readConsent, setReadConsent] = useState<{
+    entry: ScopeContributionEntry
+    seq: SessionSeqCursor
+    localTask: ScopeAgentLocalTaskTarget | null
+  } | null>(null)
   const [automaticDraft, setAutomaticDraft] = useState<NativeAutomaticDraft>({ goal: '', extra: '', steps: '', interval: '' })
   const [automaticConsent, setAutomaticConsent] = useState<{
     entry: ScopeContributionEntry
@@ -119,6 +139,36 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     readNativeContribution(agentId)
     return () => { previewRevision.current++ }
   }, [agentId, readNativeContribution])
+  useLayoutEffect(() => {
+    previewRevision.current++
+    setPreview(undefined); setProbe(undefined); setInvalid(false); setPreviewing(false)
+    setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
+    setFileContent(false); setCommandDraft(emptyNativeCommands())
+    if (entryText !== undefined && details.current !== null) details.current.open = true
+  }, [entryText])
+  const localStatus = localEntry?.value
+  const localCapture = localStatus?.capture
+  const localAssignment = localStatus?.assignment
+  useLayoutEffect(() => {
+    setCommandDraft(emptyNativeCommands()); setConsent(false)
+  }, [localAssignment?.taskId, localAssignment?.bindingId,
+    localAssignment?.expectedBindingEpoch.nodeId, localAssignment?.expectedBindingEpoch.seq])
+  const initializationReady = localEntry?.status === 'ready' && !localEntry.pending
+  const initializationEligible = localStatus?.agentId === agentId && localStatus.initialization.eligible
+    && localCapture != null && localAssignment != null
+  const initializationSource = initializationEligible ? JSON.stringify([localCapture.selection.captureId,
+    localCapture.selection.captureGeneration, localAssignment.taskId, localAssignment.bindingId,
+    localAssignment.expectedBindingEpoch.nodeId, localAssignment.expectedBindingEpoch.seq]) : null
+  const localPrefillEligible = localStatus?.agentId === agentId && localCapture != null && localAssignment != null
+    && localCapture.state !== 'ending' && localCapture.grant.expiresAt > Date.now()
+  useEffect(() => {
+    if (prefilled.current || permissionEdited.current || !initializationReady || !localPrefillEligible) return
+    const remainingHours = Math.ceil((localCapture.grant.expiresAt - Date.now()) / 3_600_000)
+    if (remainingHours <= 0) return
+    prefilled.current = true
+    setRoots(localCapture.roots.join('\n')); setWrite(localCapture.tools.includes('write')); setEdit(localCapture.tools.includes('edit'))
+    setHours(String(remainingHours)); setSamples(String(localCapture.grant.maxSamples)); setBytes(String(localCapture.grant.maxSampleBytes))
+  }, [initializationReady, localPrefillEligible, localCapture])
   const status = entry?.value
   const capture = status?.capture
   const continuation = status?.receivingContinuation
@@ -128,17 +178,20 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     if (!occupied) return
     previewRevision.current++
     setPreview(undefined); setProbe(undefined); setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
+    setInitializationConsent(null); setFileContent(false); setCommandDraft(emptyNativeCommands())
   }, [occupied])
   const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
   const eligible = ready && status?.eligibility === 'eligible'
-  const joint = preview?.kind === 'scope-join-entry'
+  const joint = preview?.kind === 'scope-join-entry' || preview?.kind === 'scope-group-entry'
   const observation = scope.observation
   const readState = observation?.eligibility === 'eligible' ? observation : null
   const canReceive = scope.phase === 'ready' && !scope.pending && readState !== null && readState.agentId === agentId
-    && readState.localTask === null && readState.state.binding === null && readState.subscriptionState === 'unbound'
+    && (readState.state.binding === null || (readState.localTask !== null && readState.state.binding.kind === 'local-task'))
+    && readState.subscriptionState === 'unbound'
   const readConfirmed = readConsent !== null && readConsent.entry === preview && canReceive
     && readConsent.seq === readState.readStateSeq
+    && (readConsent.localTask === null ? readState.localTask === null : sameLocalTarget(readState.localTask, readConsent.localTask))
   const used = readState?.state.usedBudget ?? 0
   const automaticConfirmed = automaticConsent !== null && readConfirmed && automaticConsent.entry === preview
     && automaticConsent.seq === readState.readStateSeq && automaticConsent.used === used
@@ -148,18 +201,32 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       && automaticConsent.seq === readState?.readStateSeq && automaticConsent.used === used)) return
     setAutomaticConsent(null); setReadConsent(null)
   }, [automaticConsent, preview, readState?.readStateSeq, used])
-  const selectedRoots = [...new Set(roots.split('\n').map(value => value.trim()).filter(Boolean))]
+  const enteredRoots = roots.split('\n').map(value => value.trim()).filter(Boolean)
+  const selectedRoots = commandDraft.enabled ? enteredRoots : [...new Set(enteredRoots)]
+  const commands = nativeCommandSelectors(commandDraft, selectedRoots)
   const tools: ('write' | 'edit')[] = [...(write ? ['write' as const] : []), ...(edit ? ['edit' as const] : [])]
+  const initializationScope = JSON.stringify([selectedRoots, tools, hours, samples, bytes])
+  const initializationConfirmed = initializationConsent !== null && initializationEligible && !fileContent && !commandDraft.enabled
+    && initializationConsent.entry === preview && initializationConsent.source === initializationSource
+    && initializationConsent.scope === initializationScope
+  useLayoutEffect(() => {
+    if (initializationConsent !== null && !initializationConfirmed) {
+      setInitializationConsent(null)
+    }
+  }, [initializationConsent, initializationConfirmed])
   const expiresAt = Date.now() + Number(hours) * 3_600_000
   const limitsValid = [hours, samples, bytes].every(value => value.trim() !== '' && Number.isSafeInteger(Number(value)) && Number(value) > 0)
     && Number.isSafeInteger(expiresAt)
-  const canRequest = eligible && capture === null && continuation === undefined && consent && preview !== undefined && tools.length > 0
+  const canRequest = eligible && capture === null && continuation === undefined && consent && preview !== undefined
+    && (tools.length > 0 || commands !== undefined) && commands !== null
+    && (initializationConsent === null || (initializationConfirmed && initializationReady))
     && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || (readConfirmed
       && (automaticConsent === null || (automaticConfirmed && policy !== undefined))))
-  const verify = async (): Promise<void> => {
+  const verify = async (text: string): Promise<void> => {
     const revision = ++previewRevision.current
     setPreviewing(true); setInvalid(false); setPreview(undefined); setProbe(undefined)
-    setReadConsent(null); setConsent(false); setAutomaticConsent(null)
+    setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
+    setFileContent(false); setCommandDraft(emptyNativeCommands())
     let result: ScopeContributionTransfer
     try { result = await previewNativeContribution(text) }
     catch {
@@ -167,7 +234,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       return
     }
     if (revision !== previewRevision.current) return
-    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry') || result.sourceKind !== 'tool-observations') {
+    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || result.sourceKind !== 'tool-observations') {
       setInvalid(true); setPreviewing(false); return
     }
     let checked: ScopeContributionEntryProbeResult
@@ -187,9 +254,9 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   }
   const stateKey: EmergenceCenterKey = capture == null ? 'native.share.none'
     : capture.state === 'ending' ? 'contribution.ending'
-      : capture.state === 'active' ? capture.collecting ? 'native.share.active' : 'native.share.paused'
+      : capture.state === 'active' ? capture.collecting ? capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
         : capture.application === null ? 'contribution.prepared' : `contribution.application.${capture.application}`
-  return <details data-native-contribution className={css.sharing}>
+  return <details ref={details} data-native-contribution className={css.sharing}>
     <summary>{t('native.share.title')}</summary>
     <div className={css.form}>
       <p className={css.hint}>{t('native.share.hint')}</p>
@@ -197,21 +264,20 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {entry?.status === 'error' && <p role="alert" className={css.notice}>{t(issueKey(entry.error ?? 'unknown'))}</p>}
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
       {status !== undefined && status.eligibility !== 'eligible' && <p className={css.hint}>{t(status.eligibility === 'not-live'
-        ? 'native.share.notLive' : status.eligibility === 'task-conflict' ? 'native.share.conflict' : 'native.share.ineligible')}</p>}
-      {capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
+        ? 'native.share.notLive' : 'native.share.ineligible')}</p>}
+      {entryText !== undefined && capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
         event.preventDefault()
         if (!canRequest) return
         void perform(() => requestNativeContribution({ agentId, expectedCapture: null, entry: preview, roots: selectedRoots, tools,
           limits: { expiresAt, maxSamples: Number(samples), maxSampleBytes: Number(bytes) },
+          ...(initializationConfirmed ? { initialization: initializationConsent.request } : {}),
+          ...(commands == null ? {} : { commands }),
+          ...(fileContent && tools.length > 0 ? { fileContent: 'completed-native-file' as const } : {}),
           ...(joint && readConsent !== null ? { receive: { expectedReadStateSeq: readConsent.seq,
+            ...(readConsent.localTask === null ? {} : { localTask: readConsent.localTask }),
             ...(automaticConfirmed && policy !== undefined ? { automatic: policy } : {}) } } : {}) }))
       }}>
-        <label className={css.field} htmlFor={`${id}-entry`}>{t('contribution.application.paste')}
-          <textarea id={`${id}-entry`} rows={3} value={text} disabled={!eligible} onChange={(event) => {
-            previewRevision.current++; setText(event.target.value); setPreview(undefined); setInvalid(false); setProbe(undefined)
-            setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
-          }} /></label>
-        <Button disabled={!eligible || previewing || !text.trim()} onClick={() => { void verify() }}>{t('native.share.verify')}</Button>
+        <Button disabled={!eligible || previewing || !entryText.trim()} onClick={() => { void verify(entryText) }}>{t('native.share.verify')}</Button>
         {previewing && <p role="status" className={css.hint}>{t('native.share.verifying')}</p>}
         {probe !== undefined && <p role={probe === 'ready' ? 'status' : 'alert'} className={css.notice}>{t(`native.share.probe.${probe}`)}</p>}
         {invalid && <p role="alert" className={css.notice}>{t('native.share.invalidEntry')}</p>}
@@ -225,19 +291,59 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             {!canReceive && <p role="status" className={css.notice}>{t('native.join.unboundRequired')}</p>}
             <label className={css.consent}><input type="checkbox" checked={readConfirmed} disabled={!eligible || !canReceive}
               onChange={(event) => {
-                setReadConsent(event.target.checked && readState !== null ? { entry: preview, seq: readState.readStateSeq } : null)
-                if (!event.target.checked) setAutomaticConsent(null)
+                setReadConsent(event.target.checked && readState !== null
+                  ? { entry: preview, seq: readState.readStateSeq, localTask: readState.localTask } : null)
+                setAutomaticConsent(null)
               }} />
             {t('native.join.readConsent')}</label>
           </>}
-          <NativeContributionPermission id={id} draft={{ roots, write, edit, hours, samples, bytes, consent }}
-            disabled={!eligible} consentKey="native.share.consent" t={t} change={(draft) => {
+          {!localPrefillEligible && <NativePermissionSuggestion agentId={agentId}
+            identity={JSON.stringify([entryText, localAssignment])} disabled={!eligible || !initializationReady}
+            revision={JSON.stringify([roots, write, edit, hours, samples, bytes, consent, fileContent, commandDraft,
+              readConsent, automaticConsent, automaticDraft, initializationConsent])}
+            suggestNativeContributionPermission={suggestNativeContributionPermission} t={t} apply={(draft) => {
+              permissionEdited.current = true
+              setRoots(draft.roots.join('\n')); setWrite(draft.tools.includes('write')); setEdit(draft.tools.includes('edit'))
+              setHours(String(draft.durationHours)); setSamples(String(draft.maxSamples)); setBytes(String(draft.maxSampleBytes))
+              setConsent(false); setFileContent(false); setCommandDraft(emptyNativeCommands())
+              setReadConsent(null); setAutomaticConsent(null); setInitializationConsent(null)
+            }} />}
+          <NativeContributionPermission id={id}
+            draft={{ roots, write, edit, hours, samples, bytes, consent, fileContent, commands: commandDraft }}
+            disabled={!eligible} fileContentDisabled={initializationConfirmed}
+            consentKey={commandDraft.enabled ? 'native.commands.remoteConsent' : 'native.share.consent'} t={t} change={(draft) => {
+              permissionEdited.current = true
+              if (draft.roots !== roots || draft.write !== write || draft.edit !== edit || draft.hours !== hours
+                || draft.samples !== samples || draft.bytes !== bytes || draft.commands !== commandDraft) {
+                setInitializationConsent(null); setFileContent(false); setConsent(false)
+              } else { setFileContent(draft.fileContent); setConsent(draft.consent) }
+              setCommandDraft(draft.roots !== roots ? { ...draft.commands, enabled: false,
+                selectors: draft.commands.selectors.map(item => ({ ...item, rootIndex: '' })) } : draft.commands)
               setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
-              setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
+              setSamples(draft.samples); setBytes(draft.bytes)
             }} />
+          <div data-native-initialization-consent className={css.form}>
+            <label className={css.consent}><input type="checkbox" checked={initializationConfirmed}
+              disabled={!eligible || !initializationReady || !initializationEligible || fileContent || commandDraft.enabled}
+              onChange={(event) => {
+                setInitializationConsent(event.target.checked && initializationEligible && initializationSource !== null ? {
+                  entry: preview, scope: initializationScope, source: initializationSource,
+                  request: { kind: 'recorded-local-tools', expectedLocalCapture: localCapture.selection, localTask: localAssignment },
+                } : null)
+              }} />{t('native.initialization.consent')}</label>
+            <p className={css.hint}>{t('native.initialization.hint')}</p>
+            <p className={css.hint}>{t(commandDraft.enabled ? 'native.commands.historyExclusive' : 'native.fileContent.historyExclusive')}</p>
+            <p className={css.hint}>{initializationEligible
+              ? t('native.initialization.available', { count: localStatus.initialization.recordedSamples,
+                unconfirmed: localStatus.initialization.unconfirmedSamples }) : t('native.initialization.unavailable')}</p>
+          </div>
           {joint && <div data-native-join-automatic className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={automaticConfirmed} disabled={!eligible || !readConfirmed}
               onChange={(event) => {
+                if (event.target.checked && readState?.localTask !== null && readState?.state.automatic != null) {
+                  const goal = readState.state.automatic.goal
+                  setAutomaticDraft(value => ({ ...value, goal: value.goal || goal }))
+                }
                 setAutomaticConsent(event.target.checked && readState !== null
                   ? { entry: preview, seq: readState.readStateSeq, used } : null)
               }} />{t('native.join.automaticConsent')}</label>
@@ -253,16 +359,30 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {capture != null && <>
         <dl className={css.details}>
           <dt>{t('contribution.task')}</dt><dd>{capture.entry.taskId}</dd><dt>{t('contribution.owner')}</dt><dd>{capture.entry.ownerPeerId}</dd>
+          {capture.entry.kind === 'scope-group-entry' && <>
+            <dt>{t('contribution.group.capture')}</dt><dd>{capture.selection.captureId}</dd>
+            <dt>{t('contribution.group.captureGeneration')}</dt><dd>{capture.selection.captureGeneration}</dd>
+          </>}
           <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
+          {capture.tools.length > 0 && <><dt>{t('native.fileContent.scope')}</dt>
+            <dd>{t(capture.proposal.source.kind === 'tool-observations'
+              && capture.proposal.source.fileContent === 'completed-native-file'
+              ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd></>}
           <dt>{t('native.share.tools')}</dt><dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
+          {capture.commands !== undefined && <><dt>{t('native.commands.scope')}</dt><dd>
+            <NativeCommandSummary commands={capture.commands} t={t} />
+          </dd></>}
           <dt>{t('contribution.expires')}</dt><dd>{new Date(capture.limits.expiresAt).toLocaleString()}</dd>
           <dt>{t('contribution.maxSamples')}</dt><dd>{capture.limits.maxSamples}</dd>
           <dt>{t('contribution.maxBytes')}</dt><dd>{capture.limits.maxSampleBytes}</dd>
         </dl>
+        {capture.commands !== undefined && <p className={css.hint}>{t('native.commands.stopHint')}</p>}
+        {capture.commands === undefined && <p className={css.hint}>{t('native.commands.renew')}</p>}
         {capture.receiving !== null && <JoinReceiving receiving={capture.receiving}
           intent={capture.receivingIntent ?? (capture.state === 'ending' ? undefined : 'adopt')} ready={ready} t={t}
           leave={() => { void perform(() => leaveNativeJoin({ agentId, expectedCapture: capture.selection })) }} />}
         {capture.invitation !== null && <details><summary>{t('native.share.approval')}</summary><ContributionGrantSummary grant={capture.invitation.grant} t={t} /></details>}
+        {capture.initialization !== undefined && <NativeContributionInitialization value={capture.initialization} t={t} />}
         <p className={css.hint}>{t('native.share.pending', { count: capture.pendingSamples })}</p>
         {capture.collectionIssue !== null && <p role="status" className={css.notice}>{t(`native.share.collection.${capture.collectionIssue}`)}</p>}
         {capture.issue !== null && <p className={css.notice}>{t(`native.share.issue.${capture.issue}`)}</p>}
@@ -282,8 +402,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       </div>}
       {recoverable != null && <NativeContributionRoute
         key={`${agentId}/${recoverable.selection.captureId}/${recoverable.selection.captureGeneration}/${recoverable.entry.ownerAddress}/${recoverable.routeRevision}/${routeReadSeq ?? ''}`}
-        agentId={agentId} current={recoverable} ready={ready && !scope.pending && (recoverable.entry.kind !== 'scope-join-entry' || scope.phase === 'ready')} t={t}
-        {...(recoverable.entry.kind === 'scope-join-entry' && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
+        agentId={agentId} current={recoverable} ready={ready && !scope.pending && ((recoverable.entry.kind !== 'scope-join-entry' && recoverable.entry.kind !== 'scope-group-entry') || scope.phase === 'ready')} t={t}
+        {...((recoverable.entry.kind === 'scope-join-entry' || recoverable.entry.kind === 'scope-group-entry') && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
         preview={previewNativeContribution} recover={request => perform(() => recoverNativeContributionRoute(request))} />}
       {entry?.status !== 'error' && entry?.error !== undefined && <p role="alert" className={css.notice}>{t(issueKey(entry.error))}</p>}
       <Button size="sm" disabled={entry?.pending} onClick={() => { readNativeContribution(agentId) }}>{t('native.share.refresh')}</Button>

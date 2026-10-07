@@ -8,7 +8,6 @@ import type { Message } from '@deepseek-ai/dsh-llm'
 import type { ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ScopeInvitation } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentBindingStatus } from '@deepseek-ai/dsh-scope-agent-context/types'
 import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-access'
 import { compareOrRefreshGolden, captureStableAria, assertFixtureInventory,
@@ -21,6 +20,7 @@ const DESKTOP = { width: 1440, height: 1000 }
 const NARROW = { width: 390, height: 844 }
 const ACCESS = '[data-emergence-center] details:has(> summary:text-is("独立设备协作"))'
 const PANEL = '[data-native-scope-panel]'
+const ACTIVITY = '[data-native-scope-activity]'
 const OBJECTIVE = '订单接口的原生会话协作'
 const FACT_ONE = 'ORDER_CONTEXT_ONE: orderCode is required.'
 const FACT_TWO = 'ORDER_CONTEXT_TWO: sku is required.'
@@ -52,7 +52,13 @@ async function layouts(page: Page, stage: string): Promise<void> {
     }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-    if (directory !== undefined) await page.screenshot({ path: join(directory, `${stage}-${String(viewport.width)}.png`), fullPage: true })
+    if (directory !== undefined) {
+      await page.screenshot({ path: join(directory, `${stage}-${String(viewport.width)}.png`), fullPage: true })
+      if (stage === 'budget' && viewport.width === NARROW.width) {
+        await page.locator(ACTIVITY).scrollIntoViewIfNeeded()
+        await page.screenshot({ path: join(directory, `${stage}-activity-${String(viewport.width)}.png`), fullPage: true })
+      }
+    }
   }
   await page.setViewportSize(DESKTOP)
 }
@@ -69,12 +75,15 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
   const requests: Message[][] = []
   const trips: ReturnType<typeof watchConsole>[] = []
   const errors: string[] = []
+  const firstAutomaticRequest = Promise.withResolvers<undefined>()
+  const releaseAutomaticRequest = Promise.withResolvers<undefined>()
 
-  async function state(): Promise<ScopeAgentBindingStatus> {
+  async function observation() {
     const result = await receiver.ctx.scopeAgentContext.status({ agentId: sessionId })
     if (result.eligibility === 'not-live') throw new Error('The selected native Agent stopped being live')
-    return result.state
+    return result
   }
+  async function state() { return (await observation()).state }
 
   async function openPanel(): Promise<Locator> {
     if (!await page.locator(PANEL).isVisible()) await page.getByRole('button', { name: '协作', exact: true }).click()
@@ -124,9 +133,13 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     owner = await launchWebScaffold({ hermeticMcpClients: true })
     receiver = await launchWebScaffold({ hermeticMcpClients: true,
       replayFixture: join(replayDir, 'override-only.jsonl'), replayOverride, paceMs: 5 })
-    receiver.ctx.on('llm/stream', (options, next) => {
+    receiver.ctx.on('llm/stream', async function* (options, next) {
       requests.push(structuredClone(options.messages))
-      return next()
+      if (requests.length === 3) {
+        firstAutomaticRequest.resolve(undefined)
+        await releaseAutomaticRequest.promise
+      }
+      yield* next()
     })
     expect(owner.harnessHome).not.toBe(receiver.harnessHome)
     browser = await chromium.launch()
@@ -148,6 +161,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
   }, 120_000)
 
   afterAll(async () => {
+    releaseAutomaticRequest.resolve(undefined)
     const failures: unknown[] = []
     for (const close of [() => browser?.close(), () => receiver?.close(), () => owner?.close(),
       () => replayDir === undefined ? Promise.resolve() : rm(replayDir, { recursive: true, force: true })]) {
@@ -182,7 +196,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     await prompt('NATIVE_USER_ONE: 开始前端工作。', 1)
     let panel = await openPanel()
     expect(await panel.getByRole('radio', { name: '只在我工作时更新', exact: true }).isChecked()).toBe(true)
-    const input = panel.getByRole('textbox', { name: '粘贴只读邀请', exact: true })
+    const input = panel.getByRole('textbox', { name: '粘贴协作入口', exact: true })
     await input.fill('{broken')
     expect(await panel.getByRole('button', { name: '连接此会话', exact: true }).isDisabled()).toBe(true)
     expect(await input.inputValue()).toBe('{broken')
@@ -192,6 +206,8 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     await panel.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => (await state()).mode).toBe('passive')
     expect(requests).toHaveLength(1)
+    expect((await observation()).activity).toEqual({ request: null, completed: null, evaluation: null })
+    expect(await panel.locator(ACTIVITY).count()).toBe(0)
     expect((await state()).automatic).toBeNull()
     expect(receiver.ctx.developmentTasks.list({ limit: 200 })).toEqual([])
     expect(receiver.ctx.developmentTasks.assignmentList()).toEqual([])
@@ -203,10 +219,27 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
 
     await publish(FACT_TWO)
     panel = await openPanel()
+    expect((await observation()).activity).toEqual({ request: null, completed: null, evaluation: null })
+    expect(await panel.locator(ACTIVITY).count()).toBe(0)
     await automatic(panel)
     const autoSettled = receiver.whenTurnSettled(30_000)
     await panel.getByRole('button', { name: '确认启用自动协作', exact: true }).click()
+    await firstAutomaticRequest.promise
+    const dispatched = (await observation()).activity.request
+    expect(dispatched).not.toBeNull()
+    expect(dispatched).toMatchObject({ turn: 3, step: 1 })
+    expect((await observation()).activity.completed).toBeNull()
+    await panel.getByText('本轮已记录自动请求：第 3 轮、第 1 步。', { exact: true }).waitFor()
+    expect(await panel.locator('[data-native-scope-activity-request]').count()).toBe(1)
+    expect(await panel.locator('[data-native-scope-activity-completed]').count()).toBe(0)
+    expect(await panel.locator(ACTIVITY).textContent()).not.toContain('ORDER_CONTEXT_')
+    releaseAutomaticRequest.resolve(undefined)
     expect(await autoSettled).toBe(sessionId)
+    const firstCompleted = (await observation()).activity.completed
+    expect(firstCompleted).toMatchObject({ ...dispatched, turn: 3, step: 1 })
+    await panel.getByText(`最近完成自动响应：第 3 轮，共享版本 ${String(firstCompleted!.taskRevision)}。`, { exact: true }).waitFor()
+    expect(await panel.locator('[data-native-scope-activity-request]').count()).toBe(0)
+    expect((await observation()).activity.request).toBeNull()
     expect(requests).toHaveLength(3)
     expect(requests[2]!.some(message => message.source.kind === 'scope-agent-pulse')).toBe(true)
     expect(requests[2]!.filter(message => message.source.kind === 'scope-agent-context').map(textOf).join('\n')).toContain(FACT_TWO)
@@ -230,6 +263,12 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     expect(requests[3]!.filter(message => message.source.kind === 'scope-agent-context').map(textOf).join('\n')).toContain(FACT_THREE)
     expect((await state()).automatic?.activationLimit).toBe(3)
     expect((await state()).usedBudget).toBe(2)
+    await expect.poll(async () => (await observation()).activity.completed?.turn).toBe(4)
+    const secondCompleted = (await observation()).activity.completed
+    expect(secondCompleted?.taskRevision).toBeGreaterThan(firstCompleted!.taskRevision)
+    expect(secondCompleted?.requestSeq).toBeGreaterThan(firstCompleted!.requestSeq)
+    await panel.getByText(`最近完成自动响应：第 4 轮，共享版本 ${String(secondCompleted!.taskRevision)}。`, { exact: true }).waitFor()
+    expect(await panel.locator(ACTIVITY).textContent()).not.toContain('ORDER_CONTEXT_')
     await panel.getByRole('button', { name: '暂停自动协作', exact: true }).click()
     await expect.poll(async () => (await state()).pauseReason).toBe('user')
     await ownerAccess.getByRole('button', { name: '撤销读取权限', exact: true }).click()
@@ -243,6 +282,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     expect(requests).toHaveLength(4)
     await panel.getByRole('button', { name: '离开共享上下文', exact: true }).click()
     await expect.poll(async () => (await state()).mode).toBe('left')
+    await panel.locator(ACTIVITY).waitFor({ state: 'detached' })
+    expect((await observation()).activity).toEqual({ request: null, completed: null, evaluation: null })
+    const retainedEvidence = receiver.ctx.sessionProjections.stateOf(receiver.ctx.agents.get(sessionId)!.session, 'scopeAgentEvidence')
+    expect(retainedEvidence?.completed?.request.turn).toBe(4)
     await prompt('NATIVE_USER_THREE: 继续本地工作。', 5)
     const withdrawn = requests[4]!.filter(message => message.source.kind === 'scope-agent-context')
     expect(withdrawn).toHaveLength(1)
@@ -259,6 +302,8 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     }
     expect(await page.locator('[data-context-source]').filter({ hasText: /^scope-agent-(context|pulse)$/ }).count()).toBe(0)
     panel = await openPanel()
+    expect(await panel.locator(ACTIVITY).count()).toBe(0)
+    expect((await observation()).activity).toEqual({ request: null, completed: null, evaluation: null })
     await panel.getByRole('button', { name: '查看来源', exact: true }).click()
     await expect.poll(() => page.getByRole('tab', { name: '轨迹', exact: true }).getAttribute('aria-selected')).toBe('true')
     await page.locator('tr[data-kind="context"]').filter({ hasText: 'Shared scope context withdrawn' }).last().click()

@@ -1,5 +1,6 @@
 /** Durable local Claude grants, tool leases, and exact recipient projections. */
 
+import { isDeepStrictEqual } from 'node:util'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type {
   DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskId, DevelopmentNodeId,
@@ -16,7 +17,8 @@ import type { ScopeSubscriptionId, ScopeGeneration, ScopeGrantId } from '@deepse
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
 import type { ClaudeScopeOpenApiSource, ClaudeScopePolicy, ClaudeScopeSessionKey, ClaudeScopeReceiveStatus } from './types.ts'
-import { contributionSchema, contributionLeaseSchema, type ScopeContribution, type ScopeContributionLease } from './contribution-state.ts'
+import { jointSchema, type ScopeJoint } from './joint-state.ts'
+import { contributionSchema, jointContributionSchema, contributionLeaseSchema, type ScopeContribution, type ScopeContributionLease } from './contribution-state.ts'
 
 /** Local recipient interval and the exact independently granted scope. */
 export interface ScopeReceive {
@@ -69,7 +71,7 @@ export interface ScopeArtifactChain {
 }
 
 /** Local-only observed identity and its current authorization, if any. */
-export interface ScopeSession {
+export type ScopeSession = {
   readonly sessionKey: ClaudeScopeSessionKey
   readonly sessionId: string
   readonly participantId: DevelopmentParticipantId
@@ -87,7 +89,15 @@ export interface ScopeSession {
     readonly receipt?: DevelopmentTaskObservedReceipt | undefined
   } | undefined
   readonly sharingIssue?: 'owner-unavailable' | 'capacity' | 'rejected' | undefined
-}
+} & ({
+  readonly version?: undefined
+  readonly readRevision?: undefined
+  readonly joint?: undefined
+} | {
+  readonly version: 2
+  readonly readRevision: number
+  readonly joint?: ScopeJoint | undefined
+})
 
 /** PreToolUse attribution retained until its authorization interval ends. */
 export interface ScopeToolLease {
@@ -169,7 +179,7 @@ const receiveSchema: z.ZodType<ScopeReceive> = z.object({
   expiresAt: z.number().int().positive(),
   status: z.enum(['pending', 'active', 'revoked', 'expired', 'unavailable', 'left']),
 }).strict()
-const sessionSchema: z.ZodType<ScopeSession> = z.object({
+const legacySessionSchema = z.object({
   sessionKey,
   sessionId: z.string().min(1),
   participantId: z.string().min(1).transform(value => value as DevelopmentParticipantId),
@@ -191,6 +201,32 @@ const sessionSchema: z.ZodType<ScopeSession> = z.object({
   }).strict().optional(),
   sharingIssue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict()
+const sessionSchema: z.ZodType<ScopeSession> = z.union([legacySessionSchema, legacySessionSchema.extend({
+  version: z.literal(2), readRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  joint: jointSchema.optional(), contribution: jointContributionSchema.optional(),
+}).strict().superRefine((session, context) => {
+  const joint = session.joint
+  const capture = session.contribution
+  if ((capture?.application?.entry.kind === 'scope-group-entry' && joint === undefined)
+    || (joint !== undefined && (joint.authorizedReadRevision > session.readRevision
+      || (joint.adoptedReadRevision !== undefined && joint.adoptedReadRevision > session.readRevision)
+      || (capture?.proposal.captureId === joint.proposal.captureId
+        && (capture.proposal.captureGeneration !== joint.proposal.captureGeneration
+          || !isDeepStrictEqual(capture.proposal, joint.proposal)))
+      || (capture?.application !== undefined && capture.application.entry.kind === 'scope-group-entry'
+        && (capture.proposal.captureId !== joint.proposal.captureId
+          || !isDeepStrictEqual(capture.application.entry, joint.entry)))
+      || (session.receive?.subscriptionId === joint.subscription?.id
+        && session.receive !== undefined && joint.subscription !== undefined
+        && (session.receive.generation !== joint.subscription.generation
+          || session.receive.taskId !== joint.subscription.invitation.taskId
+          || session.receive.ownerPeerId !== joint.subscription.invitation.ownerPeerId
+          || session.receive.grantId !== joint.subscription.invitation.grantId
+          || session.receive.grantGeneration !== joint.subscription.invitation.generation
+          || session.receive.expiresAt !== joint.subscription.invitation.expiresAt))))) {
+    context.addIssue({ code: 'custom', message: 'joint operation does not belong to its retained Session selection' })
+  }
+})])
 const leaseSchema: z.ZodType<ScopeToolLease> = z.object({
   sessionKey,
   toolUseId: z.string().min(1),

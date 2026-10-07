@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-05-semantic-response-evidence.md
+2026-10-05-semantic-response-evidence.md: 7e5b67829fef3d06e36a8445761367a5123f6121
+2026-10-05-semantic-response-evidence.zh.md: 04af7ee4e80af11bae20c9acbe5844d27bc01e9d

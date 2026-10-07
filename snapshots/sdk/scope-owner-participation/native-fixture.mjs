@@ -46,7 +46,7 @@ export async function apply(ctx) {
   const directory = join(process.cwd(), '.dsh', 'owner-participation')
   const source = await host(join(directory, 'peer'), 'source')
   ctx.effect(() => source.close)
-  await source.ctx.plugin(ScopeAgentContext, { maxContextBytes: 16000, coalesceMs: 1, retryDelayMs: 1000 })
+  await source.ctx.plugin(ScopeAgentContext, { maxContextBytes: 16000, maxLocalContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 })
   const peerAgent = (await source.ctx.agents.create({ sessionId: 'owner-participation-peer',
     agentOptions: { provider: 'native-fixture', model: 'native-fixture' }, meta: { cwd: source.workspace } })).agent
   const peerRoot = join(source.workspace, 'project')
@@ -116,7 +116,7 @@ export async function apply(ctx) {
       assert.equal(await readFile(join(peerRoot, 'peer.txt'), 'utf8'), 'REMOTE_PEER_READY\n')
       await runPeer([], true)
     } else if (turn === 2 && step === 1) {
-      await ctx.scopeAgentContributions.stop({ agentId: agent.id, expectedCapture: ownerCapture.selection })
+      await ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: ownerCapture.selection })
       await until('owner termination', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture === null)
       const context = await runPeer([], false)
       assert.ok(context.source.projection.omittedSources.some(item => item.reason === 'withdrawn'))

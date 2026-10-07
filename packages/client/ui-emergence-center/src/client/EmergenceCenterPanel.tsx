@@ -148,8 +148,10 @@ export function EmergenceCenterPanel({
   refreshObservedScopes,
   readScopeAccess, inviteScope, revokeScope, receiveClaudeScope, stopClaudeReceive,
   readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
+  leaveJointContribution, recoverJointContribution, probeContributionEntry,
   readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
   createContributionEntry, recoverContributionEntry, approveContributionApplication, rejectContributionApplication,
+  createGroupEntry, closeGroupEntry,
   refresh,
   t,
 }: EmergenceCenterPanelProps) {
@@ -469,12 +471,14 @@ export function EmergenceCenterPanel({
             contributions={sourceContributions} readContribution={readContribution}
             requestContribution={requestContribution} prepareContribution={prepareContribution}
             activateContribution={activateContribution} stopContribution={stopContribution}
-            previewContributionText={previewContributionText} t={t} />
+            leaveJointContribution={leaveJointContribution} recoverJointContribution={recoverJointContribution}
+            probeContributionEntry={probeContributionEntry} previewContributionText={previewContributionText} t={t} />
           <OwnerContributionPanel key={selectedTask?.id ?? ''}
             taskId={selectedTask !== undefined && selectedTask.ownerNodeId === participants.nodeId && selectedTask.origin.kind === 'root' ? selectedTask.id : undefined}
             entry={selectedTask === undefined ? undefined : ownerContributions[selectedTask.id]}
             readOwnedContributions={readOwnedContributions} moreOwnedContributions={moreOwnedContributions}
             createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}
+            createGroupEntry={createGroupEntry} closeGroupEntry={closeGroupEntry}
             approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
             approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
             previewContributionText={previewContributionText} t={t} />

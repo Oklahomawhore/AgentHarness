@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { MessageId } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
+import type { DevelopmentTaskContextEvidenceId } from './types.ts'
 import type { DevelopmentTaskId, DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task/types'
 
 /** Canonical object-key ordering for stable audit identities.
@@ -44,13 +45,20 @@ export const semanticReplySchema = z.object({
 /** Parsed natural-language updates and explicit per-source decisions. */
 export type SemanticReply = z.infer<typeof semanticReplySchema>
 
-/** Exact durable projection; this provider never claims semantic activation equivalence. */
-export const semanticProjectionSchema = z.object({
-  activation: z.object({ kind: z.literal('exact') }).strict(), text: z.string(),
+const coverage = z.object({
   selectedSources: z.array(source), omittedSources: z.array(z.object({ source,
     reason: z.enum(['self-published', 'budget', 'unsupported', 'superseded', 'withdrawn', 'recipient-irrelevant']),
   }).strict()),
 }).strict()
+const legacyProjection = coverage.extend({ activation: z.object({ kind: z.literal('exact') }).strict(), text: z.string() })
+const evidenceProjection = coverage.extend({
+  activation: z.object({ kind: z.literal('recipient-evidence'), version: z.literal(1),
+    digest: digest.transform(brandString<DevelopmentTaskContextEvidenceId>), coverage: z.literal('complete') }).strict(),
+  text: z.string(),
+})
+
+/** Historical exact projections and current literal recipient-evidence projections. */
+export const semanticProjectionSchema = z.union([legacyProjection, evidenceProjection])
 
 /** Complete captured prompt JSON, sufficient to reconstruct and check a cached projection without a model call. */
 export const semanticCapturedInputSchema = z.object({
@@ -58,11 +66,13 @@ export const semanticCapturedInputSchema = z.object({
     objective: z.string(), scope: z.string(), origin: z.json() }).strict(),
   recipient: z.object({ participantId: z.string().min(1).transform(brandString<DevelopmentParticipantId>),
     sessionLabel: z.string().optional() }).strict(),
-  inherited: z.array(z.object({ parent: z.object({ taskId: z.string().min(1), revision: z.number().int().positive() }).strict(),
-    objective: z.string(), scope: z.string() }).strict()),
+  inherited: z.array(z.object({ parent: z.object({
+    taskId: z.string().min(1).transform(brandString<DevelopmentTaskId>), revision: z.number().int().positive(),
+  }).strict(),
+  objective: z.string(), scope: z.string() }).strict()),
   sources: z.array(z.object({ sourceId: digest, source, body: z.string(), attribution: z.json() }).strict()),
   mandatory: z.array(z.json()),
-  coverage: semanticProjectionSchema.pick({ selectedSources: true, omittedSources: true }),
+  coverage,
 }).strict()
 
 const call = z.object({ provider: z.string().min(1), model: z.string().min(1),
@@ -90,14 +100,20 @@ const usage = z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.
   cacheWriteTokens: z.number().nonnegative().optional(), reasoningTokens: z.number().nonnegative().optional(),
 }).strict()
 
-/** Completed or failed result, retaining bounded raw blocks and explicitly unknown usage. */
-export const semanticResultSchema = z.object({
-  version: z.literal(1), key: digest, requestSeq: z.number().int().nonnegative(),
+const resultFields = {
+  key: digest, requestSeq: z.number().int().nonnegative(),
   status: z.enum(['completed', 'failed']), rawOutput: z.array(z.json()), finish: z.json().nullable(),
   usage: usage.nullable(), elapsedMs: z.number().nonnegative(), error: z.string().nullable(),
   rejectedChunk: z.object({ bytes: z.number().int().positive(), sha256: digest }).strict().nullable(),
-  projection: semanticProjectionSchema.nullable(),
-}).strict().superRefine((record, ctx) => {
+}
+
+/** Versioned results preserve legacy exact replay and verify current recipient-evidence digests. */
+export const semanticResultSchema = z.discriminatedUnion('version', [
+  z.object({ ...resultFields, version: z.literal(1), projection: legacyProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(2), projection: evidenceProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(3), projection: evidenceProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(4), projection: evidenceProjection.nullable() }).strict(),
+]).superRefine((record, ctx) => {
   if (record.status === 'completed' ? record.projection === null || record.error !== null
     : record.projection !== null || record.error === null) {
     ctx.addIssue({ code: 'custom', message: 'semantic result status disagrees with its projection/error' })

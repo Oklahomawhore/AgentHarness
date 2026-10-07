@@ -128,7 +128,7 @@ describe('native contribution through Loader, actual tools, and independent owne
     }
     const publications = owner.ctx.developmentTasks.get({ taskId: task.id }).context
     expect(publications.map(item => item.peerToolObservation?.sequence)).toEqual([1, 2, 3])
-    expect(publications.map(item => item.peerToolObservation?.fields.path)).toEqual(['src/client.ts', 'manual/guide.md', 'src/client.ts'])
+    expect(publications.map(item => item.peerToolObservation?.kind === 'tool-observation' ? item.peerToolObservation.fields.path : undefined)).toEqual(['src/client.ts', 'manual/guide.md', 'src/client.ts'])
     expect(publications.every(item => item.peerToolObservation?.observerPeerId === source.peerId)).toBe(true)
     expect(JSON.stringify(publications)).not.toContain(source.workspace)
     expect(JSON.stringify(publications)).not.toContain(agent.id)
@@ -185,7 +185,8 @@ describe('native contribution through Loader, actual tools, and independent owne
     expect(observation).toMatchObject({ tool: 'Edit', reportedStatus: 'failure', fields: { path: 'failure.txt' } })
     expect(observation?.fields).not.toHaveProperty('newString')
     expect(observation?.fields).not.toHaveProperty('oldString')
-    expect(observation?.omissions).toEqual(expect.arrayContaining(['oldString', 'newString']))
+    if (observation?.kind !== 'tool-observation') throw new Error('Expected a native file observation')
+    expect(observation.omissions).toEqual(expect.arrayContaining(['oldString', 'newString']))
     expect(await readFile(join(allowed, 'failure.txt'), 'utf8')).toBe('unchanged')
     await run(receiver, recipient)
     const actual = assertRequestReplay(receiver, recipient)

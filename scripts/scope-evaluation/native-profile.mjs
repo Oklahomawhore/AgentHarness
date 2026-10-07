@@ -36,7 +36,7 @@ export async function apply(ctx, config) {
   await mount('Transport', { listenAddresses: ['/ip4/127.0.0.1/tcp/0'], maxRequestBytes: config.data === undefined ? 65536 : 262144, maxResponseBytes: config.data === undefined ? 65536 : 262144,
     maxInboundRequests: 8, maxOutboundRequests: 8, maxConnections: 8, requestTimeoutMs: peerTimeoutMs, connectionTimeoutMs: 3000 })
   await mount('Access', { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: config.data?.contextBytes ?? 8000,
-    maxResponseBytes: config.data === undefined ? 32768 : 131072, requestTimeoutMs: peerTimeoutMs,
+    maxResponseBytes: config.data === undefined ? 32768 : 131072, maxDecodedResponseBytes: 2097152, requestTimeoutMs: peerTimeoutMs,
     maxInvitationLifetimeMs: config.data === undefined ? 900000 : 3600000, maxConcurrentReads: 8,
     waitTimeoutMs: 20000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: config.data === undefined ? 16384 : 32768,
     maxContributionApplications: 16, maxApplicationRequestBytes: config.data === undefined ? 16384 : 32768,

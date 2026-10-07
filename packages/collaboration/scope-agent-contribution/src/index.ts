@@ -1,5 +1,5 @@
-/** Native filesystem-tool source with explicit local consent and independent owner contribution authority. */
-import { randomUUID } from 'node:crypto'
+/** Native file and foreground-command source with explicit local consent and independent owner contribution authority. */
+import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { symbols, type Context } from '@deepseek-ai/cordis'
@@ -7,9 +7,14 @@ import s from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
-import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
+import type { ToolBashExecution, ToolBashCompletion } from '@deepseek-ai/dsh-tool-bash'
+import type { ShellExecutor } from '@deepseek-ai/dsh-shell'
+import { commandSelectorSchema } from '@deepseek-ai/dsh-development-task/schema'
+import type { DevelopmentTaskCommandSelector, DevelopmentTaskCommandObservationResult } from '@deepseek-ai/dsh-development-task/types'
+import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { ToolFsCompletion, ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
 import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
 import type ScopeAgentContext from '@deepseek-ai/dsh-scope-agent-context'
@@ -23,22 +28,26 @@ import type { ContributionStore, ContributionOutboxItem } from '@deepseek-ai/dsh
 import { contributionEntrySchema, contributionLimitsSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
 import type { ScopeContributionEntry, ScopeContributionSample, ScopeContributionApplicationResult } from '@deepseek-ai/dsh-scope-access/types'
-import { DevelopmentTaskError } from '@deepseek-ai/dsh-development-task'
+import { DevelopmentTaskError, type DevelopmentTaskService } from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentTaskLocalContributionGrant, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { nativeToolPath, nativeToolReport } from './capture.ts'
+import { boundedCommandCompletion, nativeCommandReport } from './command.ts'
 import { nativeContributionDomain, nativeDigest, validateNativeSample } from './state.ts'
 import type { NativeCapture, NativeSample, NativeSourceRecord, NativeContributionDomain, NativeReceivingContinuation, NativeReceiving } from './state.ts'
 import { nativeLocalContributionDomain, validateLocalReceipt } from './local-state.ts'
 import type { LocalCapture, LocalSample, NativeLocalContributionDomain } from './local-state.ts'
-import type { ScopeAgentLocalContributionBinding, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus } from './types.ts'
+import type { ScopeAgentContributionPermissionDraft, ScopeAgentLocalContributionBinding, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus } from './types.ts'
+import { initializationRequestSchema, pendingInitialization, recordedProof, recordedReport, executionDigest, initializationPlanDigest } from './initialization.ts'
+import type { NativeInitialization, InitializationProof } from './initialization.ts'
+import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationSource } from './types.ts'
 import type { ScopeAgentContributionRecoverRouteRequest, ScopeAgentContributionRequest, ScopeAgentContributionSelection, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest } from './types.ts'
 
 export type * from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Explicit current-Session file-tool contribution; mounting grants no collection permission. */
+    /** Explicit current-Session file and command contribution; mounting grants no collection permission. */
     scopeAgentContributions: ScopeAgentContributions
   }
 }
@@ -47,12 +56,21 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Maximum retained source Session rows, including ended captures. */
   readonly maxSessions: number
-  /** Maximum retained samples and simultaneous unfinished observations across source Sessions. */
+  /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number
-  /** Maximum complete owner-bound sample and application request bytes. */
+  /** Maximum complete owner-bound requests and each initial historical sample with its local proof, before receipts. */
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
+  /** Optional editable management-form defaults; omission offers no suggested permission. */
+  readonly permissionDefaults?: {
+    /** Suggested permission lifetime in whole hours from explicit submission. */
+    readonly durationHours: number
+    /** Suggested maximum sample count for the new permission. */
+    readonly maxSamples: number
+    /** Suggested per-sample byte limit, still subject to owner approval and source request limits. */
+    readonly maxSampleBytes: number
+  }
 }
 
 /** Collection always requires a separate explicit request even when this plugin is mounted. */
@@ -61,14 +79,29 @@ export const Config: s<Config> = s.object({
   maxLeases: s.number().step(1).min(1).required(),
   maxObservationBytes: s.number().step(1).min(512).required(),
   contributionPollIntervalMs: s.number().step(1).min(1).max(2_147_483_647).required(),
+  permissionDefaults: s.object({
+    durationHours: s.number().step(1).min(1).max(Math.floor(Number.MAX_SAFE_INTEGER / 3_600_000)).required(),
+    maxSamples: s.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+    maxSampleBytes: s.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+  }).extra('default', undefined),
 })
+
+type CaptureRole = 'local' | 'remote'
+const captureRoles = ['local', 'remote'] as const
 
 interface Runtime {
   readonly agent: Agent
   readonly filesystem: FileSystem
+  readonly shell?: ShellExecutor
   readonly roots: readonly FsTarget[]
   readonly selection: ScopeAgentContributionSelection
-  readonly local: boolean
+  readonly role: CaptureRole
+  /** A failed atomic activation retries the same selection and reserves its retained capacity. */
+  initializationPlan?: {
+    readonly sequence: number
+    readonly initialization: NativeInitialization
+    readonly samples: readonly NativeSample[]
+  }
   /** The accepting receiver lifetime cannot be renewed by an exact capture retry. */
   readonly automaticReceiver?: { readonly provider: ScopeAgentContext; revoked: boolean; adopted: boolean }
 }
@@ -78,20 +111,53 @@ interface Completion {
   readonly event: SessionEvent
   readonly failed: boolean
 }
-interface Pending {
+interface PendingExecution {
   readonly runtime: Runtime
-  readonly mutation: ToolFsMutation
   readonly callSeq: SessionSeq
-  readonly path: { readonly rootIndex: number; readonly path: string }
 }
+interface PendingFile extends PendingExecution {
+  readonly kind: 'file'
+  readonly mutation: ToolFsMutation
+  readonly path: { readonly rootIndex: number; readonly path: string }
+  completedFile?: import('@deepseek-ai/dsh-development-task/types').DevelopmentTaskCompletedFileToolObservationResult['completedFile']
+}
+interface PendingCommand extends PendingExecution {
+  readonly kind: 'command'
+  readonly operation: ToolBashExecution
+  readonly selector: DevelopmentTaskCommandSelector
+  completion?: Extract<DevelopmentTaskCommandObservationResult, { state: 'completed' }>
+}
+type Pending = PendingFile | PendingCommand
+/** Local and remote consent own separate cancellation, sampling, and reconciliation. */
+function captureOperations() {
+  return {
+    controls: new Map<SessionId, AbortController>(),
+    runtimes: new Map<SessionId, Runtime>(),
+    pending: new Map<SessionId, Map<SessionSeq, Pending>>(),
+    completed: new Map<SessionId, Map<SessionSeq, Completion>>(),
+    collectionIssues: new Map<SessionId, CollectionIssue>(),
+    workers: new Map<SessionId, Promise<void>>(),
+    sleeps: new Map<SessionId, AbortController>(),
+  }
+}
+
 /** Cordis traces the same provider through distinct caller-context proxies. */
 function filesystemIdentity(filesystem: FileSystem): FileSystem {
   return (filesystem as FileSystem & { [symbols.original]?: FileSystem })[symbols.original] ?? filesystem
+}
+/** Preserve the actual executor identity across Cordis caller-context proxies. */
+function shellIdentity(shell: ShellExecutor | undefined): ShellExecutor | undefined {
+  return shell === undefined ? undefined : (shell as ShellExecutor & { [symbols.original]?: ShellExecutor })[symbols.original] ?? shell
 }
 /** Compare the underlying provider while retaining its caller-context proxy for service calls. */
 function receiverIdentity(receiver: ScopeAgentContext | undefined): ScopeAgentContext | undefined {
   return receiver === undefined ? undefined
     : (receiver as ScopeAgentContext & { [symbols.original]?: ScopeAgentContext })[symbols.original] ?? receiver
+}
+/** Preserve provider-instance comparison across Cordis caller-context proxies. */
+function taskIdentity(tasks: DevelopmentTaskService | undefined): DevelopmentTaskService | undefined {
+  return tasks === undefined ? undefined
+    : (tasks as DevelopmentTaskService & { [symbols.original]?: DevelopmentTaskService })[symbols.original] ?? tasks
 }
 function selection(capture: NativeCapture | LocalCapture): ScopeAgentContributionSelection
 function selection(capture: NativeCapture | LocalCapture | null | undefined): ScopeAgentContributionSelection | null
@@ -117,7 +183,7 @@ class MissingDurability extends Error {
   constructor() { super('scope-agent-contribution: source Session has no durability checkpoint') }
 }
 
-/** Actual file-tool observations become durable original reports, then the existing owner protocol delivers them. */
+/** Actual native execution observations become durable original reports, then the existing owner protocol delivers them. */
 export default class ScopeAgentContributions extends TypertRemoteService {
   static inject = ['agents', 'sessions', 'storageDomain', 'scopeAccess', 'fs']
   static Config = Config
@@ -127,13 +193,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private localDomain: NativeLocalContributionDomain | undefined
   private tail: Promise<unknown> = Promise.resolve()
   private readonly operations = new Set<Promise<unknown>>()
-  private readonly controls = new Map<SessionId, AbortController>()
-  private readonly runtimes = new Map<SessionId, Runtime>()
-  private readonly pending = new Map<SessionId, Map<SessionSeq, Pending>>()
-  private readonly completed = new Map<SessionId, Map<SessionSeq, Completion>>()
-  private readonly collectionIssues = new Map<SessionId, CollectionIssue>()
-  private readonly workers = new Map<SessionId, Promise<void>>()
-  private readonly sleeps = new Map<SessionId, AbortController>()
+  private readonly sources = { local: captureOperations(), remote: captureOperations() }
   private readonly receivingOperations = new Map<string, Promise<void>>()
   private readonly receivingDirty = new Set<SessionId>()
   private readonly controller: ContributionController<NativeCapture>
@@ -162,54 +222,72 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           if (row.capture.proposal.contributorPeerId !== identity.peerId) throw new Error('scope-agent-contribution: restored capture belongs to another peer')
           for (const item of row.samples) validateNativeSample(id, item, row.capture)
           // The previous live Agent instance no longer exists; recovery ends its retained permission instead of resuming collection.
-          await this.markEnding(domain, id)
+          await this.markEnding(domain, id, 'remote')
         } else if (row.receivingContinuation !== undefined) {
           if (row.receivingContinuation.proposal.contributorPeerId !== identity.peerId) throw new Error('scope-agent-contribution: restored receiving belongs to another peer')
-          await this.markEnding(domain, id)
+          await this.markEnding(domain, id, 'remote')
         }
       }
       for (const [id, row] of local.table('sessions').entries()) {
-        if (id !== row.agentId || (row.capture !== null && domain.table('sessions').get(id)?.capture != null)) {
-          throw new Error('scope-agent-contribution: restored source identity or mode conflicts')
+        if (id !== row.agentId) {
+          throw new Error('scope-agent-contribution: restored source identity differs from its row key')
         }
         if (row.capture !== null) await this.saveLocal(id, { ...row.capture, state: 'ending' }, row.samples)
       }
       this.lifetime.signal.throwIfAborted()
       return domain
     })
-    void this.ready.then((domain) => { for (const id of new Set([...domain.table('sessions').keys(), ...this.local().table('sessions').keys()])) this.schedule(id) })
+    void this.ready.then((domain) => {
+      for (const id of new Set([...domain.table('sessions').keys(), ...this.local().table('sessions').keys()])) {
+        for (const role of captureRoles) this.schedule(id, role)
+      }
+    })
       .catch((error: unknown) => { if (!this.lifetime.signal.aborted) ctx.logger.error('scope-agent-contribution: initialization failed: %s', String(error)) })
     ctx.on('tool-fs/mutation-start', (mutation) => {
       try { this.observe(mutation) }
       catch (error) { ctx.logger.error('scope-agent-contribution: observation rejected: %s', String(error)) }
     }, { global: true })
+    ctx.on('tool-fs/mutation-completed', (completion) => { this.completedFile(completion) }, { global: true })
+    ctx.on('tool-bash/foreground-start', (operation) => { this.observeCommand(operation) }, { global: true })
+    ctx.on('tool-bash/foreground-completed', (completion) => { this.completedCommand(completion) }, { global: true })
     ctx.on('session/event', (session, event) => { this.settled(session, event) }, { global: true })
     ctx.on('internal/service', (name) => {
+      if (name === 'shell' || name === 'fs') for (const role of captureRoles) {
+        for (const [id, runtime] of this.sources[role].runtimes) {
+          if (!this.commandProvidersCurrent(runtime)) this.endDetached(id, role)
+        }
+      }
       if (name !== 'scopeAgentContext') return
+      const role = 'remote'
       const receiver = receiverIdentity(ctx.get('scopeAgentContext'))
-      for (const [id, runtime] of this.runtimes) {
+      for (const [id, runtime] of this.sources[role].runtimes) {
         const consent = runtime.automaticReceiver
         if (consent === undefined || consent.adopted || consent.revoked || consent.provider === receiver) continue
         consent.revoked = true
         this.receivingDirty.add(id)
-        this.schedule(id)
+        this.schedule(id, role)
       }
     })
     ctx.on('agent/disposed', ({ agent }) => {
-      if (this.runtimes.get(agent.id)?.agent === agent) this.endDetached(agent.id)
+      for (const role of captureRoles) {
+        if (this.sources[role].runtimes.get(agent.id)?.agent === agent) this.endDetached(agent.id, role)
+      }
     }, { global: true })
     ctx.on('development-task/assignment-changed', () => {
-      for (const [id] of this.runtimes) {
-        const capture = this.capture(id)
-        if (capture != null && !this.collecting(id, capture, true)) this.endDetached(id)
+      const role = 'local'
+      for (const [id] of this.sources[role].runtimes) {
+        const capture = this.capture(id, role)
+        if (capture != null && !this.collecting(id, capture, true)) this.endDetached(id, role)
       }
     })
     ctx.on('development-task/changed', () => {
-      for (const [id, row] of this.localDomain?.table('sessions').entries() ?? []) if (row.capture !== null) this.schedule(id)
+      for (const [id, row] of this.localDomain?.table('sessions').entries() ?? []) if (row.capture !== null) this.schedule(id, 'local')
     })
     ctx.effect(() => async () => {
       this.lifetime.abort(new Error('scope-agent-contribution: disposed'))
-      this.runtimes.clear(); this.pending.clear(); this.completed.clear()
+      for (const role of captureRoles) {
+        this.sources[role].runtimes.clear(); this.sources[role].pending.clear(); this.sources[role].completed.clear()
+      }
       await Promise.allSettled([...this.operations])
       await this.tail.catch(() => {}) // Each queued caller observes its own failure.
       await this.ready.catch(() => {}) // Initialization failures remain visible to management callers.
@@ -233,8 +311,32 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   /**
-   * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.
-   * @param request - exact capture expectation, owner entry, local files, tools, and accepted limits.
+   * Suggest editable file permission from this Session's directory, visible tools, and configured limits.
+   * @param request - exact live ordinary Session selected by the user.
+   * @returns an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.
+   */
+  @Remote('permissionDraft')
+  async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null> {
+    await this.ready
+    this.lifetime.signal.throwIfAborted()
+    const agent = this.requireAgent(request.agentId)
+    this.requireEligible(agent)
+    const defaults = this.config.permissionDefaults
+    if (defaults === undefined) return null
+    if (!Number.isSafeInteger(Date.now() + defaults.durationHours * 3_600_000)) {
+      throw new Error('scope-agent-contribution: configured permission duration cannot form a safe expiry')
+    }
+    const cwd = agent.session.header.cwd
+    return { agentId: agent.id, roots: cwd === undefined ? [] : [cwd],
+      tools: (['write', 'edit'] as const).filter(tool => agent.ctx.get('tools')?.get(tool, agent) !== undefined),
+      ...defaults }
+  }
+
+  /**
+   * Persist one Session's explicit file and command sharing permission and request automatic activation
+   * of an equal or narrower owner approval.
+   * @param request - exact capture expectation, owner entry, file and command selections, limits,
+   * and optional recorded-local-tool export consent.
    * @returns durable local intent; later changed notifications describe owner reconciliation.
    */
   @Remote('request')
@@ -243,27 +345,32 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async requestCapture(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus> {
+    const role = 'remote'
     const domain = await this.ready
     const agent = this.requireAgent(request.agentId)
-    this.assertExpected(domain, request.agentId, request.expectedCapture)
+    this.assertExpected(domain, request.agentId, role, request.expectedCapture)
     this.requireEligible(agent)
-    if (this.local().table('sessions').get(agent.id)?.capture != null) throw this.invalid(agent.id, 'Stop the local capture before selecting a peer owner')
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
+    const commands = this.permissionCommands(agent.id, request)
+    const initialization = request.initialization === undefined ? undefined : initializationRequestSchema.parse(request.initialization)
+    if ((request.fileContent !== undefined || commands !== undefined) && initialization !== undefined) {
+      throw this.invalid(agent.id, 'Complete file-result sharing cannot include recorded-tool initialization')
+    }
     const automatic = request.receive?.automatic === undefined
       ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
-    if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry') || entry.sourceKind !== 'tool-observations'
+    if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry' && entry.kind !== 'scope-group-entry') || entry.sourceKind !== 'tool-observations'
       || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now() || request.roots.length === 0
-      || request.tools.length === 0
+      || (request.tools.length === 0 && commands === undefined)
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) {
-      throw this.invalid(agent.id, 'The source file selection, entry, or accepted limits are invalid')
+      throw this.invalid(agent.id, 'The source selection, entry, or accepted limits are invalid')
     }
-    if ((entry.kind === 'scope-join-entry') !== (request.receive !== undefined)) {
+    if ((entry.kind === 'scope-join-entry' || entry.kind === 'scope-group-entry') !== (request.receive !== undefined)) {
       throw this.invalid(agent.id, 'Joint entry receiving requires explicit local consent')
     }
-    const signal = this.invalidate(agent.id, false)
-    const command = this.controls.get(agent.id)
+    const signal = this.invalidate(agent.id, role, false)
+    const command = this.sources[role].controls.get(agent.id)
     let stopReceiverWatch: (() => void) | undefined
     let automaticReceiver: Runtime['automaticReceiver']
     try {
@@ -279,13 +386,17 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       }
       const filesystem = agent.ctx.get('fs')
       if (filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      const shell = commands === undefined ? undefined : agent.ctx.get('shell')
+      if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
       for (const path of request.roots) {
         const cwd = agent.session.header.cwd
         const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
         signal.throwIfAborted()
         if ((await filesystem.stat(target, signal))?.type !== 'directory') throw this.invalid(agent.id, 'A permitted root is not a directory')
-        if (!roots.some(root => root.targetKey === target.targetKey)) roots.push(target)
+        if (roots.some(root => root.targetKey === target.targetKey)) {
+          if (commands !== undefined) throw this.invalid(agent.id, 'Command directory ordinals require distinct roots')
+        } else roots.push(target)
       }
       const tools = (['write', 'edit'] as const).filter(tool => request.tools.includes(tool))
       const identity = await this.ctx.scopeAccess.identity()
@@ -296,12 +407,14 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         signal.throwIfAborted()
         if (this.requireAgent(agent.id) !== agent) throw this.superseded(agent.id)
         this.requireEligible(agent)
-        this.assertExpected(current, agent.id, request.expectedCapture)
+        this.requireProviders(agent, filesystem, shell)
+        this.assertExpected(current, agent.id, role, request.expectedCapture)
         this.requireCompatible(agent.id, entry)
         const row = current.table('sessions').get(agent.id)
         const retained = row?.capture
-        const previousRuntime = this.runtimes.get(agent.id)
-        if (previousRuntime !== undefined && filesystemIdentity(previousRuntime.filesystem) !== filesystemIdentity(filesystem)) {
+        const previousRuntime = this.sources[role].runtimes.get(agent.id)
+        if (previousRuntime !== undefined && (filesystemIdentity(previousRuntime.filesystem) !== filesystemIdentity(filesystem)
+          || shellIdentity(previousRuntime.shell) !== shellIdentity(shell))) {
           throw this.invalid(agent.id, 'Stop the existing source before changing its filesystem provider')
         }
         const localRoots = roots.map(root => filesystem.processPath(root))
@@ -310,7 +423,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         if (retained != null) {
           if (retained.state === 'ending' || !isDeepStrictEqual(retained.entry, entry) || !isDeepStrictEqual(retained.limits, limits)
             || retained.receiving?.expectedReadStateSeq !== request.receive?.expectedReadStateSeq
+            || !isDeepStrictEqual(retained.receiving?.localTask, request.receive?.localTask)
             || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
+            || !isDeepStrictEqual(retained.initialization?.request, initialization)
+            || (retained.proposal.source.kind === 'tool-observations' && (retained.proposal.source.version === 3 || retained.proposal.source.version === 4)
+              ? retained.proposal.source.fileContent : undefined) !== request.fileContent
+            || !isDeepStrictEqual(retained.commands, commands)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -326,9 +444,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
               || receiverIdentity(receiver) !== automaticReceiver.provider)) throw this.superseded(agent.id)
             const receiving = await receiver.status({ agentId: agent.id })
             signal.throwIfAborted()
-            if (receiving.eligibility !== 'eligible' || receiving.state.binding !== null
+            if (receiving.eligibility !== 'eligible'
+              || (receiving.state.binding !== null && (receiving.state.binding.kind !== 'local-task' || receiving.localTask === null))
+              || !isDeepStrictEqual(receiving.localTask, request.receive.localTask ?? null)
               || receiving.readStateSeq !== request.receive.expectedReadStateSeq) {
-              throw this.invalid(agent.id, 'Receiving consent requires the originally observed unbound Session')
+              throw this.invalid(agent.id, 'Receiving consent requires the originally observed Session and exact local assignment')
             }
             if (automatic !== undefined) {
               if (automatic.activationLimit <= receiving.state.usedBudget) {
@@ -338,32 +458,53 @@ export default class ScopeAgentContributions extends TypertRemoteService {
                 || receiverIdentity(this.ctx.get('scopeAgentContext')) !== automaticReceiver.provider) throw this.superseded(agent.id)
             }
           }
+          if (initialization !== undefined) {
+            const local = this.local().table('sessions').get(agent.id)?.capture
+            if (local == null || !this.initializationSource(agent.id).eligible
+              || !sameSelection(selection(local), initialization.expectedLocalCapture)
+              || !this.matchesBinding(agent.id, initialization.localTask)
+              || !isDeepStrictEqual(initialization.localTask, { taskId: local.grant.taskId, bindingId: local.grant.bindingId,
+                expectedBindingEpoch: local.grant.expectedBindingEpoch })) {
+              throw this.invalid(agent.id, 'Initialization requires the displayed current local capture and assignment')
+            }
+          }
           capture = { proposal: { contributorPeerId: identity.peerId,
             captureId: randomUUID() as NativeCapture['proposal']['captureId'],
             captureGeneration: randomUUID() as NativeCapture['proposal']['captureGeneration'],
-            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') } },
-          roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
-          ...(request.receive === undefined ? {} : { receiving: { adoptionId: randomUUID() as ScopeAgentJoinReadId,
+            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
+              ...(commands !== undefined ? { version: 4 as const, commands,
+                ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) }
+                : request.fileContent === undefined
+                  ? initialization === undefined ? {} : { version: 2 as const, initialization: 'recorded-local-tools' as const }
+                  : { version: 3 as const, fileContent: request.fileContent }) } },
+          roots: localRoots, rootUrls, tools, ...(commands === undefined ? {} : { commands }), entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
+          ...(initialization === undefined ? {} : { initialization: pendingInitialization(initialization) }),
+          ...(request.receive === undefined ? {} : { receiving: { version: 2 as const, adoptionId: randomUUID() as ScopeAgentJoinReadId,
             expectedReadStateSeq: request.receive.expectedReadStateSeq, state: 'waiting' as const, invitation: null, leaveAdopted: false, intent: 'adopt' as const,
+            ...(request.receive.localTask === undefined ? {} : { localTask: request.receive.localTask }),
             ...(automatic === undefined ? {} : { automatic }) } }) }
         }
         await this.save(current, agent.id, capture, row?.samples ?? [])
+        try { this.requireProviders(agent, filesystem, shell) } catch (error) {
+          this.endDetached(agent.id, role)
+          throw error
+        }
         signal.throwIfAborted()
         if (this.ctx.agents.get(agent.id) !== agent) throw this.superseded(agent.id)
         this.requireCompatible(agent.id, entry)
-        this.runtimes.set(agent.id, previousRuntime ?? { agent, filesystem, roots, selection: selection(capture), local: false,
+        this.sources[role].runtimes.set(agent.id, previousRuntime ?? { agent, filesystem, ...(shell === undefined ? {} : { shell }), roots, selection: selection(capture), role: 'remote',
           ...(automaticReceiver === undefined ? {} : { automaticReceiver }) })
-        this.collectionIssues.delete(agent.id)
+        this.sources[role].collectionIssues.delete(agent.id)
         this.notify(current, agent.id)
       })
       return this.view(domain, agent.id)
     } catch (error) {
-      if (this.ctx.agents.get(agent.id) !== agent) this.endDetached(agent.id)
+      if (this.ctx.agents.get(agent.id) !== agent) this.endDetached(agent.id, role)
       throw error
     } finally {
       stopReceiverWatch?.()
-      if (domain.table('sessions').get(agent.id) === undefined && this.controls.get(agent.id) === command) this.controls.delete(agent.id)
-      this.schedule(agent.id)
+      if (domain.table('sessions').get(agent.id) === undefined && this.sources[role].controls.get(agent.id) === command) this.sources[role].controls.delete(agent.id)
+      this.schedule(agent.id, role)
     }
   }
 
@@ -379,15 +520,16 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async recoverCaptureRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus> {
+    const role = 'remote'
     const domain = await this.ready
-    const command = this.controls.get(request.agentId)
+    const command = this.sources[role].controls.get(request.agentId)
     const entry = contributionEntrySchema.parse(request.entry)
     if (Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) {
       throw this.invalid(request.agentId, 'The route recovery request exceeds the configured byte limit')
     }
     try {
       await this.enqueue(async (current) => {
-        this.assertExpected(current, request.agentId, request.expectedCapture)
+        this.assertExpected(current, request.agentId, role, request.expectedCapture)
         const row = current.table('sessions').get(request.agentId)
         const capture = row?.capture
         const selected = capture ?? row?.receivingContinuation
@@ -421,11 +563,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           receiving = { ...retained, ...(routeRecovery === undefined ? {} : { routeRecovery }) }
         }
         if (selected.entry.ownerAddress === entry.ownerAddress && isDeepStrictEqual(receiving, originalReceiving)) return
-        if (this.controls.get(request.agentId) !== command) throw this.superseded(request.agentId)
+        if (this.sources[role].controls.get(request.agentId) !== command) throw this.superseded(request.agentId)
         // Route changes abort peer work but preserve the live collector and unfinished tool completions.
         const routeRevision = revision + 1
         if (!Number.isSafeInteger(routeRevision)) throw this.invalid(request.agentId, 'The route revision is exhausted')
-        const signal = this.invalidate(request.agentId, false)
+        const signal = this.invalidate(request.agentId, role, false)
         if (capture != null) {
           await this.save(current, request.agentId, { ...capture, entry, routeRevision, lastRoute,
             ...(capture.application === undefined ? {} : { application: { ...capture.application, entry } }),
@@ -441,12 +583,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       })
       return this.view(domain, request.agentId)
     } finally {
-      this.schedule(request.agentId)
+      this.schedule(request.agentId, role)
     }
   }
 
   /**
-   * Stop future collection immediately and retain any owner cancellation until it is confirmed.
+   * Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.
    * @param request - exact displayed capture, including for an inactive source Session.
    * @returns durable sharing termination and pending-read cancellation; already adopted reading is retained.
    */
@@ -466,20 +608,45 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async stopCapture(request: ScopeAgentContributionStopRequest, leaveAdopted: boolean): Promise<ScopeAgentContributionStatus> {
+    const role = 'remote'
     const domain = await this.ready
-    this.assertExpected(domain, request.agentId, request.expectedCapture)
+    this.assertExpected(domain, request.agentId, role, request.expectedCapture)
     if (leaveAdopted && this.receivingWork(domain.table('sessions').get(request.agentId)) === undefined) {
       throw this.invalid(request.agentId, 'The selected capture has no joint receiving permission')
     }
-    const signal = this.invalidate(request.agentId, true)
+    const signal = this.invalidate(request.agentId, role, true)
     await this.enqueue(async (current) => {
       signal.throwIfAborted()
-      this.assertExpected(current, request.agentId, request.expectedCapture)
-      await this.markEnding(current, request.agentId, leaveAdopted)
+      this.assertExpected(current, request.agentId, role, request.expectedCapture)
+      await this.markEnding(current, request.agentId, role, leaveAdopted)
     })
     this.scheduleReceiving(request.agentId, signal)
-    this.schedule(request.agentId)
+    this.schedule(request.agentId, role)
     return this.view(domain, request.agentId)
+  }
+
+  /**
+   * Stop only the selected owner-local capture and withdraw its reports from the original Task.
+   * @param request - exact displayed local capture, including for an inactive source Session.
+   * @returns durable local termination; unrelated remote sharing and receiving remain unchanged.
+   */
+  @Remote('stopLocal')
+  stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus> {
+    return this.track(this.stopLocalCapture(request))
+  }
+
+  private async stopLocalCapture(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus> {
+    const role = 'local'
+    const domain = await this.ready
+    this.assertExpected(domain, request.agentId, role, request.expectedCapture)
+    const signal = this.invalidate(request.agentId, role, true)
+    await this.enqueue(async (current) => {
+      signal.throwIfAborted()
+      this.assertExpected(current, request.agentId, role, request.expectedCapture)
+      await this.markEnding(current, request.agentId, role)
+    })
+    this.schedule(request.agentId, role)
+    return this.localView(domain, request.agentId)
   }
 
   /**
@@ -495,8 +662,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   /**
-   * Authorize actual file tools for the selected Agent's current owner-local Root Task.
-   * @param request - exact assignment and capture expectations, local roots, tools, and finite limits.
+   * Authorize native file and foreground command reports for the selected Agent's current owner-local Root Task.
+   * @param request - exact assignment and capture expectations, local roots, file tools, commands, and finite limits.
    * @returns durable opening intent; collection starts only after Task commits the same permission.
    */
   @Remote('requestLocal')
@@ -505,38 +672,45 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async requestLocalCapture(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus> {
+    const role = 'local'
     const domain = await this.ready
     const agent = this.requireAgent(request.agentId)
-    this.assertExpected(domain, agent.id, request.expectedCapture)
+    this.assertExpected(domain, agent.id, role, request.expectedCapture)
     this.requireLocalEligible(agent, request)
-    if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const limits = contributionLimitsSchema.parse(request.limits)
-    if (limits.expiresAt <= Date.now() || request.roots.length === 0 || request.tools.length === 0
+    const commands = this.permissionCommands(agent.id, request)
+    if (limits.expiresAt <= Date.now() || request.roots.length === 0 || (request.tools.length === 0 && commands === undefined)
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) throw this.invalid(agent.id, 'Invalid local source permission')
-    const signal = this.invalidate(agent.id, false)
-    const command = this.controls.get(agent.id)
+    const signal = this.invalidate(agent.id, role, false)
+    const command = this.sources[role].controls.get(agent.id)
     try {
       const filesystem = agent.ctx.get('fs')
       if (filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      const shell = commands === undefined ? undefined : agent.ctx.get('shell')
+      if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
       for (const path of request.roots) {
         const cwd = agent.session.header.cwd
         const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
         signal.throwIfAborted()
         if ((await filesystem.stat(target, signal))?.type !== 'directory') throw this.invalid(agent.id, 'A permitted root is not a directory')
-        if (!roots.some(root => root.targetKey === target.targetKey)) roots.push(target)
+        if (roots.some(root => root.targetKey === target.targetKey)) {
+          if (commands !== undefined) throw this.invalid(agent.id, 'Command directory ordinals require distinct roots')
+        } else roots.push(target)
       }
       const tools = (['write', 'edit'] as const).filter(tool => request.tools.includes(tool))
       await this.enqueue(async (current) => {
         signal.throwIfAborted()
         if (this.requireAgent(agent.id) !== agent) throw this.superseded(agent.id)
-        this.assertExpected(current, agent.id, request.expectedCapture)
+        this.requireProviders(agent, filesystem, shell)
+        this.assertExpected(current, agent.id, role, request.expectedCapture)
         this.requireLocalEligible(agent, request)
         const row = this.local().table('sessions').get(agent.id)
         const rootUrls = roots.map(root => filesystem.fileUrl(root))
         const retained = row?.capture
-        const priorRuntime = this.runtimes.get(agent.id)
-        if (priorRuntime !== undefined && filesystemIdentity(priorRuntime.filesystem) !== filesystemIdentity(filesystem)) {
+        const priorRuntime = this.sources[role].runtimes.get(agent.id)
+        if (priorRuntime !== undefined && (filesystemIdentity(priorRuntime.filesystem) !== filesystemIdentity(filesystem)
+          || shellIdentity(priorRuntime.shell) !== shellIdentity(shell))) {
           throw this.invalid(agent.id, 'Stop the existing source before changing its filesystem provider')
         }
         let capture: LocalCapture
@@ -544,6 +718,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           const { expiresAt, maxSamples, maxSampleBytes } = retained.grant
           if (retained.state === 'ending' || !this.matchesBinding(agent.id, retained.grant)
             || !isDeepStrictEqual({ expiresAt, maxSamples, maxSampleBytes }, limits)
+            || (retained.grant.source.version === 3 || retained.grant.source.version === 4
+              ? retained.grant.source.fileContent : undefined) !== request.fileContent
+            || !isDeepStrictEqual(retained.commands, commands)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -556,34 +733,64 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             participantId: developmentAgentParticipantId(agent.id),
             captureId: randomUUID() as DevelopmentTaskLocalContributionGrant['captureId'],
             captureGeneration: randomUUID() as DevelopmentTaskLocalContributionGrant['captureGeneration'],
-            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') }, ...limits }
-          capture = { grant, roots: roots.map(root => filesystem.processPath(root)), rootUrls, tools, state: 'opening', sequence: 0 }
+            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
+              ...(commands !== undefined ? { version: 4 as const, commands,
+                ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) }
+                : request.fileContent === undefined ? {} : { version: 3 as const, fileContent: request.fileContent }) }, ...limits }
+          capture = { grant, roots: roots.map(root => filesystem.processPath(root)), rootUrls, tools, ...(commands === undefined ? {} : { commands }), state: 'opening', sequence: 0 }
         }
         await this.saveLocal(agent.id, capture, row?.samples ?? [])
+        try { this.requireProviders(agent, filesystem, shell) } catch (error) {
+          this.endDetached(agent.id, role)
+          throw error
+        }
         signal.throwIfAborted()
         if (this.ctx.agents.get(agent.id) !== agent) throw this.superseded(agent.id)
         this.requireLocalEligible(agent, request)
-        this.runtimes.set(agent.id, priorRuntime ?? { agent, filesystem, roots, selection: selection(capture), local: true })
-        this.collectionIssues.delete(agent.id)
+        this.sources[role].runtimes.set(agent.id, priorRuntime ?? { agent, filesystem, ...(shell === undefined ? {} : { shell }), roots, selection: selection(capture), role: 'local' })
+        this.sources[role].collectionIssues.delete(agent.id)
         this.notify(current, agent.id)
       })
       return this.localView(domain, agent.id)
     } catch (error) {
-      if (this.ctx.agents.get(agent.id) !== agent || !this.matchesBinding(agent.id, request)) this.endDetached(agent.id)
+      if (this.ctx.agents.get(agent.id) !== agent || !this.matchesBinding(agent.id, request)) this.endDetached(agent.id, role)
       throw error
     } finally {
       if (domain.table('sessions').get(agent.id) === undefined && this.local().table('sessions').get(agent.id) === undefined
-        && this.controls.get(agent.id) === command) this.controls.delete(agent.id)
-      this.schedule(agent.id)
+        && this.sources[role].controls.get(agent.id) === command) this.sources[role].controls.delete(agent.id)
+      this.schedule(agent.id, role)
     }
   }
 
+  private permissionCommands(id: SessionId, request: Pick<ScopeAgentLocalContributionRequest, 'commands' | 'roots' | 'tools' | 'fileContent'>): readonly DevelopmentTaskCommandSelector[] | undefined {
+    if (request.fileContent !== undefined && request.tools.length === 0) throw this.invalid(id, 'Complete file sharing requires a file tool')
+    if (request.commands === undefined) return undefined
+    const commands = commandSelectorSchema.array().min(1).parse(request.commands)
+    if (commands.some(command => command.rootIndex >= request.roots.length)
+      || new Set(commands.map(command => JSON.stringify([command.rootIndex, command.command]))).size !== commands.length) {
+      throw this.invalid(id, 'Command sharing requires unique commands at explicit directory ordinals')
+    }
+    return commands
+  }
+  private requireProviders(agent: Agent, filesystem: FileSystem, shell: ShellExecutor | undefined): void {
+    const current = agent.ctx.get('fs')
+    if (current === undefined || filesystemIdentity(current) !== filesystemIdentity(filesystem)
+      || (shell !== undefined && shellIdentity(agent.ctx.get('shell')) !== shellIdentity(shell))) {
+      throw this.superseded(agent.id)
+    }
+  }
+  private commandProvidersCurrent(runtime: Runtime): boolean {
+    if (runtime.shell === undefined) return true
+    const filesystem = runtime.agent.ctx.get('fs')
+    return filesystem !== undefined && filesystemIdentity(filesystem) === filesystemIdentity(runtime.filesystem)
+      && shellIdentity(runtime.agent.ctx.get('shell')) === shellIdentity(runtime.shell)
+  }
   private local(): NativeLocalContributionDomain {
     if (this.localDomain === undefined) throw new Error('scope-agent-contribution: local domain is not open')
     return this.localDomain
   }
-  private capture(id: SessionId): NativeCapture | LocalCapture | null | undefined {
-    return this.domain?.table('sessions').get(id)?.capture ?? this.localDomain?.table('sessions').get(id)?.capture
+  private capture(id: SessionId, role: CaptureRole): NativeCapture | LocalCapture | null | undefined {
+    return role === 'remote' ? this.domain?.table('sessions').get(id)?.capture : this.localDomain?.table('sessions').get(id)?.capture
   }
   private revision(domain: NativeContributionDomain, id: SessionId): number {
     return (domain.table('sessions').get(id)?.revision ?? 0) + (this.local().table('sessions').get(id)?.revision ?? 0)
@@ -594,6 +801,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private retainedSamples(domain: NativeContributionDomain): number {
     return [...domain.table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
       + [...this.local().table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
+      + [...this.sources.remote.runtimes.values()].reduce((sum, runtime) => sum + (runtime.initializationPlan?.samples.length ?? 0), 0)
   }
   private assignment(id: SessionId): ScopeAgentLocalContributionBinding | null {
     const tasks = this.ctx.get('developmentTasks')
@@ -617,7 +825,6 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (agent === undefined) return 'not-live'
     if (!this.ctx.agents.roots().includes(agent)) return 'delegated'
     if (agent.session.header.parentSession !== undefined) return 'fork'
-    if (this.domain?.table('sessions').get(agent.id)?.capture != null) return 'remote-capture'
     return this.assignment(agent.id) === null ? 'no-local-task' : 'eligible'
   }
   private requireLocalEligible(agent: Agent, binding: ScopeAgentLocalContributionBinding): void {
@@ -632,29 +839,33 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const projection = this.ctx.get('sessionProjections')?.snapshot(agent.session, ['scopeAgentContext']).values.scopeAgentContext
     const binding = projection?.binding
     if (binding == null || projection?.mode === 'left') return
-    if (binding.kind === 'local-task') {
+    if (binding.kind === 'local-task' || binding.kind === 'local-task-scope') {
       const target = binding.target
       if (target.participantId === developmentAgentParticipantId(id) && this.matchesBinding(id, {
         taskId: target.taskId, bindingId: target.taskBindingId, expectedBindingEpoch: target.bindingEpoch,
       })) return
     }
-    throw this.invalid(id, 'Read and local contribution permission must select the same Task assignment and epoch')
+    if (binding.kind === 'local-task' || binding.kind === 'local-task-scope') throw this.invalid(id, 'Read and local contribution permission must select the same Task assignment and epoch')
   }
   private requireCaptureCompatible(id: SessionId, capture: NativeCapture | LocalCapture): void {
     if ('grant' in capture) this.requireLocalReadCompatible(id)
     else this.requireCompatible(id, capture.entry)
   }
   private localView(domain: NativeContributionDomain, id: SessionId): ScopeAgentLocalContributionStatus {
+    const role = 'local'
     const agent = this.ctx.agents.get(id)
     const row = this.local().table('sessions').get(id)
     const capture = row?.capture
     const exhausted = capture != null && capture.sequence >= capture.grant.maxSamples
     return { agentId: id, participantId: agent === undefined ? null : developmentAgentParticipantId(id),
       eligibility: this.localEligibility(agent), assignment: this.assignment(id), revision: this.revision(domain, id),
+      initialization: this.initializationSource(id),
       capture: capture == null ? null : { selection: selection(capture), grant: capture.grant, roots: capture.roots, tools: capture.tools,
+        ...(capture.commands === undefined ? {} : { commands: capture.commands }),
         state: capture.state, collecting: this.collecting(id, capture) && !exhausted, issue: capture.issue ?? null,
-        collectionIssue: this.collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
-        pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0) + (this.completed.get(id)?.size ?? 0) } }
+        collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
+        pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0)
+          + (this.sources[role].completed.get(id)?.size ?? 0) } }
   }
   private async saveLocal(id: SessionId, capture: LocalCapture | null, samples: readonly LocalSample[]): Promise<void> {
     const table = this.local().table('sessions')
@@ -665,9 +876,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     await table.put(id, { agentId: id, revision, capture, samples })
     if (this.domain !== undefined) this.notify(this.domain, id)
   }
-  private async markEnding(domain: NativeContributionDomain, id: SessionId, leaveAdopted = false): Promise<void> {
-    const local = this.local().table('sessions').get(id)
-    if (local?.capture != null) { await this.saveLocal(id, { ...local.capture, state: 'ending' }, local.samples); return }
+  private async markEnding(domain: NativeContributionDomain, id: SessionId, role: CaptureRole, leaveAdopted = false): Promise<void> {
+    if (role === 'local') {
+      const local = this.local().table('sessions').get(id)
+      if (local?.capture != null) await this.saveLocal(id, { ...local.capture, state: 'ending' }, local.samples)
+      return
+    }
     const row = domain.table('sessions').get(id)
     if (row === undefined) return
     const current = this.receivingWork(row)
@@ -683,6 +897,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
   }
   private async reconcileLocal(id: SessionId, signal: AbortSignal): Promise<void> {
+    const role = 'local'
     const tasks = this.ctx.get('developmentTasks')
     if (tasks === undefined) throw new Error('scope-agent-contribution: local Task authority is unavailable')
     const row = this.local().table('sessions').get(id)
@@ -694,7 +909,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         signal.throwIfAborted()
         const current = this.local().table('sessions').get(id)
         if (current?.capture != null && isDeepStrictEqual(current.capture.grant, capture.grant)) {
-          this.runtimes.delete(id); this.pending.delete(id); this.completed.delete(id)
+          this.sources[role].runtimes.delete(id); this.sources[role].pending.delete(id); this.sources[role].completed.delete(id)
           await this.saveLocal(id, { ...current.capture, state: 'ending' }, current.samples)
         }
       })
@@ -709,7 +924,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const current = this.local().table('sessions').get(id)?.capture
         if (current?.state !== 'ending' || !isDeepStrictEqual(current.grant, capture.grant)) return
         await this.saveLocal(id, null, [])
-        this.runtimes.delete(id); this.pending.delete(id); this.completed.delete(id); this.collectionIssues.delete(id)
+        this.sources[role].runtimes.delete(id)
+        this.sources[role].pending.delete(id)
+        this.sources[role].completed.delete(id)
+        this.sources[role].collectionIssues.delete(id)
       })
       return
     }
@@ -722,7 +940,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const current = this.local().table('sessions').get(id)
       if (current?.capture == null || current.capture.state === 'ending' || !isDeepStrictEqual(current.capture.grant, capture.grant)) return
       if (status.state === 'ended' || !this.collecting(id, current.capture, true)) {
-        this.runtimes.delete(id); this.pending.delete(id); this.completed.delete(id)
+        this.sources[role].runtimes.delete(id); this.sources[role].pending.delete(id); this.sources[role].completed.delete(id)
         await this.saveLocal(id, { ...current.capture, state: 'ending' }, current.samples)
       } else await this.saveLocal(id, { ...current.capture, state: 'active', issue: undefined }, current.samples)
     })
@@ -748,8 +966,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (agent === undefined) return 'not-live'
     if (!this.ctx.agents.roots().includes(agent)) return 'delegated'
     if (agent.session.header.parentSession !== undefined) return 'fork'
-    return this.ctx.get('developmentTasks')?.assignmentList().some(item => item.participantId === developmentAgentParticipantId(agent.id)) === true
-      ? 'task-conflict' : 'eligible'
+    return 'eligible'
   }
   private requireAgent(id: SessionId): Agent {
     const agent = this.ctx.agents.get(id)
@@ -758,7 +975,6 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
   private requireEligible(agent: Agent): void {
     const state = this.eligibility(agent)
-    if (state === 'task-conflict') throw new RemoteError('scope-agent-contribution/task-conflict', 'The Session already has a local Task assignment', { agentId: agent.id })
     if (state === 'delegated' || state === 'fork') throw new RemoteError('scope-agent-contribution/ineligible', 'This Agent cannot contribute independently', { agentId: agent.id, reason: state })
   }
   private invalid(id: SessionId, message: string): RemoteError<'scope-agent-contribution/invalid-permission'> {
@@ -767,10 +983,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private superseded(id: SessionId): RemoteError<'scope-agent-contribution/superseded'> {
     return new RemoteError('scope-agent-contribution/superseded', 'A later local action superseded this source operation', { agentId: id })
   }
-  private assertExpected(domain: NativeContributionDomain, id: SessionId, expected: ScopeAgentContributionSelection | null): void {
+  private assertExpected(domain: NativeContributionDomain, id: SessionId, role: CaptureRole,
+    expected: ScopeAgentContributionSelection | null): void {
     const row = domain.table('sessions').get(id)
-    const actual = selection(row?.capture ?? this.local().table('sessions').get(id)?.capture)
-      ?? (row?.receivingContinuation === undefined ? null : this.receivingSelection(row.receivingContinuation))
+    const actual = role === 'local' ? selection(this.local().table('sessions').get(id)?.capture)
+      : selection(row?.capture) ?? (row?.receivingContinuation === undefined ? null : this.receivingSelection(row.receivingContinuation))
     if (!sameSelection(actual, expected)) throw new RemoteError('scope-agent-contribution/stale-capture', 'The source capture changed', {
       agentId: id, expectedCapture: expected, actualCapture: actual,
     })
@@ -780,9 +997,6 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (agent === undefined) return
     const projection = this.ctx.get('sessionProjections')?.snapshot(agent.session, ['scopeAgentContext']).values.scopeAgentContext
     const binding = projection?.binding
-    if (binding?.kind === 'local-task' && projection?.mode !== 'left') {
-      throw this.invalid(id, 'Stop local Task receiving before using independent-owner contribution')
-    }
     const invitation = binding?.kind === 'local-task' ? undefined : binding?.invitation
     if (projection?.mode !== 'left' && invitation !== undefined
       && (invitation.ownerPeerId !== target.ownerPeerId || invitation.taskId !== target.taskId)) {
@@ -790,9 +1004,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
   }
   private collecting(id: SessionId, capture: NativeCapture | LocalCapture, permissionOnly = false): boolean {
-    const runtime = this.runtimes.get(id)
+    const role = 'grant' in capture ? 'local' : 'remote'
+    const runtime = this.sources[role].runtimes.get(id)
     if (runtime === undefined || this.ctx.agents.get(id) !== runtime.agent
-      || !sameSelection(runtime.selection, selection(capture))) return false
+      || !sameSelection(runtime.selection, selection(capture)) || !this.commandProvidersCurrent(runtime)) return false
     if ('grant' in capture) {
       return this.localEligibility(runtime.agent) === 'eligible' && this.matchesBinding(id, capture.grant)
         && capture.state !== 'ending' && (permissionOnly || (capture.state === 'active' && capture.grant.expiresAt > Date.now()))
@@ -801,6 +1016,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       && capture.invitation !== undefined && capture.invitation.grant.expiresAt > Date.now()))
   }
   private view(domain: NativeContributionDomain, id: SessionId): ScopeAgentContributionStatus {
+    const role = 'remote'
     const row = domain.table('sessions').get(id)
     const capture = row?.capture
     const exhausted = capture?.state === 'active' && capture.invitation !== undefined
@@ -812,13 +1028,16 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         intent: this.receivingIntent(continuation.receiving) } }),
       capture: capture == null ? null : { routeRevision: capture.routeRevision ?? 0, selection: selection(capture),
         proposal: capture.proposal,
-        roots: capture.roots, tools: capture.tools,
+        roots: capture.roots, tools: capture.tools, ...(capture.commands === undefined ? {} : { commands: capture.commands }),
         entry: capture.entry, limits: capture.limits, invitation: capture.invitation ?? null, state: capture.state,
         receiving: capture.receiving === undefined ? null : this.publicReceiving(capture.receiving),
         ...(capture.receiving === undefined ? {} : { receivingIntent: this.receivingIntent(capture.receiving, capture.state === 'ending') }),
         collecting: this.collecting(id, capture) && !exhausted, application: capture.application?.state ?? null,
-        issue: capture.issue ?? null, collectionIssue: this.collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
-        pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0) + (this.completed.get(id)?.size ?? 0) } }
+        ...(capture.initialization === undefined ? {}
+          : { initialization: this.initializationView(capture.initialization, row?.samples ?? []) }),
+        issue: capture.issue ?? null, collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
+        pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0)
+          + (this.sources[role].completed.get(id)?.size ?? 0) } }
   }
   private notify(domain: NativeContributionDomain, id: SessionId): void {
     this.ctx.emit('scope-agent-contribution/changed', id, this.revision(domain, id))
@@ -832,11 +1051,145 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const revision = (previous?.revision ?? 0) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: source revision exhausted')
     const record: NativeSourceRecord = { agentId: id, revision, capture, samples,
+      ...(previous?.version === 2 || capture?.initialization !== undefined
+        || (capture?.proposal.source.kind === 'tool-observations' && (capture.proposal.source.version === 3 || capture.proposal.source.version === 4)) ? { version: 2 as const } : {}),
       ...(receivingContinuation === undefined ? {} : { receivingContinuation }) }
     await domain.table('sessions').put(id, record)
     this.notify(domain, id)
   }
+  private initializationSource(id: SessionId): ScopeAgentContributionInitializationSource {
+    const row = this.local().table('sessions').get(id)
+    const capture = row?.capture
+    const runtime = this.sources.local.runtimes.get(id)
+    const currentFs = runtime?.agent.ctx.get('fs')
+    const eligible = capture != null && capture.grant.source.version !== 3 && capture.grant.source.version !== 4 && capture.state === 'active' && this.collecting(id, capture)
+      && currentFs !== undefined && runtime !== undefined
+      && filesystemIdentity(currentFs) === filesystemIdentity(runtime.filesystem)
+    return { eligible, recordedSamples: row?.samples.length ?? 0,
+      unconfirmedSamples: row?.samples.filter(item => item.receipt === undefined).length ?? 0 }
+  }
+
+  private initializationView(initialization: NativeInitialization, samples: readonly NativeSample[]): ScopeAgentContributionInitialization {
+    const { plan, ...view } = initialization
+    const acknowledged = plan === null ? 0 : samples.filter(item => item.receipt !== undefined
+      && 'kind' in item.sample.result && item.sample.result.version === 2
+      && item.sample.result.origin.planDigest === plan.digest).length
+    return { ...view, coverage: { ...view.coverage, acknowledged } }
+  }
+
+  private async freezeInitialization(domain: NativeContributionDomain, id: SessionId, capture: NativeCapture)
+    : Promise<{ readonly capture: NativeCapture; readonly samples: readonly NativeSample[] }> {
+    const initialization = capture.initialization
+    const grant = capture.invitation?.grant
+    if (initialization?.state !== 'pending' || grant === undefined) throw new Error('Initialization requires its selected active grant')
+    const signal = this.signal(id, 'remote')
+    const remoteRuntime = this.sources.remote.runtimes.get(id)
+    const localRuntime = this.sources.local.runtimes.get(id)
+    const original = this.local().table('sessions').get(id)
+    const local = original?.capture
+    const request = initialization.request
+    const unavailable = (reason: NonNullable<NativeInitialization['reason']>, recorded = 0, unconfirmed = 0) => ({
+      capture: { ...capture, initialization: { ...initialization, state: 'unavailable' as const, reason,
+        coverage: { recorded, selected: 0, omitted: recorded, unconfirmed, inFlight: 0 } } },
+      samples: domain.table('sessions').get(id)?.samples ?? [],
+    })
+    if (original === undefined || local == null || localRuntime === undefined || remoteRuntime === undefined
+      || !this.initializationSource(id).eligible) {
+      return unavailable('source-unavailable')
+    }
+    if (!sameSelection(selection(local), request.expectedLocalCapture) || !this.matchesBinding(id, request.localTask)
+      || !isDeepStrictEqual(request.localTask, { taskId: local.grant.taskId, bindingId: local.grant.bindingId,
+        expectedBindingEpoch: local.grant.expectedBindingEpoch })
+      || localRuntime.agent !== remoteRuntime.agent
+      || filesystemIdentity(localRuntime.filesystem) !== filesystemIdentity(remoteRuntime.filesystem)) return unavailable('source-changed')
+    const tasks = this.ctx.get('developmentTasks')
+    if (tasks === undefined) return unavailable('source-unavailable')
+    let status
+    try { status = await tasks.localContributionStatus({ grant: local.grant }) }
+    catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof DevelopmentTaskError && (error.code === 'TASK_NOT_FOUND' || error.code === 'POLICY_REJECTED')) {
+        delete remoteRuntime.initializationPlan
+        return unavailable('source-changed')
+      }
+      throw error
+    }
+    signal.throwIfAborted()
+    validateLocalReceipt(local.grant, status.state === 'active' ? status.openReceipt : status.endReceipt)
+    if (status.state !== 'active' || taskIdentity(this.ctx.get('developmentTasks')) !== taskIdentity(tasks)
+      || this.sources.local.runtimes.get(id) !== localRuntime || this.sources.remote.runtimes.get(id) !== remoteRuntime
+      || this.local().table('sessions').get(id) !== original || !this.initializationSource(id).eligible
+      || !this.matchesBinding(id, request.localTask)) return unavailable('source-changed')
+    const cached = remoteRuntime.initializationPlan
+    if (cached !== undefined) return { capture: { ...capture, sequence: cached.sequence, initialization: cached.initialization },
+      samples: [...domain.table('sessions').get(id)?.samples ?? [], ...cached.samples] }
+    const samples = original.samples
+    const coverage = { recorded: samples.length, selected: 0, omitted: samples.length,
+      unconfirmed: samples.filter(item => item.receipt === undefined).length,
+      inFlight: (this.sources.local.pending.get(id)?.size ?? 0) + [...this.sources.local.completed.get(id)?.values() ?? []]
+        .filter(item => !samples.some(sample => sample.callSeq === item.pending.callSeq && sample.resultSeq === item.event.seq)).length }
+    const cutoff = { localSequence: local.sequence, sessionSeq: (localRuntime.agent.session.seq - 1) as SessionSeqCursor }
+    const pending = captureRoles.reduce((sum, role) => sum
+      + [...this.sources[role].pending.values(), ...this.sources[role].completed.values()]
+        .reduce((total, items) => total + items.size, 0), 0)
+    const capacity = Math.max(0, Math.min(grant.maxSamples - capture.sequence,
+      this.config.maxLeases - this.retainedSamples(domain) - pending))
+    const selected: { sample: LocalSample; proof: InitializationProof; result: NonNullable<ReturnType<typeof recordedReport>> }[] = []
+    for (const item of [...samples].sort((a, b) => b.sample.sequence - a.sample.sequence)) {
+      const result = item.sample.result
+      if (result.kind !== 'tool-observation') return unavailable('coverage-invalid', coverage.recorded, coverage.unconfirmed)
+      const root = local.rootUrls[result.fields.rootIndex]
+      const rootIndex = root === undefined ? -1 : capture.rootUrls.indexOf(root)
+      const tool = result.tool === 'Write' ? 'write' : 'edit'
+      if (rootIndex < 0 || !capture.tools.includes(tool)) continue
+      const proof = recordedProof(localRuntime.agent.session, item)
+      if (proof === undefined || result.version !== 1) return unavailable('coverage-invalid', coverage.recorded, coverage.unconfirmed)
+      if (selected.length >= capacity) continue
+      const sequence = grant.maxSamples
+      const leaseId = nativeDigest(['native-tool', id, capture.proposal.captureId, capture.proposal.captureGeneration,
+        item.callSeq, item.resultSeq])
+      const sourceId = nativeDigest([leaseId, sequence]) as DevelopmentTaskObservedSourceId
+      const fits = (report: NonNullable<ReturnType<typeof recordedReport>>) => {
+        const sample = { sourceId, sequence, result: report }
+        return Buffer.byteLength(JSON.stringify({ grant, ...sample }), 'utf8') <= grant.maxSampleBytes
+          && Buffer.byteLength(JSON.stringify({ version: 2, requestId: '00000000-0000-0000-0000-000000000000',
+            op: 'sample', invitation: capture.invitation, sample }), 'utf8') <= this.config.maxObservationBytes
+          && Buffer.byteLength(JSON.stringify({ proof, sample: { id: leaseId,
+            captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration,
+            callId: item.callId, rootCallId: item.rootCallId, callSeq: item.callSeq, resultSeq: item.resultSeq,
+            argumentDigest: item.argumentDigest, completionDigest: item.completionDigest, sample } }), 'utf8')
+            <= this.config.maxObservationBytes
+      }
+      const report = recordedReport(result, rootIndex, { kind: 'recorded-local-tools', planDigest: '0'.repeat(64),
+        executionDigest: executionDigest(request, proof) }, fits)
+      if (report !== undefined) selected.push({ sample: item, proof, result: report })
+    }
+    if (samples.length > 0 && selected.length === 0 && capacity === 0) {
+      return unavailable('capacity', coverage.recorded, coverage.unconfirmed)
+    }
+    selected.reverse()
+    const sources = selected.map(item => item.proof)
+    const digest = initializationPlanDigest(request, cutoff, sources)
+    const seeded: NativeSample[] = selected.map((item, index) => {
+      const sequence = capture.sequence + index + 1
+      const sampleId = nativeDigest(['native-tool', id, capture.proposal.captureId, capture.proposal.captureGeneration,
+        item.sample.callSeq, item.sample.resultSeq])
+      return { id: sampleId, callSeq: item.sample.callSeq, resultSeq: item.sample.resultSeq,
+        callId: item.sample.callId, rootCallId: item.sample.rootCallId,
+        argumentDigest: item.sample.argumentDigest, completionDigest: item.sample.completionDigest,
+        captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration,
+        sample: { sourceId: nativeDigest([sampleId, sequence]) as DevelopmentTaskObservedSourceId, sequence,
+          result: { ...item.result, origin: { ...item.result.origin, planDigest: digest } } } }
+    })
+    const frozen: NativeInitialization = { ...initialization, state: 'frozen', cutoff, reason: null, plan: { digest, sources },
+      coverage: { ...coverage, selected: seeded.length, omitted: samples.length - seeded.length } }
+    remoteRuntime.initializationPlan = { sequence: capture.sequence + seeded.length, initialization: frozen, samples: seeded }
+    return { capture: { ...capture, sequence: capture.sequence + seeded.length, initialization: frozen },
+      samples: [...domain.table('sessions').get(id)?.samples ?? [], ...seeded] }
+  }
+
   private store(domain: NativeContributionDomain, id: SessionId): ContributionStore<NativeCapture> {
+    const role = 'remote'
     const row = () => domain.table('sessions').get(id)
     const retained = (item: ContributionOutboxItem): NativeSample => {
       const sample = row()?.samples.find(value => value.id === item.id)
@@ -845,17 +1198,34 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
     return {
       current: () => ({ capture: row()?.capture ?? undefined, ended: false }),
-      save: async (capture) => { await this.save(domain, id, capture, row()?.samples ?? []) },
+      save: async (capture) => {
+        if (capture.state === 'active' && row()?.capture?.state !== 'active' && capture.initialization?.state === 'pending') {
+          const localRuntime = this.sources.local.runtimes.get(id)
+          const tasks = this.ctx.get('developmentTasks')
+          let initialized = await this.freezeInitialization(domain, id, capture)
+          this.signal(id, 'remote').throwIfAborted()
+          if (initialized.capture.initialization?.state === 'frozen'
+            && (this.sources.local.runtimes.get(id) !== localRuntime || taskIdentity(this.ctx.get('developmentTasks')) !== taskIdentity(tasks)
+              || !this.initializationSource(id).eligible || !this.matchesBinding(id, capture.initialization.request.localTask))) {
+            const { coverage } = initialized.capture.initialization
+            initialized = { capture: { ...capture, initialization: { ...capture.initialization, state: 'unavailable',
+              reason: 'source-changed', coverage: { ...coverage, selected: 0, omitted: coverage.recorded } } }, samples: row()?.samples ?? [] }
+          }
+          await this.save(domain, id, initialized.capture, initialized.samples)
+          const runtime = this.sources.remote.runtimes.get(id)
+          if (runtime !== undefined) delete runtime.initializationPlan
+        } else await this.save(domain, id, capture, row()?.samples ?? [])
+      },
       clear: async (capture) => {
-        this.assertExpected(domain, id, selection(capture))
+        this.assertExpected(domain, id, role, selection(capture))
         const receiving = capture.receiving
         const continuation = receiving === undefined ? null : { proposal: capture.proposal, entry: capture.entry, limits: capture.limits,
           routeRevision: capture.routeRevision, lastRoute: capture.lastRoute,
           receiving: { ...receiving, intent: this.receivingIntent(receiving, capture.state === 'ending'),
             leaveAdopted: this.receivingIntent(receiving, capture.state === 'ending') === 'leave' } }
         await this.save(domain, id, null, [], continuation)
-        if (continuation === null || continuation.receiving.intent !== 'adopt') this.runtimes.delete(id)
-        this.pending.delete(id); this.completed.delete(id); this.collectionIssues.delete(id)
+        if (continuation === null || continuation.receiving.intent !== 'adopt') this.sources[role].runtimes.delete(id)
+        this.sources[role].pending.delete(id); this.sources[role].completed.delete(id); this.sources[role].collectionIssues.delete(id)
       },
       outbox: () => row()?.samples ?? [],
       validateOutbox: (item, capture) => { validateNativeSample(id, retained(item), capture) },
@@ -900,6 +1270,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
   private publicReceiving(receiving: NativeReceiving) {
     return { adoptionId: receiving.adoptionId, state: receiving.state, invitation: receiving.invitation,
+      ...(receiving.localTask === undefined ? {} : { localTask: receiving.localTask }),
       ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) }
   }
   private receivingSelection(work: NativeReceivingContinuation): ScopeAgentContributionSelection {
@@ -915,6 +1286,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     return row?.receivingContinuation
   }
   private scheduleReceiving(id: SessionId, signal: AbortSignal): void {
+    const role = 'remote'
     const row = this.domain?.table('sessions').get(id)
     const work = this.receivingWork(row)
     if (work === undefined || signal.aborted) return
@@ -931,19 +1303,21 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (!signal.aborted) this.ctx.logger.warn('scope-agent-contribution: receiving reconciliation failed: %s', String(error))
     }).finally(() => {
       this.receivingOperations.delete(key)
-      if ((signal.aborted || this.receivingDirty.has(id)) && !this.lifetime.signal.aborted) this.schedule(id)
+      if ((signal.aborted || this.receivingDirty.has(id)) && !this.lifetime.signal.aborted) this.schedule(id, role)
     })
   }
   private automaticReceiverChanged(id: SessionId, receiving: NativeReceiving): boolean {
+    const role = 'remote'
     if (receiving.automatic === undefined || this.receivingIntent(receiving) !== 'adopt'
       || receiving.state === 'active' || receiving.state === 'ended' || receiving.state === 'superseded') return false
-    const consent = this.runtimes.get(id)?.automaticReceiver
+    const consent = this.sources[role].runtimes.get(id)?.automaticReceiver
     if (consent === undefined) return true
     if (consent.adopted) return false
     if (consent.provider !== receiverIdentity(this.ctx.get('scopeAgentContext'))) consent.revoked = true
     return consent.revoked
   }
   private async reconcileReceiving(id: SessionId, selected: NativeReceivingContinuation, signal: AbortSignal): Promise<void> {
+    const role = 'remote'
     if (this.automaticReceiverChanged(id, selected.receiving)) {
       await this.enqueue(async (domain) => {
         signal.throwIfAborted()
@@ -962,7 +1336,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
     const receiving = selected.receiving
     const intent = this.receivingIntent(receiving)
-    const runtime = this.runtimes.get(id)
+    const runtime = this.sources[role].runtimes.get(id)
     const adopt = intent === 'adopt' && receiving.state !== 'ended' && receiving.state !== 'superseded'
     if (adopt && (receiving.invitation === null || runtime === undefined || this.ctx.agents.get(id) !== runtime.agent
       || !sameSelection(runtime.selection, this.receivingSelection(selected)))) return
@@ -977,6 +1351,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const result = receiving.state === 'active' && route !== undefined ? { status: 'adopted' as const }
           : await receiver.adoptJoinRead({ agentId: id, adoptionId: receiving.adoptionId,
             expectedReadStateSeq: receiving.expectedReadStateSeq, invitation,
+            ...(receiving.version !== 2 ? {} : { originalCapture: { captureId: selected.proposal.captureId,
+              captureGeneration: selected.proposal.captureGeneration } }),
+            ...(receiving.localTask === undefined ? {} : { localTask: receiving.localTask }),
             ...(receiving.automatic === undefined ? {} : { automatic: receiving.automatic }) })
         signal.throwIfAborted()
         if (result.status === 'adopted' && runtime?.automaticReceiver !== undefined) runtime.automaticReceiver.adopted = true
@@ -1011,7 +1388,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         || !sameSelection(this.receivingSelection(current), this.receivingSelection(selected))
         || this.receivingIntent(current.receiving) !== intent
         || !isDeepStrictEqual(current.receiving.routeRecovery, receiving.routeRecovery)
-        || (adopt && (this.runtimes.get(id) !== runtime || this.ctx.agents.get(id) !== runtime?.agent))) return
+        || (adopt && (this.sources[role].runtimes.get(id) !== runtime || this.ctx.agents.get(id) !== runtime?.agent))) return
       const { routeRecovery, ...retained } = current.receiving
       const reconciled: NativeReceiving = { ...retained, state,
         ...(settled || routeRecovery === undefined ? {} : { routeRecovery }),
@@ -1019,27 +1396,27 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           ? { ...retained.invitation, ownerAddress: routeRecovery.ownerAddress } : retained.invitation }
       if (row.receivingContinuation !== undefined) {
         await this.save(domain, id, null, [], settled ? null : { ...current, receiving: reconciled })
-        if (settled) { this.runtimes.delete(id); this.receivingDirty.delete(id) }
+        if (settled) { this.sources[role].runtimes.delete(id); this.receivingDirty.delete(id) }
       } else if (row.capture !== null) {
         await this.save(domain, id, { ...row.capture, receiving: reconciled }, row.samples)
       }
     })
   }
 
-  private invalidate(id: SessionId, remove: boolean): AbortSignal {
-    this.controls.get(id)?.abort(this.superseded(id))
+  private invalidate(id: SessionId, role: CaptureRole, remove: boolean): AbortSignal {
+    this.sources[role].controls.get(id)?.abort(this.superseded(id))
     const control = new AbortController()
-    this.controls.set(id, control)
+    this.sources[role].controls.set(id, control)
     if (remove) {
-      this.pending.delete(id)
-      this.completed.delete(id)
-      this.runtimes.delete(id)
+      this.sources[role].pending.delete(id)
+      this.sources[role].completed.delete(id)
+      this.sources[role].runtimes.delete(id)
     }
     return AbortSignal.any([this.lifetime.signal, control.signal])
   }
-  private signal(id: SessionId): AbortSignal {
-    const control = this.controls.get(id)
-    return control === undefined ? this.invalidate(id, false) : AbortSignal.any([this.lifetime.signal, control.signal])
+  private signal(id: SessionId, role: CaptureRole): AbortSignal {
+    const control = this.sources[role].controls.get(id)
+    return control === undefined ? this.invalidate(id, role, false) : AbortSignal.any([this.lifetime.signal, control.signal])
   }
   private enqueue<T>(operation: (domain: NativeContributionDomain) => Promise<T>): Promise<T> {
     const run = this.tail.then(async () => {
@@ -1055,45 +1432,46 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     void operation.finally(() => { this.operations.delete(operation) }).catch(() => {}) // Original promise belongs to its caller.
     return operation
   }
-  private endDetached(id: SessionId): void {
-    this.invalidate(id, true)
+  private endDetached(id: SessionId, role: CaptureRole): void {
+    this.invalidate(id, role, true)
     if (this.domain !== undefined) this.notify(this.domain, id)
-    const operation = this.enqueue(async (domain) => { await this.markEnding(domain, id) })
-    this.track(operation).then(() => { this.schedule(id) }).catch((error: unknown) => {
+    const operation = this.enqueue(async (domain) => { await this.markEnding(domain, id, role) })
+    this.track(operation).then(() => { this.schedule(id, role) }).catch((error: unknown) => {
       if (!this.lifetime.signal.aborted) this.ctx.logger.error('scope-agent-contribution: source stop failed: %s', String(error))
     })
   }
-  private schedule(id: SessionId): void {
+  private schedule(id: SessionId, role: CaptureRole): void {
     if (this.lifetime.signal.aborted || this.domain === undefined) return
-    this.sleeps.get(id)?.abort()
-    if (this.workers.has(id) || (this.capture(id) == null && this.domain.table('sessions').get(id)?.receivingContinuation === undefined)) return
-    const signal = this.signal(id)
+    this.sources[role].sleeps.get(id)?.abort()
+    if (this.sources[role].workers.has(id) || (this.capture(id, role) == null
+      && (role === 'local' || this.domain.table('sessions').get(id)?.receivingContinuation === undefined))) return
+    const signal = this.signal(id, role)
     const aborted = (): boolean => signal.aborted
     const worker = (async () => {
       while (!aborted()) {
         const domain = await this.ready
         const store = this.store(domain, id)
         let completionFailed = false
-        const completions = this.completed.get(id)
+        const completions = this.sources[role].completed.get(id)
         if (completions !== undefined) for (const [seq, completion] of completions) {
           try {
             const retained = await this.finish(completion.pending, completion.event, completion.failed)
-            if (this.completed.get(id) === completions) completions.delete(seq)
-            if (retained) this.collectionIssues.delete(id)
+            if (this.sources[role].completed.get(id) === completions) completions.delete(seq)
+            if (retained) this.sources[role].collectionIssues.delete(id)
             this.notify(domain, id)
           } catch (error) {
             if (aborted()) return
             completionFailed = true
-            this.collectionIssues.set(id, error instanceof MissingDurability ? 'durability-unavailable' : 'durability-failed')
+            this.sources[role].collectionIssues.set(id, error instanceof MissingDurability ? 'durability-unavailable' : 'durability-failed')
             this.notify(domain, id)
             this.ctx.logger.warn('scope-agent-contribution: original completion awaits durability: %s', String(error))
             break
           }
         }
         try {
-          this.scheduleReceiving(id, signal)
+          if (role === 'remote') this.scheduleReceiving(id, signal)
           signal.throwIfAborted()
-          if (this.local().table('sessions').get(id)?.capture != null) await this.reconcileLocal(id, signal)
+          if (role === 'local') await this.reconcileLocal(id, signal)
           else if (store.current().capture?.application !== undefined) {
             await this.controller.pollApplication(operation => this.enqueue(current => operation(this.store(current, id))), signal)
           } else if (this.controller.needsWork(store)) {
@@ -1103,18 +1481,18 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           if (aborted()) return
           this.ctx.logger.warn('scope-agent-contribution: owner reconciliation failed: %s', String(error))
           try { await this.enqueue(async (current) => { const row = this.local().table('sessions').get(id)
-            if (row?.capture != null) await this.saveLocal(id, { ...row.capture, issue: error instanceof DevelopmentTaskError && error.code === 'LIMIT_EXCEEDED' ? 'capacity' : 'owner-unavailable' }, row.samples)
-            else await this.controller.attemptFailed(this.store(current, id), signal) }) }
+            if (role === 'local' && row?.capture != null) await this.saveLocal(id, { ...row.capture, issue: error instanceof DevelopmentTaskError && error.code === 'LIMIT_EXCEEDED' ? 'capacity' : 'owner-unavailable' }, row.samples)
+            else if (role === 'remote') await this.controller.attemptFailed(this.store(current, id), signal) }) }
           catch (failure) {
             if (aborted()) return
             this.ctx.logger.error('scope-agent-contribution: reconciliation issue awaits storage: %s', String(failure))
           }
         }
         if (aborted()) return
-        this.scheduleReceiving(id, signal)
-        const capture = this.capture(id)
+        if (role === 'remote') this.scheduleReceiving(id, signal)
+        const capture = this.capture(id, role)
         if (capture == null) {
-          if (domain.table('sessions').get(id)?.receivingContinuation === undefined) return
+          if (role === 'local' || domain.table('sessions').get(id)?.receivingContinuation === undefined) return
           try { await delay(this.config.contributionPollIntervalMs, undefined, { signal }) }
           catch (error) { if (!aborted()) throw error }
           continue
@@ -1125,23 +1503,23 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           && (capture.receiving.state === 'adopting' || capture.receiving.state === 'failed' || capture.receiving.routeRecovery !== undefined
             || this.automaticReceiverChanged(id, capture.receiving))
         const work = completionFailed || localWork || receivingWork
-          || this.controller.needsWork(store) || (this.completed.get(id)?.size ?? 0) > 0
+          || (role === 'remote' && this.controller.needsWork(store)) || (this.sources[role].completed.get(id)?.size ?? 0) > 0
         if (!work && capture.state !== 'active') return
         const untilExpiry = Math.max(1, ('grant' in capture ? capture.grant.expiresAt : capture.invitation?.grant.expiresAt ?? Date.now()) - Date.now())
         const wait = work ? this.config.contributionPollIntervalMs : Math.min(2_147_483_647, untilExpiry)
         const sleep = new AbortController()
-        this.sleeps.set(id, sleep)
+        this.sources[role].sleeps.set(id, sleep)
         try { await delay(wait, undefined, { signal: AbortSignal.any([signal, sleep.signal]) }) }
         catch (error) { if (!aborted() && !sleep.signal.aborted) throw error }
-        finally { if (this.sleeps.get(id) === sleep) this.sleeps.delete(id) }
+        finally { if (this.sources[role].sleeps.get(id) === sleep) this.sources[role].sleeps.delete(id) }
       }
     })()
-    this.workers.set(id, worker)
+    this.sources[role].workers.set(id, worker)
     this.track(worker).catch((error: unknown) => {
       if (!signal.aborted) this.ctx.logger.error('scope-agent-contribution: worker failed: %s', String(error))
     }).finally(() => {
-      this.workers.delete(id)
-      if (signal.aborted && !this.lifetime.signal.aborted) this.schedule(id)
+      this.sources[role].workers.delete(id)
+      if (signal.aborted && !this.lifetime.signal.aborted) this.schedule(id, role)
     })
   }
 
@@ -1149,70 +1527,152 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const agent = mutation.execution.agent
     const domain = this.domain
     if (agent === undefined || domain === undefined || this.lifetime.signal.aborted) return
-    const runtime = this.runtimes.get(agent.id)
-    const capture = this.capture(agent.id)
+    for (const role of captureRoles) {
+      try { this.observeFor(agent, mutation, domain, role) }
+      catch (error) { this.ctx.logger.error('scope-agent-contribution: %s observation rejected: %s', role, String(error)) }
+    }
+  }
+  private observeFor(agent: Agent, mutation: ToolFsMutation, domain: NativeContributionDomain, role: CaptureRole): void {
+    const runtime = this.sources[role].runtimes.get(agent.id)
+    const capture = this.capture(agent.id, role)
     if (runtime?.agent !== agent || capture == null || !this.collecting(agent.id, capture)
       || filesystemIdentity(runtime.filesystem) !== filesystemIdentity(mutation.filesystem)
       || !capture.tools.includes(mutation.tool)) return
     this.requireCaptureCompatible(agent.id, capture)
     const path = nativeToolPath(mutation.filesystem, runtime.roots, mutation.target)
     if (path === undefined) return
-    const exec = mutation.execution
+    const source = 'grant' in capture ? capture.grant.source : capture.proposal.source
+    this.reserveObservation(runtime, mutation.execution, mutation.tool, domain, callSeq => ({ kind: 'file', runtime,
+      mutation, callSeq, path, ...(source.kind === 'tool-observations' && 'fileContent' in source
+        ? { completedFile: { state: 'omitted' as const, reason: 'unavailable' as const } } : {}) }))
+  }
+  private observeCommand(operation: ToolBashExecution): void {
+    const agent = operation.execution.agent
+    const domain = this.domain
+    if (agent === undefined || domain === undefined || this.lifetime.signal.aborted) return
+    for (const role of captureRoles) {
+      const runtime = this.sources[role].runtimes.get(agent.id)
+      const capture = this.capture(agent.id, role)
+      if (runtime?.agent !== agent || capture == null || !this.collecting(agent.id, capture)
+        || runtime.shell === undefined || shellIdentity(runtime.shell) !== shellIdentity(operation.shell)) continue
+      const selector = capture.commands?.find((command) => {
+        const root = runtime.roots[command.rootIndex]
+        return command.command === operation.command && root !== undefined
+          && runtime.filesystem.processPath(root) === operation.workdir
+      })
+      if (selector === undefined) continue
+      this.requireCaptureCompatible(agent.id, capture)
+      this.reserveObservation(runtime, operation.execution, 'bash', domain,
+        callSeq => ({ kind: 'command', runtime, operation, selector, callSeq }))
+    }
+  }
+  private reserveObservation(runtime: Runtime, exec: Readonly<ToolExecution>, tool: string,
+    domain: NativeContributionDomain, create: (callSeq: SessionSeq) => Pending): void {
+    const { agent, role } = runtime
+    const capture = this.capture(agent.id, role)
+    if (capture == null) return
     const call = agent.session.snapshotEvents().findLast(event => exec.parent === undefined
-      ? event.type === 'tool/call' && event.data.callId === exec.callId && event.data.name === mutation.tool && nativeArgumentsMatch(event.data.arguments, exec.arguments)
+      ? event.type === 'tool/call' && event.data.callId === exec.callId && event.data.name === tool && nativeArgumentsMatch(event.data.arguments, exec.arguments)
       : event.type === 'tool/ptc-dispatch-start' && event.data.subCallId === exec.callId && event.data.rootCallId === exec.rootCallId
-        && event.data.name === mutation.tool && isDeepStrictEqual(event.data.arguments, exec.arguments))
+        && event.data.name === tool && isDeepStrictEqual(event.data.arguments, exec.arguments))
     if (call === undefined) return
     const retained = this.retainedSamples(domain)
-    const pending = [...this.pending.values(), ...this.completed.values()].reduce((sum, items) => sum + items.size, 0)
-    const selectedPending = (this.pending.get(agent.id)?.size ?? 0) + (this.completed.get(agent.id)?.size ?? 0)
+    const pending = captureRoles.reduce((total, selected) => total
+      + [...this.sources[selected].pending.values(), ...this.sources[selected].completed.values()]
+        .reduce((sum, items) => sum + items.size, 0), 0)
+    const selectedPending = (this.sources[role].pending.get(agent.id)?.size ?? 0) + (this.sources[role].completed.get(agent.id)?.size ?? 0)
     if (retained + pending >= this.config.maxLeases || capture.sequence + selectedPending >= ('grant' in capture ? capture.grant.maxSamples : capture.invitation?.grant.maxSamples ?? 0)) {
-      this.collectionIssues.set(agent.id, retained + pending >= this.config.maxLeases ? 'retention-limit' : 'sample-limit')
+      this.sources[role].collectionIssues.set(agent.id, retained + pending >= this.config.maxLeases ? 'retention-limit' : 'sample-limit')
       this.notify(domain, agent.id)
       return
     }
-    let observations = this.pending.get(agent.id)
-    if (observations === undefined) { observations = new Map(); this.pending.set(agent.id, observations) }
-    observations.set(call.seq, { runtime, mutation, callSeq: call.seq, path })
+    let observations = this.sources[role].pending.get(agent.id)
+    if (observations === undefined) { observations = new Map(); this.sources[role].pending.set(agent.id, observations) }
+    observations.set(call.seq, create(call.seq))
+  }
+  private completedCommand(completion: ToolBashCompletion): void {
+    const agent = completion.operation.execution.agent
+    if (agent === undefined) return
+    for (const role of captureRoles) {
+      const capture = this.capture(agent.id, role)
+      if (capture == null || !this.collecting(agent.id, capture)) continue
+      const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+      if (grant === undefined) continue
+      for (const pending of this.sources[role].pending.get(agent.id)?.values() ?? []) {
+        if (pending.kind !== 'command' || pending.operation !== completion.operation
+          || this.sources[role].runtimes.get(agent.id) !== pending.runtime) continue
+        pending.completion = boundedCommandCompletion(pending.selector, completion.result,
+          Math.min(this.config.maxObservationBytes, grant.maxSampleBytes))
+      }
+    }
+  }
+  private completedFile(completion: ToolFsCompletion): void {
+    const agent = completion.mutation.execution.agent
+    if (agent === undefined) return
+    for (const role of captureRoles) {
+      const capture = this.capture(agent.id, role)
+      if (capture == null || !this.collecting(agent.id, capture)) continue
+      const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+      for (const pending of this.sources[role].pending.get(agent.id)?.values() ?? []) {
+        if (pending.kind !== 'file' || pending.mutation !== completion.mutation || pending.completedFile === undefined
+          || this.sources[role].runtimes.get(agent.id) !== pending.runtime) continue
+        if (grant === undefined || Buffer.byteLength(completion.content, 'utf8') > Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)) {
+          pending.completedFile = { state: 'omitted', reason: 'budget' }
+        } else if (!completion.content.isWellFormed() || completion.content.includes('\r')) {
+          pending.completedFile = { state: 'omitted', reason: 'unavailable' }
+        } else {
+          pending.completedFile = { state: 'included', content: completion.content,
+            sha256: createHash('sha256').update(completion.content).digest('hex') }
+        }
+      }
+    }
   }
   private settled(session: Session, event: SessionEvent): void {
     if (event.type === 'scope-agent-context/state') {
       if (this.receivingWork(this.domain?.table('sessions').get(session.id)) !== undefined) this.receivingDirty.add(session.id)
-      const capture = this.capture(session.id)
-      if (capture != null) {
-        try { this.requireCaptureCompatible(session.id, capture) }
-        catch { this.endDetached(session.id) }
-        this.schedule(session.id)
+      for (const role of captureRoles) {
+        const capture = this.capture(session.id, role)
+        if (capture != null) {
+          try { this.requireCaptureCompatible(session.id, capture) }
+          catch { this.endDetached(session.id, role) }
+          this.schedule(session.id, role)
+        }
       }
       return
     }
-    const observations = this.pending.get(session.id)
+    for (const role of captureRoles) this.settleFor(session, event, role)
+  }
+  private settleFor(session: Session, event: SessionEvent, role: CaptureRole): void {
+    const observations = this.sources[role].pending.get(session.id)
     if (observations === undefined) return
     for (const [seq, pending] of observations) {
       if (pending.runtime.agent.session !== session) continue
-      const exec = pending.mutation.execution
+      const exec = pending.kind === 'file' ? pending.mutation.execution : pending.operation.execution
+      const tool = pending.kind === 'file' ? pending.mutation.tool : 'bash'
       const matched = event.type === 'tool/result'
         ? exec.parent === undefined && event.data.message.content[0].toolCallId === exec.callId
           && event.sourceEventSeqs?.includes(seq) === true
         : event.type === 'tool/ptc-dispatch' && exec.parent !== undefined && event.data.subCallId === exec.callId
-          && event.data.rootCallId === exec.rootCallId && event.data.name === pending.mutation.tool
+          && event.data.rootCallId === exec.rootCallId && event.data.name === tool
           && isDeepStrictEqual(event.data.arguments, exec.arguments)
       if (!matched) continue
       observations.delete(seq)
       if (event.type !== 'tool/result' && event.type !== 'tool/ptc-dispatch') continue
       const failed = event.type === 'tool/result' ? event.data.message.content[0].isError === true : event.data.isError
-      let completions = this.completed.get(session.id)
-      if (completions === undefined) { completions = new Map(); this.completed.set(session.id, completions) }
+      let completions = this.sources[role].completed.get(session.id)
+      if (completions === undefined) { completions = new Map(); this.sources[role].completed.set(session.id, completions) }
       completions.set(seq, { pending, event, failed })
       if (this.domain !== undefined) this.notify(this.domain, session.id)
-      this.schedule(session.id)
+      this.schedule(session.id, role)
     }
-    if (event.type === 'turn/end' || observations.size === 0) this.pending.delete(session.id)
+    if (event.type === 'turn/end' || observations.size === 0) this.sources[role].pending.delete(session.id)
   }
   private async finish(pending: Pending, event: SessionEvent, failed: boolean): Promise<boolean> {
-    const { runtime, mutation } = pending
+    const { runtime } = pending
+    const execution = pending.kind === 'file' ? pending.mutation.execution : pending.operation.execution
+    const role = runtime.role
     const id = runtime.agent.id
-    const signal = this.signal(id)
+    const signal = this.signal(id, role)
     signal.throwIfAborted()
     if (!await this.ctx.sessions.flush(runtime.agent.session)) throw new MissingDurability()
     signal.throwIfAborted()
@@ -1220,27 +1680,34 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       signal.throwIfAborted()
       const remoteRow = domain.table('sessions').get(id)
       const localRow = this.local().table('sessions').get(id)
-      const capture = localRow?.capture ?? remoteRow?.capture
-      if (capture == null || this.runtimes.get(id) !== runtime || !this.collecting(id, capture)) return false
+      const capture = role === 'local' ? localRow?.capture : remoteRow?.capture
+      if (capture == null || this.sources[role].runtimes.get(id) !== runtime || !this.collecting(id, capture)) return false
       this.requireCaptureCompatible(id, capture)
+      const identity = selection(capture)
+      const leaseId = nativeDigest([runtime.role === 'local' ? 'native-local-tool' : 'native-tool', id,
+        identity.captureId, identity.captureGeneration, pending.callSeq, event.seq])
+      const samples = runtime.role === 'local' ? localRow?.samples : remoteRow?.samples
+      if (samples?.some(item => item.id === leaseId)) return true
       const sequence = capture.sequence + 1
       const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
       if (grant === undefined || sequence > grant.maxSamples || this.retainedSamples(domain) >= this.config.maxLeases) return false
-      const identity = selection(capture)
-      const leaseId = nativeDigest([runtime.local ? 'native-local-tool' : 'native-tool', id,
-        identity.captureId, identity.captureGeneration, pending.callSeq, event.seq])
-      const samples = runtime.local ? localRow?.samples : remoteRow?.samples
-      if (samples?.some(item => item.id === leaseId)) return true
       const sourceId = nativeDigest([leaseId, sequence]) as DevelopmentTaskObservedSourceId
-      const fits = (result: ScopeContributionSample['result']) => Buffer.byteLength(JSON.stringify({ grant, sourceId, sequence, result }), 'utf8')
-        <= Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)
-      const result = nativeToolReport(mutation, pending.path, failed, fits)
+      const fits = (result: ScopeContributionSample['result']) => {
+        if (Buffer.byteLength(JSON.stringify({ grant, sourceId, sequence, result }), 'utf8')
+          > Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)) return false
+        return 'grant' in capture || grant.source.kind !== 'tool-observations' || grant.source.version !== 4
+          || Buffer.byteLength(JSON.stringify({ version: 4, requestId: '00000000-0000-0000-0000-000000000000',
+            op: 'sample', invitation: capture.invitation, sample: { sourceId, sequence, result } }), 'utf8') <= this.config.maxObservationBytes
+      }
+      const result = pending.kind === 'file'
+        ? nativeToolReport(pending.mutation, pending.path, failed, fits, pending.completedFile)
+        : nativeCommandReport(pending.selector, pending.completion, failed, fits)
       if (result === undefined) {
-        this.collectionIssues.set(id, 'attribution-budget'); this.notify(domain, id); return false
+        this.sources[role].collectionIssues.set(id, 'attribution-budget'); this.notify(domain, id); return false
       }
       const sample: Omit<LocalSample, 'receipt'> = { id: leaseId, captureId: identity.captureId, captureGeneration: identity.captureGeneration,
-        callId: mutation.execution.callId, rootCallId: mutation.execution.rootCallId, callSeq: pending.callSeq, resultSeq: event.seq,
-        argumentDigest: nativeDigest(mutation.execution.arguments), completionDigest: nativeDigest(event.data),
+        callId: execution.callId, rootCallId: execution.rootCallId, callSeq: pending.callSeq, resultSeq: event.seq,
+        argumentDigest: nativeDigest(execution.arguments), completionDigest: nativeDigest(event.data),
         sample: { sourceId, sequence, result } }
       if ('grant' in capture) await this.saveLocal(id, { ...capture, sequence }, [...localRow?.samples ?? [], sample])
       else await this.save(domain, id, { ...capture, sequence }, [...remoteRow?.samples ?? [], sample])

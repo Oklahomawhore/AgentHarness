@@ -41,10 +41,10 @@ export interface ScopeContributionLease {
 }
 
 const opaque = z.string().min(1).max(256)
-const proposal = peerContributionProposalSchema
+const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'tool-observations' || (value.source.version !== 3 && value.source.version !== 4))
 
 /** Strict additive record; missing records in older adapter data grant no contribution permission. */
-export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
+const contributionRecord = z.object({
   proposal,
   policy: z.object({ roots: z.array(z.string().min(1)), bashCommands: z.array(z.never()), revision: z.string().min(1) }).strict(),
   source: contributionSourceSchema,
@@ -52,7 +52,8 @@ export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   application: z.object({ entry: contributionEntrySchema, limits: contributionLimitsSchema,
     state: z.enum(['applying', 'waiting', 'cancelling', 'rejected', 'expired']) }).strict().optional(),
-  invitation: contributionInvitationSchema.optional(),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'tool-observations'
+    || (value.grant.source.version !== 3 && value.grant.source.version !== 4)).optional(),
   endReceipt: peerContributionReceiptSchema.optional(),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((value, context) => {
@@ -72,6 +73,16 @@ export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
   }
 })
 
+/** Historical rows retain their original single-entry parser. */
+export const contributionSchema: z.ZodType<ScopeContribution> = contributionRecord.superRefine((value, context) => {
+  if (value.application?.entry.kind === 'scope-group-entry') {
+    context.addIssue({ code: 'custom', message: 'legacy contribution does not support reusable joint entries' })
+  }
+})
+
+/** Group entries require the containing version-2 Session's separately validated consent. */
+export const jointContributionSchema: z.ZodType<ScopeContribution> = contributionRecord
+
 /** Complete original sample is parsed without manufacturing a Task binding or node identity. */
 export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.object({
   sessionKey: z.string().min(1).transform(value => value as ClaudeScopeSessionKey),
@@ -81,5 +92,5 @@ export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.obje
   authorizedInputDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   completionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   terminal: z.enum(['PostToolUse', 'PostToolUseFailure']).optional(),
-  sample: peerContributionSampleSchema.optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
+  sample: peerContributionSampleSchema.refine(value => !('kind' in value.result) || (value.result.version !== 3 && value.result.version !== 4)).optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
 }).strict()

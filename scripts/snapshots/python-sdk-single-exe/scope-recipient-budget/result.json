@@ -1,0 +1,51 @@
+{
+  "turns": 4,
+  "finalResponse": "Shared context fit my original budget; my local responsibility remains.",
+  "hostCount": 2,
+  "executingSessionCount": 2,
+  "requestCounts": {
+    "a": 6,
+    "b": 7
+  },
+  "rawProjectionBytes": 11353,
+  "maxContextBytes": 8000,
+  "maxLocalContextBytes": 4000,
+  "selectedGroups": 1,
+  "budgetOmissions": 2,
+  "contextBytes": {
+    "a": [
+      728,
+      728,
+      728,
+      728,
+      728,
+      2460
+    ],
+    "b": [
+      728,
+      728,
+      5120,
+      5120,
+      5120,
+      880,
+      880
+    ]
+  },
+  "remoteAllowances": [
+    7149,
+    7149,
+    7149
+  ],
+  "measuredFramingBytes": [
+    123,
+    123,
+    123
+  ],
+  "bidirectionalActualRequests": true,
+  "completeFactsPreserved": true,
+  "noRecall": true,
+  "originalTaskRetained": true,
+  "originalHistoryRetained": true,
+  "originalToolsRetained": true,
+  "localCaptureAbsent": true
+}

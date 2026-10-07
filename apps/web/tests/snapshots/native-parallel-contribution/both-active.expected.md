@@ -1,0 +1,44 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - paragraph: 本地与他人目标各有一份文件分享许可。请在对应目标中查看或停止；停止其中一份不会停止另一份。
+  - status: 尚未接收共享上下文
+  - paragraph: 保留的本地目标：独立维护客户端重试实现
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{ownerTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"contribution-entry\",\"sourceKind\":\"tool-observations\"}"
+  - group:
+    - text: 分享本会话的工作
+    - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+    - status: 正在采集已授权的文件工作
+    - term: 目标 Task
+    - definition: {{ownerTaskId}}
+    - term: 任务所有者设备
+    - definition: {{ownerPeerId}}
+    - term: 允许采集的目录
+    - definition: {{cwd}}/parallel-source/project
+    - term: 文件内容范围
+    - definition: 原始工具参数及完成状态
+    - term: 允许分享的文件操作
+    - definition: 写入文件（write）
+    - term: 授权到期时间
+    - definition: {{permissionExpiresLocal}}
+    - term: 最多样本数
+    - definition: "8"
+    - term: 每份样本字节上限
+    - definition: "8192"
+    - paragraph: 既有文件许可不包含命令结果。要加入命令许可，请结束这份分享；联合加入须先退出此次协作，再重新申请。
+    - group: 已批准的权限
+    - paragraph: 等待提交的观察：0
+    - button "停止分享并撤回"
+    - group: 更新所有者连接地址
+    - button "重新读取分享状态"
+  - button "重新读取状态"
+  - button "查看来源"
