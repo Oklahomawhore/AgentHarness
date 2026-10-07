@@ -28,7 +28,7 @@ kind: "package-reference"
 
 ### 最小配置
 
-在该组合中加入以下条目；所有额度都必须填写：
+在该组合中加入以下条目；保留量与重试限额都必须填写：
 
 ```yaml
 - name: '@deepseek-ai/dsh-scope-agent-contribution'
@@ -45,10 +45,13 @@ kind: "package-reference"
 | `maxLeases` | 必填 | 所有 Session 保留的样本、未完成观察及待提交冻结计划的预留总数；已确认样本也保留到采集终结。 |
 | `maxObservationBytes` | 必填 | 完整申请或样本请求的字节数，以及每条历史样本及其保留证据；样本还受所有者授权限制。 |
 | `contributionPollIntervalMs` | 必填 | 未完成同步与持久化工作的重试间隔。 |
+| `permissionDefaults` | 未配置 | 可编辑权限草稿的可选 `durationHours`、`maxSamples` 和 `maxSampleBytes`；三个值均须为正整数。 |
 
 允许范围见[配置目录](../../../docs/config-catalog.zh.md)。部署时明确选择额度；这些值与 [Loader 组合](tests/fixtures/hosts.ts)一致。
 
 ### 授权与恢复
+
+`permissionDraft({ agentId })` 读取选中的运行中普通 Session，返回配置的建议值、Session 记录的工作目录，以及当前可见的 `write`/`edit` 工具。Session 没有目录时，不建议任何根目录；Host 不会替换为自己的目录或扫描文件。未配置 `permissionDefaults` 的部署返回 `null`。建议不会授予权限、改变 Session 或采集状态，也不联系所有者。[Web 配置](../../bundle/web-app/cordis.patch.yml) 提供明确默认值。用户审阅或编辑草稿，并分别确认采集、读取、完整文件内容、历史初始化和自动工作。[权限草稿决策](../../../.agents/notes/implemented/feature/2026-10-07-native-permission-drafts.zh.md)。
 
 连接独立所有者时，选择在线普通 Agent、工具观察入口、根目录、`write`/`edit` 和有限额度，所有者批准后启用采集。连接本机所有的 Task 时，先检出该 Root Task，再针对精确绑定代际批准文件范围。Task 直接记录本地许可，不使用 peer 邀请。一个 Session 可分别持有一份本地与远端许可。每份许可独立选择根目录、工具、到期时间和样本额度，不授权另一份采集。绝对根目录仅在本机保存；获准报告正文可能包含私有文本。
 

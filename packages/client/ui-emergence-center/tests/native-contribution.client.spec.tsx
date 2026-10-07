@@ -10,6 +10,7 @@ import type {
 import type { NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
 import { NativeContributionPanel } from './native-contribution-panel-fixture.client.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
+import { assigned, localCapture } from './native-local-contribution-fixture.client.ts'
 import { localExecution, localObservation, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { bound, invitation, observation, state } from './native-scope-fixture.client.ts'
 import type { ContributionEntry } from '../src/client/contribution-directory.ts'
@@ -21,6 +22,7 @@ const t = makeTranslate(zh)
 function fixture(value: ScopeAgentContributionStatus = emptyStatus) {
   const actions: NativeContributionActions = {
     recoverNativeContributionRoute: vi.fn(async () => {}), readNativeContribution: vi.fn(),
+    suggestNativeContributionPermission: vi.fn(async () => null),
     requestNativeContribution: vi.fn(async () => {}),
     stopNativeContribution: vi.fn(async () => {}), leaveNativeJoin: vi.fn(async () => {}),
     previewNativeContribution: vi.fn(async (): Promise<ScopeContributionTransfer> => applicationEntry),
@@ -49,6 +51,80 @@ async function consentFields(): Promise<void> {
 const submit = (): HTMLButtonElement => screen.getByRole('button', { name: zh['native.share.request'] })
 
 describe('native file-work consent', () => {
+  it('suggests an editable remote permission without applying, then requires explicit collection consent', async () => {
+    const f = fixture()
+    f.rerender(<NativeContributionPanel {...f.props}
+      localEntry={{ status: 'ready', pending: false, value: assigned }} />)
+    vi.mocked(f.actions.suggestNativeContributionPermission).mockResolvedValue({
+      agentId, roots: ['/workspace'], tools: ['write', 'edit'], durationHours: 3, maxSamples: 12, maxSampleBytes: 2048,
+    })
+    change(zh['native.invitation'], 'tool-entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(applicationEntry.ownerPeerId)
+    fireEvent.click(screen.getByRole('button', { name: zh['native.suggestion.use'] }))
+    await waitFor(() => { expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('/workspace') })
+    expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.hours']).value).toBe('3')
+    expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.maxSamples']).value).toBe('12')
+    expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.maxBytes']).value).toBe('2048')
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.write'] }).checked).toBe(true)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.edit'] }).checked).toBe(true)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.fileContent.consent'] }).checked).toBe(false)
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    const consent = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.share.consent'] })
+    expect(consent().checked).toBe(false)
+    fireEvent.click(consent())
+    change(zh['contribution.maxSamples'], '5')
+    expect(consent().checked).toBe(false)
+    expect(submit().disabled).toBe(true)
+    fireEvent.click(consent())
+    fireEvent.click(submit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]).toMatchObject({
+      roots: ['/workspace'], tools: ['write', 'edit'], limits: { maxSamples: 5, maxSampleBytes: 2048 },
+    })
+  })
+
+  it('keeps an existing local capture as the permission prefill instead of offering workspace suggestions', async () => {
+    const f = fixture()
+    f.rerender(<NativeContributionPanel {...f.props} localEntry={{ status: 'ready', pending: false,
+      value: { ...assigned, capture: localCapture, initialization: { eligible: true, recordedSamples: 0, unconfirmedSamples: 0 } } }} />)
+    change(zh['native.invitation'], 'tool-entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(applicationEntry.ownerPeerId)
+    expect(screen.queryByRole('button', { name: zh['native.suggestion.use'] })).toBeNull()
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe(localCapture.roots.join('\n'))
+    expect(f.actions.suggestNativeContributionPermission).not.toHaveBeenCalled()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it.each(['completed-file', 'expired', 'ending'] as const)(
+    'prefills only a current live capture and keeps suggestions available for %s captures', async (kind) => {
+      const f = fixture()
+      const current = { ...localCapture, state: kind === 'ending' ? 'ending' as const : localCapture.state,
+        grant: { ...localCapture.grant, expiresAt: kind === 'expired' ? 1 : localCapture.grant.expiresAt,
+          source: { kind: 'tool-observations' as const, name: 'Completed native file work', tools: ['Write' as const],
+            version: 3 as const, fileContent: 'completed-native-file' as const } } }
+      f.rerender(<NativeContributionPanel {...f.props} localEntry={{ status: 'ready', pending: false,
+        value: { ...assigned, capture: current } }} />)
+      change(zh['native.invitation'], 'tool-entry')
+      fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+      await screen.findByText(applicationEntry.ownerPeerId)
+      const suggestion = screen.queryByRole('button', { name: zh['native.suggestion.use'] })
+      if (kind === 'completed-file') {
+        expect(suggestion).toBeNull()
+        expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe(current.roots.join('\n'))
+      } else {
+        expect(suggestion).not.toBeNull()
+        expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
+      }
+      expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.initialization.consent'] }).checked).toBe(false)
+      expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.initialization.consent'] }).disabled).toBe(true)
+      expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.fileContent.consent'] }).checked).toBe(false)
+      expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.consent'] }).checked).toBe(false)
+      expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    },
+  )
+
   it.each([false, true])('sends complete file permission only for an explicitly selected application (%s)', async (completeFile) => {
     const f = fixture()
     await consentFields()

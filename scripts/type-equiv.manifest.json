@@ -3179,6 +3179,11 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionPermissionDraft",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionRequest",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     },

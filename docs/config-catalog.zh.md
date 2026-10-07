@@ -2404,6 +2404,15 @@ export interface Config {
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
+  /** Optional editable management-form defaults; omission offers no suggested permission. */
+  readonly permissionDefaults?: {
+    /** Suggested permission lifetime in whole hours from explicit submission. */
+    readonly durationHours: number
+    /** Suggested maximum sample count for the new permission. */
+    readonly maxSamples: number
+    /** Suggested per-sample byte limit, still subject to owner approval and source request limits. */
+    readonly maxSampleBytes: number
+  }
 }
 ```
 

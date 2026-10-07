@@ -24,6 +24,7 @@ const change = (label: string, value: string): void => { fireEvent.change(screen
 function fixture(initial: ScopeAgentLocalContributionStatus | undefined = local, joint = false) {
   const actions: NativeContributionActions = {
     recoverNativeContributionRoute: vi.fn(async () => {}), readNativeContribution: vi.fn(),
+    suggestNativeContributionPermission: vi.fn(async () => null),
     requestNativeContribution: vi.fn(async () => {}), stopNativeContribution: vi.fn(async () => {}), leaveNativeJoin: vi.fn(async () => {}),
     previewNativeContribution: vi.fn(async () => joint ? { ...applicationEntry, kind: 'scope-join-entry' as const } : applicationEntry),
     probeNativeContribution: vi.fn(async () => ({ status: 'ready' as const })),
@@ -111,9 +112,14 @@ describe('recorded native tool consent', () => {
     fireEvent.click(sharing()); fireEvent.click(history())
     change(zh['contribution.maxSamples'], '7')
     expect(history().checked).toBe(false)
+    expect(sharing().checked).toBe(false)
     change(zh['contribution.maxSamples'], '8')
     fireEvent.click(history())
     fireEvent.click(screen.getByRole('checkbox', { name: zh['native.join.readConsent'] }))
+    expect(history().checked).toBe(true)
+    expect(sharing().checked).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.join.request'] }).disabled).toBe(true)
+    fireEvent.click(sharing())
     expect(history().checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: zh['native.join.request'] }))
     await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })

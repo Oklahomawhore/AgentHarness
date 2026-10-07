@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/user/guide/collaboration-network.md
-collaboration-network.md: 6fb6593f78b924dcf9b634630055acacc38aaac4
-collaboration-network.zh.md: 6962457954c2a04115e37c5b9c1c8770c99cf604
+collaboration-network.md: 96aa9c156d0aaaed28535062db0e66dda94ee710
+collaboration-network.zh.md: 9b39d87a1871f2bf1920abc55fab51a720acba34

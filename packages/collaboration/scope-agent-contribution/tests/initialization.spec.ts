@@ -1,5 +1,5 @@
 /** Explicit historical initialization uses only one current capture's persisted tool completions. */
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -11,6 +11,7 @@ import { recordedProof, recordedReport } from '../src/initialization.ts'
 import type { ScopeAgentContributionRequest } from '../src/types.ts'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
+import { captureColdInputs, writeColdInputs } from './fixtures/cold-input.ts'
 
 const hosts: TestHost[] = []
 const releases: (() => void)[] = []
@@ -353,12 +354,15 @@ it.each([false, true])('ends cold version-two source state without replaying or 
   await remote.approve()
   await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(acknowledged ? 1 : 0)
   expect(f.remoteRow()).toMatchObject({ version: 2, capture: { initialization: { state: 'frozen' } } })
+  const inputs = await captureColdInputs(f.source, ['scope_agent_contributions', 'scope_agent_local_contributions',
+    'development_context_tasks', 'development_rooms', 'scope_access'], f.agent)
   const copied = await mkdtemp(join(tmpdir(), 'dsh-history-source-restart-'))
   scratchRoots.push(copied)
-  await cp(f.source.root, copied, { recursive: true })
   await f.source.ctx.fiber.dispose()
+  await writeColdInputs(copied, inputs)
   const restarted = await createHost(f.network, 'source', 'native', { ownerLocal: true, root: copied, peerId: f.source.peerId })
   hosts.push(restarted)
+  expect(await restarted.readEvents(f.agent)).toEqual(inputs.events)
   await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
   expect((await restarted.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).eligibility).toBe('not-live')
   expect(restarted.adapter.requests).toEqual([])
@@ -382,10 +386,11 @@ it('restores owner authorization and exact historical origin before accepting la
   const original = f.reports()[0]?.peerToolObservation
   const grant = (await f.status()).capture?.invitation?.grant
   if (grant === undefined) throw new Error('Missing approved historical source grant')
+  const inputs = await captureColdInputs(f.owner, ['development_context_tasks', 'development_rooms', 'scope_access'], null)
   const copied = await mkdtemp(join(tmpdir(), 'dsh-history-owner-restart-'))
   scratchRoots.push(copied)
-  await cp(f.owner.root, copied, { recursive: true })
   await f.owner.ctx.fiber.dispose()
+  await writeColdInputs(copied, inputs)
   const restarted = await createHost(f.network, 'owner', 'native', { ownerLocal: true, root: copied, peerId: f.owner.peerId })
   hosts.push(restarted)
   expect(restarted.ctx.developmentTasks.get({ taskId: f.task.id }).context.find(item => item.peerToolObservation !== undefined)

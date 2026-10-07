@@ -1,5 +1,5 @@
 /** Existing owner and remote Agents exchange actual file-tool reports through their separate receive paths. */
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +9,7 @@ import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, requestText, TestNetwork, type TestHost } from './fixtures/hosts.ts'
+import { captureColdInputs, writeColdInputs } from './fixtures/cold-input.ts'
 
 const hosts: TestHost[] = []
 const cleanups: (() => void | Promise<void>)[] = []
@@ -197,15 +198,20 @@ describe('owner-local native source with an independently authorized remote Agen
     const { owner, remote, a, b, task, capture } = await fixture()
     await run(owner, a, [toolCallResponse('before-restart', 'write', { file_path: 'before.txt', content: 'BEFORE_LOCAL_RESTART' })])
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.pendingSamples).toBe(0)
+    expect((await storedLocal(owner, a.id)).capture).toMatchObject({ grant: capture.grant, state: 'active' })
+    const inputs = await captureColdInputs(owner,
+      ['scope_agent_local_contributions', 'development_context_tasks', 'development_rooms', 'scope_access'], a)
     const copiedRoot = await mkdtemp(join(tmpdir(), 'dsh-native-local-restart-'))
-    cleanups.push(async () => { await rm(copiedRoot, { recursive: true, force: true }) })
-    // Copy quiescent real persisted files before disposal; no grant, sample, or Task event is fabricated for recovery.
-    await cp(owner.root, copiedRoot, { recursive: true })
+    let copiedOwned = false
+    cleanups.push(async () => { if (!copiedOwned) await rm(copiedRoot, { recursive: true, force: true }) })
     const peerId = owner.peerId
     await owner.ctx.fiber.dispose()
+    await writeColdInputs(copiedRoot, inputs)
     expect((await storedLocal(owner, a.id)).capture?.grant).toEqual(capture.grant)
     const restarted = await createHost(new TestNetwork(), 'owner', 'native', { ownerLocal: true, root: copiedRoot, peerId })
     hosts.push(restarted)
+    copiedOwned = true
+    expect(await restarted.readEvents(a)).toEqual(inputs.events)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     const status = await restarted.ctx.developmentTasks.localContributionStatus({ grant: capture.grant })
     expect(status.state).toBe('ended')

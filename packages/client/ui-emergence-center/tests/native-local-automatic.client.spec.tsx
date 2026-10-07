@@ -15,7 +15,8 @@ function fixture(scope = localSnapshot()) {
   const actScope = vi.fn<(action: NativeScopeAction) => Promise<boolean>>().mockResolvedValue(true)
   const props = { agentId: assigned.agentId, tasks, catalogReady: true, receivingElsewhere: false, t: makeTranslate(zh),
     scope, actScope, entry: { status: 'ready' as const, pending: false, value: assigned },
-    readNativeLocalContribution: vi.fn(), checkoutNativeLocalTask: vi.fn(async () => {}),
+    readNativeLocalContribution: vi.fn(),
+    suggestNativeContributionPermission: vi.fn(async () => null), checkoutNativeLocalTask: vi.fn(async () => {}),
     requestNativeLocalContribution: vi.fn(async () => {}), stopNativeLocalContribution: vi.fn(async () => {}) }
   return { ...render(<NativeLocalContributionPanel {...props} />), props, actScope }
 }

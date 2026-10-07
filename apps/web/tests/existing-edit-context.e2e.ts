@@ -221,7 +221,7 @@ it.skipIf(process.platform === 'win32').each([false, true])(
     } else expect(jsonStrings(payload)).not.toContain(latest)
   })
 
-it.skipIf(process.platform === 'win32')('authorizes complete contents through the native UI before an existing-file Edit', async () => {
+it.skipIf(process.platform === 'win32')('authorizes complete contents through the native UI before an existing-file Edit', async (test) => {
   if (webSnapshotMode() === 'record') throw new Error('Native completion UI acceptance uses controlled keyless replies')
   const directory = await mkdtemp(join(tmpdir(), 'dsh-existing-edit-ui-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
@@ -285,11 +285,22 @@ it.skipIf(process.platform === 'win32')('authorizes complete contents through th
   await local.getByRole('combobox', { name: '本机目标', exact: true }).selectOption({ label: task.objective })
   await local.getByRole('button', { name: '连接当前会话', exact: true }).click()
   await local.getByText(`已连接：${task.objective}`, { exact: true }).waitFor()
-  await local.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(project)
-  await local.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).check()
-  await local.getByLabel('授权有效期（小时）', { exact: true }).fill('1')
-  await local.getByLabel('最多样本数', { exact: true }).fill('8')
-  await local.getByLabel('每份样本字节上限', { exact: true }).fill('8192')
+  const suggestions = local.getByRole('button', { name: '使用当前工作区建议', exact: true })
+  await expect.poll(() => suggestions.isEnabled()).toBe(true)
+  await suggestions.click()
+  await expect.poll(() => local.getByRole('textbox', { name: '允许采集的目录', exact: true }).inputValue()).toBe(a.session.header.cwd)
+  expect(await local.getByLabel('授权有效期（小时）', { exact: true }).inputValue()).toBe('8')
+  expect(await local.getByLabel('最多样本数', { exact: true }).inputValue()).toBe('100')
+  expect(await local.getByLabel('每份样本字节上限', { exact: true }).inputValue()).toBe('8192')
+  expect(await local.getByRole('checkbox', { name: '写入文件（write）', exact: true }).isChecked()).toBe(true)
+  expect(await local.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).isChecked()).toBe(true)
+  expect(await local.getByRole('checkbox', {
+    name: '我允许将上述目录中所选文件操作的内容分享到这个目标，直到到期或我停止分享。', exact: true,
+  }).isChecked()).toBe(false)
+  expect(await local.getByRole('checkbox', { name: '允许此会话为当前目标开始有限自动工作', exact: true }).isChecked()).toBe(false)
+  expect((await owner.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture).toBeNull()
+  expect(ownerConsumption.actual).toBe(2)
+  await local.getByRole('checkbox', { name: '写入文件（write）', exact: true }).uncheck()
   const complete = local.getByRole('checkbox', { name: '分享修改后的完整文件内容', exact: true })
   expect(await complete.isChecked()).toBe(false)
   expect((await owner.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture).toBeNull()
@@ -333,6 +344,8 @@ it.skipIf(process.platform === 'win32')('authorizes complete contents through th
   if (active === null) throw new Error('The UI did not establish a native capture')
   expect(active.grant.source).toMatchObject({ version: 3, fileContent: 'completed-native-file', tools: ['Edit'] })
   expect(active.tools).toEqual(['edit'])
+  expect(active.roots).toEqual([a.session.header.cwd])
+  expect(active.grant).toMatchObject({ maxSamples: 100, maxSampleBytes: 8192 })
   await capture('active', [[await page.evaluate(value => new Date(value).toLocaleString(), active.grant.expiresAt), '{{expiresLocal}}']])
   const address = (await owner.ctx.scopeAccess.identity()).addresses[0]
   if (address === undefined) throw new Error('The owner has no transport address')
@@ -360,7 +373,9 @@ it.skipIf(process.platform === 'win32')('authorizes complete contents through th
   expect(a.session.snapshotEvents().filter(event => event.type === 'tool/call').map(event => event.data.name)).toEqual(['read', 'edit'])
   await page.getByRole('button', { name: '协作', exact: true }).click()
   await local.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
-  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture).toBeNull()
+  // Stopping may wait for the configured reconciliation cadence before both durable writes settle.
+  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: aId })).capture,
+    { timeout: test.task.timeout }).toBeNull()
   const retained = await owner.ctx.scopeAgentContributions.localStatus({ agentId: aId })
   expect(retained.assignment?.taskId).toBe(task.id)
   expect(await complete.isChecked()).toBe(false)

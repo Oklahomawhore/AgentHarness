@@ -1187,6 +1187,20 @@ interface ScopeAgentContributionInitialization {
 ```
 
 ```ts type-equiv
+/** Editable, uncommitted defaults for one live Session; no collection or receiving permission. */
+interface ScopeAgentContributionPermissionDraft {
+  readonly agentId: SessionId
+  /** Only the current Session's absolute working directory; empty when it is unavailable. */
+  readonly roots: string[]
+  /** File-tool names currently visible to this Agent; actual collection still requires native mutation evidence. */
+  readonly tools: ('write' | 'edit')[]
+  readonly durationHours: number
+  readonly maxSamples: number
+  readonly maxSampleBytes: number
+}
+```
+
+```ts type-equiv
 /** Explicit permission to collect this Session's allowed tools and activate an equal or narrower owner approval. */
 interface ScopeAgentContributionRequest {
   readonly agentId: SessionId
@@ -4060,6 +4074,13 @@ Actual file-tool observations become durable original reports, then the existing
  * @returns one committed source-domain revision and current live eligibility.
  */
 @Remote('status') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionStatus>
+
+/**
+ * Suggest editable file permission from this Session's directory, visible tools, and configured limits.
+ * @param request - exact live ordinary Session selected by the user.
+ * @returns an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.
+ */
+@Remote('permissionDraft') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>
 
 /**
  * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.

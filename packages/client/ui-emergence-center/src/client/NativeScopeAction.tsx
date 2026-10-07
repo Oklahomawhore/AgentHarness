@@ -69,7 +69,7 @@ export function NativeScopeAction(props: NativeScopeActionProps) {
 function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeLocalContributions, useNativeTasks, useNativeParticipants,
   refreshNativeScope, actNativeScope,
   readNativeContribution, requestNativeContribution, stopNativeContribution, leaveNativeJoin,
-  previewNativeContribution, probeNativeContribution, recoverNativeContributionRoute,
+  previewNativeContribution, probeNativeContribution, recoverNativeContributionRoute, suggestNativeContributionPermission,
   readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution, t, ...runtime
 }: NativeScopeActionProps) {
   const snapshot = useNativeScope(value => value)
@@ -187,6 +187,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         tasks={tasks.tasks.filter(task => task.origin.kind === 'root' && task.ownerNodeId === participants.nodeId)}
         receivingElsewhere={bound !== null && bound.kind !== 'local-task-scope' && state?.mode !== 'left'} scope={snapshot} actScope={act}
         catalogReady={snapshot.phase === 'ready' && tasks.read && participants.read && tasks.error === undefined && participants.error === undefined}
+        suggestNativeContributionPermission={suggestNativeContributionPermission}
         readNativeLocalContribution={readNativeLocalContribution} checkoutNativeLocalTask={checkoutNativeLocalTask}
         requestNativeLocalContribution={requestNativeLocalContribution} stopNativeLocalContribution={stopNativeLocalContribution} /> : <>
         <p className={css.state} role="status">{state?.binding?.kind === 'local-task' ? t('native.mode.left') : label}</p>
@@ -262,6 +263,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         {success && snapshot.phase === 'ready' && state?.binding?.kind !== 'local-task' && <p className={css.hint}>{t('native.saved')}</p>}
         <NativeContributionPanel agentId={runtime.sessionId} entry={contribution} localEntry={localContribution} scope={snapshot} t={t}
           entryText={sharingEntry ? invitationText : undefined}
+          suggestNativeContributionPermission={suggestNativeContributionPermission}
           readNativeContribution={readNativeContribution} requestNativeContribution={requestNativeContribution}
           stopNativeContribution={stopNativeContribution} leaveNativeJoin={leaveNativeJoin}
           previewNativeContribution={previewNativeContribution} probeNativeContribution={probeNativeContribution}

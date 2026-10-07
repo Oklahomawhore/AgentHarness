@@ -10,6 +10,8 @@
   - definition: {{taskId}}
   - term: 申请入口到期时间
   - definition: {{entryExpiresLocal}}
+  - button "使用当前工作区建议"
+  - paragraph: 按当前会话工作目录、可用文件工具和本机配置生成可编辑草稿。请核对目录、操作和额度；此操作不会申请或授予权限。
   - text: 允许采集的目录
   - textbox "允许采集的目录"
   - group "允许分享的文件操作":

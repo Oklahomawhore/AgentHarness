@@ -14,7 +14,7 @@
 - term: 本机目标
 - definition: 维护已有文件的获准完成内容
 - term: 允许采集的目录
-- definition: {{cwd}}/existing-edit-ui/project
+- definition: {{cwd}}/existing-edit-ui
 - term: 文件内容范围
 - definition: 本次操作完成后的完整文件内容（包含未修改部分）
 - term: 允许分享的文件操作
@@ -22,7 +22,7 @@
 - term: 授权到期时间
 - definition: {{expiresLocal}}
 - term: 最多样本数
-- definition: "8"
+- definition: "100"
 - term: 每份样本字节上限
 - definition: "8192"
 - paragraph: 等待提交的观察：0

@@ -11,8 +11,10 @@
 - button "退出本地目标"
 - paragraph: 退出会停止自动工作、撤回此本地目标的文件分享，并断开目标读取。历史记录仍保留。
 - status: 尚未允许分享文件工作
+- button "使用当前工作区建议"
+- paragraph: 按当前会话工作目录、可用文件工具和本机配置生成可编辑草稿。请核对目录、操作和额度；此操作不会申请或授予权限。
 - text: 允许采集的目录
-- textbox "允许采集的目录": {{cwd}}/existing-edit-ui/project
+- textbox "允许采集的目录": {{cwd}}/existing-edit-ui
 - group "允许分享的文件操作":
   - text: 允许分享的文件操作
   - checkbox "写入文件（write）"
@@ -20,9 +22,9 @@
   - checkbox "编辑文件（edit）" [checked]
   - text: 编辑文件（edit）
 - text: 授权有效期（小时）
-- spinbutton "授权有效期（小时）": "1"
+- spinbutton "授权有效期（小时）": "8"
 - text: 最多样本数
-- spinbutton "最多样本数": "8"
+- spinbutton "最多样本数": "100"
 - text: 每份样本字节上限
 - spinbutton "每份样本字节上限": "8192"
 - checkbox "分享修改后的完整文件内容" [checked]

@@ -10,6 +10,18 @@ import type { ScopeAgentAutomaticPolicy, ScopeAgentJoinReadId, ScopeAgentLocalTa
 /** One source capture identity, never reused after termination. */
 export type ScopeAgentContributionSelection = Pick<ScopeContributionProposal, 'captureId' | 'captureGeneration'>
 
+/** Editable, uncommitted defaults for one live Session; no collection or receiving permission. */
+export interface ScopeAgentContributionPermissionDraft {
+  readonly agentId: SessionId
+  /** Only the current Session's absolute working directory; empty when it is unavailable. */
+  readonly roots: string[]
+  /** File-tool names currently visible to this Agent; actual collection still requires native mutation evidence. */
+  readonly tools: ('write' | 'edit')[]
+  readonly durationHours: number
+  readonly maxSamples: number
+  readonly maxSampleBytes: number
+}
+
 /** Explicit permission to collect this Session's allowed tools and activate an equal or narrower owner approval. */
 export interface ScopeAgentContributionRequest {
   readonly agentId: SessionId

@@ -12,10 +12,11 @@ import { contributionErrorKey } from './contribution-ui.tsx'
 import { NativeContributionPermission, type NativeContributionDraft } from './NativeContributionPermission.tsx'
 import { NativeLocalAutomaticPanel } from './NativeLocalAutomaticPanel.tsx'
 import type { NativeScopeAction, NativeScopeSnapshot } from './native-scopes.ts'
+import { NativePermissionSuggestion, type NativePermissionSuggestionActions } from './NativePermissionSuggestion.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Local Task commands supplied by the owning management directory. */
-export interface NativeLocalContributionActions {
+export interface NativeLocalContributionActions extends NativePermissionSuggestionActions {
   readonly readNativeLocalContribution: (agentId: SessionId) => void
   readonly checkoutNativeLocalTask: (agentId: SessionId, taskId: DevelopmentTaskId) => Promise<void>
   readonly requestNativeLocalContribution: (request: ScopeAgentLocalContributionRequest) => Promise<void>
@@ -28,7 +29,8 @@ export interface NativeLocalContributionActions {
  * @returns local receiving status and a separately confirmed source permission.
  */
 export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogReady, receivingElsewhere, scope, actScope,
-  readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution, t,
+  readNativeLocalContribution, checkoutNativeLocalTask, requestNativeLocalContribution, stopNativeLocalContribution,
+  suggestNativeContributionPermission, t,
 }: NativeLocalContributionActions & PropsLocale<'emergenceCenter'> & {
   agentId: SessionId
   entry: ContributionEntry<ScopeAgentLocalContributionStatus> | undefined
@@ -113,12 +115,19 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
         ...(draft.fileContent ? { fileContent: 'completed-native-file' as const } : {}) }))
     }}>
       <p role="status">{t('native.share.none')}</p>
+      <NativePermissionSuggestion agentId={agentId} identity={JSON.stringify(assignment)} revision={JSON.stringify(draft)}
+        disabled={!eligible} suggestNativeContributionPermission={suggestNativeContributionPermission} t={t} apply={(suggestion) => {
+          setDraft({ roots: suggestion.roots.join('\n'), write: suggestion.tools.includes('write'), edit: suggestion.tools.includes('edit'),
+            hours: String(suggestion.durationHours), samples: String(suggestion.maxSamples), bytes: String(suggestion.maxSampleBytes),
+            consent: false, fileContent: false })
+          setConsentedBinding(null)
+        }} />
       <NativeContributionPermission id={id} draft={{ ...draft, consent: draft.consent && consentIsCurrent }} disabled={!eligible}
         consentKey="native.local.consent" change={(value) => {
           const changed = value.roots !== draft.roots || value.write !== draft.write || value.edit !== draft.edit
             || value.hours !== draft.hours || value.samples !== draft.samples || value.bytes !== draft.bytes
-          setDraft(changed ? { ...value, fileContent: false } : value)
-          setConsentedBinding(value.consent ? assignment : null)
+          setDraft(changed ? { ...value, consent: false, fileContent: false } : value)
+          setConsentedBinding(!changed && value.consent ? assignment : null)
         }} t={t} />
       <Button type="submit" variant="primary" disabled={!canRequest}>{t('native.local.enable')}</Button>
     </form>}

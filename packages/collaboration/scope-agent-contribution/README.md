@@ -28,7 +28,7 @@ Mount in a `dsh` profile providing Agents, file tools, Session persistence, stor
 
 ### Minimal configuration
 
-Add this row to that composition; all limits are required:
+Add this row to that composition; retention and retry limits are required:
 
 ```yaml
 - name: '@deepseek-ai/dsh-scope-agent-contribution'
@@ -45,10 +45,13 @@ Add this row to that composition; all limits are required:
 | `maxLeases` | Required | Retained samples, unfinished observations, and pending frozen-plan reservations across Sessions; acknowledged samples remain until capture termination. |
 | `maxObservationBytes` | Required | Complete application or sample request bytes, plus each historical sample with its retained proof; samples also obey the owner's grant. |
 | `contributionPollIntervalMs` | Required | Retry delay for unfinished reconciliation and persistence work. |
+| `permissionDefaults` | Absent | Optional `durationHours`, `maxSamples`, and `maxSampleBytes` for an editable permission draft. All three values must be positive integers. |
 
 The [configuration catalog](../../../docs/config-catalog.md) owns accepted ranges. Choose deployment limits explicitly; these values match the [Loader composition](tests/fixtures/hosts.ts).
 
 ### Consent and recovery
+
+`permissionDraft({ agentId })` reads the selected live ordinary Session and returns configured suggestion values, its recorded working directory, and its currently visible `write`/`edit` tools. An absent Session directory yields no suggested root; the Host never substitutes its own directory or scans files. Deployments without `permissionDefaults` return `null`. A suggestion grants no permission, changes no Session or capture, and contacts no owner. The [Web profile](../../bundle/web-app/cordis.patch.yml) supplies explicit defaults. The user reviews or edits the draft and separately confirms collection, receiving, complete file content, initialization, and automatic work. [Permission draft rationale](../../../.agents/notes/implemented/feature/2026-10-07-native-permission-drafts.md).
 
 For an independent owner, select a live ordinary Agent, tool-observation entry, roots, `write`/`edit`, and finite limits. Owner approval activates collection. For an owner-local Task, first check out that Root Task, then authorize the same file selection against its exact assignment epoch. The Task records local permission without a peer invitation. A Session can hold one permission of each kind. Each permission selects its own roots, tools, expiry, and sample allowance; neither authorizes the other. Absolute roots stay local; authorized report content can contain private text.
 

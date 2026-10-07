@@ -256,7 +256,25 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     await verifyNativeContributionEntry(remotePage, entryText)
     await sharing.getByText(task.id, { exact: true }).waitFor()
     const bRoot = join(b.workspaceCwd, 'remote-native/project')
-    await permission(sharing, bRoot, REMOTE_CONSENT)
+    if (!automaticJoin) {
+      const suggestions = sharing.getByRole('button', { name: '使用当前工作区建议', exact: true })
+      await expect.poll(() => suggestions.isEnabled()).toBe(true)
+      await suggestions.click()
+      await expect.poll(() => sharing.getByRole('textbox', { name: '允许采集的目录', exact: true }).inputValue())
+        .toBe(originalRemote.session.header.cwd)
+      expect(await sharing.getByLabel('授权有效期（小时）', { exact: true }).inputValue()).toBe('8')
+      expect(await sharing.getByLabel('最多样本数', { exact: true }).inputValue()).toBe('100')
+      expect(await sharing.getByLabel('每份样本字节上限', { exact: true }).inputValue()).toBe('8192')
+      for (const name of [READ_CONSENT, REMOTE_CONSENT, AUTOMATIC_CONSENT, '分享修改后的完整文件内容']) {
+        expect(await sharing.getByRole('checkbox', { name, exact: true }).isChecked()).toBe(false)
+      }
+      expect(await sharing.locator('[data-native-initialization-consent] input[type="checkbox"]').isChecked()).toBe(false)
+      expect((await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+      expect(remoteRequests).toHaveLength(1)
+      expect(await sharing.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).isChecked()).toBe(true)
+      await sharing.getByRole('checkbox', { name: '编辑文件（edit）', exact: true }).uncheck()
+    }
+    await permission(sharing, bRoot, REMOTE_CONSENT, !automaticJoin)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
     expect(await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).isDisabled()).toBe(true)
     await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
@@ -933,11 +951,15 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     await history.check()
     await sharing.getByLabel('最多样本数', { exact: true }).fill('7')
     expect(await history.isChecked()).toBe(false)
+    expect(await sharing.getByRole('checkbox', { name: REMOTE_CONSENT, exact: true }).isChecked()).toBe(false)
     await sharing.getByLabel('最多样本数', { exact: true }).fill('8')
     await history.check()
     expect(await history.isChecked(), 'Historical permission remains selected after its explicit second confirmation').toBe(true)
     await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
     expect(await history.isChecked(), 'Separate receiving consent must not clear historical file permission').toBe(true)
+    expect(await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).isDisabled()).toBe(true)
+    await sharing.getByRole('checkbox', { name: REMOTE_CONSENT, exact: true }).check()
+    expect(await history.isChecked(), 'Renewed collection consent must preserve separately selected history').toBe(true)
     const requestCall = vi.spyOn(b.ctx.scopeAgentContributions, 'request')
     try {
       await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
@@ -1520,7 +1542,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     }
     if (failures.length > 0) throw new AggregateError(failures, 'Recipient budget browser cleanup failed')
   }, 120_000)
-  it('joins once without local capture, admits complete facts in 8000 bytes, and retains original work after leaving', async () => {
+  it('joins once without local capture, admits complete facts in 8000 bytes, and retains original work after leaving', async (test) => {
     if (owner === undefined || source === undefined) throw new Error('Both independently owned Hosts are required')
     const a = owner
     const b = source
@@ -1612,10 +1634,11 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     await sourcePage.keyboard.press('Escape')
     expect(await sourcePage.locator(PANEL).isVisible()).toBe(false)
     await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+    // Approval is observed on the source's configured application-poll cadence before joint adoption commits.
     await expect.poll(async () => {
       const status = await b.ctx.scopeAgentContext.status({ agentId: bId })
       return status.eligibility === 'eligible' && status.state.binding?.kind === 'local-task-scope'
-    }).toBe(true)
+    }, { timeout: test.task.timeout }).toBe(true)
     await panel(sourcePage)
     if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
     await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()

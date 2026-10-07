@@ -287,6 +287,10 @@
         maxLeases: 4096
         maxObservationBytes: 16384
         contributionPollIntervalMs: 1000
+        permissionDefaults:
+          durationHours: 8
+          maxSamples: 100
+          maxSampleBytes: 8192
 
     # External Claude sessions join explicitly; hooks receive context at their
     # next eligible request. The descriptor's OS lock is unavailable on Windows.

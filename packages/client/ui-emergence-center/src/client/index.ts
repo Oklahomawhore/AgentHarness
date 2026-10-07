@@ -100,7 +100,10 @@ export function apply(ctx: Context): void {
     request: async request => unwrap(await ctx.remote.scopeAgentContributions.requestLocal(request)),
     stopLocal: async request => unwrap(await ctx.remote.scopeAgentContributions.stopLocal(request)),
   }, (error) => { console.error('[ui-emergence-center] local contribution management failed:', error) })
+  const suggestNativeContributionPermission: NativeContributionActions['suggestNativeContributionPermission'] = async agentId =>
+    unwrap(await ctx.remote.scopeAgentContributions.permissionDraft({ agentId }))
   const nativeLocalActions: NativeLocalContributionActions = {
+    suggestNativeContributionPermission,
     readNativeLocalContribution: (agentId) => {
       tasks.refresh(); participants.refresh(); void nativeLocalContributions.directory.refresh(agentId)
     },
@@ -109,6 +112,7 @@ export function apply(ctx: Context): void {
     stopNativeLocalContribution: request => nativeLocalContributions.stop(request),
   }
   const nativeContributionActions: NativeContributionActions = {
+    suggestNativeContributionPermission,
     readNativeContribution: (agentId) => { void nativeContributions.directory.refresh(agentId) },
     requestNativeContribution: request => nativeContributions.request(request),
     recoverNativeContributionRoute: request => nativeContributions.recoverRoute(request),

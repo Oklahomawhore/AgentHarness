@@ -2427,6 +2427,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one committed source-domain revision and current live eligibility.',
       },
       {
+        signature: '@Remote(\'permissionDraft\') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>',
+        description: 'Suggest editable file permission from this Session\'s directory, visible tools, and configured limits.',
+        parameters: [{ name: 'request', description: 'exact live ordinary Session selected by the user.' }],
+        returns: 'an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.',
+      },
+      {
         signature: '@Remote(\'request\') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>',
         description: 'Persist one Session\'s explicit file permission and request automatic activation of an equal or narrower owner approval.',
         parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, file scope, limits, and optional recorded-local-tool export consent.' }],
@@ -7062,6 +7068,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScopeAgentContributionInitializationSource',
     declaration: 'export interface ScopeAgentContributionInitializationSource {\n    readonly eligible: boolean;\n    readonly recordedSamples: number;\n    readonly unconfirmedSamples: number;\n}',
+  },
+  {
+    name: 'ScopeAgentContributionPermissionDraft',
+    declaration: 'export interface ScopeAgentContributionPermissionDraft {\n    readonly agentId: SessionId;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly durationHours: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
   },
   {
     name: 'ScopeAgentContributionReceiving',

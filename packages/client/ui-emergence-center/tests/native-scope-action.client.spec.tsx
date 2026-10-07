@@ -26,7 +26,7 @@ function fixture(initial: NativeScopeSnapshot = { phase: 'ready', pending: false
     sessionId: state.agentId, t: makeTranslate(zh), selectView, actNativeScope: action, refreshNativeScope: refresh,
     ...hooks,
     useNativeTasks: () => ({ tasks: [], read: true }), useNativeParticipants: () => ({ read: true }),
-    readNativeLocalContribution: vi.fn(), checkoutNativeLocalTask: vi.fn(),
+    readNativeLocalContribution: vi.fn(), suggestNativeContributionPermission: vi.fn(async () => null), checkoutNativeLocalTask: vi.fn(),
     requestNativeLocalContribution: vi.fn(), stopNativeLocalContribution: vi.fn(),
     recoverNativeContributionRoute: vi.fn(), readNativeContribution: vi.fn(), requestNativeContribution: vi.fn(),
     stopNativeContribution: vi.fn(), leaveNativeJoin: vi.fn(), previewNativeContribution: vi.fn(), probeNativeContribution: vi.fn(),

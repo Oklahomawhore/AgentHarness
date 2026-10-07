@@ -17,10 +17,11 @@ import { NativeContributionRoute } from './NativeContributionRoute.tsx'
 import { NativeContributionInitialization } from './NativeContributionInitialization.tsx'
 import { NativeContributionPermission } from './NativeContributionPermission.tsx'
 import { automaticPolicy, NativeAutomaticPermission, type NativeAutomaticDraft } from './NativeAutomaticPermission.tsx'
+import { NativePermissionSuggestion, type NativePermissionSuggestionActions } from './NativePermissionSuggestion.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Local management callbacks supplied by the apply-owned directory. */
-export interface NativeContributionActions {
+export interface NativeContributionActions extends NativePermissionSuggestionActions {
   readonly readNativeContribution: (agentId: SessionId) => void
   readonly recoverNativeContributionRoute: (request: ScopeAgentContributionRecoverRouteRequest) => Promise<void>
   readonly requestNativeContribution: (request: ScopeAgentContributionRequest) => Promise<void>
@@ -95,7 +96,7 @@ export function NativeContributionPanel(props: NativeContributionActions & Props
 
 function SessionContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
   stopNativeContribution, leaveNativeJoin, previewNativeContribution, probeNativeContribution,
-  recoverNativeContributionRoute, localEntry, entryText, scope, t,
+  recoverNativeContributionRoute, suggestNativeContributionPermission, localEntry, entryText, scope, t,
 }: Parameters<typeof NativeContributionPanel>[0]) {
   const id = useId()
   const previewRevision = useRef(0)
@@ -151,14 +152,16 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const initializationSource = initializationEligible ? JSON.stringify([localCapture.selection.captureId,
     localCapture.selection.captureGeneration, localAssignment.taskId, localAssignment.bindingId,
     localAssignment.expectedBindingEpoch.nodeId, localAssignment.expectedBindingEpoch.seq]) : null
+  const localPrefillEligible = localStatus?.agentId === agentId && localCapture != null && localAssignment != null
+    && localCapture.state !== 'ending' && localCapture.grant.expiresAt > Date.now()
   useEffect(() => {
-    if (prefilled.current || permissionEdited.current || !initializationReady || !initializationEligible) return
+    if (prefilled.current || permissionEdited.current || !initializationReady || !localPrefillEligible) return
     const remainingHours = Math.ceil((localCapture.grant.expiresAt - Date.now()) / 3_600_000)
     if (remainingHours <= 0) return
     prefilled.current = true
     setRoots(localCapture.roots.join('\n')); setWrite(localCapture.tools.includes('write')); setEdit(localCapture.tools.includes('edit'))
     setHours(String(remainingHours)); setSamples(String(localCapture.grant.maxSamples)); setBytes(String(localCapture.grant.maxSampleBytes))
-  }, [initializationReady, initializationEligible, localCapture])
+  }, [initializationReady, localPrefillEligible, localCapture])
   const status = entry?.value
   const capture = status?.capture
   const continuation = status?.receivingContinuation
@@ -282,15 +285,25 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               }} />
             {t('native.join.readConsent')}</label>
           </>}
+          {!localPrefillEligible && <NativePermissionSuggestion agentId={agentId}
+            identity={JSON.stringify([entryText, localAssignment])} disabled={!eligible || !initializationReady}
+            revision={JSON.stringify([roots, write, edit, hours, samples, bytes, consent, fileContent,
+              readConsent, automaticConsent, automaticDraft, initializationConsent])}
+            suggestNativeContributionPermission={suggestNativeContributionPermission} t={t} apply={(draft) => {
+              permissionEdited.current = true
+              setRoots(draft.roots.join('\n')); setWrite(draft.tools.includes('write')); setEdit(draft.tools.includes('edit'))
+              setHours(String(draft.durationHours)); setSamples(String(draft.maxSamples)); setBytes(String(draft.maxSampleBytes))
+              setConsent(false); setFileContent(false); setReadConsent(null); setAutomaticConsent(null); setInitializationConsent(null)
+            }} />}
           <NativeContributionPermission id={id} draft={{ roots, write, edit, hours, samples, bytes, consent, fileContent }}
             disabled={!eligible} fileContentDisabled={initializationConfirmed} consentKey="native.share.consent" t={t} change={(draft) => {
               permissionEdited.current = true
               if (draft.roots !== roots || draft.write !== write || draft.edit !== edit || draft.hours !== hours
                 || draft.samples !== samples || draft.bytes !== bytes) {
-                setInitializationConsent(null); setFileContent(false)
-              } else setFileContent(draft.fileContent)
+                setInitializationConsent(null); setFileContent(false); setConsent(false)
+              } else { setFileContent(draft.fileContent); setConsent(draft.consent) }
               setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
-              setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
+              setSamples(draft.samples); setBytes(draft.bytes)
             }} />
           <div data-native-initialization-consent className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={initializationConfirmed}

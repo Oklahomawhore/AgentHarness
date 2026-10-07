@@ -395,6 +395,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   ScopeAgentContributionReceivingContinuation: 'development-room.md',
   ScopeAgentContributionSelection: 'development-room.md',
   ScopeAgentContributionRequest: 'development-room.md',
+  ScopeAgentContributionPermissionDraft: 'development-room.md',
   ScopeAgentContributionStopRequest: 'development-room.md',
   ScopeAgentContributionCapture: 'development-room.md',
   ScopeAgentContributionStatus: 'development-room.md',

@@ -1,5 +1,5 @@
 /** Existing local responsibility and explicitly authorized remote file sharing remain independently revocable. */
-import { cp, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -13,6 +13,7 @@ import { nativeContributionDomain } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
+import { captureColdInputs, writeColdInputs } from './fixtures/cold-input.ts'
 
 const hosts: TestHost[] = []
 const cleanups: (() => void | Promise<void>)[] = []
@@ -274,14 +275,21 @@ it('restores two real durable capture domains as separate withdrawals without re
     (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture?.pendingSamples).toBe(0)
   await expect.poll(async () =>
     (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture?.pendingSamples).toBe(0)
+  expect((await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture)
+    .toMatchObject({ selection: remote.capture.selection, state: 'active', collecting: true })
+  expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture)
+    .toMatchObject({ grant: f.localCapture.grant, state: 'active', collecting: true })
+  const inputs = await captureColdInputs(f.source, ['scope_agent_contributions', 'scope_agent_local_contributions',
+    'development_context_tasks', 'development_rooms', 'scope_access'], f.agent)
   const copiedRoot = await mkdtemp(join(tmpdir(), 'dsh-dual-capture-restart-'))
   let copiedOwned = false
   cleanups.push(async () => { if (!copiedOwned) await rm(copiedRoot, { recursive: true, force: true }) })
-  await cp(f.source.root, copiedRoot, { recursive: true })
   await f.source.ctx.fiber.dispose()
+  await writeColdInputs(copiedRoot, inputs)
   const restarted = await createHost(f.network, 'source', 'native', { ownerLocal: true, receive: true, root: copiedRoot, peerId: f.source.peerId })
   hosts.push(restarted)
   copiedOwned = true
+  expect(await restarted.readEvents(f.agent)).toEqual(inputs.events)
   await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
   await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture).toBeNull()
   expect((await restarted.ctx.developmentTasks.localContributionStatus({ grant: f.localCapture.grant })).state).toBe('ended')

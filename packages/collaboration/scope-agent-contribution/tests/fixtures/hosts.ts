@@ -40,7 +40,7 @@ import LocalSubprocess from '@deepseek-ai/dsh-subprocess-local'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import { expect } from 'vitest'
 import { MockAdapter, textResponse } from '../../../../core/agent-loop/tests/mock-adapter.ts'
-import NativeContribution from '../../src/index.ts'
+import NativeContribution, { type Config as NativeContributionConfig } from '../../src/index.ts'
 
 /** Per-test transport registry; JSON copying represents the external wire boundary. */
 export class TestNetwork {
@@ -108,6 +108,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly receive?: boolean
     readonly maxLeases?: number
     readonly maxObservationBytes?: number
+    readonly permissionDefaults?: NativeContributionConfig['permissionDefaults']
     readonly root?: string
     readonly peerId?: ScopePeerId
   } = {},
@@ -167,7 +168,8 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' }, { name: 'code' },
       { name: 'subprocess' }, { name: 'shell-env', config: { dshHome: join(root, 'home') } },
       { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
-      { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25 } },
+      { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25,
+        ...(options.permissionDefaults === undefined ? {} : { permissionDefaults: options.permissionDefaults }) } },
     ] : []),
     ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: 16000, maxLocalContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } }] : []),
   ]

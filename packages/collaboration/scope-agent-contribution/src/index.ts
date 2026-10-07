@@ -31,7 +31,7 @@ import { nativeContributionDomain, nativeDigest, validateNativeSample } from './
 import type { NativeCapture, NativeSample, NativeSourceRecord, NativeContributionDomain, NativeReceivingContinuation, NativeReceiving } from './state.ts'
 import { nativeLocalContributionDomain, validateLocalReceipt } from './local-state.ts'
 import type { LocalCapture, LocalSample, NativeLocalContributionDomain } from './local-state.ts'
-import type { ScopeAgentLocalContributionBinding, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus } from './types.ts'
+import type { ScopeAgentContributionPermissionDraft, ScopeAgentLocalContributionBinding, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus } from './types.ts'
 import { initializationRequestSchema, pendingInitialization, recordedProof, recordedReport, executionDigest, initializationPlanDigest } from './initialization.ts'
 import type { NativeInitialization, InitializationProof } from './initialization.ts'
 import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationSource } from './types.ts'
@@ -56,6 +56,15 @@ export interface Config {
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
+  /** Optional editable management-form defaults; omission offers no suggested permission. */
+  readonly permissionDefaults?: {
+    /** Suggested permission lifetime in whole hours from explicit submission. */
+    readonly durationHours: number
+    /** Suggested maximum sample count for the new permission. */
+    readonly maxSamples: number
+    /** Suggested per-sample byte limit, still subject to owner approval and source request limits. */
+    readonly maxSampleBytes: number
+  }
 }
 
 /** Collection always requires a separate explicit request even when this plugin is mounted. */
@@ -64,6 +73,11 @@ export const Config: s<Config> = s.object({
   maxLeases: s.number().step(1).min(1).required(),
   maxObservationBytes: s.number().step(1).min(512).required(),
   contributionPollIntervalMs: s.number().step(1).min(1).max(2_147_483_647).required(),
+  permissionDefaults: s.object({
+    durationHours: s.number().step(1).min(1).max(Math.floor(Number.MAX_SAFE_INTEGER / 3_600_000)).required(),
+    maxSamples: s.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+    maxSampleBytes: s.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+  }).extra('default', undefined),
 })
 
 type CaptureRole = 'local' | 'remote'
@@ -266,6 +280,28 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const domain = await this.ready
     this.lifetime.signal.throwIfAborted()
     return this.view(domain, request.agentId)
+  }
+
+  /**
+   * Suggest editable file permission from this Session's directory, visible tools, and configured limits.
+   * @param request - exact live ordinary Session selected by the user.
+   * @returns an uncommitted draft, or null when this deployment provides no defaults; no files or peer are read.
+   */
+  @Remote('permissionDraft')
+  async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null> {
+    await this.ready
+    this.lifetime.signal.throwIfAborted()
+    const agent = this.requireAgent(request.agentId)
+    this.requireEligible(agent)
+    const defaults = this.config.permissionDefaults
+    if (defaults === undefined) return null
+    if (!Number.isSafeInteger(Date.now() + defaults.durationHours * 3_600_000)) {
+      throw new Error('scope-agent-contribution: configured permission duration cannot form a safe expiry')
+    }
+    const cwd = agent.session.header.cwd
+    return { agentId: agent.id, roots: cwd === undefined ? [] : [cwd],
+      tools: (['write', 'edit'] as const).filter(tool => agent.ctx.get('tools')?.get(tool, agent) !== undefined),
+      ...defaults }
   }
 
   /**
