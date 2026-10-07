@@ -11,6 +11,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { nativeContributionDomain } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { recordedProof } from '../src/initialization.ts'
+import type { ScopeAgentLocalContributionRequest } from '../src/types.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
@@ -279,8 +280,9 @@ it.each([{ complete: false, label: 'ordinary' }, { complete: true, label: 'compl
     if (before.assignment === null || before.capture === null) throw new Error('Active local capture missing')
     expect(before.capture).toMatchObject({ state: 'active', collecting: true })
     const durable = await stored(f)
-    const request = { agentId: f.agent.id, expectedCapture: before.capture.selection, ...before.assignment,
-      roots: [f.source.workspace], tools: ['write', 'edit'] as const, limits: f.limits }
+    const request: ScopeAgentLocalContributionRequest = { agentId: f.agent.id,
+      expectedCapture: before.capture.selection, ...before.assignment,
+      roots: [f.source.workspace], tools: ['write', 'edit'], limits: f.limits }
     const permission = { fileContent: 'completed-native-file' as const }
     const retried = await f.source.ctx.scopeAgentContributions.requestLocal({ ...request, ...(complete ? permission : {}) })
     expect(retried.capture).toEqual(before.capture)
