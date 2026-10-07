@@ -1,5 +1,7 @@
 /** Durable native source permission and exact samples; Session logs remain the authority for tool execution. */
 import { z } from 'zod'
+import type { DevelopmentTaskCommandSelector } from '@deepseek-ai/dsh-development-task/types'
+import { commandSelectorSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
@@ -39,18 +41,19 @@ export interface NativeRouteState {
   readonly lastRoute?: NativeRouteCommand | undefined
 }
 
-/** Immutable local file selection and original consent retained after owner activation. */
+/** Immutable local file and command selection and original consent retained after owner activation. */
 export interface NativeCapture extends ContributionRecord, NativeRouteState {
   readonly roots: readonly string[]
   readonly rootUrls: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[] | undefined
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
   readonly receiving?: NativeReceiving | undefined
   readonly initialization?: NativeInitialization | undefined
 }
 
-/** Detached read work has no file permission; its original live Agent is checked separately. */
+/** Detached read work has no collection permission; its original live Agent is checked separately. */
 export interface NativeReceivingContinuation extends NativeRouteState {
   readonly proposal: NativeCapture['proposal']
   readonly entry: ScopeContributionEntry
@@ -58,7 +61,7 @@ export interface NativeReceivingContinuation extends NativeRouteState {
   readonly receiving: NativeReceiving
 }
 
-/** One actual file-tool completion, linked to the source Session's persisted start and settlement. */
+/** One actual native tool completion, linked to the source Session's persisted start and settlement. */
 export interface NativeSample extends ContributionOutboxItem {
   readonly callSeq: SessionSeq
   readonly resultSeq: SessionSeq
@@ -127,7 +130,8 @@ const receivingSchema = z.union([
 const captureSchema = contributionRecordSchema.safeExtend({
   ...routeState,
   roots: z.array(z.string().min(1)).min(1), rootUrls: z.array(z.string().startsWith('file:')).min(1),
-  tools: z.array(z.enum(['write', 'edit'])).min(1).max(2),
+  tools: z.array(z.enum(['write', 'edit'])).max(2),
+  commands: z.array(commandSelectorSchema).min(1).optional(),
   entry: contributionEntrySchema, limits: contributionLimitsSchema,
   receiving: receivingSchema.optional(), initialization: initializationSchema.optional(),
 }).superRefine((capture, ctx) => {
@@ -145,6 +149,8 @@ const captureSchema = contributionRecordSchema.safeExtend({
     || (receiving?.routeRecovery !== undefined && receiving.routeRecovery.ownerAddress !== capture.entry.ownerAddress)
     || capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
     || new Set(capture.tools).size !== capture.tools.length || source.kind !== 'tool-observations'
+    || JSON.stringify(capture.commands) !== JSON.stringify(source.version === 4 ? source.commands : undefined)
+    || capture.commands?.some(command => command.rootIndex >= capture.roots.length) === true
     || JSON.stringify(source.tools) !== JSON.stringify(tools) || source.name !== 'session-work'
     || (source.version === 2) !== (capture.initialization !== undefined)
     || (grant !== undefined && (grant.ownerPeerId !== capture.entry.ownerPeerId || grant.taskId !== capture.entry.taskId
@@ -180,7 +186,7 @@ const recordFields = {
   capture: captureSchema.nullable(), samples: z.array(sampleSchema), receivingContinuation: continuationSchema.optional(),
 }
 const legacyRecord = z.strictObject(recordFields).refine(record => record.capture?.initialization === undefined
-  && !(record.capture?.proposal.source.kind === 'tool-observations' && record.capture.proposal.source.version === 3)
+  && !(record.capture?.proposal.source.kind === 'tool-observations' && (record.capture.proposal.source.version === 3 || record.capture.proposal.source.version === 4))
   && !(record.receivingContinuation !== undefined && 'version' in record.receivingContinuation.proposal.source)
   && record.samples.every(item => !('kind' in item.sample.result) || item.sample.result.version === 1),
 'historical native source rows cannot acquire initialization')
@@ -218,7 +224,8 @@ export function validateNativeSample(agentId: SessionId, item: NativeSample, cap
   if (item.id !== id || item.captureId !== capture.proposal.captureId || item.captureGeneration !== capture.proposal.captureGeneration
     || item.callSeq >= item.resultSeq || item.sample.sourceId !== nativeDigest([id, item.sample.sequence])
     || item.sample.sequence > capture.sequence || capture.invitation === undefined
-    || !('kind' in item.sample.result) || !capture.tools.includes(item.sample.result.tool === 'Write' ? 'write' : 'edit')) {
+    || !('kind' in item.sample.result)
+    || (item.sample.result.kind === 'tool-observation' && !capture.tools.includes(item.sample.result.tool === 'Write' ? 'write' : 'edit'))) {
     throw new Error('native contribution sample has different source coordinates')
   }
   peerContributionRequestSchema.parse({ grant: capture.invitation.grant, ...item.sample })

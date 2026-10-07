@@ -3,6 +3,8 @@ scenario: scope-recipient-budget
 profile: sdk
 composition: sdk-scope-recipient-budget
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-recipient-budget
   pin: true

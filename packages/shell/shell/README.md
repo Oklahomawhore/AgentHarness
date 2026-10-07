@@ -44,6 +44,8 @@ Call `start` with a resolved spec to launch a background process; it returns a h
 
 Every execution starts from a `ShellExecRequest` with optional fields; the executor's `resolve()` turns it into a fully-resolved `ShellExecSpec` with explicit defaults and caps before anything runs. This request/spec split is the repository's template for explicit resolution at package boundaries: callers never rely on hidden defaults inside `run` or `start`. `resolve()` fills the working directory and timeout from the executor's configuration, caps per-call overrides, and carries optional inputs — `stdin`, ordinary `env`, and the trusted `DSH_*` snapshot — through verbatim.
 
+Resolved working directories use the same execution world as the composition’s filesystem and subprocess providers. A filesystem `processPath` must keep its meaning when passed as `workdir`; a composition cannot pair a remote filesystem with an unrelated local command executor.
+
 ### Choosing and composing an executor
 
 The seam is not an executor: mount exactly one provider per composition, and the tools work unchanged. On POSIX, `dsh-bash-local` runs commands as fresh `bash -c` processes and `dsh-bash-sandbox` confines every command through the sandbox capability; on Windows, `dsh-pwsh-local` and `dsh-pwsh-sandbox` are the counterparts. The `bash` and `pwsh` tools advertise escalation fields only while a sandboxing executor is mounted. The smallest composition is the executor alone:
@@ -57,7 +59,7 @@ The seam is not an executor: mount exactly one provider per composition, and the
 
 ### The shared exit-status contract
 
-Tool results end with a machine-readable exit marker — `[exit code: N]` or `[killed by signal: X]` — so the model can always tell how a command ended. The seam owns that marker format and the `parseExitStatus` helper that splits a rendered result back into its output body and structured exit status, keeping the `bash` and `pwsh` tools from drifting on it.
+The shell tools render exit markers such as `[exit code: N]` and `[killed by signal: X]`. The seam owns their format and the `parseExitStatus` helper used to split rendered output for display. Output text can resemble these markers; consumers that need execution facts must use the typed provider result instead of parsing text.
 
 -----
 

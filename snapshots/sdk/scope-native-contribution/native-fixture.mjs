@@ -131,7 +131,7 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     const projection = visible[0].source.projection
     assert.equal(projection.backend.id, 'text')
-    assert.equal(projection.backend.revision, '8')
+    assert.equal(projection.backend.revision, '9')
     assert.equal(projection.taskRevision, requests === 1 ? 5 : requests + 5)
     const text = options.messages.map(body).join('\n')
     if (requests < 3) {

@@ -32,7 +32,7 @@ Claude Code 会话可通过隐藏的 Task scope 共享获授权的工作观察�
 
 手工交换时，`prepareContribution` 选择一个已观察到的会话、明确的本地目录根，以及 `source`。工具来源使用 `{ kind: 'tool-observations', tools: ['Write', 'Edit'] }`；这些目录下获准的工作无需选择文件即可贡献。API 来源则指定一个精确的 OpenAPI 文件和操作，并明确授权读取该文件。它持久化尚未启用的本地权限，并返回稳定且不含路径的申请。owner 通过 [scope access](../scope-access/README.zh.md) 单独批准该申请，指定到期时间、采样次数和字节限制。`activateContribution` 仅接受匹配的邀请，在线核验 owner 批准后才启用采样。管理操作重试保留原 capture 与 grant 身份。
 
-Claude 工具贡献只接受原始 Hook 字段，不支持原生完成文件许可。第 3 版 `completed-native-file` grant 与持久样本会被拒绝；本适配器无法取得原生文件系统操作的完成证据。独立 OpenAPI 文件读取许可继续保有单独的声明采样行为。
+Claude 工具贡献只接受原始 Hook 字段，不支持原生完成文件或命令贡献许可。第 3 版 `completed-native-file` 与第 4 版命令 grant 及持久样本会被拒绝；本适配器不采集这些原生 provider 的完成证据。独立 OpenAPI 文件读取许可继续保有单独的声明采样行为。
 
 `contributionDetail` 在经认证的来源 Host 上读取保留的申请、可转交的 `proposalText`、规范化采集权限、已选邀请、耐久申请意图和当前会话状态。它不采样、在线核验权限或调度恢复。首次准备或在线申请要求 `expectedCapture: null`；之后的准备、在线申请、激活和贡献退出必须携带界面所显示的 capture ID 与 generation。旧选择在取消当前工作前就被拒绝，并在排队变更开始时再次检查。准备回复丢失后，读取详情并复用该选择；激活或停止结果不确定时，先读取详情再决定下一操作。已结束会话仍保留待撤回详情，直到 owner 确认。
 

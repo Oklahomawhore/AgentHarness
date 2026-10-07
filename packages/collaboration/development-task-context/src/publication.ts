@@ -58,10 +58,10 @@ export function publicationObservation(publication: DevelopmentTaskContextPublic
 }
 
 /**
- * Partition one snapshot's generic tool reports and retire history before its last complete reported Write.
+ * Partition one snapshot's file reports and exact command attempts within each authorized capture.
  * @param context - Publications from exactly one current Task or frozen parent snapshot.
  * @param completedFiles - Whether explicitly permitted native completion text establishes an independent checkpoint.
- * @returns Per-publication file chain and supersession; terminal and non-tool publications have no tool chain.
+ * @returns Per-publication chain and supersession; command heads replace earlier attempts regardless of outcome.
  */
 export function publicationToolHistory(context: readonly DevelopmentTaskContextPublication[], completedFiles: boolean): readonly ({
   readonly chain: string
@@ -74,6 +74,11 @@ export function publicationToolHistory(context: readonly DevelopmentTaskContextP
     const interval = publicationInterval(publication)
     if (tool === undefined || source?.kind !== 'tool-observations' || interval === undefined
       || isTerminalPublication(publication)) return undefined
+    if (tool.kind === 'command-observation') {
+      const chain = JSON.stringify([interval, source.name, 'command', tool.fields.rootIndex, tool.fields.command])
+      checkpoints.set(chain, Math.max(checkpoints.get(chain) ?? 0, tool.sequence))
+      return { chain, sequence: tool.sequence }
+    }
     const chain = JSON.stringify([interval, source.name, [...source.tools].sort(), tool.fields.rootIndex, tool.fields.path])
     if (tool.reportedStatus === 'success' && (tool.version === 3 && completedFiles
       ? tool.completedFile.state === 'included'

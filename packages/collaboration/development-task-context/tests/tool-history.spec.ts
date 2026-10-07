@@ -274,7 +274,8 @@ it('budgets separate frozen snapshots independently even when their parent refer
 
 it('keeps recorded origin in recipient summaries and supersedes it only with a later complete Write', async () => {
   const original = publication('peer', 'recorded', 1, write('RECORDED_BEFORE_JOIN'))
-  if (original.peerContribution === undefined || original.peerToolObservation === undefined) throw new Error('expected peer publication')
+  if (original.peerContribution === undefined || original.peerToolObservation === undefined
+    || original.peerToolObservation.kind !== 'tool-observation') throw new Error('expected peer file publication')
   const observed = { ...original.peerToolObservation, version: 2 as const,
     origin: { kind: 'recorded-local-tools' as const, planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } }
   const authorization: DevelopmentTaskPeerContributionGrant = { ...original.peerContribution.grant,

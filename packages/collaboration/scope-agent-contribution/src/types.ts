@@ -1,6 +1,6 @@
 /** Explicit native Session tool-sharing permission and local management observations. */
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
-import type { DevelopmentParticipantId, DevelopmentTaskLocalContributionGrant } from '@deepseek-ai/dsh-development-task/types'
+import type { DevelopmentParticipantId, DevelopmentTaskCommandSelector, DevelopmentTaskLocalContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import type {
   ScopeContributionEntry, ScopeContributionInvitation, ScopeContributionLimits, ScopeContributionProposal, ScopeInvitation,
 } from '@deepseek-ai/dsh-scope-access/types'
@@ -29,6 +29,8 @@ export interface ScopeAgentContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
   readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
@@ -61,12 +63,14 @@ export interface ScopeAgentContributionRecoverRouteRequest {
 export type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionGrant,
   'taskId' | 'bindingId' | 'expectedBindingEpoch'>
 
-/** Explicit file permission for the selected Agent's current owner-local Root Task. */
+/** Explicit native file and command sharing permission for the selected Agent's current owner-local Root Task. */
 export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection | null
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
   readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
@@ -110,6 +114,7 @@ export interface ScopeAgentLocalContributionCapture {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly state: 'opening' | 'active' | 'ending'
   readonly collecting: boolean
   readonly pendingSamples: number
@@ -161,6 +166,7 @@ export interface ScopeAgentContributionCapture {
   readonly proposal: ScopeContributionProposal
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
   readonly invitation: ScopeContributionInvitation | null

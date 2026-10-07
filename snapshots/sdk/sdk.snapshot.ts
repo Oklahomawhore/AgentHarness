@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-command-outcomes': {
+    expectedFinalResponse: 'Stopped command sharing no longer supplies command outcomes.',
+  },
   'scope-completed-file': {
     expectedFinalResponse: 'Withdrawn completed file is no longer shared context.',
   },

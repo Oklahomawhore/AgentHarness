@@ -70,8 +70,24 @@ export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceC
     <dt>{t('contribution.sourceName')}</dt><dd>{source.name}</dd>
     {source.kind === 'tool-observations' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('contribution.toolObservations')}</dd>
       <dt>{t('contribution.tools')}</dt><dd>{source.tools.join(', ')}</dd>
+      {source.version === 4 && <><dt>{t('native.commands.scope')}</dt><dd>
+        <NativeCommandSummary commands={source.commands} t={t} />
+      </dd></>}
       {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}
-      {source.version === 3 && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
+      {source.fileContent === 'completed-native-file' && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
       : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
   </>
+}
+
+/**
+ * Display the approved command and public directory number without exposing local paths.
+ * @param props - exact command selectors from an observed permission and translations.
+ * @returns the selected commands and their separate working-directory identities.
+ */
+export function NativeCommandSummary({ commands, t }: PropsLocale<'emergenceCenter'> & {
+  commands: readonly { readonly command: string; readonly rootIndex: number }[]
+}) {
+  return <ul>{commands.map((item, index) => <li key={index}>
+    <code style={{ whiteSpace: 'pre-wrap' }}>{item.command}</code> — {t('native.commands.root', { index: item.rootIndex + 1 })}
+  </li>)}</ul>
 }

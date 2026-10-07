@@ -1,6 +1,7 @@
 /** Immutable artifact evidence and its Task-local publication chains. */
 
 import { createHash } from 'node:crypto'
+import { freezeCommandResult } from './command.ts'
 import { freezePeerGrant } from './peer.ts'
 import { freezeLocalGrant, freezeLocalToolObservation } from './local.ts'
 import type {
@@ -51,12 +52,15 @@ export function freezePublication(publication: DevelopmentTaskContextPublication
       peerContribution: Object.freeze({ version: 1 as const, grant: freezePeerGrant(publication.peerContribution.grant),
         ...(publication.peerContribution.ended === undefined ? {} : { ended: publication.peerContribution.ended }),
       }),
-      ...(tool === undefined ? {} : { peerToolObservation: Object.freeze({ ...tool,
-        ...(tool.version === 2 ? { origin: Object.freeze({ ...tool.origin }) } : {}),
-        ...(tool.version === 3 ? { completedFile: Object.freeze({ ...tool.completedFile }) } : {}),
-        fields: Object.freeze({ ...tool.fields }), omissions: Object.freeze([...tool.omissions]),
-        capture: Object.freeze({ ...tool.capture }),
-      }) as typeof tool }),
+      ...(tool === undefined ? {} : { peerToolObservation: tool.kind === 'command-observation'
+        ? Object.freeze({ ...freezeCommandResult(tool), sourceName: tool.sourceName, grantId: tool.grantId, sequence: tool.sequence,
+          observerPeerId: tool.observerPeerId, sourceId: tool.sourceId, capture: Object.freeze({ ...tool.capture }) })
+        : Object.freeze({ ...tool,
+          ...(tool.version === 2 ? { origin: Object.freeze({ ...tool.origin }) } : {}),
+          ...(tool.version === 3 ? { completedFile: Object.freeze({ ...tool.completedFile }) } : {}),
+          fields: Object.freeze({ ...tool.fields }), omissions: Object.freeze([...tool.omissions]),
+          capture: Object.freeze({ ...tool.capture }),
+        }) as typeof tool }),
       ...(observation === undefined ? {} : { peerObservation: Object.freeze({ kind: observation.kind, version: observation.version,
         artifactId: observation.artifactId, sourceName: observation.sourceName, grantId: observation.grantId,
         sequence: observation.sequence, operation: Object.freeze({ ...observation.operation }), ...result,

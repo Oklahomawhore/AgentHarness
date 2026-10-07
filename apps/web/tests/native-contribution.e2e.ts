@@ -282,9 +282,14 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
     await expect.poll(() => ownerHost.ctx.developmentTasks.get({ taskId: task.id }).context
       .filter(item => item.peerToolObservation !== undefined).length).toBe(2)
     const publications = ownerHost.ctx.developmentTasks.get({ taskId: task.id }).context
-    expect(publications.map(item => item.peerToolObservation?.fields.path)).toEqual(['src/client.ts', 'docs/guide.md'])
-    expect(publications.map(item => item.peerToolObservation?.observerPeerId)).toEqual([sourceIdentity.peerId, sourceIdentity.peerId])
-    expect(publications.map(item => item.peerToolObservation?.reportedStatus)).toEqual(['success', 'success'])
+    const observations = publications.map((item) => {
+      const observation = item.peerToolObservation
+      if (observation?.kind !== 'tool-observation') throw new Error('Expected an admitted file-tool observation')
+      return observation
+    })
+    expect(observations.map(item => item.fields.path)).toEqual(['src/client.ts', 'docs/guide.md'])
+    expect(observations.map(item => item.observerPeerId)).toEqual([sourceIdentity.peerId, sourceIdentity.peerId])
+    expect(observations.map(item => item.reportedStatus)).toEqual(['success', 'success'])
     expect(JSON.stringify(publications)).not.toContain(root)
     expect(JSON.stringify(publications)).not.toContain(sourceId)
     const sourceAgent = sourceHost.ctx.agents.get(sourceId)

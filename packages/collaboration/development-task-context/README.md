@@ -19,6 +19,8 @@ Native Harness Agents receive context for their connected Task at the next admit
 - [Dev Note](#dev-note)
 
 
+<a id="configuration"></a>
+
 ## Configuration
 
 Mount one backend and the consumer after the Agent and Task services. The text backend needs no configuration; `maxContextBytesPerStep` is required and bounds the complete delivered text, including its framing.
@@ -45,6 +47,8 @@ To deliver sampled OpenAPI declarations, mount `/facts` as the backend. Its `rou
   config:
     maxContextBytesPerStep: 65536
 ```
+
+<a id="semantic-backend"></a>
 
 ### Semantic backend
 
@@ -77,19 +81,23 @@ Keep its JSONL persistence in a separate directory and an isolated `sessionPersi
 
 The backend records and flushes each request before model dispatch, then records and flushes its bounded response, reported usage, and exact projection before returning. Completed identical requests reuse their audited result; concurrent identical requests share one computation. `maxCalls` counts durable reservations across all configuration revisions using that audit Session. A known failed attempt can retry within the remaining limit. An interrupted request without a recorded result remains unknown and is not silently resent; its reservation remains consumed. Usage absent from the provider is unknown, not zero. These limits do not establish an exact input-token or monetary cap.
 
+<a id="behavior"></a>
+
 ## Behavior
 
 The text backend retains the Task objective, scope, lineage, and inherited objectives and scopes. It selects complete publications within the remaining budget, prioritizes newer content, and omits the recipient's own publications. For typed OpenAPI observations, it first retains the greatest sampling sequence for each artifact and source chain; older records are `superseded` even when the newest record is invalid, unavailable, or too large to fit. Equal-sequence heads remain separate candidates. Each current or frozen snapshot is selected independently.
 
 For generic peer and owner-local tool reports, text, reported, and semantic select history separately for each authorization interval, source, root index, and relative path. The latest successful Write containing its complete `content`, including an empty string, marks strictly earlier reports in that chain as `superseded`. Later Edits, failures, and reports with omitted content remain separate records. Failed Writes, omitted-body Writes, and Edits do not replace earlier history. Different authorizations, files, and frozen snapshots cannot supersede one another. This shared selection identifies reported segments; only `/reported` can reconstruct eligible segments as described below. None establishes unreported changes or verified current disk contents.
 
-The `/reported` backend reconstructs file text only from a complete successful live Write and its complete successful literal Edits. It uses the same whole-group selection, withdrawal, and recipient exclusions as text. Reconstruction requires an uninterrupted capture sequence from that Write through the latest observed report; known reports for other files can occupy intervening positions. Each file group retains one author and authorization. Missing or duplicate sequence numbers, recorded-work reports, carriage returns, malformed Unicode, unsuccessful or incomplete operations, unmatched or ambiguous edits, and extra publication prose or URI retain the original report group. No complete Write means no reconstructed file. Each intermediate UTF-8 value must fit the supplied context allowance before allocation.
+The `/reported` backend reconstructs file text only from a complete successful live Write and its complete successful literal Edits. It uses the same whole-group selection, withdrawal, and recipient exclusions as text. Reconstruction requires an uninterrupted capture sequence from that Write through the latest observed report; known reports for other files can occupy intervening positions. A command attempt in the same capture interrupts file reconstruction even if that command report is superseded; a later complete Write or independently complete native operation can establish a new checkpoint. Each file group retains one author and authorization. Missing or duplicate sequence numbers, recorded-work reports, carriage returns, malformed Unicode, unsuccessful or incomplete operations, unmatched or ambiguous edits, and extra publication prose or URI retain the original report group. No complete Write means no reconstructed file. Each intermediate UTF-8 value must fit the supplied context allowance before allocation.
 
 Reconstructed records explicitly identify reported contents rather than verified current disk state. Their model text includes authority, file identity, dependency count, an ordered dependency digest, and first/last references. The projection retains every selected publication reference, including operations that restore an earlier value. Frozen parent snapshots remain separate. Complete framing and reconstructed content must fit together; otherwise the whole group is omitted without an old-base fallback. The backend reads no files, exports no private tool outcomes, and makes no model calls. Exact coverage and stored reports still grow with history. `/semantic` retains its own original-report input and summarization limits.
 
-With explicit version-3 completed-file permission, `/reported` also accepts a successful native Edit or Write result as an independent complete checkpoint. A `completed-native-file` record identifies the original publication, sequence, grant, relative file, complete LF content and digest; its warning distinguishes operation completion from current disk verification. It requires no previously shared Write or inferred historical continuity. Strictly earlier reports in that file and authorization become `superseded`. Later failed or omitted completions stay in the same atomic group and prevent presenting the earlier completion alone. Extra source prose and URIs retain the original publications. Complete output framing still determines whether the group fits. `/text` and `/semantic` retain their original tool-report selection.
+With explicit completed-file permission, `/reported` also accepts a successful native Edit or Write result as an independent complete checkpoint. A `completed-native-file` record identifies the original publication, sequence, grant, relative file, complete LF content and digest; its warning distinguishes operation completion from current disk verification. It requires no previously shared Write or inferred historical continuity. Strictly earlier reports in that file and authorization become `superseded`. Later failed or omitted completions stay in the same atomic group and prevent presenting the earlier completion alone. Extra source prose and URIs retain the original publications. Complete output framing still determines whether the group fits. `/text` and `/semantic` retain their original tool-report selection.
 
 Recorded-work tool reports retain their historical origin in the text backend's complete publication and in the semantic backend's source attribution beside every accepted summary quote. Summaries cannot discard that attribution. Their sequences remain part of the same authorized tool chain as subsequent live reports; being shared later does not make an old operation a current file check.
+
+Explicitly authorized foreground command reports select the greatest sequence for each source interval, source name, exact command text and working-directory root index. A later nonzero exit, signal, timeout, abort, unavailable completion or omitted output replaces the earlier attempt; it never restores an earlier success. Independent authorizations and frozen snapshots remain separate. Text and reported deliver each selected command as one whole publication or omit it as `budget`. Semantic delivery retains the complete typed command publication as mandatory evidence, including output truncation or omission and authorization; the summarizer cannot classify it as irrelevant or erase its exit status. A report records one execution, not verification of current code. Exact self-published exclusion and interval withdrawal apply before delivery.
 
 The text backend budgets each complete retained tool-report chain as one unit, including chains without a complete Write. It delivers the whole unit or omits it as `budget`; it does not send an older base while dropping a later correction or restore an earlier Write when the replacement cannot fit. Groups are prioritized by their latest publication time, and delivered records keep source order. Other file groups can still fit. Coverage retains exact source references, so excluding replaced bodies does not bound historical metadata growth. Stored Task publications and previously recorded Session projections remain intact.
 
@@ -109,7 +117,7 @@ Owner-local reports use the same interval withdrawal selection in every backend.
 
 Facts are declarations as sampled: required field names do not establish complete request validation, response status keys retain their original strings, and a sample does not prove deployed behavior. Responsibility rules select fields after the complete evidence is reduced; operation identity, status, versions, and provenance remain visible. Each chain retains at most its immediate predecessor's source, sequence, and state, without old field values; `supersededCount` counts all replaced samples. Older samples are omitted as `superseded` and counted in coverage, so repeated revisions do not add source references to the delivered text. Each artifact's heads, conflicts, revoked chains, and retained predecessor references form one budget unit. If the group does not fit, that complete unit is omitted as `budget`; older samples remain `superseded`. Field omissions and source omissions are reported separately. The provider identity includes a digest of the normalized selection rules, so a configuration change invalidates new-request caches while recorded projections remain exact.
 
-The semantic backend excludes withdrawn and superseded source bodies before inference, using the same complete-Write selection as text. Terminal notices and current structured OpenAPI evidence remain deterministic mandatory records; it does not ask the model to resolve their conflicts. For other sources, the model supplies one relevance decision per source and concise updates with exact quoted excerpts. Unknown or duplicate references, missing decisions, or relevant sources without a cited update reject the result. The delivered attribution contains source identities and report metadata, not another copy of each tool body. `recipient-irrelevant` records a model judgment, not an access restriction. Quotes establish a reference to source text, not semantic truth. Complete relevant updates and mandatory records must fit the delivery budget; failure never restores an old summary.
+The semantic backend excludes withdrawn and superseded source bodies before inference, using the same complete-Write selection as text. Terminal notices, current structured OpenAPI evidence, and selected command outcomes remain deterministic mandatory records; it does not ask the model to resolve their conflicts. For other sources, the model supplies one relevance decision per source and concise updates with exact quoted excerpts. Unknown or duplicate references, missing decisions, or relevant sources without a cited update reject the result. The delivered attribution contains source identities and report metadata, not another copy of each tool body. `recipient-irrelevant` records a model judgment, not an access restriction. Quotes establish a reference to source text, not semantic truth. Complete relevant updates and mandatory records must fit the delivery budget; failure never restores an old summary.
 
 Changing a session binding from Task A to Task B replaces A with B on the current request surface. Clearing the final binding replaces injected Task context with a neutral disconnection marker at the next admitted pre-step. Reconnecting replaces that marker with the selected Task. Earlier durable Session events remain available for replay. Room membership cannot select context.
 
@@ -131,6 +139,8 @@ The `development-task-context/admit` waterfall delegates before passive computat
 
 An ordinary publication arriving during computation leaves the captured revision valid; the next request selects the newer revision. Switching away and back creates a new binding interval, so a computation started before that switch cannot publish its result. Model retries use the exact logged text.
 
+<a id="model-experience"></a>
+
 ## Model Experience
 
 ### Connected Task snapshot
@@ -149,6 +159,8 @@ A binding change, disconnection, or Task revision change replaces the prior Task
 
 ## Known Limitations and Deferred Work
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - Self-published omission identifies the report's origin; it cannot prove that the model still retains its local operation after compaction. It does not suppress Task revisions, evaluations, or automatic activations by itself.
 - External MCP Agents receive context delta through MCP calls rather than this native pre-step path.
 - Report reconstruction cannot detect external writers or reconstruct existing files shared only through Edits. Unsupported groups can still exhaust the text budget. It does not define semantic equality or suppress automatic turns for equivalent contents.
@@ -156,6 +168,8 @@ A binding change, disconnection, or Task revision change replaces the prior Task
 - The facts backend neither reads artifacts nor extracts claims from free text. The trusted sampler owns authorization, supported OpenAPI fields, sampling completeness, and invalidation; the backend cannot detect later external changes by itself.
 - This consumer alone does not wake idle Agents; context enters the next request admitted for another reason. [Native scope receiving](../scope-agent-context/README.md) can own explicitly authorized local automatic turns through the admission waterfall.
 - Withdrawal removes this plugin's injected context; it does not erase Task details quoted in ordinary conversation messages.
+
+<a id="dev-note"></a>
 
 ### Dev Note
 

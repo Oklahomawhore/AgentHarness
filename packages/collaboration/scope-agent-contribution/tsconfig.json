@@ -52,6 +52,12 @@
     },
     {
       "path": "../development-room"
+    },
+    {
+      "path": "../../shell/shell"
+    },
+    {
+      "path": "../../shell/tool-bash"
     }
   ]
 }

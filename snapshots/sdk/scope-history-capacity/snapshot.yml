@@ -3,6 +3,8 @@ scenario: scope-history-capacity
 profile: sdk
 composition: sdk-scope-history-capacity
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-history-capacity
   pin: true

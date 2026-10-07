@@ -2824,3 +2824,28 @@ it('refuses native completed-file grants before Claude Hook activation and in du
       fields: { rootIndex: 0, path: 'old.ts', replaceAll: false }, completedFile: { state: 'omitted', reason: 'unavailable' },
     } } }).success).toBe(false)
 })
+
+
+it('refuses command permissions and outcomes in the file-only Claude contribution adapter', async () => {
+  const f = await toolContributionHosts()
+  const commandSource = { kind: 'tool-observations' as const, version: 4 as const, name: 'session-work',
+    tools: ['Write', 'Edit'] as const, commands: [{ command: 'pnpm test --run', rootIndex: 0 }] }
+  const invitation = { ...f.invitation, grant: { ...f.invitation.grant, source: commandSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: commandSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-command', toolName: 'Bash',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'command-observation', version: 4, tool: 'Bash', fields: commandSource.commands[0],
+      state: 'unavailable', reason: 'completion-unavailable',
+    } } }).success).toBe(false)
+})

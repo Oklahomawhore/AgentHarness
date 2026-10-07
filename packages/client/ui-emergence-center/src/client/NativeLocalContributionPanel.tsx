@@ -8,10 +8,11 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
-import { contributionErrorKey } from './contribution-ui.tsx'
+import { contributionErrorKey, NativeCommandSummary } from './contribution-ui.tsx'
 import { NativeContributionPermission, type NativeContributionDraft } from './NativeContributionPermission.tsx'
 import { NativeLocalAutomaticPanel } from './NativeLocalAutomaticPanel.tsx'
 import type { NativeScopeAction, NativeScopeSnapshot } from './native-scopes.ts'
+import { emptyNativeCommands, nativeCommandSelectors } from './NativeCommandPermission.tsx'
 import { NativePermissionSuggestion, type NativePermissionSuggestionActions } from './NativePermissionSuggestion.tsx'
 import css from './NativeScopeAction.module.css'
 
@@ -45,14 +46,14 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
   const [selected, setSelected] = useState<DevelopmentTaskId>()
   const [consentedBinding, setConsentedBinding] = useState<ScopeAgentLocalContributionStatus['assignment']>(null)
   const [draft, setDraft] = useState<NativeContributionDraft>({
-    roots: '', write: false, edit: false, hours: '', samples: '', bytes: '', consent: false, fileContent: false,
+    roots: '', write: false, edit: false, hours: '', samples: '', bytes: '', consent: false, fileContent: false, commands: emptyNativeCommands(),
   })
   useEffect(() => { readNativeLocalContribution(agentId) }, [agentId, readNativeLocalContribution])
   const status = entry?.value
   const capture = status?.capture
   const assignment = status?.assignment
   useLayoutEffect(() => {
-    setDraft(value => ({ ...value, consent: false, fileContent: false })); setConsentedBinding(null)
+    setDraft(value => ({ ...value, consent: false, fileContent: false, commands: emptyNativeCommands() })); setConsentedBinding(null)
   }, [agentId, assignment?.bindingId, assignment?.expectedBindingEpoch.seq, assignment?.expectedBindingEpoch.nodeId,
     capture?.selection.captureId, capture?.selection.captureGeneration])
   const ready = entry?.status === 'ready' && !entry.pending && !scope.pending
@@ -61,7 +62,9 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
   const chosen = tasks.find(task => task.id === selected)
   const activeTaskId = capture?.grant.taskId ?? assignment?.taskId
   const title = tasks.find(task => task.id === activeTaskId)?.objective ?? activeTaskId
-  const roots = [...new Set(draft.roots.split('\n').map(value => value.trim()).filter(Boolean))]
+  const enteredRoots = draft.roots.split('\n').map(value => value.trim()).filter(Boolean)
+  const roots = draft.commands.enabled ? enteredRoots : [...new Set(enteredRoots)]
+  const commands = nativeCommandSelectors(draft.commands, roots)
   const tools: ('write' | 'edit')[] = [...(draft.write ? ['write' as const] : []), ...(draft.edit ? ['edit' as const] : [])]
   const expiresAt = Date.now() + Number(draft.hours) * 3_600_000
   const limitsValid = [draft.hours, draft.samples, draft.bytes].every(value => value.trim() !== ''
@@ -71,7 +74,7 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
     && assignment.expectedBindingEpoch.nodeId === consentedBinding.expectedBindingEpoch.nodeId
     && assignment.expectedBindingEpoch.seq === consentedBinding.expectedBindingEpoch.seq
   const permissionReady = eligible && capture === null && assignment != null && draft.consent
-    && roots.length > 0 && tools.length > 0 && limitsValid
+    && roots.length > 0 && (tools.length > 0 || commands !== undefined) && commands !== null && limitsValid
   const canRequest = permissionReady && consentIsCurrent
   const executionBinding = scope.observation?.eligibility === 'not-live' ? null : scope.observation?.state.binding?.id
   const perform = async (operation: () => Promise<void>): Promise<void> => {
@@ -112,35 +115,43 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
       if (!permissionReady || !consentIsCurrent) return
       void perform(() => requestNativeLocalContribution({ agentId, expectedCapture: null, ...assignment, roots, tools,
         limits: { expiresAt, maxSamples: Number(draft.samples), maxSampleBytes: Number(draft.bytes) },
-        ...(draft.fileContent ? { fileContent: 'completed-native-file' as const } : {}) }))
+        ...(commands == null ? {} : { commands }),
+        ...(draft.fileContent && tools.length > 0 ? { fileContent: 'completed-native-file' as const } : {}) }))
     }}>
       <p role="status">{t('native.share.none')}</p>
       <NativePermissionSuggestion agentId={agentId} identity={JSON.stringify(assignment)} revision={JSON.stringify(draft)}
         disabled={!eligible} suggestNativeContributionPermission={suggestNativeContributionPermission} t={t} apply={(suggestion) => {
           setDraft({ roots: suggestion.roots.join('\n'), write: suggestion.tools.includes('write'), edit: suggestion.tools.includes('edit'),
             hours: String(suggestion.durationHours), samples: String(suggestion.maxSamples), bytes: String(suggestion.maxSampleBytes),
-            consent: false, fileContent: false })
+            consent: false, fileContent: false, commands: emptyNativeCommands() })
           setConsentedBinding(null)
         }} />
       <NativeContributionPermission id={id} draft={{ ...draft, consent: draft.consent && consentIsCurrent }} disabled={!eligible}
-        consentKey="native.local.consent" change={(value) => {
+        consentKey={draft.commands.enabled ? 'native.commands.localConsent' : 'native.local.consent'} change={(value) => {
           const changed = value.roots !== draft.roots || value.write !== draft.write || value.edit !== draft.edit
             || value.hours !== draft.hours || value.samples !== draft.samples || value.bytes !== draft.bytes
-          setDraft(changed ? { ...value, consent: false, fileContent: false } : value)
+            || value.commands !== draft.commands
+          setDraft(changed ? { ...value, consent: false, fileContent: false,
+            commands: value.roots !== draft.roots ? { ...value.commands, enabled: false,
+              selectors: value.commands.selectors.map(item => ({ ...item, rootIndex: '' })) } : value.commands } : value)
           setConsentedBinding(!changed && value.consent ? assignment : null)
         }} t={t} />
       <Button type="submit" variant="primary" disabled={!canRequest}>{t('native.local.enable')}</Button>
     </form>}
     {capture != null && <>
       <p role="status" className={css.state}>{t(capture.state === 'opening' ? 'native.local.opening'
-        : capture.state === 'ending' ? 'native.local.ending' : capture.collecting ? 'native.share.active' : 'native.share.paused')}</p>
+        : capture.state === 'ending' ? 'native.local.ending' : capture.collecting ? capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused')}</p>
       <dl className={css.details}>
         <dt>{t('native.local.task')}</dt><dd>{title}</dd>
         <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
-        <dt>{t('native.fileContent.scope')}</dt>
-        <dd>{t(capture.grant.source.version === 3 ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd>
+        {capture.tools.length > 0 && <><dt>{t('native.fileContent.scope')}</dt>
+          <dd>{t(capture.grant.source.fileContent === 'completed-native-file'
+            ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd></>}
         <dt>{t('native.share.tools')}</dt>
         <dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
+        {capture.commands !== undefined && <><dt>{t('native.commands.scope')}</dt><dd>
+          <NativeCommandSummary commands={capture.commands} t={t} />
+        </dd></>}
         <dt>{t('contribution.expires')}</dt><dd>{new Date(capture.grant.expiresAt).toLocaleString()}</dd>
         <dt>{t('contribution.maxSamples')}</dt><dd>{capture.grant.maxSamples}</dd>
         <dt>{t('contribution.maxBytes')}</dt><dd>{capture.grant.maxSampleBytes}</dd>
@@ -155,7 +166,7 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
       }}>
         {t(capture.state === 'ending' ? 'native.share.retryStop' : 'native.share.stop')}
       </Button>
-      <p className={css.hint}>{t('native.local.stopHint')}</p>
+      <p className={css.hint}>{t(capture.commands === undefined ? 'native.local.stopHint' : 'native.commands.stopHint')}</p>
     </>}
     <Button size="sm" disabled={entry?.pending} onClick={() => { readNativeLocalContribution(agentId) }}>{t('native.share.refresh')}</Button>
   </section>

@@ -2417,8 +2417,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'scopeAgentContributions',
-    summary: 'Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.',
-    description: 'Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.',
+    summary: 'Actual native execution observations become durable original reports, then the existing owner protocol delivers them.',
+    description: 'Actual native execution observations become durable original reports, then the existing owner protocol delivers them.',
     methods: [
       {
         signature: '@Remote(\'status\') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionStatus>',
@@ -2434,8 +2434,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'request\') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>',
-        description: 'Persist one Session\'s explicit file permission and request automatic activation of an equal or narrower owner approval.',
-        parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, file scope, limits, and optional recorded-local-tool export consent.' }],
+        description: 'Persist one Session\'s explicit file and command sharing permission and request automatic activation of an equal or narrower owner approval.',
+        parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, file and command selections, limits, and optional recorded-local-tool export consent.' }],
         returns: 'durable local intent; later changed notifications describe owner reconciliation.',
       },
       {
@@ -2470,8 +2470,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'requestLocal\') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>',
-        description: 'Authorize actual file tools for the selected Agent\'s current owner-local Root Task.',
-        parameters: [{ name: 'request', description: 'exact assignment and capture expectations, local roots, tools, and finite limits.' }],
+        description: 'Authorize native file and foreground command reports for the selected Agent\'s current owner-local Root Task.',
+        parameters: [{ name: 'request', description: 'exact assignment and capture expectations, local roots, file tools, commands, and finite limits.' }],
         returns: 'durable opening intent; collection starts only after Task commits the same permission.',
       },
     ],
@@ -3184,7 +3184,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'shell',
     summary: 'Abstract bash execution service.',
-    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
+    description: 'Abstract bash execution service. Subclass, implement the abstract methods, and load the subclass as a plugin — it registers as `ctx.shell` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Resolved working directories belong to the execution world shared with the mounted filesystem and subprocess providers; filesystem process paths retain their meaning when passed as `workdir`.\n- run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.\n- start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.\n- ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.\n- A still-running background process is stopped and awaited when its owning composition tears down. With the subprocess seam that boundary is `ctx.subprocess` disposal, so a background process survives an executor-only reload.',
     methods: [
       {
         signature: 'abstract resolve(request: ShellExecRequest): ShellExecSpec',
@@ -4670,6 +4670,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'tool-bash/foreground-completed',
+    mode: 'emit',
+    signature: '\'tool-bash/foreground-completed\'(completion: ToolBashCompletion): void',
+    summary: 'Observe returned provider facts, including timeout or abort, before the tool pipeline settles.',
+    description: 'Observe returned provider facts, including timeout or abort, before the tool pipeline settles. Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.',
+    parameters: [{ name: 'completion', description: 'original operation identity and its actual provider result; no spill file is read.' }],
+  },
+  {
+    name: 'tool-bash/foreground-start',
+    mode: 'emit',
+    signature: '\'tool-bash/foreground-start\'(operation: ToolBashExecution): void',
+    summary: 'Observe an admitted foreground invocation immediately before its actual provider run.',
+    description: 'Observe an admitted foreground invocation immediately before its actual provider run. This does not establish process startup or completion. Observers own asynchronous work; failures are contained.',
+    parameters: [{ name: 'operation', description: 'exact registry execution, provider, and resolved command settings.' }],
+  },
+  {
     name: 'tool-fs/mutation-completed',
     mode: 'emit',
     signature: '\'tool-fs/mutation-completed\'(completion: ToolFsCompletion): void',
@@ -5638,6 +5654,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskClearRequest {\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly expectedBindingEpoch?: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n}',
   },
   {
+    name: 'DevelopmentTaskCommandObservationResult',
+    declaration: 'export type DevelopmentTaskCommandObservationResult = {\n    readonly kind: \'command-observation\';\n    readonly version: 4;\n    readonly tool: \'Bash\';\n    readonly fields: DevelopmentTaskCommandSelector;\n} & ({\n    readonly state: \'completed\';\n    readonly exitCode: number | null;\n    readonly signal: string | null;\n    readonly timedOut: boolean;\n    readonly aborted: boolean;\n    readonly timeoutMs: number;\n    readonly stdout: DevelopmentTaskCommandOutput;\n    readonly stderr: DevelopmentTaskCommandOutput;\n} | {\n    readonly state: \'unavailable\';\n    readonly reason: \'tool-failed\' | \'completion-unavailable\';\n});',
+  },
+  {
+    name: 'DevelopmentTaskCommandOutput',
+    declaration: 'export type DevelopmentTaskCommandOutput = {\n    readonly state: \'included\';\n    readonly text: string;\n    readonly truncated: boolean;\n} | {\n    readonly state: \'omitted\';\n    readonly reason: \'budget\';\n    readonly truncated: boolean;\n};',
+  },
+  {
+    name: 'DevelopmentTaskCommandSelector',
+    declaration: 'export interface DevelopmentTaskCommandSelector {\n    readonly command: string;\n    readonly rootIndex: number;\n}',
+  },
+  {
+    name: 'DevelopmentTaskCommandToolObservationSource',
+    declaration: 'export interface DevelopmentTaskCommandToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly version: 4;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n    readonly commands: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly initialization?: never;\n}',
+  },
+  {
     name: 'DevelopmentTaskCompletedFileToolObservationResult',
     declaration: 'export type DevelopmentTaskCompletedFileToolObservationResult = (Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Write\';\n}>, \'version\'> | Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Edit\';\n}>, \'version\'>) & {\n    readonly version: 3;\n    readonly completedFile: {\n        readonly state: \'included\';\n        readonly content: string;\n        readonly sha256: string;\n    } | {\n        readonly state: \'omitted\';\n        readonly reason: \'tool-failed\' | \'budget\' | \'unavailable\';\n    };\n};',
   },
@@ -5707,7 +5739,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContributionSource',
-    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource;',
+    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource;',
   },
   {
     name: 'DevelopmentTaskCreateRequest',
@@ -5779,7 +5811,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalContributionGrant',
-    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
+    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
   },
   {
     name: 'DevelopmentTaskLocalContributionId',
@@ -5807,7 +5839,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalToolObservationResult',
-    declaration: 'export type DevelopmentTaskLocalToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskCompletedFileToolObservationResult;',
+    declaration: 'export type DevelopmentTaskLocalToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskCompletedFileToolObservationResult | DevelopmentTaskCommandObservationResult;',
   },
   {
     name: 'DevelopmentTaskLogChange',
@@ -7055,7 +7087,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionCapture',
-    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly initialization?: ScopeAgentContributionInitialization;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
+    declaration: 'export interface ScopeAgentContributionCapture {\n    readonly routeRevision: number;\n    readonly selection: ScopeAgentContributionSelection;\n    readonly proposal: ScopeContributionProposal;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly invitation: ScopeContributionInvitation | null;\n    readonly receiving: ScopeAgentContributionReceiving | null;\n    readonly receivingIntent?: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly state: \'prepared\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly application: \'applying\' | \'waiting\' | \'cancelling\' | \'rejected\' | \'expired\' | null;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly initialization?: ScopeAgentContributionInitialization;\n    readonly collectionIssue: \'retention-limit\' | \'sample-limit\' | \'attribution-budget\' | \'durability-unavailable\' | \'durability-failed\' | null;\n    readonly pendingSamples: number;\n}',
   },
   {
     name: 'ScopeAgentContributionInitialization',
@@ -7087,7 +7119,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionRequest',
-    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n    readonly initialization?: ScopeAgentContributionInitializationRequest;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly localTask?: ScopeAgentLocalTaskTarget;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
+    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n    readonly initialization?: ScopeAgentContributionInitializationRequest;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly localTask?: ScopeAgentLocalTaskTarget;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
   },
   {
     name: 'ScopeAgentContributionSelection',
@@ -7135,11 +7167,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentLocalContributionCapture',
-    declaration: 'export interface ScopeAgentLocalContributionCapture {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly state: \'opening\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly pendingSamples: number;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: ScopeAgentContributionCapture[\'collectionIssue\'];\n}',
+    declaration: 'export interface ScopeAgentLocalContributionCapture {\n    readonly selection: ScopeAgentContributionSelection;\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly roots: readonly string[];\n    readonly tools: readonly (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly state: \'opening\' | \'active\' | \'ending\';\n    readonly collecting: boolean;\n    readonly pendingSamples: number;\n    readonly issue: \'owner-unavailable\' | \'capacity\' | \'rejected\' | null;\n    readonly collectionIssue: ScopeAgentContributionCapture[\'collectionIssue\'];\n}',
   },
   {
     name: 'ScopeAgentLocalContributionRequest',
-    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n}',
+    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly commands?: readonly DevelopmentTaskCommandSelector[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n}',
   },
   {
     name: 'ScopeAgentLocalContributionStatus',
@@ -8030,6 +8062,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ShellExecSpec {\n    command: string;\n    workdir: string;\n    timeoutMs: number;\n    stdoutMaxBytes: number;\n    signal?: AbortSignal | undefined;\n    stdin?: string | undefined;\n    env?: Record<string, string> | undefined;\n    dshEnv?: DshEnvironment | undefined;\n    sandboxPolicy: SandboxExecutionPolicy | undefined;\n}',
   },
   {
+    name: 'ShellExecutor',
+    declaration: 'export abstract class ShellExecutor extends Service {\n    constructor(ctx: Context);\n    get sandboxMode(): SandboxMode | undefined;\n    abstract resolve(request: ShellExecRequest): ShellExecSpec;\n    abstract run(spec: ShellExecSpec): Promise<ShellRunResult>;\n    abstract start(spec: ShellExecSpec): ShellProcess;\n}',
+  },
+  {
     name: 'ShellProcess',
     declaration: 'export interface ShellProcess {\n    status: ShellProcessStatus;\n    exitCode: number | null;\n    signal: NodeJS.Signals | null;\n    readonly done: Promise<void>;\n    sandbox?: ShellSandboxInfo;\n    readOutput(): ShellProcessRead;\n    kill(): boolean;\n}',
   },
@@ -8468,6 +8504,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TokenUsage',
     declaration: 'export interface TokenUsage {\n    inputTokens: number;\n    outputTokens: number;\n    totalTokens?: number;\n    cacheReadTokens?: number;\n    cacheWriteTokens?: number;\n    reasoningTokens?: number;\n}',
+  },
+  {
+    name: 'ToolBashCompletion',
+    declaration: 'export interface ToolBashCompletion {\n    readonly operation: ToolBashExecution;\n    readonly result: Readonly<ShellRunResult>;\n}',
+  },
+  {
+    name: 'ToolBashExecution',
+    declaration: 'export interface ToolBashExecution {\n    readonly execution: Readonly<ToolExecution>;\n    readonly shell: ShellExecutor;\n    readonly command: string;\n    readonly workdir: string;\n    readonly timeoutMs: number;\n}',
   },
   {
     name: 'ToolCallKind',

@@ -21,6 +21,6 @@
     - text: 允许自动协作
   - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
   - button "连接此会话" [disabled]
-  - group: 分享本会话的文件工作
+  - group: 分享本会话的工作
   - button "重新读取状态"
   - button "查看来源"

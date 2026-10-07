@@ -3586,6 +3586,36 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "DevelopmentTaskLocalToolObservationResult",
       "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandSelector",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandOutput",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCommandObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/shell.md",
+      "symbol": "ToolBashExecution",
+      "source": "packages/shell/tool-bash/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/shell.md",
+      "symbol": "ToolBashCompletion",
+      "source": "packages/shell/tool-bash/src/index.ts"
     }
   ]
 }

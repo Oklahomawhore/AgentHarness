@@ -22,7 +22,12 @@ function sameInvitation(left: ScopeContributionInvitation, right: ScopeContribut
     && a.ownerPeerId === b.ownerPeerId && a.contributorPeerId === b.contributorPeerId
     && a.captureId === b.captureId && a.captureGeneration === b.captureGeneration
     && a.source.name === b.source.name
-    && (a.source.kind === 'tool-observations' ? b.source.kind === 'tool-observations' && a.source.tools.length === b.source.tools.length
+    && (a.source.kind === 'tool-observations' ? b.source.kind === 'tool-observations'
+      && a.source.version === b.source.version && a.source.initialization === b.source.initialization
+      && a.source.fileContent === b.source.fileContent
+      && JSON.stringify(a.source.version === 4 ? a.source.commands.map(item => [item.command, item.rootIndex]) : null)
+        === JSON.stringify(b.source.version === 4 ? b.source.commands.map(item => [item.command, item.rootIndex]) : null)
+      && a.source.tools.length === b.source.tools.length
       && a.source.tools.every(tool => b.source.kind === 'tool-observations' && b.source.tools.includes(tool))
       : b.source.kind !== 'tool-observations' && a.source.method === b.source.method && a.source.path === b.source.path)
     && a.expiresAt === b.expiresAt && a.maxSamples === b.maxSamples && a.maxSampleBytes === b.maxSampleBytes

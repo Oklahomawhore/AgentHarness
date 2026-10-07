@@ -14,7 +14,7 @@
   - text: 粘贴协作入口
   - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{sharedTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
   - group:
-    - text: 分享本会话的文件工作
+    - text: 分享本会话的工作
     - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
     - status: 尚未允许分享文件工作
     - button "验证连接"
@@ -44,9 +44,11 @@
     - spinbutton "最多样本数"
     - text: 每份样本字节上限
     - spinbutton "每份样本字节上限"
-    - checkbox "分享修改后的完整文件内容"
+    - checkbox "分享修改后的完整文件内容" [disabled]
     - text: 分享修改后的完整文件内容
     - paragraph: 包含文件未修改的部分。仅分享本会话在获准目录执行原生工具操作时产生的完成文本，不扫描目录或另行读取文件；它不保证发送时仍是磁盘上的当前内容。
+    - checkbox "分享指定命令的执行结果"
+    - text: 分享指定命令的执行结果
     - checkbox "我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。"
     - text: 我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。
     - checkbox "同时分享本次范围内已记录的工具操作" [disabled]

@@ -1139,9 +1139,9 @@ interface ScopeAccessCurrentProjection extends ScopeAccessProjectionContent {
 type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection
 ```
 
-## 原生文件工作贡献
+## 原生工作贡献
 
-[原生来源贡献](../../packages/collaboration/scope-agent-contribution/README.zh.md)在明确本地许可与独立所有者批准后，采集一个既有普通 Agent 获准的文件工具完成记录。经过认证的管理方法返回本地持久状态，不暴露采集正文。修改操作比较采集身份；变化事件使 Client 观察失效，采集状态或 revision 均不证明模型已采用。
+[原生来源贡献](../../packages/collaboration/scope-agent-contribution/README.zh.md)在明确本地许可与独立所有者批准后，采集一个既有普通 Agent 获准的文件工具完成记录与明确选择的前台命令结果。经过认证的管理方法返回本地持久状态，不暴露采集正文。修改操作比较采集身份；变化事件使 Client 观察失效，采集状态或 revision 均不证明模型已采用。
 
 ```ts type-equiv
 /** One source capture identity, never reused after termination. */
@@ -1208,6 +1208,8 @@ interface ScopeAgentContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
   readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
@@ -1255,6 +1257,7 @@ interface ScopeAgentContributionCapture {
   readonly proposal: ScopeContributionProposal
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
   readonly invitation: ScopeContributionInvitation | null
@@ -1854,7 +1857,8 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 ```ts type-equiv
 /** Immutable source permission without local filesystem roots or session identifiers. */
 type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
-  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
+  | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
 ```
 
 ```ts type-equiv
@@ -2780,11 +2784,64 @@ type DevelopmentTaskCompletedFileToolObservationResult = (
 }
 ```
 
+命令结果分别保留退出、信号、超时和中止事实。保留的输出沿用提供方截断标记；分享预算不足时整项省略输出。这些观察描述一次已完成执行，不宣称当前代码已通过验证。
+
+```ts type-equiv
+/** One exact foreground command and its explicitly selected local working-directory root. */
+interface DevelopmentTaskCommandSelector {
+  readonly command: string
+  readonly rootIndex: number
+}
+```
+
+```ts type-equiv
+/** Explicit command-outcome permission, optionally combined with future file observations. */
+interface DevelopmentTaskCommandToolObservationSource {
+  readonly kind: 'tool-observations'
+  readonly version: 4
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
+}
+```
+
+```ts type-equiv
+/** One complete provider-returned output field, or explicit whole-field omission for the sharing budget. */
+type DevelopmentTaskCommandOutput =
+  | { readonly state: 'included'; readonly text: string; readonly truncated: boolean }
+  | { readonly state: 'omitted'; readonly reason: 'budget'; readonly truncated: boolean }
+```
+
+```ts type-equiv
+/** Foreground execution evidence; a completed report does not assert that current code passes verification. */
+type DevelopmentTaskCommandObservationResult = {
+  readonly kind: 'command-observation'
+  readonly version: 4
+  readonly tool: 'Bash'
+  readonly fields: DevelopmentTaskCommandSelector
+} & (
+  | {
+    readonly state: 'completed'
+    readonly exitCode: number | null
+    readonly signal: string | null
+    readonly timedOut: boolean
+    readonly aborted: boolean
+    readonly timeoutMs: number
+    readonly stdout: DevelopmentTaskCommandOutput
+    readonly stderr: DevelopmentTaskCommandOutput
+  }
+  | { readonly state: 'unavailable'; readonly reason: 'tool-failed' | 'completion-unavailable' }
+)
+```
+
 ```ts type-equiv
 /** Local reports require explicit permission before carrying a native completion's full text. */
 type DevelopmentTaskLocalToolObservationResult =
   | DevelopmentTaskToolObservationResult
   | DevelopmentTaskCompletedFileToolObservationResult
+  | DevelopmentTaskCommandObservationResult
 ```
 
 ```ts type-equiv
@@ -2834,6 +2891,7 @@ interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
+    | DevelopmentTaskCommandToolObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -2932,12 +2990,14 @@ type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionG
 ```
 
 ```ts type-equiv
-/** Explicit file permission for the selected Agent's current owner-local Root Task. */
+/** Explicit native file and command sharing permission for the selected Agent's current owner-local Root Task. */
 interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {
   readonly agentId: SessionId
   readonly expectedCapture: ScopeAgentContributionSelection | null
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
   readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
@@ -2951,6 +3011,7 @@ interface ScopeAgentLocalContributionCapture {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly roots: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly state: 'opening' | 'active' | 'ending'
   readonly collecting: boolean
   readonly pendingSamples: number
@@ -4065,7 +4126,7 @@ Source: [`packages/collaboration/scope-agent-context/src/index.ts`](../../packag
 
 ### `ctx.scopeAgentContributions` — `ScopeAgentContributions`
 
-Actual file-tool observations become durable original reports, then the existing owner protocol delivers them.
+Actual native execution observations become durable original reports, then the existing owner protocol delivers them.
 
 ```ts cordis-catalog
 /**
@@ -4083,8 +4144,8 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('permissionDraft') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>
 
 /**
- * Persist one Session's explicit file permission and request automatic activation of an equal or narrower owner approval.
- * @param request - exact capture expectation, owner entry, file scope, limits, and optional recorded-local-tool export consent.
+ * Persist one Session's explicit file and command sharing permission and request automatic activation of an equal or narrower owner approval.
+ * @param request - exact capture expectation, owner entry, file and command selections, limits, and optional recorded-local-tool export consent.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>
@@ -4126,8 +4187,8 @@ Actual file-tool observations become durable original reports, then the existing
 @Remote('localStatus') async localStatus(request: { readonly agentId: SessionId }): Promise<ScopeAgentLocalContributionStatus>
 
 /**
- * Authorize actual file tools for the selected Agent's current owner-local Root Task.
- * @param request - exact assignment and capture expectations, local roots, tools, and finite limits.
+ * Authorize native file and foreground command reports for the selected Agent's current owner-local Root Task.
+ * @param request - exact assignment and capture expectations, local roots, file tools, commands, and finite limits.
  * @returns durable opening intent; collection starts only after Task commits the same permission.
  */
 @Remote('requestLocal') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>

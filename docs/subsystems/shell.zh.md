@@ -164,6 +164,30 @@ interface ShellSandboxInfo {
 
 当受限模式没有可用后端时，`ctx.sandbox` 提供方会抛出、执行器会传播由[沙箱 seam](sandbox.zh.md)所有的 `SANDBOX_UNAVAILABLE` 错误码。选定的 runner 拒绝其 profile 时会触达同一个故障关闭的前台错误；已结束的后台任务则记录 `runnerFailed`。模型会在结果中收到拒绝/runner 事实，仅当拒绝标记指出生效模式时才得知该模式，并可通过 `sandbox_permissions` 加 `justification` 请求一次性、严格更宽松的重试；执行任何操作前，`ctx.approval` 必须批准该次确切调用。完整的策略与切换设计见[沙箱 Agent Note](../../.agents/notes/implemented/feature/2026-07-06-sandbox.zh.md)。
 
+## 前台工具观察
+
+`dsh-tool-bash` 在策略批准与参数解析后、调用提供方前立即发出 `tool-bash/foreground-start`，在提供方返回时发出 `tool-bash/foreground-completed`。记录不包含解析后的环境变量或标准输入。它们不授予分享权限，也不证明工具已最终结算；消费方须将同一次执行与其持久化最终结果关联。后台调用和提供方拒绝不会发出完成观察，观察者失败不改变命令执行。
+
+```ts type-equiv
+/** Actual foreground dispatch after policy approval and request resolution; excludes resolved environment and stdin. */
+interface ToolBashExecution {
+  readonly execution: Readonly<ToolExecution>
+  readonly shell: ShellExecutor
+  readonly command: string
+  /** Resolved process path in the executor's filesystem execution world. */
+  readonly workdir: string
+  readonly timeoutMs: number
+}
+```
+
+```ts type-equiv
+/** The same foreground operation and its returned provider facts, before final tool settlement. */
+interface ToolBashCompletion {
+  readonly operation: ToolBashExecution
+  readonly result: Readonly<ShellRunResult>
+}
+```
+
 ## 后台进程：`ShellProcess`
 
 `start()` 返回不含 id 或所有者的句柄。`dsh-tool-bash` 将它适配为 `ctx.jobs.start()` 钩子；随后由通用运行时拥有任务标识与生命周期。`done` 会在底层进程结算时完成且绝不 reject；subprocess 提供方的 rejection 会生成状态为 `killed` 的进程，并把不声明阶段的错误写入 stderr。进程结算后仍可读取，并且沙箱事实会在 `done` 完成前写入。
@@ -239,6 +263,7 @@ Abstract bash execution service. Subclass, implement the abstract methods, and l
 
 Implementations must honor these semantics:
 
+- Resolved working directories belong to the execution world shared with the mounted filesystem and subprocess providers; filesystem process paths retain their meaning when passed as `workdir`.
 - run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.
 - start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.
 - ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.
@@ -303,4 +328,44 @@ list(): BashEnvVariableInfo[]
 Types: [DshEnvironment](subprocess.zh.md) · [ToolExecution](tools.zh.md)
 
 Source: [`packages/shell/shell-env/src/index.ts`](../../packages/shell/shell-env/src/index.ts)
+
+<a id="tool-bash-events"></a>
+
+### `tool-bash/*` events
+
+<a id="tool-bashforeground-completed--emit"></a>
+
+#### `tool-bash/foreground-completed` — emit
+
+Observe returned provider facts, including timeout or abort, before the tool pipeline settles. Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.
+
+```ts cordis-catalog
+/**
+ * Observe returned provider facts, including timeout or abort, before the tool pipeline settles.
+ * Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.
+ * @param completion - original operation identity and its actual provider result; no spill file is read.
+ * @mode emit
+ */
+'tool-bash/foreground-completed'(completion: ToolBashCompletion): void
+```
+
+Source: [`packages/shell/tool-bash/src/index.ts`](../../packages/shell/tool-bash/src/index.ts)
+
+<a id="tool-bashforeground-start--emit"></a>
+
+#### `tool-bash/foreground-start` — emit
+
+Observe an admitted foreground invocation immediately before its actual provider run. This does not establish process startup or completion. Observers own asynchronous work; failures are contained.
+
+```ts cordis-catalog
+/**
+ * Observe an admitted foreground invocation immediately before its actual provider run.
+ * This does not establish process startup or completion. Observers own asynchronous work; failures are contained.
+ * @param operation - exact registry execution, provider, and resolved command settings.
+ * @mode emit
+ */
+'tool-bash/foreground-start'(operation: ToolBashExecution): void
+```
+
+Source: [`packages/shell/tool-bash/src/index.ts`](../../packages/shell/tool-bash/src/index.ts)
 <!-- END GENERATED cordis-surface -->

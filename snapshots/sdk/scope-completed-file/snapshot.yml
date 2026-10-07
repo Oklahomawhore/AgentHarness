@@ -3,6 +3,8 @@ scenario: scope-completed-file
 profile: sdk
 composition: sdk-scope-completed-file
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-completed-file
   pin: true

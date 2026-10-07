@@ -16,6 +16,8 @@
 
 Claude 联合场景使用一个所有者、一个已有原生 Session 和一个已观察的外部 Claude 会话，各有独立 Host。两位参与者使用同一多人入口；来源页面关闭后，所有者审批仍可完成接入。原生 Write 进入受控 Claude Hook 输出，受控 Claude 完成观察进入实际原生模型请求。停止 Claude 贡献保留其读取；退出联合协作会结束原权限，原生成员仍可继续。Hook 输出证明上下文已准备，不证明外部 Claude 模型已经消费。该场景不使用付费模型或物理第二设备。
 
+原生命令场景使用本机两个 Web Host、受控模型回复和真实前台 Bash 执行。来源先明确选择命令与目录，再由所有者批准；文件许可本身不能分享命令结果。实际接收请求区分最新失败与较早成功，并排除未选择的命令。停止贡献保留读取，退出保留原 Task、文件采集和工具。每份捕获的请求都从持久 Session 事件重建；这不证明物理设备连接或模型判断能力。
+
 ## 这些是 Host 面的测试
 
 它们在根 `tsconfig.host.json` 中做类型检查，而不在 Client aggregate 中，因为它们直接读取 Host 服务：`ctx.connection`、Host 侧 `SessionStore` 与 `ctx.sessionProjectionCache`。运行时驱动 浏览器并不使一个文件成为 Client 程序的一部分——两个 face 在相同的键上以不同服务合并 cordis `Context`，因此单个程序无法同时看见两者。把这些文件挪进 Client aggregate 会让每一处 Host 服务访问都无法编译。

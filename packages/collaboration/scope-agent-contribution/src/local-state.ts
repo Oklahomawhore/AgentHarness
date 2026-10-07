@@ -1,6 +1,8 @@
 /** Owner-local source records retain exact Task permission without a peer invitation or network identity. */
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
+import type { DevelopmentTaskCommandSelector } from '@deepseek-ai/dsh-development-task/types'
+import { commandSelectorSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
@@ -19,6 +21,7 @@ export interface LocalCapture {
   readonly roots: readonly string[]
   readonly rootUrls: readonly string[]
   readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[] | undefined
   readonly state: 'opening' | 'active' | 'ending'
   readonly sequence: number
   readonly issue?: 'owner-unavailable' | 'capacity' | 'rejected' | undefined
@@ -66,12 +69,15 @@ export function validateLocalReceipt(grant: DevelopmentTaskLocalContributionGran
 
 const captureSchema: z.ZodType<LocalCapture> = z.object({
   grant: localContributionGrantSchema, roots: z.array(z.string().min(1)).min(1),
-  rootUrls: z.array(z.string().startsWith('file:')).min(1), tools: z.array(z.enum(['write', 'edit'])).min(1).max(2),
+  rootUrls: z.array(z.string().startsWith('file:')).min(1), tools: z.array(z.enum(['write', 'edit'])).max(2),
+  commands: z.array(commandSelectorSchema).min(1).optional(),
   state: z.enum(['opening', 'active', 'ending']), sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((capture, ctx) => {
   if (capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
     || new Set(capture.tools).size !== capture.tools.length || capture.grant.source.name !== 'session-work'
+    || !isDeepStrictEqual(capture.commands, capture.grant.source.version === 4 ? capture.grant.source.commands : undefined)
+    || capture.commands?.some(command => command.rootIndex >= capture.roots.length) === true
     || !isDeepStrictEqual(capture.grant.source.tools, capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'))
     || capture.sequence > capture.grant.maxSamples) {
     ctx.addIssue({ code: 'custom', message: 'native local contribution differs from the retained permission' })
@@ -104,7 +110,7 @@ const recordSchema: z.ZodType<LocalSourceRecord> = z.object({
       if (item.id !== id || item.captureId !== capture.grant.captureId || item.captureGeneration !== capture.grant.captureGeneration
         || item.callSeq >= item.resultSeq || item.sample.sourceId !== nativeDigest([id, item.sample.sequence])
         || item.sample.sequence > capture.sequence || seen.has(item.sample.sequence)
-        || !capture.grant.source.tools.includes(item.sample.result.tool)) throw new Error('local sample has different execution coordinates')
+        || (item.sample.result.kind === 'tool-observation' && !capture.grant.source.tools.includes(item.sample.result.tool))) throw new Error('local sample has different execution coordinates')
       localContributionRequestSchema.parse({ grant: capture.grant, ...item.sample })
       seen.add(item.sample.sequence)
       if (item.receipt !== undefined) validateLocalReceipt(capture.grant, item.receipt, item.sample)

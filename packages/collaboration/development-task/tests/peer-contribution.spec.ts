@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import DevelopmentTaskService, { peerContributionArtifactId, peerContributionPayloadDigest, peerContributionPublicationId } from '../src/index.ts'
 import type { Config, DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskId,
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId,
-  DevelopmentTaskCaptureGeneration, DevelopmentTaskObservedSourceId } from '../src/index.ts'
+  DevelopmentTaskCaptureGeneration, DevelopmentTaskObservedSourceId, DevelopmentTaskToolObservationResult } from '../src/index.ts'
 import { developmentTaskContextBlockSchema, developmentTaskEventSchema, peerContributionAdmissionReceiptSchema,
   peerContributionStateSchema, toolObservationResultSchema, completedFileToolObservationResultSchema,
   recordedToolObservationResultSchema, legacyPeerContributionSampleSchema, recordedPeerContributionSampleSchema, localContributionSampleSchema } from '../src/schema.ts'
@@ -335,7 +335,9 @@ it('refuses active direct peer evidence on Mesh replicas but preserves terminal 
   expect((await remote.tasks.currentContextView(task.id)).task.context).toEqual(tasks.contextView(task.id).task.context)
 })
 
-function toolSample(grant: DevelopmentTaskPeerContributionGrant, sequence = 1): DevelopmentTaskPeerContributionRequest {
+function toolSample(grant: DevelopmentTaskPeerContributionGrant, sequence = 1): DevelopmentTaskPeerContributionRequest & {
+  readonly result: Extract<DevelopmentTaskToolObservationResult, { tool: 'Write' }>
+} {
   return { grant, sourceId: sequence.toString(16).padStart(64, '0') as DevelopmentTaskObservedSourceId, sequence,
     result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
       fields: { rootIndex: 0, path: 'src/order.ts', content: 'export const orderCode = "新🙂"' }, omissions: [] } }
@@ -353,7 +355,11 @@ it('admits ordered Write and Edit events for different files without an artifact
   const view = await tasks.currentContextView(task.id)
   expect(view.task.context).toEqual([first.publication, second.publication])
   await expect(tasks.admitPeerContribution(toolSample(grant, 3), source)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
-  expect(view.task.context.map(item => item.peerToolObservation?.fields.path)).toEqual(['src/order.ts', 'guide/contract.md'])
+  expect(view.task.context.map((item) => {
+    const report = item.peerToolObservation
+    if (report?.kind !== 'tool-observation') throw new Error('expected file tool report')
+    return report.fields.path
+  })).toEqual(['src/order.ts', 'guide/contract.md'])
   expect(view.task.context.map(item => item.peerToolObservation?.sequence)).toEqual([1, 2])
   expect(view.task.context.every(item => item.peerObservation === undefined && item.publishedBy === undefined)).toBe(true)
   expect(first.publication.peerToolObservation).toMatchObject({ observerPeerId: source, sourceName: 'session-work',
@@ -362,8 +368,10 @@ it('admits ordered Write and Edit events for different files without an artifact
   expect(first.publication.text).toContain('has not independently verified')
   expect(rooms.list().participants).toEqual(before)
   expect(tasks.assignmentLog()).toEqual([])
-  expect(Object.isFrozen(first.publication.peerToolObservation?.fields)).toBe(true)
-  expect(Object.isFrozen(first.publication.peerToolObservation?.omissions)).toBe(true)
+  const firstReport = first.publication.peerToolObservation
+  if (firstReport?.kind !== 'tool-observation') throw new Error('expected first file tool report')
+  expect(Object.isFrozen(firstReport.fields)).toBe(true)
+  expect(Object.isFrozen(firstReport.omissions)).toBe(true)
   const retained = tasks.peerContributions({})[0]!.grant.source
   if (retained.kind !== 'tool-observations') throw new Error('expected tool permission')
   expect(Object.isFrozen(retained)).toBe(true)
@@ -509,7 +517,6 @@ it('requires explicit historical-sharing authority and preserves recorded proven
   const { tasks, task, grant } = await scenario({}, { source: { kind: 'tool-observations', version: 2,
     initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write', 'Edit'] } })
   const live = toolSample(grant)
-  if (!('kind' in live.result)) throw new Error('expected tool report')
   const recorded: DevelopmentTaskPeerContributionRequest = { ...live, result: { ...live.result, version: 2,
     origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } } }
   const { grant: _grant, ...body } = recorded
@@ -551,7 +558,6 @@ it('rejects incomplete or extra recorded origins and binds each origin field int
   const grant = grantFor('task' as DevelopmentTaskId, { source: { kind: 'tool-observations', version: 2,
     initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write'] } })
   const live = toolSample(grant)
-  if (!('kind' in live.result)) throw new Error('expected tool report')
   const result = { ...live.result, version: 2 as const,
     origin: { kind: 'recorded-local-tools' as const, planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } }
   for (const origin of [undefined, { ...result.origin, localSessionId: 'private' }, { ...result.origin, planDigest: '' },
@@ -571,7 +577,6 @@ it.each(['history', 'tool'] as const)('rejects serialized inherited recorded rep
     initialization: 'recorded-local-tools', name: 'session-work', tools: ['Write'] } })
   await tasks.openPeerContribution(grant)
   const original = toolSample(grant)
-  if (!('kind' in original.result)) throw new Error('expected tool report')
   const recorded: DevelopmentTaskPeerContributionRequest = { ...original, result: { ...original.result, version: 2,
     origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } } }
   const admitted = await tasks.admitPeerContribution(recorded, source)

@@ -164,6 +164,30 @@ interface ShellSandboxInfo {
 
 The `SANDBOX_UNAVAILABLE` error code (owned by the [sandbox seam](sandbox.md)) is what the `ctx.sandbox` provider throws — and the executor propagates — when a confined mode has no usable backend. A selected runner refusing its profile reaches the same fail-closed foreground error; a settled background job records `runnerFailed`. The model receives denial/runner facts in results, learns the effective mode only when a denial marker names it, and can request a one-shot strictly wider retry through `sandbox_permissions` plus `justification`; `ctx.approval` must grant that exact call before anything executes. The complete policy and switching design is the [sandbox Agent Note](../../.agents/notes/implemented/feature/2026-07-06-sandbox.md).
 
+## Foreground tool observations
+
+`dsh-tool-bash` emits `tool-bash/foreground-start` after policy approval and resolution, immediately before the provider run, and `tool-bash/foreground-completed` when that provider returns. The records exclude resolved environment and stdin. They do not grant sharing permission or prove final tool settlement; consumers correlate the same execution with its durable final result. Background calls and provider rejections do not emit completion, and observer failures do not change command execution.
+
+```ts type-equiv
+/** Actual foreground dispatch after policy approval and request resolution; excludes resolved environment and stdin. */
+interface ToolBashExecution {
+  readonly execution: Readonly<ToolExecution>
+  readonly shell: ShellExecutor
+  readonly command: string
+  /** Resolved process path in the executor's filesystem execution world. */
+  readonly workdir: string
+  readonly timeoutMs: number
+}
+```
+
+```ts type-equiv
+/** The same foreground operation and its returned provider facts, before final tool settlement. */
+interface ToolBashCompletion {
+  readonly operation: ToolBashExecution
+  readonly result: Readonly<ShellRunResult>
+}
+```
+
 ## Background processes: `ShellProcess`
 
 `start()` returns a handle with no id or owner. `dsh-tool-bash` adapts it into `ctx.jobs.start()` hooks; the generic runtime then owns job identity and lifecycle. `done` resolves when the underlying process settles and never rejects; a subprocess provider rejection becomes a `killed` process with a stage-neutral error on stderr. Reads remain valid after settlement, and sandbox facts are stamped before `done` resolves.
@@ -239,6 +263,7 @@ Abstract bash execution service. Subclass, implement the abstract methods, and l
 
 Implementations must honor these semantics:
 
+- Resolved working directories belong to the execution world shared with the mounted filesystem and subprocess providers; filesystem process paths retain their meaning when passed as `workdir`.
 - run rejects only for infrastructure failures. Nonzero exits, timeout kills, and abort kills resolve with a ShellRunResult.
 - start returns immediately; no timeout applies to background processes. `done` settles at process close and never rejects; spawn failures settle as `killed` with the error on stderr.
 - ShellProcess.readOutput is incremental: consecutive reads never repeat output. Lossy reads report truncation and available spill files.
@@ -303,4 +328,44 @@ list(): BashEnvVariableInfo[]
 Types: [DshEnvironment](subprocess.md) · [ToolExecution](tools.md)
 
 Source: [`packages/shell/shell-env/src/index.ts`](../../packages/shell/shell-env/src/index.ts)
+
+<a id="tool-bash-events"></a>
+
+### `tool-bash/*` events
+
+<a id="tool-bashforeground-completed--emit"></a>
+
+#### `tool-bash/foreground-completed` — emit
+
+Observe returned provider facts, including timeout or abort, before the tool pipeline settles. Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.
+
+```ts cordis-catalog
+/**
+ * Observe returned provider facts, including timeout or abort, before the tool pipeline settles.
+ * Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.
+ * @param completion - original operation identity and its actual provider result; no spill file is read.
+ * @mode emit
+ */
+'tool-bash/foreground-completed'(completion: ToolBashCompletion): void
+```
+
+Source: [`packages/shell/tool-bash/src/index.ts`](../../packages/shell/tool-bash/src/index.ts)
+
+<a id="tool-bashforeground-start--emit"></a>
+
+#### `tool-bash/foreground-start` — emit
+
+Observe an admitted foreground invocation immediately before its actual provider run. This does not establish process startup or completion. Observers own asynchronous work; failures are contained.
+
+```ts cordis-catalog
+/**
+ * Observe an admitted foreground invocation immediately before its actual provider run.
+ * This does not establish process startup or completion. Observers own asynchronous work; failures are contained.
+ * @param operation - exact registry execution, provider, and resolved command settings.
+ * @mode emit
+ */
+'tool-bash/foreground-start'(operation: ToolBashExecution): void
+```
+
+Source: [`packages/shell/tool-bash/src/index.ts`](../../packages/shell/tool-bash/src/index.ts)
 <!-- END GENERATED cordis-surface -->

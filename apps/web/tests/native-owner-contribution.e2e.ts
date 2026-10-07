@@ -462,7 +462,8 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     expect(readingAfterStop.state).toMatchObject(automaticJoin
       ? { mode: 'paused', automatic: REMOTE_POLICY, usedBudget: 1, pauseReason: 'user' }
       : { mode: 'passive', automatic: null, usedBudget: 0 })
-    expect(await sharing.getByRole('button', { name: '退出此次协作', exact: true }).count()).toBe(0)
+    // The empty capture label can precede the receiving-continuation cleanup notification.
+    await sharing.getByRole('button', { name: '退出此次协作', exact: true }).waitFor({ state: 'detached' })
     await capture(remotePage, b.workspaceCwd, 'joint-sharing-stopped', jointReplacements, REMOTE)
     if (automaticJoin) {
       const [resumedRead] = await Promise.all([b.whenTurnSettled(30_000),

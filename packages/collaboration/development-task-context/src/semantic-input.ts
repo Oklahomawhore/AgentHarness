@@ -79,6 +79,12 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
         omitted.push({ source, reason: 'self-published' }); continue
       }
       const tool = publication.peerToolObservation ?? publication.localToolObservation
+      if (tool?.kind === 'command-observation') {
+        selected.push(source)
+        mandatory.push({ source, basis: historical ? 'frozen-parent-snapshot' : 'current-task-as-reported',
+          kind: 'command-evidence', publication })
+        continue
+      }
       const local = publication.localContribution?.grant
       const grant = publication.peerContribution?.grant
       sources.push({ sourceId: semanticDigest(source), source, body: publication.text,

@@ -111,9 +111,27 @@ export type DevelopmentTaskCompletedFileToolObservationSource = Omit<Development
   readonly fileContent: 'completed-native-file'
 }
 
+/** One exact foreground command and its explicitly selected local working-directory root. */
+export interface DevelopmentTaskCommandSelector {
+  readonly command: string
+  readonly rootIndex: number
+}
+
+/** Explicit command-outcome permission, optionally combined with future file observations. */
+export interface DevelopmentTaskCommandToolObservationSource {
+  readonly kind: 'tool-observations'
+  readonly version: 4
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
+}
+
 /** Immutable source permission without local filesystem roots or session identifiers. */
 export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
-  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
+  | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -163,10 +181,36 @@ export type DevelopmentTaskCompletedFileToolObservationResult = (
     | { readonly state: 'omitted'; readonly reason: 'tool-failed' | 'budget' | 'unavailable' }
 }
 
+/** One complete provider-returned output field, or explicit whole-field omission for the sharing budget. */
+export type DevelopmentTaskCommandOutput =
+  | { readonly state: 'included'; readonly text: string; readonly truncated: boolean }
+  | { readonly state: 'omitted'; readonly reason: 'budget'; readonly truncated: boolean }
+
+/** Foreground execution evidence; a completed report does not assert that current code passes verification. */
+export type DevelopmentTaskCommandObservationResult = {
+  readonly kind: 'command-observation'
+  readonly version: 4
+  readonly tool: 'Bash'
+  readonly fields: DevelopmentTaskCommandSelector
+} & (
+  | {
+    readonly state: 'completed'
+    readonly exitCode: number | null
+    readonly signal: string | null
+    readonly timedOut: boolean
+    readonly aborted: boolean
+    readonly timeoutMs: number
+    readonly stdout: DevelopmentTaskCommandOutput
+    readonly stderr: DevelopmentTaskCommandOutput
+  }
+  | { readonly state: 'unavailable'; readonly reason: 'tool-failed' | 'completion-unavailable' }
+)
+
 /** Local reports require explicit permission before carrying a native completion's full text. */
 export type DevelopmentTaskLocalToolObservationResult =
   | DevelopmentTaskToolObservationResult
   | DevelopmentTaskCompletedFileToolObservationResult
+  | DevelopmentTaskCommandObservationResult
 
 /** Peer reports preserve separate live, recorded-work, and completed-file permissions. */
 export type DevelopmentTaskPeerToolObservationResult =
@@ -186,6 +230,7 @@ export interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
+    | DevelopmentTaskCommandToolObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number

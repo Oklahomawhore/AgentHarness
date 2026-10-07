@@ -195,6 +195,32 @@ describe('source contribution onboarding', () => {
     expect(screen.getByText(zh['contribution.reconnect'])).toBeTruthy()
   })
 
+  it.each<ScopeContributionInvitation['grant']['source']>([
+    { kind: 'tool-observations', version: 2, initialization: 'recorded-local-tools', name: 'File work', tools: ['Write', 'Edit'] },
+    { kind: 'tool-observations', version: 3, fileContent: 'completed-native-file', name: 'File work', tools: ['Write', 'Edit'] },
+    { kind: 'tool-observations', version: 4, name: 'File work', tools: ['Write', 'Edit'],
+      commands: [{ command: 'node verify.mjs', rootIndex: 0 }] },
+  ])('retains a different source permission preview instead of acknowledging the existing file grant: $version', async (source) => {
+    const original: ScopeContributionInvitation = { ...invitation, kind: 'tool-contribution',
+      grant: { ...G, source: { kind: 'tool-observations', name: 'File work', tools: ['Write', 'Edit'] } } }
+    const changed: ScopeContributionInvitation = { ...original, grant: { ...original.grant, source } }
+    const authority: ClaudeScopeContributionDetail = { session: { ...session, contributionState: 'active' },
+      capture: { ...captured.capture!, proposal: { ...proposal, source: original.grant.source },
+        source: { kind: 'tool-observations', tools: ['Write', 'Edit'] }, invitation: original } }
+    const actions = sourceActions({ previewContributionText: vi.fn(async () => changed) })
+    const view = render(<SourceContributionPanel session={session}
+      entry={{ status: 'ready', pending: false, value: authority }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.reconnect']))
+    paste(zh['contribution.pasteInvitation'], 'different-source-permission')
+    fireEvent.click(screen.getByRole('button', { name: zh['contribution.verifyInvitation'] }))
+    await screen.findByRole('button', { name: zh['contribution.confirmReconnect'] })
+    view.rerender(<SourceContributionPanel session={session}
+      entry={{ status: 'ready', pending: false, value: { ...authority } }} {...actions} t={t} />)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['contribution.confirmReconnect'] }).disabled).toBe(false)
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.pasteInvitation']).value).toBe('different-source-permission')
+    expect(actions.activateContribution).not.toHaveBeenCalled()
+  })
+
   it('retains a different-address preview and its draft when reconnecting fails', async () => {
     const authority: ClaudeScopeContributionDetail = {
       ...captured, session: { ...session, contributionState: 'active' }, capture: { ...captured.capture!, invitation },

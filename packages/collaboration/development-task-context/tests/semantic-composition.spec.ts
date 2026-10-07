@@ -333,7 +333,7 @@ it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves th
   const adapter = new CompositionAdapter()
   second.ctx.effect(() => second.ctx.llm.registerAdapter(['semantic-composition'], adapter))
   const backend = second.ctx.developmentTaskContextBackend
-  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 5,
+  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 6,
     system: legacySemanticSystem, config: legacyConfig }) })
   expect(backend.identity).not.toEqual(request.backend)
   const reopened = await readAudit(second.auditPersistence)

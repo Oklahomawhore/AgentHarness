@@ -15,7 +15,7 @@
   - text: 粘贴协作入口
   - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{ownerTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"contribution-entry\",\"sourceKind\":\"tool-observations\"}"
   - group:
-    - text: 分享本会话的文件工作
+    - text: 分享本会话的工作
     - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
     - status: 正在采集已授权的文件工作
     - term: 目标 Task
@@ -34,6 +34,7 @@
     - definition: "8"
     - term: 每份样本字节上限
     - definition: "8192"
+    - paragraph: 既有文件许可不包含命令结果。要加入命令许可，请结束这份分享；联合加入须先退出此次协作，再重新申请。
     - group: 已批准的权限
     - paragraph: 等待提交的观察：0
     - button "停止分享并撤回"

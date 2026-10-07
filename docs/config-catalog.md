@@ -816,7 +816,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task/src/index.ts:143`](../packages/collaboration/development-task/src/index.ts)
+Source: [`packages/collaboration/development-task/src/index.ts:144`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
@@ -2414,7 +2414,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:50`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:56`](../packages/collaboration/scope-agent-contribution/src/index.ts)
 
 <a id="deepseek-aidsh-scope-transportlibp2p"></a>
 
@@ -3352,7 +3352,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-bash/src/index.ts:33`](../packages/shell/tool-bash/src/index.ts)
+Source: [`packages/shell/tool-bash/src/index.ts:88`](../packages/shell/tool-bash/src/index.ts)
 
 <a id="deepseek-aidsh-tool-bash-persistent"></a>
 

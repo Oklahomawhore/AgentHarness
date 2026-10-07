@@ -6,7 +6,7 @@ import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection } fr
 
 /** Selects complete original publications; it performs no semantic inference or summarization. */
 export default class TextDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
-  readonly identity = { id: 'text', revision: '8' }
+  readonly identity = { id: 'text', revision: '9' }
 
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   override async compute(input: DevelopmentTaskContextInput): Promise<DevelopmentTaskContextProjection> {

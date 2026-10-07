@@ -413,7 +413,7 @@ it('budgets the complete compact tool report exactly and still withdraws it with
   expect(withdrawn.text).not.toContain('TOOL_VALUE')
   expect(withdrawn.omittedSources.map(item => item.reason)).toEqual(['withdrawn'])
   expect(withdrawn.text).toContain('The owner ended this peer contribution.')
-  expect(provider.identity).toEqual({ id: 'text', revision: '8' })
+  expect(provider.identity).toEqual({ id: 'text', revision: '9' })
 })
 
 function canonicalToolReport(publication: PeerPublication): PeerPublication {

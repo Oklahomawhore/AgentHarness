@@ -26,6 +26,25 @@ export const zh = {
 
   'contribution.initialization': '既有记录分享',
   'contribution.recordedTools': '允许分享加入前已记录的工具操作，以及后续获准的新操作。',
+  'native.commands.active': '正在采集已授权的工作结果',
+  'native.commands.approve': '批准读取与所选工作贡献',
+  'native.commands.approvalHint': '批准此会话读取整个目标，并接受所展示的文件与命令结果许可；不授予命令执行或自动工作权限。',
+  'native.commands.consent': '分享指定命令的执行结果',
+  'native.commands.hint': '仅自动分享这些命令在所选目录中完成的前台执行结果，包括标准输出、错误输出和退出状态。目录精确匹配，不包含子目录。此许可不会执行命令或改变工具权限。',
+  'native.commands.item': '命令 {index}',
+  'native.commands.command': '完整命令',
+  'native.commands.cwd': '命令工作目录',
+  'native.commands.chooseRoot': '选择上方已填写的目录',
+  'native.commands.root': '目录 {index}',
+  'native.commands.add': '添加另一条命令',
+  'native.commands.remove': '移除此命令',
+  'native.commands.limits': '文件与命令结果共用上述期限、样本数和每条字节上限。输出可能截断或省略；一次执行结果不证明之后代码仍然通过验证。',
+  'native.commands.localConsent': '我允许将上述文件操作与已选命令结果分享到这个目标，直到到期或我停止分享。',
+  'native.commands.remoteConsent': '我允许分享上述文件操作与已选命令结果。任务所有者批准后可自动启用，直到到期或我停止分享。',
+  'native.commands.historyExclusive': '命令结果分享不能与已有工具记录初始化同时选择；不会分享授权前的命令结果。',
+  'native.commands.scope': '获准分享的命令结果',
+  'native.commands.stopHint': '停止这份分享会同时撤回其中的文件与命令结果，不停止命令执行或已连接的读取，也不影响另一份本地采集。',
+  'native.commands.renew': '既有文件许可不包含命令结果。要加入命令许可，请结束这份分享；联合加入须先退出此次协作，再重新申请。',
   'native.fileContent.consent': '分享修改后的完整文件内容',
   'native.fileContent.hint': '包含文件未修改的部分。仅分享本会话在获准目录执行原生工具操作时产生的完成文本，不扫描目录或另行读取文件；它不保证发送时仍是磁盘上的当前内容。',
   'native.fileContent.historyExclusive': '完整文件内容与已有工具记录初始化不能同时选择；已有记录不会因此取得新的内容许可。',
@@ -247,7 +266,7 @@ export const zh = {
   'native.suggestion.loading': '正在读取本机建议…',
   'native.suggestion.unavailable': '本机未提供权限建议，请手动填写。',
   'native.suggestion.failed': '未能取得本机建议。已保留当前输入，可重试或手动填写。',
-  'native.share.title': '分享本会话的文件工作',
+  'native.share.title': '分享本会话的工作',
   'native.share.parallel': '本地与他人目标各有一份文件分享许可。请在对应目标中查看或停止；停止其中一份不会停止另一份。',
   'native.share.verify': '验证连接',
   'native.share.verifying': '正在验证任务所有者的连接…',
@@ -639,6 +658,34 @@ export const en = {
 
   'contribution.initialization': 'Recorded work sharing',
   'contribution.recordedTools': 'Allows tool observations recorded before joining, as well as subsequent permitted work.',
+  'native.commands.active': 'Collecting permitted work results',
+  'native.commands.approve': 'Approve reading and selected work contributions',
+  'native.commands.approvalHint': 'Approve reading of the whole goal and the displayed file and command-result permission. ' +
+    'This grants neither command execution nor automatic work.',
+  'native.commands.consent': 'Share results from selected commands',
+  'native.commands.hint': 'Automatically shares completed foreground results, including stdout, stderr and exit status, only ' +
+    'for these exact commands and directories. Subdirectories are excluded. This permission neither runs ' +
+    'commands nor changes tool permissions.',
+  'native.commands.item': 'Command {index}',
+  'native.commands.command': 'Exact command',
+  'native.commands.cwd': 'Command working directory',
+  'native.commands.chooseRoot': 'Select a directory entered above',
+  'native.commands.root': 'Directory {index}',
+  'native.commands.add': 'Add another command',
+  'native.commands.remove': 'Remove this command',
+  'native.commands.limits': 'Files and command results share the expiry, sample count and per-sample byte limit above. Output ' +
+    'may be truncated or omitted; one result does not validate later code changes.',
+  'native.commands.localConsent': 'I allow these file operations and selected command results to be shared with this goal until expiry ' +
+    'or until I stop sharing.',
+  'native.commands.remoteConsent': 'I allow these file operations and selected command results to be shared and enabled automatically ' +
+    'after owner approval, until expiry or until I stop sharing.',
+  'native.commands.historyExclusive': 'Command results cannot be combined with recorded-tool initialization. Commands completed before ' +
+    'permission are not shared.',
+  'native.commands.scope': 'Permitted command results',
+  'native.commands.stopHint': 'Stopping this sharing withdraws its file and command results. It does not stop command execution, ' +
+    'adopted reading or a separate local capture.',
+  'native.commands.renew': 'Existing file permission does not include command results. End this sharing before applying with ' +
+    'commands; for a joint entry, leave this collaboration first.',
   'native.fileContent.consent': 'Share complete file contents after changes',
   'native.fileContent.hint': 'Includes unchanged parts. Shares completion text from this session’s permitted native file operations ' +
     'without scanning directories or reading files again; it does not prove current disk contents when sent.',
@@ -862,7 +909,7 @@ export const en = {
   'native.suggestion.loading': 'Reading local suggestions…',
   'native.suggestion.unavailable': 'This Host has no permission suggestions. Fill in the fields manually.',
   'native.suggestion.failed': 'Local suggestions could not be read. Your inputs are unchanged; retry or fill in the fields manually.',
-  'native.share.title': 'Share this session’s file work',
+  'native.share.title': 'Share this session’s work',
   'native.share.parallel': 'Local and peer goals have separate file-sharing permissions. Review or stop each under its target; stopping one preserves the other.',
   'native.share.verify': 'Check connection',
   'native.share.verifying': 'Checking the connection to the task owner…',

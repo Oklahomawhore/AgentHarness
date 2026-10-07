@@ -2,7 +2,8 @@
 import { z } from 'zod'
 import {
   peerContributionGrantSchema, peerContributionProposalSchema, legacyPeerContributionSampleSchema,
-  recordedPeerContributionSampleSchema, completedFilePeerContributionSampleSchema, peerContributionReceiptSchema,
+  recordedPeerContributionSampleSchema, completedFilePeerContributionSampleSchema, commandPeerContributionSampleSchema,
+  peerContributionReceiptSchema,
   peerContributionAdmissionReceiptSchema, peerContributionPayloadDigest, peerContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {
@@ -124,7 +125,9 @@ export const contributionSubmitSchema: z.ZodType<ScopeContributionSubmitResult> 
 /** Strict end result; only a matched receipt permits clearing a pending local end. */
 export const contributionEndSchema: z.ZodType<ScopeContributionEndResult> = z.union([ended, failure])
 
-const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: contributionInvitationSchema }).strict()
+const legacyInvitation = contributionInvitationSchema.refine(value => value.grant.source.kind !== 'tool-observations'
+  || value.grant.source.version !== 4)
+const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: legacyInvitation }).strict()
 /** Version-one peer requests accept only original samples and retain their status/end operations. */
 export const contributionRequestSchema = z.discriminatedUnion('op', [
   request.extend({ op: z.literal('status') }),
@@ -141,6 +144,16 @@ export const recordedContributionRequestSchema = request.extend({
 export const completedFileContributionRequestSchema = request.extend({
   version: z.literal(3), op: z.literal('sample'), sample: completedFilePeerContributionSampleSchema,
 })
+
+const commandRequest = request.extend({ version: z.literal(4),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind === 'tool-observations' && value.grant.source.version === 4),
+})
+/** Version-four command permissions retain their status, file/command samples, and terminal operations without downgrade. */
+export const commandContributionRequestSchema = z.discriminatedUnion('op', [
+  commandRequest.extend({ op: z.literal('status') }),
+  commandRequest.extend({ op: z.literal('sample'), sample: commandPeerContributionSampleSchema }),
+  commandRequest.extend({ op: z.literal('end') }),
+])
 
 const response = z.object({ version: z.literal(1), requestId: z.uuid() }).strict()
 /** A response is correlated to the operation as well as the unique request identifier. */
@@ -159,6 +172,13 @@ export const recordedContributionResponseSchema = response.extend({
 export const completedFileContributionResponseSchema = response.extend({
   version: z.literal(3), op: z.literal('sample'), result: contributionSubmitSchema,
 })
+
+/** Version-four replies correlate each operation under the exact command permission. */
+export const commandContributionResponseSchema = z.discriminatedUnion('op', [
+  response.extend({ version: z.literal(4), op: z.literal('status'), result: contributionStatusSchema }),
+  response.extend({ version: z.literal(4), op: z.literal('sample'), result: contributionSubmitSchema }),
+  response.extend({ version: z.literal(4), op: z.literal('end'), result: contributionEndSchema }),
+])
 
 /**
  * Validate a wire or restored receipt against the exact invitation and optional persisted sample.

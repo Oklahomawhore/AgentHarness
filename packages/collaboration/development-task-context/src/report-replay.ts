@@ -74,17 +74,19 @@ export function replayReportedFile(context: readonly DevelopmentTaskContextPubli
     const tool = observation(publication)
     return publicationInterval(publication) === interval && tool !== undefined && tool.sequence >= base.sequence ? [tool] : []
   }).sort((a, b) => a.sequence - b.sequence)
+  // Commands may change any file; their sequence cannot stand in for a known file-only operation.
   for (const [index, tool] of capture.entries()) {
     if (tool.sequence !== base.sequence + index || tool.version !== 1) return undefined
   }
   for (const item of reports) {
     const publication = item.publication
     const tool = item.tool
+    if (tool.version !== 1) return undefined
     if (publication.uri !== undefined || !canonical(publication, tool) || publication.publishedBy !== first.publication.publishedBy
       || !isDeepStrictEqual(publication.peerContribution ?? publication.localContribution, authority)
       || tool.fields.rootIndex !== base.fields.rootIndex || tool.fields.path !== base.fields.path) return undefined
     if (item === first) continue
-    if (tool.version !== 1 || tool.tool !== 'Edit' || tool.reportedStatus !== 'success' || tool.omissions.length !== 0
+    if (tool.tool !== 'Edit' || tool.reportedStatus !== 'success' || tool.omissions.length !== 0
       || tool.fields.error !== undefined || tool.fields.oldString === undefined || tool.fields.newString === undefined
       || tool.fields.oldString === '' || tool.fields.oldString.includes('\r') || tool.fields.newString.includes('\r')
       || !tool.fields.oldString.isWellFormed() || !tool.fields.newString.isWellFormed()

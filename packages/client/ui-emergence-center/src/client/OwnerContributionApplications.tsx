@@ -23,8 +23,9 @@ export interface OwnerApplicationActions {
   readonly rejectContributionApplication: (taskId: DevelopmentTaskId, request: ScopeContributionApplicationRejectRequest) => Promise<void>
 }
 
-function JoinApproval({ pending, approve, t }: PropsLocale<'emergenceCenter'> & {
+function JoinApproval({ pending, commands, approve, t }: PropsLocale<'emergenceCenter'> & {
   pending: boolean
+  commands: boolean
   approve: (responsibility: string) => void
 }) {
   const id = useId()
@@ -33,12 +34,12 @@ function JoinApproval({ pending, approve, t }: PropsLocale<'emergenceCenter'> & 
     event.preventDefault()
     if (!pending && responsibility.trim()) approve(responsibility.trim())
   }}>
-    <p className={css.hint}>{t('contribution.join.approvalHint')}</p>
+    <p className={css.hint}>{t(commands ? 'native.commands.approvalHint' : 'contribution.join.approvalHint')}</p>
     <label className={css.field} htmlFor={id}>{t('contribution.join.responsibility')}
       <Input id={id} required value={responsibility} disabled={pending}
         onChange={(event) => { setResponsibility(event.target.value) }} /></label>
     <p className={css.hint}>{t('contribution.join.responsibilityHint')}</p>
-    <Button type="submit" disabled={pending || !responsibility.trim()}>{t('contribution.join.approve')}</Button>
+    <Button type="submit" disabled={pending || !responsibility.trim()}>{t(commands ? 'native.commands.approve' : 'contribution.join.approve')}</Button>
   </form>
 }
 
@@ -143,11 +144,12 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
               expectedProposal: item.proposal })
           }}>{t('contribution.group.endMember')}</Button>}
         {item.result.status === 'pending' && <div className={css.actions}>
-          {item.limits !== null && <JoinApproval pending={pending || !ownerAddress} t={t} approve={(responsibility) => {
-            if (item.limits === null) return
-            void approveContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
-              expectedProposal: item.proposal, limits: item.limits, ownerAddress, read: { responsibility } })
-          }} />}
+          {item.limits !== null && <JoinApproval pending={pending || !ownerAddress} t={t}
+            commands={item.proposal.source.kind === 'tool-observations' && item.proposal.source.version === 4} approve={(responsibility) => {
+              if (item.limits === null) return
+              void approveContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
+                expectedProposal: item.proposal, limits: item.limits, ownerAddress, read: { responsibility } })
+            }} />}
           <Button variant="ghost" disabled={pending} onClick={() => {
             void rejectContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
               expectedProposal: item.proposal })
@@ -177,7 +179,9 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
         </dl>}
         <div className={css.actions}>
           {item.result.status === 'pending' && proposal !== null && limits !== null && (joint
-            ? <JoinApproval key={`${item.entry.entryId}/${proposal.captureId}/${proposal.captureGeneration}`} pending={pending || !ownerAddress} t={t}
+            ? <JoinApproval key={`${item.entry.entryId}/${proposal.captureId}/${proposal.captureGeneration}`}
+              pending={pending || !ownerAddress} t={t}
+              commands={proposal.source.kind === 'tool-observations' && proposal.source.version === 4}
               approve={(responsibility) => { void approveContributionApplication(taskId, { entryId: item.entry.entryId,
                 expectedProposal: proposal, limits, ownerAddress, read: { responsibility } }) }} />
             : <Button disabled={pending || !ownerAddress} onClick={() => {

@@ -122,6 +122,7 @@
     "tests/independent-scope.e2e.ts",
     "tests/native-scope.e2e.ts",
     "tests/native-contribution.e2e.ts",
+    "tests/native-command-contribution.e2e.ts",
     "tests/native-owner-contribution.e2e.ts",
     "tests/continuous-edit-context.e2e.ts",
     "tests/existing-edit-context.e2e.ts",

@@ -173,7 +173,7 @@ it('includes persisted completions without a local receipt and verifies every ex
   await held.entered
   expect(f.localRow().samples[0]?.receipt).toBeUndefined()
   const original = f.localRow().samples[0]
-  if (original === undefined) throw new Error('Missing durable tool report')
+  if (original === undefined || original.sample.result.kind !== 'tool-observation') throw new Error('Missing durable file report')
   expect(recordedProof(f.agent.session, original)).toBeDefined()
   expect(recordedProof(f.agent.session, { ...original, sample: { ...original.sample,
     result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],

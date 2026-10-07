@@ -1,7 +1,8 @@
-/** Shared explicit file permission fields for local and independent Task sources. */
+/** Shared explicit file and command-result permission for local and independent Task sources. */
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EmergenceCenterKey } from './locales.ts'
+import { NativeCommandPermission, type NativeCommandDraft } from './NativeCommandPermission.tsx'
 import css from './NativeScopeAction.module.css'
 
 /** Uncommitted local form values; no value grants permission until submitted. */
@@ -14,12 +15,13 @@ export interface NativeContributionDraft {
   readonly bytes: string
   readonly consent: boolean
   readonly fileContent: boolean
+  readonly commands: NativeCommandDraft
 }
 
 /**
- * Render explicit roots, tool selection, limits and separate consent in the incumbent form style.
+ * Render explicit roots, file and command selection, limits and separate consent in the incumbent form style.
  * @param props - unique field prefix, local draft, editing state and localized consent label.
- * @returns controlled file-permission fields without a submit action.
+ * @returns controlled source-permission fields without a submit action.
  */
 export function NativeContributionPermission({ id, draft, disabled, fileContentDisabled, consentKey, change, t,
 }: PropsLocale<'emergenceCenter'> & {
@@ -30,6 +32,7 @@ export function NativeContributionPermission({ id, draft, disabled, fileContentD
   consentKey: EmergenceCenterKey
   change: (value: NativeContributionDraft) => void
 }) {
+  const roots = draft.roots.split('\n').map(value => value.trim()).filter(Boolean)
   return <>
     <label className={css.field} htmlFor={`${id}-roots`}>{t('contribution.roots')}
       <textarea id={`${id}-roots`} rows={2} required value={draft.roots} disabled={disabled}
@@ -43,9 +46,11 @@ export function NativeContributionPermission({ id, draft, disabled, fileContentD
       <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" required value={draft.samples} disabled={disabled} onChange={(event) => { change({ ...draft, samples: event.target.value }) }} /></label>
       <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" required value={draft.bytes} disabled={disabled} onChange={(event) => { change({ ...draft, bytes: event.target.value }) }} /></label>
     </div>
-    <label className={css.consent}><input type="checkbox" checked={draft.fileContent} disabled={disabled || fileContentDisabled}
+    <label className={css.consent}><input type="checkbox" checked={draft.fileContent} disabled={disabled || fileContentDisabled || (!draft.write && !draft.edit)}
       onChange={(event) => { change({ ...draft, fileContent: event.target.checked }) }} />{t('native.fileContent.consent')}</label>
     <p className={css.hint}>{t('native.fileContent.hint')}</p>
+    <NativeCommandPermission id={id} draft={draft.commands} roots={roots} disabled={disabled}
+      unavailable={fileContentDisabled === true} t={t} change={(commands) => { change({ ...draft, commands }) }} />
     <label className={css.consent}><input type="checkbox" checked={draft.consent} disabled={disabled}
       onChange={(event) => { change({ ...draft, consent: event.target.checked }) }} />{t(consentKey)}</label>
   </>
