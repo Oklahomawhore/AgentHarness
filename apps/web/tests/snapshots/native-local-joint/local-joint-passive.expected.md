@@ -24,13 +24,14 @@
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
   - group: 更新所有者连接地址
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{ownerTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作"
     - text: 允许自动协作
   - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
   - button "确认启用自动协作" [disabled]
-  - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
   - group:
     - text: 分享本会话的文件工作
     - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。

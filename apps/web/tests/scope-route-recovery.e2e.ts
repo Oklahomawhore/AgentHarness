@@ -1,4 +1,5 @@
 /** A live native Session recovers both original permissions after its independent owner changes listener. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -236,8 +237,7 @@ async function scenario(responses: readonly StreamChunk[][]) {
   const entryText = await entryField.inputValue()
   const entry = contributionEntrySchema.parse(JSON.parse(entryText))
   const share = await sharing(sourceView)
-  await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-  await share.getByRole('button', { name: '验证连接', exact: true }).click()
+  await verifyNativeContributionEntry(sourceView.page, entryText)
   await share.getByText(task.id, { exact: true }).waitFor()
   await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(sourceRoot)
   for (const name of ['写入文件（write）', '编辑文件（edit）']) await share.getByRole('checkbox', { name, exact: true }).check()
@@ -370,7 +370,8 @@ async function scenario(responses: readonly StreamChunk[][]) {
     await page.setViewportSize({ width: 1440, height: 1000 })
     if (MODE === 'refresh') await mkdir(PASSIVE_SNAPSHOTS, { recursive: true })
     const aria = await captureStableAria(page, PANEL, source.workspaceCwd,
-      { replacements: [[task.id, '{{taskId}}'], [identity.peerId, '{{ownerPeerId}}']] })
+      { replacements: [[entry.ownerAddress, '{{ownerAddress}}'], [String(entry.expiresAt), '{{entryExpiresAt}}'],
+        [task.id, '{{taskId}}'], [identity.peerId, '{{ownerPeerId}}']] })
     await compareOrRefreshGolden(join(PASSIVE_SNAPSHOTS, `${stage}.expected.md`), aria, MODE)
     expect(requests).toHaveLength(before)
   }

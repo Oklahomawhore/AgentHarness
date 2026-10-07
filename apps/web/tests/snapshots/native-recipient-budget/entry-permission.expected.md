@@ -1,0 +1,55 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - status: 尚未接收共享上下文
+  - paragraph: 保留的本地目标：保留原有客户端职责
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{sharedTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
+  - group:
+    - text: 分享本会话的文件工作
+    - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+    - status: 尚未允许分享文件工作
+    - button "验证连接"
+    - status: 连接已确认，可以申请。确认本地权限后还需所有者批准；尚未开始同步。
+    - term: 任务所有者设备
+    - definition: {{ownerPeerId}}
+    - term: 目标 Task
+    - definition: {{sharedTaskId}}
+    - term: 申请入口到期时间
+    - definition: {{entryExpiresLocal}}
+    - paragraph: 这是一个会话的联合加入申请。所有者批准后，本会话会自动连接读取并启用所选文件分享，无需再粘贴邀请。
+    - checkbox "我允许此会话在工作时接收整个目标的共享上下文；本项本身不允许自动开始新工作。"
+    - text: 我允许此会话在工作时接收整个目标的共享上下文；本项本身不允许自动开始新工作。 允许采集的目录
+    - textbox "允许采集的目录"
+    - group "允许分享的文件操作":
+      - text: 允许分享的文件操作
+      - checkbox "写入文件（write）"
+      - text: 写入文件（write）
+      - checkbox "编辑文件（edit）"
+      - text: 编辑文件（edit）
+    - text: 授权有效期（小时）
+    - spinbutton "授权有效期（小时）"
+    - text: 最多样本数
+    - spinbutton "最多样本数"
+    - text: 每份样本字节上限
+    - spinbutton "每份样本字节上限"
+    - checkbox "我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。"
+    - text: 我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。
+    - checkbox "同时分享本次范围内已记录的工具操作" [disabled]
+    - text: 同时分享本次范围内已记录的工具操作
+    - paragraph: 批准后一次性选取当前本地采集已保存的完成记录。复用上述目录、工具和额度，历史与后续新操作共用样本上限；不会读取或扫描现有文件。
+    - paragraph: 当前没有可用于历史分享的有效本地采集。仍可单独申请后续文件工作分享。
+    - checkbox "我允许本会话在我的职责内，按以下目标和额度自动响应共享变化；所有者批准加入后生效" [disabled]
+    - text: 我允许本会话在我的职责内，按以下目标和额度自动响应共享变化；所有者批准加入后生效
+    - button "申请加入并在批准后连接" [disabled]
+    - button "重新读取分享状态"
+  - button "重新读取状态"
+  - button "查看来源"

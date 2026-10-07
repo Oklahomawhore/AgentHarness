@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-[Emergence Center UI](../../../../packages/client/ui-emergence-center/README.zh.md) 在当前 Session 标题栏提供一个操作入口。接受邀请默认启用被动接收。自动运行许可必须包含本地目标、有限的新增启动次数、每轮步数上限和间隔。界面根据刚读取的累计计数计算绝对 reservation 上限。远端职责只作为来源信息，不能授权本地工作。
+[Emergence Center UI](../../../../packages/client/ui-emergence-center/README.zh.md) 在当前 Session 标题栏提供一个操作入口。同一主粘贴区识别只读邀请及原生工具观察申请入口，包括联合和多人入口。识别只选择相应的权限流程，不连接读取或提交申请。替换粘贴内容会使其待处理检查及未提交同意失效；无关状态刷新保留草稿。只读邀请保留明确连接步骤。申请入口保留在线可用性检查和文件采集同意；联合读取及自动工作须各自同意。只读邀请流程默认启用被动接收。自动运行许可必须包含本地目标、有限的新增启动次数、每轮步数上限和间隔。界面根据刚读取的累计计数计算绝对 reservation 上限。远端职责只作为来源信息，不能授权本地工作。
 
 [原生 consumer](../../../../packages/collaboration/scope-agent-context/README.zh.md) 提供只读状态，区分无存活 Agent、委派或 fork Agent，以及本地 Task 分配冲突。状态读取不启动 cold Agent，返回现有持久状态、对应 Session 序号和本地已知的 subscription 状态。既有 projection 提供 Client 更新，不引入另一套持久 UI 状态。本地 active subscription 不代表当前远端授权已验证。
 
@@ -28,6 +28,8 @@ Client 状态源将 mutation 返回视为操作完成，然后重新读取权威
 
 **独立列出所有 Session 供选择。** 历史记录不能证明 Agent 存活。当前 Session 入口明确接收对象，并通过 Host 只读检查确认资格。
 
+**每种入口使用独立粘贴区。** 用户收到协作内容时不需要知道其协议类型。共用入口让相应流程可发现，同时保留各项独立权限。
+
 **仅在 Client 防止旧回复覆盖。** 忽略旧回复不能撤销 Host 上已经发生的过期修改。预期 binding 标识让 Host 能权威地拒绝该修改。
 
 **隐藏所有 context 或删除同步事件。** 其他 context 有独立展示需求，删除记录会破坏精确回放。Chat 持有窄范围展示规则，Trajectory 持有检查能力。
@@ -36,4 +38,4 @@ Client 状态源将 mutation 返回视为操作完成，然后重新读取权威
 
 后台交换不产生需要维护的聊天流。用户可以检查已记录的输入，并从接收 Session 暂停或离开。新增自动启动次数计量 reservation，包含取消的 reservation，并非 token 或金额限制。暂停控制后续自动工作，不能撤回已经发给模型的请求。
 
-必要验证覆盖过期修改、跨重置与 Session 切换的延迟状态、bind 结果未知、终态恢复拒绝、Chat 与 Trajectory 历史对照，以及真实 Web 邀请和有限政策操作。无密钥模型回复只验证输入准入与界面行为，不证明语义采用或真实跨设备协作质量。
+必要验证覆盖不隐式授权的入口识别、只读与申请路径、过期修改、跨重置与 Session 切换的延迟状态、bind 结果未知、终态恢复拒绝、Chat 与 Trajectory 历史对照，以及真实 Web 邀请和有限政策操作。无密钥模型回复只验证输入准入与界面行为，不证明语义采用或真实跨设备协作质量。

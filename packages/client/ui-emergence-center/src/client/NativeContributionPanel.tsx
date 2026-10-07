@@ -1,5 +1,5 @@
 /** Explicit sharing permission for the current native Session. */
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   ScopeAgentContributionRequest, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest, ScopeAgentContributionReceiving,
   ScopeContributionEntry, ScopeContributionTransfer, ScopeAgentContributionRecoverRouteRequest,
@@ -87,20 +87,22 @@ export function NativeContributionPanel(props: NativeContributionActions & Props
   scope: NativeScopeSnapshot
   entry: ContributionEntry<ScopeAgentContributionStatus> | undefined
   localEntry?: ContributionEntry<ScopeAgentLocalContributionStatus> | undefined
+  /** Main entrance draft; changes discard its preview and consent without replacing existing permissions. */
+  entryText?: string | undefined
 }) {
   return <SessionContributionPanel key={props.agentId} {...props} />
 }
 
 function SessionContributionPanel({ agentId, entry, readNativeContribution, requestNativeContribution,
   stopNativeContribution, leaveNativeJoin, previewNativeContribution, probeNativeContribution,
-  recoverNativeContributionRoute, localEntry, scope, t,
+  recoverNativeContributionRoute, localEntry, entryText, scope, t,
 }: Parameters<typeof NativeContributionPanel>[0]) {
   const id = useId()
   const previewRevision = useRef(0)
   const actionPending = useRef(false)
   const permissionEdited = useRef(false)
   const prefilled = useRef(false)
-  const [text, setText] = useState('')
+  const details = useRef<HTMLDetailsElement>(null)
   const [preview, setPreview] = useState<ScopeContributionEntry>()
   const [previewing, setPreviewing] = useState(false)
   const [invalid, setInvalid] = useState(false)
@@ -133,6 +135,12 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     readNativeContribution(agentId)
     return () => { previewRevision.current++ }
   }, [agentId, readNativeContribution])
+  useLayoutEffect(() => {
+    previewRevision.current++
+    setPreview(undefined); setProbe(undefined); setInvalid(false); setPreviewing(false)
+    setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
+    if (entryText !== undefined && details.current !== null) details.current.open = true
+  }, [entryText])
   const localStatus = localEntry?.value
   const localCapture = localStatus?.capture
   const localAssignment = localStatus?.assignment
@@ -188,9 +196,9 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const initializationConfirmed = initializationConsent !== null && initializationEligible
     && initializationConsent.entry === preview && initializationConsent.source === initializationSource
     && initializationConsent.scope === initializationScope
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (initializationConsent !== null && !initializationConfirmed) {
-      setInitializationConsent(current => current === initializationConsent ? null : current)
+      setInitializationConsent(null)
     }
   }, [initializationConsent, initializationConfirmed])
   const expiresAt = Date.now() + Number(hours) * 3_600_000
@@ -200,10 +208,10 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     && (initializationConsent === null || (initializationConfirmed && initializationReady))
     && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || (readConfirmed
       && (automaticConsent === null || (automaticConfirmed && policy !== undefined))))
-  const verify = async (): Promise<void> => {
+  const verify = async (text: string): Promise<void> => {
     const revision = ++previewRevision.current
     setPreviewing(true); setInvalid(false); setPreview(undefined); setProbe(undefined)
-    setReadConsent(null); setConsent(false); setAutomaticConsent(null)
+    setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
     let result: ScopeContributionTransfer
     try { result = await previewNativeContribution(text) }
     catch {
@@ -233,7 +241,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     : capture.state === 'ending' ? 'contribution.ending'
       : capture.state === 'active' ? capture.collecting ? 'native.share.active' : 'native.share.paused'
         : capture.application === null ? 'contribution.prepared' : `contribution.application.${capture.application}`
-  return <details data-native-contribution className={css.sharing}>
+  return <details ref={details} data-native-contribution className={css.sharing}>
     <summary>{t('native.share.title')}</summary>
     <div className={css.form}>
       <p className={css.hint}>{t('native.share.hint')}</p>
@@ -242,7 +250,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
       {status !== undefined && status.eligibility !== 'eligible' && <p className={css.hint}>{t(status.eligibility === 'not-live'
         ? 'native.share.notLive' : 'native.share.ineligible')}</p>}
-      {capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
+      {entryText !== undefined && capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
         event.preventDefault()
         if (!canRequest) return
         void perform(() => requestNativeContribution({ agentId, expectedCapture: null, entry: preview, roots: selectedRoots, tools,
@@ -252,12 +260,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             ...(readConsent.localTask === null ? {} : { localTask: readConsent.localTask }),
             ...(automaticConfirmed && policy !== undefined ? { automatic: policy } : {}) } } : {}) }))
       }}>
-        <label className={css.field} htmlFor={`${id}-entry`}>{t('contribution.application.paste')}
-          <textarea id={`${id}-entry`} rows={3} value={text} disabled={!eligible} onChange={(event) => {
-            previewRevision.current++; setText(event.target.value); setPreview(undefined); setInvalid(false); setProbe(undefined)
-            setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
-          }} /></label>
-        <Button disabled={!eligible || previewing || !text.trim()} onClick={() => { void verify() }}>{t('native.share.verify')}</Button>
+        <Button disabled={!eligible || previewing || !entryText.trim()} onClick={() => { void verify(entryText) }}>{t('native.share.verify')}</Button>
         {previewing && <p role="status" className={css.hint}>{t('native.share.verifying')}</p>}
         {probe !== undefined && <p role={probe === 'ready' ? 'status' : 'alert'} className={css.notice}>{t(`native.share.probe.${probe}`)}</p>}
         {invalid && <p role="alert" className={css.notice}>{t('native.share.invalidEntry')}</p>}

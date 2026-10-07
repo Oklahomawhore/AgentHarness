@@ -1,4 +1,5 @@
 /** Local calibration of two separate shipped dsh Web processes; this is not a two-physical-device result. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -249,9 +250,7 @@ it.skipIf(process.platform === 'win32')('calibrates two independent dsh Web proc
   await bPanel.getByText(`已连接：${bObjective}`, { exact: true }).waitFor()
   await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
   const sharing = bPage.locator(REMOTE)
-  if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
-  await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-  await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+  await verifyNativeContributionEntry(bPage, entryText)
   await sharing.getByText(aTask, { exact: true }).waitFor()
   await permission(sharing, join(b.workspace, 'project'), REMOTE_CONSENT)
   expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
@@ -294,7 +293,7 @@ it.skipIf(process.platform === 'win32')('calibrates two independent dsh Web proc
   await panel(bPage)
   if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
   await sharing.getByRole('button', { name: '退出此次协作', exact: true }).click()
-  await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).waitFor()
+  await bPage.locator(PANEL).getByRole('textbox', { name: '粘贴协作入口', exact: true }).waitFor()
   await bPage.locator(PANEL).getByRole('radio', { name: '本机创建的目标', exact: true }).check()
   await bPage.locator(LOCAL).getByText(`已连接：${bObjective}`, { exact: true }).waitFor()
   expect(await bPage.locator(LOCAL).getByRole('button', { name: '允许并开始分享', exact: true }).isVisible()).toBe(true)

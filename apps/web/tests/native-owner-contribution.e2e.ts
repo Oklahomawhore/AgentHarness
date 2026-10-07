@@ -1,4 +1,5 @@
 /** Existing native Sessions exchange authorized file work while retaining each destination’s permissions. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-scope-agent-contribution'
 import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-access'
+import type { ScopeGroupEntry } from '@deepseek-ai/dsh-scope-access/types'
 import { assertFixtureInventory, captureStableAria, compareOrRefreshGolden, launchWebScaffold,
   watchConsole, webSnapshotMode, readPersistedEvents, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh, saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
@@ -251,9 +253,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     const entryText = await entryField.inputValue()
     const bPanel = await panel(remotePage)
     const sharing = remotePage.locator(REMOTE)
-    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
-    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(remotePage, entryText)
     await sharing.getByText(task.id, { exact: true }).waitFor()
     const bRoot = join(b.workspaceCwd, 'remote-native/project')
     await permission(sharing, bRoot, REMOTE_CONSENT)
@@ -684,12 +684,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     const entryText = await entryField.inputValue()
     await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
     const sharing = sourcePage.locator(REMOTE)
-    await sharing.locator(':scope > summary').click()
     await bPanel.getByText('共享范围只增加获准上下文，不替换本地目标或文件许可。', { exact: true }).waitFor()
     expect(await bPanel.getByRole('button', { name: '连接此会话', exact: true }).isDisabled()).toBe(true)
     expect(await bPanel.getByText('本机会话设置已更新；后续请求将在线核验读取权限。', { exact: true }).count()).toBe(0)
-    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(sourcePage, entryText)
     await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
     await permission(sharing, root, REMOTE_CONSENT, true)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).count()).toBe(0)
@@ -708,7 +706,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     expect((await b.ctx.scopeAgentContext.status({ agentId: bId })).eligibility).toBe('eligible')
     const replacements: (readonly [string, string])[] = [[ownerTask.id, '{{ownerTaskId}}'], [sourceTask.id, '{{sourceTaskId}}'],
       [ownerAddress, '{{ownerAddress}}'], [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'],
-      [entryText, '{{contributionEntry}}'], [localCapture.grant.bindingId, '{{localBindingId}}'],
+      [String(requested.entry.expiresAt), '{{entryExpiresAt}}'], [localCapture.grant.bindingId, '{{localBindingId}}'],
       [`${localCapture.grant.expectedBindingEpoch.nodeId}:${String(localCapture.grant.expectedBindingEpoch.seq)}`, '{{localBindingEpoch}}'],
     ]
     const expiry = async (value: number): Promise<readonly [string, string]> => [
@@ -925,9 +923,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
     const sourcePanel = await panel(sourcePage)
     await sourcePanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
     const sharing = sourcePage.locator(REMOTE)
-    await sharing.locator(':scope > summary').click()
-    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(sourcePage, entryText)
     await sharing.getByText(ownerTask.id, { exact: true }).waitFor()
     await permission(sharing, join(b.workspaceCwd, 'local-joint-source/project'), REMOTE_CONSENT, true)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
@@ -959,11 +955,12 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
       expectedLocalCapture: originalCapture.selection, localTask: localBefore.assignment } })
     const [aIdentity, bIdentity] = await Promise.all([a.ctx.scopeAccess.identity(), b.ctx.scopeAccess.identity()])
     const replacements: (readonly [string, string])[] = [[ownerTask.id, '{{ownerTaskId}}'], [localTask.id, '{{localTaskId}}'],
-      [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'], [entryText, '{{jointEntry}}'],
+      [aIdentity.peerId, '{{ownerPeerId}}'], [bIdentity.peerId, '{{sourcePeerId}}'],
+      [String(requested.entry.expiresAt), '{{entryExpiresAt}}'],
       [originalCapture.grant.bindingId, '{{localBindingId}}'],
       [`${originalCapture.grant.expectedBindingEpoch.nodeId}:${String(originalCapture.grant.expectedBindingEpoch.seq)}`, '{{localBindingEpoch}}'],
       [await sourcePage.evaluate(value => new Date(value).toLocaleString(), requested.limits.expiresAt), '{{permissionExpiresLocal}}']]
-    for (const address of aIdentity.addresses) replacements.push([address, '{{ownerAddress}}'])
+    for (const address of aIdentity.addresses) replacements.unshift([address, '{{ownerAddress}}'])
     await captureStage(sourcePage, b.workspaceCwd, 'local-joint-pending', replacements, PANEL, snapshots)
     await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
     await applications.getByText('允许分享加入前已记录的工具操作，以及后续获准的新操作。', { exact: true }).waitFor()
@@ -1230,20 +1227,19 @@ describe.skipIf(process.platform === 'win32')('web e2e: reusable group entry joi
     const entryField = applications.getByRole('textbox', { name: '将此入口交给来源用户', exact: true })
     await expect.poll(() => entryField.inputValue()).toContain('scope-group-entry')
     const entryText = await entryField.inputValue()
+    const transferredEntry = JSON.parse(entryText) as ScopeGroupEntry
     const identities = await Promise.all(hosts.map(host => host.ctx.scopeAccess.identity()))
     const ownerIdentity = identities[0]
     if (ownerIdentity === undefined) throw new Error('Owner identity is missing')
     const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'],
-      [bTask.id, '{{bTaskId}}'], [cTask.id, '{{cTaskId}}'], [entryText, '{{groupEntry}}']]
-    for (const [index, identity] of identities.entries()) replacements.push([identity.peerId, `{{peer${String(index)}}}`])
+      [bTask.id, '{{bTaskId}}'], [cTask.id, '{{cTaskId}}'], [String(transferredEntry.expiresAt), '{{entryExpiresAt}}']]
     for (const address of ownerIdentity.addresses) replacements.push([address, '{{ownerAddress}}'])
+    for (const [index, identity] of identities.entries()) replacements.push([identity.peerId, `{{peer${String(index)}}}`])
     for (const [host, id, page, index, original] of [[b, bId, bPage, 1, bLocal], [c, cId, cPage, 2, cLocal]] as const) {
       const scope = await panel(page)
       await scope.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
       const sharing = page.locator(REMOTE)
-      await sharing.locator(':scope > summary').click()
-      await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-      await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+      await verifyNativeContributionEntry(page, entryText)
       await sharing.getByText(sharedTask.id, { exact: true }).waitFor()
       await permission(sharing, join(host.workspaceCwd, `group-${String(index)}/project`), REMOTE_CONSENT, true)
       expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
@@ -1579,13 +1575,31 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     await bPanel.getByText(`已连接：${localTask.objective}`, { exact: true }).waitFor()
     expect(await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).isChecked()).toBe(true)
     await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
+    expect(await bPanel.getByRole('textbox', { name: '粘贴协作入口', exact: true }).isVisible()).toBe(true)
     const sharing = sourcePage.locator(REMOTE)
-    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
-    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    expect(await sharing.getAttribute('open')).toBeNull()
+    const entryTokens: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'], [localTask.id, '{{localTaskId}}']]
+    await captureStage(sourcePage, b.workspaceCwd, 'entry-main', entryTokens, PANEL, snapshots)
+    await verifyNativeContributionEntry(sourcePage, entryText)
     await sharing.getByText(sharedTask.id, { exact: true }).waitFor()
+    expect((await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
+    expect((await b.ctx.scopeAccess.list()).subscriptions).toEqual([])
+    expect((await a.ctx.scopeAccess.list()).grants).toEqual([])
+    expect(a.ctx.developmentTasks.peerContributions({ taskId: sharedTask.id })).toEqual([])
+    expect(originalAgent.session.snapshotEvents()).toEqual(originalHistory)
+    expect(aRequests).toHaveLength(1); expect(bRequests).toHaveLength(2)
+    const issued = (await a.ctx.scopeAccess.contributionApplications({ taskId: sharedTask.id })).entries[0]
+    if (issued === undefined) throw new Error('Owner-issued entry is absent')
+    const joinRequest = sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true })
+    expect(await joinRequest.isDisabled()).toBe(true)
+    await captureStage(sourcePage, b.workspaceCwd, 'entry-permission', [...entryTokens,
+      [issued.entry.ownerAddress, '{{ownerAddress}}'], [issued.entry.ownerPeerId, '{{ownerPeerId}}'],
+      [String(issued.entry.expiresAt), '{{entryExpiresAt}}'],
+      [await sourcePage.evaluate(value => new Date(value).toLocaleString(), issued.entry.expiresAt), '{{entryExpiresLocal}}']],
+    PANEL, snapshots)
     await permission(sharing, join(b.workspaceCwd, 'budget-source/project'), REMOTE_CONSENT)
     expect(await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).isChecked()).toBe(false)
+    expect(await joinRequest.isDisabled()).toBe(true)
     await sharing.getByRole('checkbox', { name: READ_CONSENT, exact: true }).check()
     expect(await sharing.getByRole('checkbox', { name: AUTOMATIC_CONSENT, exact: true }).isChecked()).toBe(false)
     await sharing.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
@@ -1595,7 +1609,15 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(requested.initialization).toBeUndefined()
     await applications.getByRole('status').getByText('收到申请，等待你的批准', { exact: true }).waitFor()
     await applications.getByLabel('该会话的协作职责', { exact: true }).fill('在原客户端职责内使用完整文件事实。')
+    await sourcePage.keyboard.press('Escape')
+    expect(await sourcePage.locator(PANEL).isVisible()).toBe(false)
     await applications.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
+    await expect.poll(async () => {
+      const status = await b.ctx.scopeAgentContext.status({ agentId: bId })
+      return status.eligibility === 'eligible' && status.state.binding?.kind === 'local-task-scope'
+    }).toBe(true)
+    await panel(sourcePage)
+    if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
     await sharing.getByText('此次加入的读取已连接', { exact: true }).waitFor()
     const joined = await b.ctx.scopeAgentContext.status({ agentId: bId })
     if (joined.eligibility !== 'eligible' || joined.state.binding?.kind !== 'local-task-scope') throw new Error('Joint receiving absent')
@@ -1665,9 +1687,9 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(bRequests).toHaveLength(3)
     const identity = await a.ctx.scopeAccess.identity()
     const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'], [localTask.id, '{{localTaskId}}'],
-      [identity.peerId, '{{ownerPeerId}}'], [entryText, '{{joinEntry}}'],
+      [identity.peerId, '{{ownerPeerId}}'], [String(issued.entry.expiresAt), '{{entryExpiresAt}}'],
       [await sourcePage.evaluate(value => new Date(value).toLocaleString(), requested.limits.expiresAt), '{{permissionExpiresLocal}}']]
-    if (identity.addresses[0] !== undefined) replacements.push([identity.addresses[0], '{{ownerAddress}}'])
+    replacements.unshift([issued.entry.ownerAddress, '{{ownerAddress}}'])
     await captureStage(sourcePage, b.workspaceCwd, 'budget-passive', replacements, PANEL, snapshots)
     await prompt(b, sourcePage, 'BUDGET_SOURCE_SHARED')
     await expect.poll(() => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
@@ -1710,6 +1732,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(await sourcePage.locator('[data-native-recorded-context]').count()).toBe(0)
     await captureStage(sourcePage, b.workspaceCwd, 'budget-left', replacements, PANEL, snapshots)
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
-    await assertFixtureInventory(snapshots, ['budget-passive.expected.md', 'budget-left.expected.md'])
+    await assertFixtureInventory(snapshots, ['entry-main.expected.md', 'entry-permission.expected.md',
+      'budget-passive.expected.md', 'budget-left.expected.md'])
   }, 120_000)
 })

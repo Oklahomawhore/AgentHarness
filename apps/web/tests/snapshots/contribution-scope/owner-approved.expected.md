@@ -2,17 +2,22 @@
   - text: 批准独立来源贡献
   - paragraph: 把申请入口交给来源用户，在这里核对并批准其采集范围。来源会自动取回授权。读取上下文和自动运行模型需要另行授权。
   - button "刷新贡献授权"
-  - text: 对方可达的本机地址
-  - textbox "对方可达的本机地址": {{ownerAddress}}
-  - paragraph: 当前支持直接连接。默认地址仅供本机使用；跨设备需先配置可达的监听地址。
-  - text: 贡献来源
-  - combobox "贡献来源":
-    - option "授权目录内的 Write/Edit" [selected]
-    - option "单个 OpenAPI 操作"
+  - text: 邀请使用的本机地址
+  - combobox "邀请使用的本机地址":
+    - option "选择邀请地址"
+    - option "仅本机 · {{ownerEndpoint}}" [selected]
+  - paragraph: 仅列出 Host 当前公布的地址。请选择对方能直连的地址；列在这里不代表已经验证跨设备可达。
+  - status: 此地址只能用于同一设备上的另一个 Host。
+  - paragraph: 跨设备连接：在本机页面的“设置 → 插件 → 协作网络”中配置，保存后重启 Host，再刷新这里的地址。
+  - text: 入口用途
+  - combobox "入口用途":
+    - option "邀请多人加入同一目标"
+    - option "邀请一个会话加入" [selected]
+    - option "仅申请文件贡献"
   - text: 申请入口有效期（小时）
   - spinbutton "申请入口有效期（小时）"
-  - paragraph: 把入口交给一个来源用户。对方选定会话和采集目录后，申请会出现在这里；你批准前不会获得贡献权限。
-  - button "生成一次申请入口" [disabled]
+  - paragraph: 此入口只供一个现有会话申请加入。对方一次确认读取和文件范围，你再一次批准两项权限；入口本身不授予权限。
+  - button "邀请一个会话加入" [disabled]
   - group: 手工审批与恢复
   - term: 目标 Task
   - definition: {{taskId}}

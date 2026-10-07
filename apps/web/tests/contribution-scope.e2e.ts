@@ -303,10 +303,14 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     expect(invitation.grant).toEqual(originalGrant)
     expect(owner.scaffold.ctx.developmentTasks.peerContributions({ taskId })).toHaveLength(1)
     const expiryLabel = await owner.page.evaluate(timestamp => new Date(timestamp).toLocaleString(), originalGrant.expiresAt)
+    const portMatch = invitation.ownerAddress.match(/^\/ip4\/127\.0\.0\.1\/tcp\/([1-9]\d*)\/p2p\//u)
+    if (portMatch?.[1] === undefined) throw new Error('Contribution owner did not provide an allocated loopback address')
+    const ownerEndpoint = `127.0.0.1:${portMatch[1]}`
     const replacements = [[expiryLabel, '{{expiresLocal}}'], [originalGrant.grantId, '{{grantId}}'],
       [originalGrant.generation, '{{generation}}'], [originalGrant.captureId, '{{captureId}}'],
       [originalGrant.captureGeneration, '{{captureGeneration}}'], [taskId, '{{taskId}}'],
-      [invitation.ownerAddress, '{{ownerAddress}}'], [invitation.grant.ownerPeerId, '{{ownerPeerId}}'],
+      [invitation.ownerAddress, '{{ownerAddress}}'], [ownerEndpoint, '{{ownerEndpoint}}'],
+      [invitation.grant.ownerPeerId, '{{ownerPeerId}}'],
       [invitation.grant.contributorPeerId, '{{contributorPeerId}}'], [String(invitation.grant.expiresAt), '{{expiresAt}}']] as const
     await capture(owner, OWNER, 'owner-approved', replacements)
     await contribution.getByRole('textbox', { name: '粘贴贡献邀请', exact: true }).fill(invitationText)
@@ -338,7 +342,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     const readText = await access.getByRole('textbox', { name: '将此邀请交给接收人', exact: true }).inputValue()
     const readInvitation = JSON.parse(readText) as ScopeInvitation
     expect(readInvitation.taskId).toBe(taskId)
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(readText)
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(readText)
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => (await state()).mode).toBe('passive')
     await write(declaration('sku'))

@@ -12,16 +12,8 @@
   - status: 尚未接收共享上下文
   - paragraph: 保留的本地目标：维护客户端重试实现
   - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
-  - text: 粘贴只读邀请
-  - textbox "粘贴只读邀请"
-  - group "本机执行许可":
-    - text: 本机执行许可
-    - radio "只在我工作时更新" [checked]
-    - text: 只在我工作时更新
-    - radio "允许自动协作"
-    - text: 允许自动协作
-  - paragraph: 不会唤醒空闲会话；下一次正常工作时自动读取上下文。
-  - button "连接此会话" [disabled]
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{ownerTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
   - group:
     - text: 分享本会话的文件工作
     - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。

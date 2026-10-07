@@ -10,7 +10,7 @@ Independent scope context needs local permission to start work, but membership a
 
 ## Decision
 
-The [Emergence Center UI](../../../../packages/client/ui-emergence-center/README.md) contributes one action to the current Session header. The default invitation flow enables passive receipt. Automatic permission requires a local goal, a finite number of additional activations, a per-turn step limit, and an interval. The UI derives the absolute reservation limit from a freshly read cumulative count. Remote responsibility remains source information; it does not authorize local work.
+The [Emergence Center UI](../../../../packages/client/ui-emergence-center/README.md) contributes one action to the current Session header. One primary paste field recognizes read invitations and native tool-observation application entries, including joint and reusable group entries. Recognition chooses the matching permission flow; it neither connects reading nor submits an application. Replacing the pasted content invalidates its pending checks and unsubmitted consent; unrelated status refreshes preserve the draft. Read invitations retain explicit connection. Application entries retain online availability checks and file-collection consent; joint reading and automatic work require their own consent. The default read-invitation flow enables passive receipt. Automatic permission requires a local goal, a finite number of additional activations, a per-turn step limit, and an interval. The UI derives the absolute reservation limit from a freshly read cumulative count. Remote responsibility remains source information; it does not authorize local work.
 
 The [native consumer](../../../../packages/collaboration/scope-agent-context/README.md) exposes a read-only status that distinguishes absent live Agents, delegated or forked Agents, and conflicting local Task assignments. It never starts a cold Agent. Status returns the existing durable state, its Session sequence watermark, and locally known subscription state. The existing projection supplies Client updates without a second durable UI state. Local active subscription state does not prove current remote authorization.
 
@@ -28,6 +28,8 @@ Recorded shared-context details come from the current Session surface and the ex
 
 **A separate picker of all Sessions.** Cold history cannot establish live eligibility. The current Session action makes the receiving identity explicit and uses a read-only Host check.
 
+**Separate paste areas for each entry type.** Users receive collaboration content without needing to know its wire type. A shared entry point makes the matching workflow discoverable while preserving separate permissions.
+
 **Client-only stale-response protection.** Ignoring an old response does not undo a stale mutation on the Host. Expected binding identities make that rejection authoritative.
 
 **Hide all context or remove synchronization events.** Other context has independent display requirements, and deleting records prevents exact replay. Chat owns the narrow display policy; Trajectory owns inspection.
@@ -36,4 +38,4 @@ Recorded shared-context details come from the current Session surface and the ex
 
 Background exchange does not produce a chat feed to maintain. Users can inspect the recorded input and pause or leave from the receiving Session. Extra automatic activations are reservations, including cancelled reservations, rather than a token or monetary limit. Pause controls new automatic work; it does not retract a request already sent to a model.
 
-Required verification covers stale mutations, delayed status across resets and Session changes, unknown bind outcomes, terminal resume denial, Chat versus Trajectory history, and the real Web invitation and finite-policy flow. Keyless model responses verify admission and UI behavior, not semantic adoption or real cross-device collaboration quality.
+Required verification covers entry classification without implicit permission, the read-only and application paths, stale mutations, delayed status across resets and Session changes, unknown bind outcomes, terminal resume denial, Chat versus Trajectory history, and the real Web invitation and finite-policy flow. Keyless model responses verify admission and UI behavior, not semantic adoption or real cross-device collaboration quality.

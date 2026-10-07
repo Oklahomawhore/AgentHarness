@@ -23,6 +23,8 @@
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
   - group: 更新所有者连接地址
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":2,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{sharedTaskId}}\",\"ownerPeerId\":\"{{peer0}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-group-entry\",\"sourceKind\":\"tool-observations\",\"maxMembers\":2}"
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作"

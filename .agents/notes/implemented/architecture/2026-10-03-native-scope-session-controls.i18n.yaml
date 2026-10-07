@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-03-native-scope-session-controls.md
-2026-10-03-native-scope-session-controls.md: 6cf41499f08903011ec936d39d98b6699491cdc7
-2026-10-03-native-scope-session-controls.zh.md: 5f39fd543e484f80c6696b60dee4835e514d32a6
+2026-10-03-native-scope-session-controls.md: b2b16a1331dd70208a2ade9a690320876b33e49c
+2026-10-03-native-scope-session-controls.zh.md: 3568d5fada20116e7c1050fdd0d2f0d879909cb0

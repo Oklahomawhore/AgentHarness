@@ -2,8 +2,6 @@
   - text: 分享本会话的文件工作
   - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
   - status: 尚未允许分享文件工作
-  - text: 粘贴协作申请入口
-  - textbox "粘贴协作申请入口": "{\"version\":1,\"entryId\":\"{{entryId}}\",\"taskId\":\"{{taskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"contribution-entry\",\"sourceKind\":\"tool-observations\"}"
   - button "验证连接"
   - status: 连接已确认，可以申请。确认本地权限后还需所有者批准；尚未开始同步。
   - term: 任务所有者设备
@@ -28,5 +26,9 @@
   - spinbutton "每份样本字节上限"
   - checkbox "我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。"
   - text: 我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。
+  - checkbox "同时分享本次范围内已记录的工具操作" [disabled]
+  - text: 同时分享本次范围内已记录的工具操作
+  - paragraph: 批准后一次性选取当前本地采集已保存的完成记录。复用上述目录、工具和额度，历史与后续新操作共用样本上限；不会读取或扫描现有文件。
+  - paragraph: 当前没有可用于历史分享的有效本地采集。仍可单独申请后续文件工作分享。
   - button "申请并允许批准后自动启用" [disabled]
   - button "重新读取分享状态"

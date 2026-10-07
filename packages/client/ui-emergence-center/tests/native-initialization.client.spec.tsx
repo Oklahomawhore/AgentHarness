@@ -4,12 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentContributionInitialization, ScopeAgentLocalContributionStatus } from '@deepseek-ai/dsh-api-remotes/client'
-import { NativeContributionPanel, type NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
+import type { NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
+import { NativeContributionPanel } from './native-contribution-panel-fixture.client.tsx'
 import { NativeContributionInitialization } from '../src/client/NativeContributionInitialization.tsx'
 import { ContributionSourceSummary } from '../src/client/contribution-ui.tsx'
 import { zh } from '../src/client/locales.ts'
 import { observation, state } from './native-scope-fixture.client.ts'
-import { agentId, applicationEntry, emptyStatus } from './native-contribution-fixture.client.ts'
+import { agentId, applicationEntry, capture, capturedStatus, emptyStatus } from './native-contribution-fixture.client.ts'
 import { assigned, binding, localCapture } from './native-local-contribution-fixture.client.ts'
 
 afterEach(cleanup)
@@ -34,8 +35,8 @@ function fixture(initial: ScopeAgentLocalContributionStatus | undefined = local,
   }
   const view = render(<NativeContributionPanel {...props} />)
   fireEvent.click(screen.getByText(zh['native.share.title']))
-  const verify = async () => {
-    change(zh['contribution.application.paste'], 'entry')
+  const verify = async (entryText = 'entry') => {
+    change(zh['native.invitation'], entryText)
     fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
     await screen.findByText(applicationEntry.ownerPeerId)
   }
@@ -43,6 +44,31 @@ function fixture(initial: ScopeAgentLocalContributionStatus | undefined = local,
 }
 
 describe('recorded native tool consent', () => {
+  it('keeps permission blank when the retained local capture has expired', async () => {
+    const f = fixture({ ...local, capture: { ...localCapture, collecting: false,
+      grant: { ...localCapture.grant, expiresAt: Date.now() - 3_600_000 } } })
+    await f.verify()
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
+    expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.hours']).value).toBe('')
+    expect(sharing().checked).toBe(false)
+    expect(history().checked).toBe(false)
+    expect(submit().disabled).toBe(true)
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('omits historical initialization when the user explicitly unchecks that permission', async () => {
+    const f = fixture()
+    await f.verify(); fireEvent.click(sharing()); fireEvent.click(history())
+    expect(history().checked).toBe(true)
+    fireEvent.click(history())
+    expect(history().checked).toBe(false)
+    expect(sharing().checked).toBe(true)
+    expect(submit().disabled).toBe(false)
+    fireEvent.click(submit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0].initialization).toBeUndefined()
+  })
+
   it('prefills permission without granting sharing or historical export, then sends the exact selected local capture and epoch', async () => {
     const f = fixture()
     await f.verify()
@@ -87,6 +113,30 @@ describe('recorded native tool consent', () => {
     expect(history().checked).toBe(true)
     expect(submit().disabled).toBe(false)
     expect(screen.getByText(t('native.initialization.available', { count: 5, unconfirmed: 1, inFlight: 1 }))).toBeTruthy()
+  })
+
+  it('clears historical and sharing consent when the main entry changes, including when restored to its earlier content', async () => {
+    const f = fixture()
+    await f.verify(); fireEvent.click(history()); fireEvent.click(sharing())
+    expect(submit().disabled).toBe(false)
+
+    change(zh['native.invitation'], 'another-entry')
+    expect(screen.queryByRole('checkbox', { name: zh['native.initialization.consent'] })).toBeNull()
+    expect(f.actions.previewNativeContribution).toHaveBeenCalledOnce()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    await f.verify('another-entry')
+    expect(history().checked).toBe(false)
+    expect(sharing().checked).toBe(false)
+    expect(submit().disabled).toBe(true)
+
+    fireEvent.click(history()); fireEvent.click(sharing())
+    change(zh['native.invitation'], 'entry')
+    expect(screen.queryByRole('checkbox', { name: zh['native.initialization.consent'] })).toBeNull()
+    await f.verify()
+    expect(history().checked).toBe(false)
+    expect(sharing().checked).toBe(false)
+    expect(submit().disabled).toBe(true)
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
   })
 
   it.each(['roots', 'maxSamples', 'maxBytes', 'hours'] as const)('clears historical consent when %s changes and does not restore it when changed back', async (field) => {
@@ -156,6 +206,20 @@ const initialization: ScopeAgentContributionInitialization = {
   coverage: { recorded: 4, selected: 3, omitted: 1, unconfirmed: 1, inFlight: 1, acknowledged: 2 }, reason: null,
 }
 describe('recorded work coverage', () => {
+  it('shows frozen historical selection and owner receipts on the retained capture panel', () => {
+    const f = fixture()
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false,
+      value: { ...capturedStatus, capture: { ...capture, initialization, state: 'active', collecting: true,
+        proposal: { ...capture.proposal, source: { kind: 'tool-observations', name: 'Recorded native work',
+          tools: ['Write'], version: 2, initialization: 'recorded-local-tools' } } } } }} />)
+    expect(screen.getByText(t('native.initialization.delivery', { count: 3, acknowledged: 2 }))).toBeTruthy()
+    expect(screen.getByText(t('native.initialization.coverage', {
+      recorded: 4, selected: 3, omitted: 1, unconfirmed: 1, inFlight: 1,
+    }))).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: zh['native.initialization.consent'] })).toBeNull()
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
   it('distinguishes selection, actual owner receipt, empty coverage, and unavailable initialization', () => {
     const view = render(<NativeContributionInitialization value={initialization} t={t} />)
     expect(screen.getByRole('status').textContent).toBe(t('native.initialization.delivery', { count: 3, acknowledged: 2 }))

@@ -1,4 +1,5 @@
 /** Browser consent, real file tools, independent owner admission, and recipient request evidence. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:net'
@@ -221,20 +222,17 @@ describe.skipIf(process.platform === 'win32')('web e2e: native file contribution
       expect(sourceHost.ctx.agents.get(sourceId)!.session.snapshotEvents()).toEqual(sourceBefore)
     }
     const unreachable = { ...entry.entry, ownerAddress: `/ip4/127.0.0.1/tcp/${String(unavailablePort)}/p2p/${ownerIdentity.peerId}` }
-    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(JSON.stringify(unreachable))
-    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(sourcePage, JSON.stringify(unreachable))
     await share.getByText('无法连接任务所有者。请确认对方在线且地址可达，然后重试。', { exact: true }).waitFor()
     expect(await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).count()).toBe(0)
     await untouched()
     await captureStage(sourcePage, sourceHost.workspaceCwd, 'unavailable', entryTokens(unreachable))
-    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(closed.text)
-    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(sourcePage, closed.text)
     await share.getByText('此入口已关闭。请向任务所有者获取新入口。', { exact: true }).waitFor()
     expect(await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).count()).toBe(0)
     await untouched()
     await captureStage(sourcePage, sourceHost.workspaceCwd, 'closed', entryTokens(closed.entry))
-    await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entry.text)
-    await share.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(sourcePage, entry.text)
     await share.getByText(task.id, { exact: true }).waitFor()
     await share.getByText('连接已确认，可以申请。确认本地权限后还需所有者批准；尚未开始同步。', { exact: true }).waitFor()
     await untouched()

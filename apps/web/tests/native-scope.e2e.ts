@@ -196,7 +196,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     await prompt('NATIVE_USER_ONE: 开始前端工作。', 1)
     let panel = await openPanel()
     expect(await panel.getByRole('radio', { name: '只在我工作时更新', exact: true }).isChecked()).toBe(true)
-    const input = panel.getByRole('textbox', { name: '粘贴只读邀请', exact: true })
+    const input = panel.getByRole('textbox', { name: '粘贴协作入口', exact: true })
     await input.fill('{broken')
     expect(await panel.getByRole('button', { name: '连接此会话', exact: true }).isDisabled()).toBe(true)
     expect(await input.inputValue()).toBe('{broken')

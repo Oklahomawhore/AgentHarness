@@ -240,7 +240,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: online contribution appr
     const readText = await access.getByRole('textbox', { name: '将此邀请交给接收人', exact: true }).inputValue()
     await receiver.page.getByRole('button', { name: '协作', exact: true }).click()
     const native = receiver.page.locator('[data-native-scope-panel]')
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(readText)
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(readText)
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => {
       const status = await receiver.scaffold.ctx.scopeAgentContext.status({ agentId: sessionId })
@@ -399,7 +399,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: online contribution appr
     await expect.poll(() => readField.inputValue()).toContain(toolTask.id)
     await toolReceiver.page.getByRole('button', { name: '协作', exact: true }).click()
     const native = toolReceiver.page.locator('[data-native-scope-panel]')
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(await readField.inputValue())
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(await readField.inputValue())
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => {
       const status = await toolReceiver.scaffold.ctx.scopeAgentContext.status({ agentId: receiverSession })

@@ -1,4 +1,5 @@
 /** One reusable entry connects a native Session and an explicitly selected Claude Hook session. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -198,9 +199,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: Claude joins a reusable 
     const scope = native.page.locator(NATIVE_PANEL)
     await scope.getByRole('radio', { name: '他人分享的目标', exact: true }).check()
     const sharing = native.page.locator(NATIVE_SHARE)
-    await sharing.locator(':scope > summary').click()
-    await sharing.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-    await sharing.getByRole('button', { name: '验证连接', exact: true }).click()
+    await verifyNativeContributionEntry(native.page, entryText)
     await sharing.getByText(taskId, { exact: true }).waitFor()
     await sharing.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(join(nativeCwd, 'project'))
     await sharing.getByRole('checkbox', { name: '写入文件（write）', exact: true }).check()
