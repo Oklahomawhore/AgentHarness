@@ -32,7 +32,7 @@ kind: "package-reference"
     maxContextBytesPerStep: 65536
 ```
 
-将 `/text` 换成 `/reported`，即可在不调用模型的情况下重建满足条件的文件报告组。这两个提供方都不需要配置。Web profile 选择 `/reported`；`/text` 保留原始 publication。
+将 `/text` 换成 `/reported`，即可在不调用模型的情况下重建满足条件的文件报告组。这两个提供方都不需要配置。Web profile 挂载 `/configured`，默认选择 `/reported`；`/text` 保留原始 publication。
 
 要交付采样得到的 OpenAPI 声明，将 `/facts` 挂载为后端。其 `routes` 精确匹配接收者完整的 Session 标签；`unmatchedFields` 显式指定标签缺失或未匹配时选择的字段。这两个数组都必填。字段名属于闭合集合；重复字段、重复或空白职责标签会使配置失败。空字段集合仍保留状态与出处；冲突组始终保留全部声明字段，并报告额外选择的字段。标签不授予访问权限，也不确立事实真伪。
 
@@ -80,6 +80,12 @@ kind: "package-reference"
 ```
 
 后端在模型发出请求前记录并 flush 请求，在返回前记录并 flush 有界响应、提供方报告的用量及确切投影。已经完成的相同请求复用审计结果；并发的相同请求共享一次计算。`maxCalls` 统计同一审计 Session 下所有配置版本的持久调用预留。明确失败的尝试可以在剩余额度内重试。中断后没有结果记录的请求保持未知状态，不会静默重发；其预留仍计入已用额度。提供方未报告的用量是未知值，不是零。这些限额不构成精确的输入 token 或金额上限。
+
+### Web 后端设置
+
+`/configured` 注册重启生效的 `scope-context` 命名空间，包含 `mode`、`provider`、`model` 和累计 `maxCalls`。通过身份验证的 Host 管理页在**插件 → 协作摘要**中提供这些字段。保存选择下次启动的后端，不替换运行中的 provider，也不改变普通 Session 的模型。打开设置、保存和启动 Host 都不会预备摘要调用。语义模式要求非空路由；计算需要路由或凭据时若不可用，会明确失败，不回退到报告模式。
+
+Web 部署默认交付报告，调用上限为100次。审计保存在 `dshHomePath('scope-context-audit')`，Session ID 为 `scope-context-audit`，与普通 Session 查询隔离。更换路由或停用后重新启用摘要都会保留累计预留。审计身份与执行限额由部署配置负责，不属于设置表单。调整自定义部署时保留原目录与 Session ID；插件不会发现或迁移其他审计日志。[用户指南](../../../docs/user/guide/collaboration-semantic.zh.md)说明设置与恢复步骤；[决策记录](../../../.agents/notes/implemented/feature/2026-10-07-configured-collaboration-backend.zh.md)解释为何由重启应用选择。
 
 <a id="behavior"></a>
 

@@ -26,6 +26,8 @@ import { ConfigurablePluginsTab } from './ConfigurablePluginsTab.tsx'
 import { PluginsSettingsSection } from './PluginsSettingsSection.tsx'
 import type { PluginsSettingsSectionInjected, PluginsSettingsTabEntry } from './PluginsSettingsSection.tsx'
 import { SubagentModelSelectionCard } from './SubagentModelSelectionCard.tsx'
+import { ScopeContextCard } from './ScopeContextCard.tsx'
+import { SCOPE_CONTEXT_NS, ScopeContextCardController } from './scope-context-card-controller.ts'
 import { ScopeNetworkCard } from './ScopeNetworkCard.tsx'
 import { SCOPE_NETWORK_NS, ScopeNetworkCardController } from './scope-network-card-controller.ts'
 import { WebSearchCard } from './WebSearchCard.tsx'
@@ -67,6 +69,14 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-plugins: section dictionaries')
 
+  const scopeContext = new ScopeContextCardController(
+    ctx.settingsScope.bind({ namespace: SCOPE_CONTEXT_NS }), () => ctx.remote.session.modelCatalog())
+  ctx.effect(() => () => { scopeContext.dispose() }, 'ui-settings-plugins: collaboration summary drafts')
+  ctx.on('connection/reset', () => { scopeContext.resetConnection() })
+  ctx.effect(() => ctx.remote.$on('llm/adapters-updated', () => { scopeContext.refreshCatalog() }),
+    'ui-settings-plugins: collaboration summary adapters')
+  ctx.effect(() => ctx.remote.$on('settings/document-updated', () => { scopeContext.refreshCatalog() }),
+    'ui-settings-plugins: collaboration summary settings')
   const scopeNetwork = new ScopeNetworkCardController(ctx.settingsScope.bind({ namespace: SCOPE_NETWORK_NS }))
   ctx.effect(() => () => { scopeNetwork.dispose() }, 'ui-settings-plugins: collaboration network drafts')
   ctx.on('connection/reset', () => { scopeNetwork.resetConnection() })
@@ -200,5 +210,11 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: () => scopeNetwork.inject(),
     }, ScopeNetworkCard)
+    yield ctx.slots.register({
+      name: 'settings.plugin.item',
+      key: SCOPE_CONTEXT_NS,
+      locale: NS,
+      inject: () => scopeContext.inject(),
+    }, ScopeContextCard)
   })
 }

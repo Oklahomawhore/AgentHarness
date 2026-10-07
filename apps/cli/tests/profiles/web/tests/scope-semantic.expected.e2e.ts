@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { expect, it } from 'vitest'
@@ -51,9 +52,12 @@ async function startWeb(root: string, role: 'owner' | 'receiver', endpoint: stri
   let stderr = ''
   child.stdout.resume() // The startup URL contains an authentication token and is never logged.
   child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+  let processFailure: Error | undefined
   const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-    child.once('error', reject); child.once('close', (code, signal) => { resolve({ code, signal }) })
+    child.once('error', (error) => { processFailure = error; reject(error) })
+    child.once('close', (code, signal) => { resolve({ code, signal }) })
   })
+  void closed.catch(() => undefined) // The startup loop and stop operation own process failures.
   const stop = async (): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) { await closed; return }
     let forced = false
@@ -66,13 +70,16 @@ async function startWeb(root: string, role: 'owner' | 'receiver', endpoint: stri
     } finally { clearTimeout(force) }
   }
   try {
-    await expect.poll(async () => {
+    const deadline = performance.now() + 60000
+    while (true) {
+      if (processFailure !== undefined) throw processFailure
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Web exited: ${stderr}`)
-      try { return await readJson(ready) } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
-        throw error
+      try { await readJson(ready); break } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
       }
-    }, { timeout: 60000, interval: 50 }).not.toBeUndefined()
+      if (performance.now() >= deadline) throw new Error(`Web readiness timed out: ${stderr}`)
+      await delay(50)
+    }
     const descriptor = descriptorSchema.parse(await readJson(join(home, 'mcp/connection.json')))
     const login = await fetch(descriptor.launchUrl, { redirect: 'manual', signal: AbortSignal.timeout(10000) })
     const cookie = login.headers.getSetCookie()[0]?.split(';', 1)[0]
@@ -88,7 +95,10 @@ async function startWeb(root: string, role: 'owner' | 'receiver', endpoint: stri
       return JSON.parse(text) as unknown
     }
     return { home, project, invoke, stop, config: await readJson(ready) }
-  } catch (error) { await stop(); throw error }
+  } catch (error) {
+    try { await stop() } catch (closing) { throw new AggregateError([error, closing], 'Web startup and cleanup failed') }
+    throw error
+  }
 }
 
 // This fixture includes Claude setup, whose descriptor lock is unavailable on Windows.
@@ -138,10 +148,18 @@ it.skipIf(process.platform === 'win32')('enables semantic in shipped Web, surviv
       transportTimeoutMs: 35000, connectionTimeoutMs: 5000, accessTimeoutMs: 30000, waitTimeoutMs: 3000,
       hook: { profileName: 'claude-hook-summaries', timeoutMs: 45000, hookTimeoutSeconds: 60 },
     })
-    expect(owner.config).toMatchObject({ backend: { id: 'semantic' }, defaultBackendDisabled: true,
-      semantic: { auditSessionId: 'scope-context-audit', maxCalls: 100, maxConcurrentCalls: 2,
-        maxInputBytes: 131072, maxOutputTokens: 2048, maxOutputBytes: 65536, timeoutMs: 20000 } })
-    expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '2' }, defaultBackendDisabled: false, semantic: null })
+    for (const host of [owner, receiver]) expect(host.config).toMatchObject({ configured: {
+      module: '@deepseek-ai/dsh-development-task-context/configured', enabled: true,
+      groupId: 'development-task-context-audit', providerCount: 1,
+    } })
+    expect(owner.config).toMatchObject({ backend: { id: 'semantic' }, configured: {
+      selection: { mode: 'semantic', provider: 'deepseek-official', model: 'deepseek-flash', maxCalls: 100 },
+    }, semantic: { auditSessionId: 'scope-context-audit', provider: 'deepseek-official', model: 'deepseek-flash',
+      maxCalls: 100, maxConcurrentCalls: 2, maxInputBytes: 131072, maxOutputTokens: 2048,
+      maxOutputBytes: 65536, timeoutMs: 20000 } })
+    expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '3' }, configured: {
+      selection: { mode: 'reported', provider: '', model: '', maxCalls: 100 },
+    }, semantic: null })
     const ownerIdentity = identitySchema.parse(await owner.invoke({ kind: 'identity' }))
     const receiverIdentity = identitySchema.parse(await receiver.invoke({ kind: 'identity' }))
     expect(ownerIdentity.peerId).not.toBe(receiverIdentity.peerId)

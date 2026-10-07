@@ -32,7 +32,7 @@ Mount one backend and the consumer after the Agent and Task services. The text b
     maxContextBytesPerStep: 65536
 ```
 
-Use `/reported` instead of `/text` to reconstruct eligible file-report groups without a model call. Both providers need no configuration. The Web profile selects `/reported`; `/text` retains original publications.
+Use `/reported` instead of `/text` to reconstruct eligible file-report groups without a model call. Both providers need no configuration. The Web profile mounts `/configured` and selects `/reported` by default; `/text` retains original publications.
 
 To deliver sampled OpenAPI declarations, mount `/facts` as the backend. Its `routes` match the complete recipient session label exactly; `unmatchedFields` explicitly selects fields for absent or unmatched labels. Both arrays are required. Field names form a closed set, and duplicate fields and duplicate or blank responsibility labels fail configuration. An empty field set retains status and attribution; conflict groups always retain all declaration fields and report the additional selection. Labels do not grant access or establish truth.
 
@@ -80,6 +80,12 @@ Keep its JSONL persistence in a separate directory and an isolated `sessionPersi
 ```
 
 The backend records and flushes each request before model dispatch, then records and flushes its bounded response, reported usage, and exact projection before returning. Completed identical requests reuse their audited result; concurrent identical requests share one computation. `maxCalls` counts durable reservations across all configuration revisions using that audit Session. A known failed attempt can retry within the remaining limit. An interrupted request without a recorded result remains unknown and is not silently resent; its reservation remains consumed. Usage absent from the provider is unknown, not zero. These limits do not establish an exact input-token or monetary cap.
+
+### Web backend settings
+
+`/configured` registers the restart-applied `scope-context` namespace with `mode`, `provider`, `model`, and cumulative `maxCalls`. The authenticated Host management page exposes these fields under **Plugins → Collaboration summaries**. Saving selects the next startup backend; it does not replace the running provider or change an ordinary Session’s model. Opening, saving, and starting the Host do not prepare a summary call. A semantic selection requires a nonblank route; unavailable routes or credentials fail when computation needs them, without falling back to reports.
+
+The Web deployment defaults to reported delivery and a 100-call ceiling. It keeps the audit in `dshHomePath('scope-context-audit')` with Session ID `scope-context-audit`, isolated from ordinary Session queries. Switching routes or disabling and re-enabling summaries retains cumulative reservations. Audit identity and execution limits belong to deployment configuration, not the settings form. Keep the original directory and Session ID when adapting a custom deployment; the plugin does not discover or move other audit logs. The [user guide](../../../docs/user/guide/collaboration-semantic.md) covers setup and recovery; the [decision](../../../.agents/notes/implemented/feature/2026-10-07-configured-collaboration-backend.md) explains restart ownership.
 
 <a id="behavior"></a>
 

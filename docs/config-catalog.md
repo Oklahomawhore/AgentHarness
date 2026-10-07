@@ -834,6 +834,36 @@ export interface Config {
 
 Source: [`packages/collaboration/development-task-context/src/index.ts:28`](../packages/collaboration/development-task-context/src/index.ts)
 
+<a id="deepseek-aidsh-development-task-contextconfigured"></a>
+
+## `@deepseek-ai/dsh-development-task-context/configured`
+
+Requires: `settings` · `llm` · `sessions` · `sessionPersistence`
+
+```ts config-catalog
+/** Deployment-owned execution limits and initial settings; mount with separately isolated audit persistence. */
+export interface Config extends Omit<SemanticConfig, 'provider' | 'model' | 'maxCalls'> {
+  /** Composition values below the durable scope-context user settings. */
+  readonly selection: Selection
+}
+
+/** User-selected context computation, independent of ordinary Session model settings. */
+export interface Selection {
+  /** Deterministic reports or explicitly authorized semantic inference. */
+  readonly mode: 'reported' | 'semantic'
+  /** Existing LLM provider route; required and nonblank in semantic mode. */
+  readonly provider: string
+  /** Exact summary model; required and nonblank in semantic mode. */
+  readonly model: string
+  /** Cumulative reservations permitted in the deployment's retained audit Session. */
+  readonly maxCalls: number
+}
+```
+
+Depends on: [`SemanticConfig`](#deepseek-aidsh-development-task-contextsemantic)
+
+Source: [`packages/collaboration/development-task-context/src/configured.ts:23`](../packages/collaboration/development-task-context/src/configured.ts)
+
 <a id="deepseek-aidsh-development-task-contextfacts"></a>
 
 ## `@deepseek-ai/dsh-development-task-context/facts`

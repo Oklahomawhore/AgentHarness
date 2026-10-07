@@ -124,6 +124,7 @@
       "@deepseek-ai/dsh-development-task-context/local": ["./packages/collaboration/development-task-context/src/local.ts"],
       "@deepseek-ai/dsh-development-task-context/backend": ["./packages/collaboration/development-task-context/src/backend.ts"],
       "@deepseek-ai/dsh-development-task-context/facts": ["./packages/collaboration/development-task-context/src/facts.ts"],
+      "@deepseek-ai/dsh-development-task-context/configured": ["./packages/collaboration/development-task-context/src/configured.ts"],
       "@deepseek-ai/dsh-development-task-context/semantic": ["./packages/collaboration/development-task-context/src/semantic.ts"],
       "@deepseek-ai/dsh-claude-scope/command": ["./packages/collaboration/claude-scope/src/command.ts"],
       "@deepseek-ai/dsh-claude-scope/types": ["./packages/collaboration/claude-scope/src/types.ts"],

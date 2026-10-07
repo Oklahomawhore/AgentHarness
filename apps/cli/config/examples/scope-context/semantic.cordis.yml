@@ -1,31 +1,18 @@
-# Opt-in recipient summaries; apply deadlines.cordis.yml on both scope peers first.
-# The ordinary DeepSeek provider resolves credentials from the existing store.
+# Optional deployment defaults for the existing Web summary settings group.
+# Saved scope-context settings take precedence; credentials stay in Models.
 - id: development-task-context-backend
-  disabled: true
-
-- insert:
-    - id: scope-context-audit
-      name: cordis:group
-      group: true
-      isolate:
-        sessionPersistence: true
-      config:
-        - id: scope-context-audit-persistence
-          name: '@deepseek-ai/dsh-session-persistence-jsonl'
-          config:
-            root: !!js dshHomePath('scope-context-audit')
-            compression: none
-        - id: development-task-context-semantic
-          name: '@deepseek-ai/dsh-development-task-context/semantic'
-          config:
-            auditSessionId: scope-context-audit
-            provider: deepseek-official
-            model: deepseek-flash
-            temperature: 0
-            reasoningEffort: off
-            maxCalls: 100
-            maxConcurrentCalls: 2
-            maxInputBytes: 131072
-            maxOutputTokens: 2048
-            maxOutputBytes: 65536
-            timeoutMs: 20000
+  name: '@deepseek-ai/dsh-development-task-context/configured'
+  config:
+    selection:
+      mode: semantic
+      provider: deepseek-official
+      model: deepseek-flash
+      maxCalls: 100
+    auditSessionId: scope-context-audit
+    temperature: 0
+    reasoningEffort: off
+    maxConcurrentCalls: 2
+    maxInputBytes: 131072
+    maxOutputTokens: 2048
+    maxOutputBytes: 65536
+    timeoutMs: 20000

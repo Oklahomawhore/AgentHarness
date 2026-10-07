@@ -92,9 +92,12 @@ export async function persisted(device: DevicePreparation): Promise<{ header: un
 /** Start the shipped Web profile as a separate process with its private home and explicit keyless patch.
  * @param repo - built repository containing the supported dsh launcher.
  * @param device - endpoint preparation containing no collaborator's filesystem data.
+ * @param options - Optional listener port for a sequential restart; omission requests an OS-assigned port.
  * @returns its authenticated local URL and a quiescent, idempotent stop operation.
  */
-export async function startDevice(repo: string, device: DevicePreparation): Promise<{
+export async function startDevice(
+  repo: string, device: DevicePreparation, options: { port?: number } = {},
+): Promise<{
   url: string
   pid: number
   stop: () => Promise<void>
@@ -104,7 +107,7 @@ export async function startDevice(repo: string, device: DevicePreparation): Prom
     if (process.env[key] !== undefined) env[key] = process.env[key]
   }
   const launch = resolveExampleLaunch({ mode: 'lib', srcBin: join(repo, 'apps/cli/src/bin.ts'), env,
-    configArgs: ['--profile', 'web', '--patch', device.overlayPath, '--no-open', '--host', '127.0.0.1', '--port', '0'] })
+    configArgs: ['--profile', 'web', '--patch', device.overlayPath, '--no-open', '--host', '127.0.0.1', '--port', String(options.port ?? 0)] })
   const child = spawn(launch.command, launch.args, { cwd: device.workspace, env: launch.env, stdio: ['ignore', 'pipe', 'pipe'] })
   const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.once('error', reject)

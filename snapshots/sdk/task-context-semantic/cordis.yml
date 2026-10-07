@@ -40,16 +40,18 @@
             root: !!js dshHomePath('semantic-audit')
             compression: none
         - id: task-context-semantic-provider
-          name: '@deepseek-ai/dsh-development-task-context/semantic'
+          name: '@deepseek-ai/dsh-development-task-context/configured'
           config:
             auditSessionId: task-context-semantic-audit
-            provider: semantic-snapshot
-            model: controlled-summary
+            selection:
+              mode: semantic
+              provider: semantic-snapshot
+              model: controlled-summary
+              maxCalls: 8
             maxInputBytes: 32768
             maxOutputTokens: 1024
             maxOutputBytes: 16384
             timeoutMs: 10000
             maxConcurrentCalls: 2
-            maxCalls: 8
         - id: task-context-semantic-fixture
           name: './semantic-fixture.mjs'

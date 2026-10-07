@@ -14,7 +14,8 @@ const { peerContributionPayloadDigest } = await import(pathToFileURL(packageRequ
 /** Loader fixture identity. */
 export const name = 'task-context-semantic-snapshot'
 /** Shared application services and this group's isolated audit persistence. */
-export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'sessionPersistence', 'developmentTaskContextBackend']
+export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'settings',
+  'sessionPersistence', 'developmentTaskContextBackend']
 
 const now = 1790985600000
 const auditId = 'task-context-semantic-audit'
@@ -132,8 +133,16 @@ export async function apply(ctx) {
     await using handle = await ctx.sessionPersistence.open(auditId, 'read')
     return (await handle.read()).events
   }
+  const selection = ctx.settings.describe().find(descriptor => descriptor.ns === 'scope-context')
+  assert.ok(selection, 'the shipped SDK composition must mount the configured backend')
+  assert.equal(selection.applies, 'restart')
+  assert.deepEqual(selection.value, { mode: 'semantic', provider: 'semantic-snapshot',
+    model: 'controlled-summary', maxCalls: 8 })
+  assert.equal(ctx.developmentTaskContextBackend.identity.id, 'semantic')
+  assert.deepEqual(await readAudit(), [], 'startup must not reserve or dispatch a summary call')
   const adapter = new ControlledSummaryAdapter(readAudit)
   ctx.effect(() => ctx.llm.registerAdapter(['semantic-snapshot'], adapter))
+  assert.equal(adapter.requests.length, 0)
   const owner = 'snapshot-human-owner'
   await ctx.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Snapshot owner' })
   const unrelated = { id: 'publication-unrelated-admin', publishedBy: owner, publishedAt: now,

@@ -229,8 +229,31 @@
       name: '@deepseek-ai/dsh-development-task-mesh'
       disabled: !!js process.env.AGENTHARNESS_NODE_ID == null && process.env.DSH_ROOM_NODE_ID == null && process.env.AGENTHARNESS_MESH_PEER_URL == null && process.env.AGENTHARNESS_MESH_PEERS == null
 
-    - id: development-task-context-backend
-      name: '@deepseek-ai/dsh-development-task-context/reported'
+    - id: development-task-context-audit
+      name: cordis:group
+      group: true
+      isolate:
+        sessionPersistence: true
+      config:
+        - id: scope-context-audit-persistence
+          name: '@deepseek-ai/dsh-session-persistence-jsonl'
+          config:
+            root: !!js dshHomePath('scope-context-audit')
+            compression: none
+        - id: development-task-context-backend
+          name: '@deepseek-ai/dsh-development-task-context/configured'
+          config:
+            selection:
+              mode: reported
+              provider: ''
+              model: ''
+              maxCalls: 100
+            auditSessionId: scope-context-audit
+            maxInputBytes: 131072
+            maxOutputTokens: 2048
+            maxOutputBytes: 65536
+            timeoutMs: 20000
+            maxConcurrentCalls: 2
 
     # Native Agent context is injected at the next pre-step and committed as a
     # replayable user/message event before the model request.
@@ -249,7 +272,7 @@
         maxInboundRequests: 16
         maxOutboundRequests: 16
         maxConnections: 32
-        requestTimeoutMs: 5000
+        requestTimeoutMs: 35000
         connectionTimeoutMs: 5000
 
     - id: scope-access
@@ -261,7 +284,7 @@
         maxContextBytes: 6000
         maxResponseBytes: 240000
         maxDecodedResponseBytes: 2097152
-        requestTimeoutMs: 5000
+        requestTimeoutMs: 30000
         maxInvitationLifetimeMs: 604800000
         maxConcurrentReads: 16
         waitTimeoutMs: 3000

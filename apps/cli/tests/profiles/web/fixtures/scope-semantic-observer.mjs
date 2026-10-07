@@ -27,13 +27,25 @@ export function apply(ctx, config) {
     const transport = entry('scope-transport-libp2p').fiber.config
     const access = entry('scope-access').fiber.config
     const claude = entry('claude-scope').fiber.config
-    const semantic = [...service('loader').entries()].find(row => row.options.id === 'development-task-context-semantic')
-    return { backend: service('developmentTaskContextBackend').identity,
-      defaultBackendDisabled: entry('development-task-context-backend').disabled,
+    const configured = entry('development-task-context-backend')
+    const group = entry('development-task-context-audit')
+    assert.equal(configured.options.name, '@deepseek-ai/dsh-development-task-context/configured')
+    assert.equal(configured.disabled, false)
+    assert.equal(group.options.group, true)
+    assert.deepEqual(group.options.isolate, { sessionPersistence: true })
+    assert.equal(configured.parent, group.subgroup)
+    const providers = Object.getOwnPropertySymbols(ctx.reflect.store).map(key => ctx.reflect.store[key])
+      .filter(impl => impl?.name === 'developmentTaskContextBackend')
+    assert.equal(providers.length, 1, 'the profile owns exactly one context backend provider')
+    // Cordis exposes traceable Fiber proxies; uid identifies the instance within this registry.
+    assert.equal(providers[0].fiber.parent.fiber.uid, configured.fiber.uid)
+    const backend = service('developmentTaskContextBackend').identity
+    return { backend, configured: { module: configured.options.name, enabled: !configured.disabled,
+      groupId: group.options.id, providerCount: providers.length, selection: configured.fiber.config.selection },
       transportTimeoutMs: transport.requestTimeoutMs, connectionTimeoutMs: transport.connectionTimeoutMs,
       accessTimeoutMs: access.requestTimeoutMs, waitTimeoutMs: access.waitTimeoutMs,
       hook: { profileName: claude.setup.profileName, timeoutMs: claude.setup.timeoutMs,
-        hookTimeoutSeconds: claude.setup.hookTimeoutSeconds }, semantic: semantic?.fiber.config ?? null }
+        hookTimeoutSeconds: claude.setup.hookTimeoutSeconds }, semantic: backend.id === 'semantic' ? providers[0].fiber.config : null }
   }
   const invoke = async (input) => {
     const access = service('scopeAccess')
