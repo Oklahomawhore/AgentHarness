@@ -9,7 +9,7 @@ import { zh } from '../src/client/locales.ts'
 import { compositeExecution, localExecution, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { localCapture, assigned as localStatus } from './native-local-contribution-fixture.client.ts'
 import { capturedStatus, capture } from './native-contribution-fixture.client.ts'
-import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
+import { bound, invitation, observation, observable, recordedContext, state } from './native-scope-fixture.client.ts'
 
 afterEach(cleanup)
 function fixture(initial: NativeScopeSnapshot = { phase: 'ready', pending: false, issue: null, observation: observation() }) {
@@ -44,6 +44,35 @@ function policy() {
 }
 
 describe('current Session collaboration action', () => {
+  it('shows a passive current recorded summary and removes it during refresh, target switching and leave', () => {
+    const current = { ...observation(bound, 14), recordedContext }
+    const ready: NativeScopeSnapshot = { phase: 'ready', pending: false, issue: null, observation: current }
+    const f = fixture(ready)
+    const summary = () => screen.queryByRole('region', { name: zh['native.recorded.title'] })
+    expect(summary()).not.toBeNull()
+    expect(screen.queryByRole('region', { name: zh['native.activity.title'] })).toBeNull()
+    expect(within(screen.getByRole('dialog', { name: zh['native.title'] }))
+      .getByText(zh['native.mode.passive'])).not.toBeNull()
+    expect(f.action).not.toHaveBeenCalled()
+    act(() => { f.source.set({ ...ready, observation: { ...current, state: { ...bound, mode: 'paused',
+      automatic: { goal: 'Keep my responsibility', activationLimit: 1, maxStepsPerTurn: 1, minIntervalMs: 0 } } } }) })
+    expect(summary()).not.toBeNull()
+    act(() => { f.source.set({ ...ready, phase: 'loading' }) })
+    expect(summary()).toBeNull()
+    act(() => { f.source.set({ ...ready, phase: 'disconnected', observation: null }) })
+    expect(summary()).toBeNull()
+    act(() => { f.source.set(ready) })
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.local'] }))
+    expect(summary()).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.remote'] }))
+    expect(summary()).not.toBeNull()
+    act(() => { f.source.set({ ...ready, observation: { ...current, recordedContext: null } }) })
+    expect(summary()).toBeNull()
+    act(() => { f.source.set({ ...ready, observation: observation() }) })
+    expect(summary()).toBeNull()
+    expect(f.action).not.toHaveBeenCalled()
+  })
+
   it('keeps both file permissions discoverable and preserves the selected destination across local capture changes', async () => {
     const f = fixture(localSnapshot(localExecution))
     const local = { status: 'ready' as const, pending: false, value: { ...localStatus, capture: localCapture } }

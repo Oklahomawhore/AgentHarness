@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { NativeReadRoute } from './NativeReadRoute.tsx'
 import { NativeScopeActivity } from './NativeScopeActivity.tsx'
+import { NativeRecordedContext } from './NativeRecordedContext.tsx'
 import { NativeContributionPanel, type NativeContributionActions } from './NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
 import type { DevelopmentTaskDirectory } from './task-directory.ts'
@@ -218,6 +219,8 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
           {bound.kind === 'local-task-scope' && bound.retainedLocal.automatic !== null
             && <p className={css.hint}>{t('native.local.retainedPolicy', { goal: bound.retainedLocal.automatic.goal })}</p>}
           <p className={css.hint}>{t('native.receiving')}</p>
+          {ready && observation?.eligibility === 'eligible' && observation.recordedContext !== null
+            && <NativeRecordedContext recorded={observation.recordedContext} t={t} />}
           <div className={css.actions}>
             {mode === 'paused' && !terminal && state?.automatic != null && state.automatic.activationLimit > state.usedBudget
               && <Button disabled={!editable} onClick={() => {

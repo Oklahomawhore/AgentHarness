@@ -1601,6 +1601,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     const subscriptionId = joined.state.binding.subscriptionId
     expect(joined.state).toMatchObject({ automatic: null, mode: 'passive', usedBudget: 0 })
     expect(bRequests).toHaveLength(2)
+    expect(await bPanel.locator('[data-native-recorded-context]').count()).toBe(0)
     expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture).toBeNull()
     await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
     const reports = () => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
@@ -1640,6 +1641,27 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(textOf(localFrames)).toContain(localTask.objective)
     for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, request, kind)
     await panel(sourcePage)
+    const recorded = sourcePage.getByRole('region', { name: '已记录共享上下文', exact: true })
+    await recorded.getByText(`共享内容 ${String(remoteFrameBytes)} 字节 · 纳入 ${String(projection.selectedSources.length)} 条来源记录。`,
+      { exact: true }).waitFor()
+    const budgetOmissions = projection.omittedSources.filter(item => item.reason === 'budget').length
+    await recorded.getByText(`因容量限制未纳入 ${String(budgetOmissions)} 条来源记录。`, { exact: true }).waitFor()
+    const otherReasons = [
+      ['self-published', '接收方自身发布的来源'], ['unsupported', '不支持的来源'], ['superseded', '已被更新替代'],
+      ['withdrawn', '已撤回'], ['recipient-irrelevant', '按职责筛选排除'],
+    ] as const
+    const excluded = otherReasons.filter(([reason]) => projection.omittedSources.some(item => item.reason === reason))
+    if (excluded.length > 0) {
+      await recorded.getByText('其他未纳入原因', { exact: true }).click()
+      for (const [reason, label] of excluded) {
+        const count = projection.omittedSources.filter(item => item.reason === reason).length
+        expect(await recorded.locator('dl > div').filter({ has: sourcePage.getByText(label, { exact: true }) })
+          .locator('dd').innerText()).toBe(`${String(count)} 条`)
+      }
+    }
+    expect(await recorded.textContent()).not.toContain('WEB_OWNER_BUDGET_')
+    expect(await recorded.textContent()).not.toContain('模型已采用')
+    expect(bRequests).toHaveLength(3)
     const identity = await a.ctx.scopeAccess.identity()
     const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'], [localTask.id, '{{localTaskId}}'],
       [identity.peerId, '{{ownerPeerId}}'], [entryText, '{{joinEntry}}'],
@@ -1684,6 +1706,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(bRequests).toHaveLength(7)
     for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, last, kind)
     await panel(sourcePage)
+    expect(await sourcePage.locator('[data-native-recorded-context]').count()).toBe(0)
     await captureStage(sourcePage, b.workspaceCwd, 'budget-left', replacements, PANEL, snapshots)
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
     await assertFixtureInventory(snapshots, ['budget-passive.expected.md', 'budget-left.expected.md'])

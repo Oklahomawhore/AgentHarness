@@ -1554,6 +1554,28 @@ type ScopeAgentSubscriptionState = 'unbound' | 'active' | 'left' | 'revoked' | '
 ```
 
 ```ts type-equiv
+/** Current recorded shared snapshot metadata; neither request dispatch nor current remote authorization. */
+interface ScopeAgentRecordedContext {
+  readonly contextSeq: SessionSeq
+  readonly bindingId: ScopeAgentBindingId
+  readonly subscriptionId: ScopeSubscriptionId
+  /** UTF-8 bytes of this shared message’s text blocks, including consumer framing; excludes non-text payloads. */
+  readonly sharedBytes: number
+  readonly taskRevision: number
+  /** Represented source references, not a count of facts, files, or understood material. */
+  readonly selectedSourceCount: number
+  readonly omittedSourceCounts: {
+    readonly 'self-published': number
+    readonly budget: number
+    readonly unsupported: number
+    readonly superseded: number
+    readonly withdrawn: number
+    readonly 'recipient-irrelevant': number
+  }
+}
+```
+
+```ts type-equiv
 /** A read-only live-Agent observation and its consistent Session projection watermark. */
 type ScopeAgentStatusResult =
   | { readonly agentId: SessionId; readonly eligibility: 'not-live' }
@@ -1568,6 +1590,8 @@ type ScopeAgentStatusResult =
     readonly localTask: ScopeAgentLocalTaskTarget | null
     /** Recorded automatic activity for the current eligible binding and goal; never a current authorization check. */
     readonly activity: ScopeAgentActivity
+    /** Current matching shared snapshot on the logged surface, or null after withdrawal or binding changes. */
+    readonly recordedContext: ScopeAgentRecordedContext | null
   }
 ```
 
@@ -3885,7 +3909,7 @@ updateJoinReadRoute(request: ScopeAgentUpdateJoinReadRouteRequest): Promise<Scop
 @Remote('leave') async leave(request: ScopeAgentBindingRequest): Promise<ScopeAgentBindingStatus>
 
 /**
- * Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.
+ * Observe live eligibility, exact Session state, recorded context and automatic activity, and local subscription intent.
  * @param request - Session identity; lookup never starts or restores a cold Agent.
  * @returns a consistent projection watermark or not-live; no remote authorization is performed.
  */

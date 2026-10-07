@@ -50,6 +50,8 @@ export interface NativeScopeDependencies {
   readonly port: NativeScopePort
   readonly projection: HostObservable<unknown>
   readonly evidence: HostObservable<unknown>
+  /** Completed-step progress invalidates recorded context even while the Agent stays running. */
+  readonly contextProgress: HostObservable<{ readonly steps: number } | undefined>
   readonly session: HostObservable<{ readonly running: boolean }>
   readonly connection: HostObservable<{ readonly id: number } | undefined>
   readonly subscribeAssignments: (listener: () => void) => () => void
@@ -83,6 +85,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
   let mutation: symbol | undefined
   let watermark = -1
   let running = deps.session.getSnapshot().running
+  let completedSteps = deps.contextProgress.getSnapshot()?.steps
   let connection = deps.connection.getSnapshot()
   let disposers: readonly (() => void)[] = []
   const observing = (): boolean => active
@@ -139,6 +142,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
     readAgain = false
     watermark = -1
     connection = deps.connection.getSnapshot()
+    completedSteps = deps.contextProgress.getSnapshot()?.steps
     // A sent mutation can still commit. Keep its single-flight lock until settlement.
     publish({ phase: connection === undefined ? 'disconnected' : 'loading', observation: null,
       pending: mutation !== undefined, issue: mutation === undefined ? null : 'unknown' })
@@ -147,10 +151,15 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
   const start = (): void => {
     active = true
     running = deps.session.getSnapshot().running
+    completedSteps = deps.contextProgress.getSnapshot()?.steps
     connection = deps.connection.getSnapshot()
     disposers = [
       deps.projection.subscribe(refresh),
       deps.evidence.subscribe(refresh),
+      deps.contextProgress.subscribe(() => {
+        const next = deps.contextProgress.getSnapshot()?.steps
+        if (next !== completedSteps) { completedSteps = next; refresh() }
+      }),
       deps.subscribeAssignments(refresh),
       deps.session.subscribe(() => {
         const next = deps.session.getSnapshot().running

@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScopeAgentContext from '../src/index.ts'
 import { goalDigest } from '../src/evidence.ts'
 import { scopeAgentActivitySchema } from '../src/activity.ts'
+import { recordedScopeContext } from '../src/recorded-context.ts'
 import { replaceContext, snapshotMessage, scopeContextFramingBytes, withdrawalMessage } from '../src/messages.ts'
 import { scopeAgentProjection } from '../src/state.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentBindingId } from '../src/types.ts'
@@ -763,6 +764,8 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(text(adapter.requests[0]!)).toContain(incomplete.text)
     expect((await state(ctx, agent.id))).toMatchObject({ mode: 'passive', usedBudget: 0, pauseReason: null })
     expect(agent.session.snapshotEvents().filter(event => event.type === 'scope-agent-context/evaluation')).toEqual([])
+    expect((await observation(ctx, agent.id)).recordedContext?.omittedSourceCounts.budget)
+      .toBe(incomplete.omittedSources.filter(item => item.reason === 'budget').length)
   })
 
   it.each([false, true])('rechecks real Text coverage for a reserved pulse while retaining human input=%s', async (withUser) => {
@@ -997,6 +1000,83 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(text(adapter.requests[1]!)).toContain('API state two')
     expect(text(adapter.requests[1]!)).not.toContain('API state one')
     expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context')).toHaveLength(2)
+  })
+
+  it('observes passive recorded context at the status watermark without a new dispatch or remote read', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    agent.followup(user('Read ordinary shared work'))
+    await agent.whenIdle()
+    const first = await observation(ctx, agent.id)
+    expect(first.recordedContext).toMatchObject({ bindingId: bound.binding?.id, taskRevision: 1 })
+    expect(first.activity).toEqual({ request: null, completed: null, evaluation: null })
+    const reads = access.reads
+    const events = agent.session.snapshotEvents()
+    const detached = Session.create(agent.id, events, agent.session.header)
+    expect(recordedScopeContext(detached, first.state.binding)).toEqual(first.recordedContext)
+    expect(first.asOfSeq).toBe(agent.session.seq - 1)
+    expect(await observation(ctx, agent.id)).toEqual(first)
+    expect(agent.session.snapshotEvents()).toEqual(events)
+    expect(access.reads).toBe(reads)
+    expect(adapter.requests).toHaveLength(1)
+    await ctx.scopeAgentContext.pause({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    expect((await observation(ctx, agent.id)).recordedContext).toEqual(first.recordedContext)
+    agent.followup(user('Read the unchanged shared work again'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.contextSeq).toBe(first.recordedContext?.contextSeq)
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('clears recorded metadata when a passive read withdraws, then requires a snapshot for the replacement binding', async () => {
+    const { ctx, agent, adapter, access } = await fixture()
+    await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    agent.followup(user('Read shared work'))
+    await agent.whenIdle()
+    const first = await observation(ctx, agent.id)
+    expect(first.recordedContext).not.toBeNull()
+    access.result = { status: 'unavailable' }
+    agent.followup(user('Continue despite an unavailable owner'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    expect(text(adapter.requests[1]!)).toContain('Shared scope context withdrawn')
+    access.result = { status: 'active', projection: projection('Recovered shared work', 2) }
+    agent.followup(user('Continue with recovered shared work'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.taskRevision).toBe(2)
+    await ctx.scopeAgentContext.bind({
+      agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id), invitation, automatic: null,
+    })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+    agent.followup(user('Read under the new local receiving interval'))
+    await agent.whenIdle()
+    expect((await observation(ctx, agent.id)).recordedContext?.bindingId).not.toBe(first.recordedContext?.bindingId)
+    await ctx.scopeAgentContext.leave({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
+  })
+
+  it('reports recorded surface replacements without claiming they were dispatched to the held ordinary request', async () => {
+    const { ctx, agent, adapter } = await fixture()
+    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic: null })
+    const binding = bound.binding
+    if (binding === null || binding.kind === 'local-task') throw new Error('Expected a remote binding')
+    const gate = barrier()
+    adapter.gate = gate.promise
+    agent.followup(user('Hold this ordinary request'))
+    try {
+      await requests(adapter, 1)
+      const first = await observation(ctx, agent.id)
+      replaceContext(agent, snapshotMessage(binding, projection('Recorded after dispatch', 2), 8000))
+      const recorded = await observation(ctx, agent.id)
+      expect(recorded.recordedContext?.taskRevision).toBe(2)
+      expect(recorded.recordedContext?.contextSeq).toBeGreaterThan(first.recordedContext!.contextSeq)
+      expect(recorded.asOfSeq).toBe(agent.session.seq - 1)
+      expect(text(adapter.requests[0]!)).not.toContain('Recorded after dispatch')
+      expect(recorded.activity).toEqual({ request: null, completed: null, evaluation: null })
+    } finally {
+      gate.resolve(undefined)
+      await agent.whenIdle()
+    }
   })
 
   it('starts one idle turn for coalesced change and does not repeat an unchanged projection', async () => {
@@ -1555,6 +1635,7 @@ describe('native scope management and Client projection', () => {
     await expect(ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: binding.id, automatic }))
       .rejects.toMatchObject({ code: 'scope-agent/terminal-subscription', details: { state: terminal } })
     expect(await ctx.scopeAgentContext.status({ agentId: agent.id })).toMatchObject({ subscriptionState: terminal, state: { mode: 'paused', pauseReason: 'terminal', pendingActivation: null } })
+    expect((await observation(ctx, agent.id)).recordedContext).toBeNull()
     expect((await observation(ctx, agent.id)).activity).toEqual({ request: null, completed: null, evaluation: null })
     expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).not.toBeNull()
     expect(adapter.requests).toHaveLength(1)

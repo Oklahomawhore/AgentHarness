@@ -1,5 +1,5 @@
 /** Client-only string-generation invitation and observable fixtures for native scope controls. */
-import type { ScopeAgentBindingStatus, ScopeAgentStatusResult, ScopeAgentRemoteBinding, ScopeInvitation } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ScopeAgentBindingStatus, ScopeAgentRecordedContext, ScopeAgentStatusResult, ScopeAgentRemoteBinding, ScopeInvitation } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 
 export const invitation: ScopeInvitation = {
@@ -17,11 +17,20 @@ export const bound: ScopeAgentBindingStatus = { ...state, mode: 'passive', bindi
 } }
 export function observation(value = state, seq = 1): Extract<ScopeAgentStatusResult, { state: unknown }> {
   return { agentId: value.agentId, eligibility: 'eligible', state: value, asOfSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['asOfSeq'],
-    readStateSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'], subscriptionState: value.binding === null ? 'unbound' : 'active', localTask: null, activity: { request: null, completed: null, evaluation: null } }
+    readStateSeq: seq as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'],
+    subscriptionState: value.binding === null ? 'unbound' : 'active', localTask: null, recordedContext: null,
+    activity: { request: null, completed: null, evaluation: null } }
 }
 export function observable<T>(initial: T): HostObservable<T> & { set(value: T): void; count(): number } {
   let value = initial
   const listeners = new Set<() => void>()
   return { getSnapshot: () => value, subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
     set(next) { value = next; for (const listener of [...listeners]) listener() }, count: () => listeners.size }
+}
+
+export const recordedContext: ScopeAgentRecordedContext = {
+  contextSeq: 12 as ScopeAgentRecordedContext['contextSeq'], bindingId: 'binding-a' as ScopeAgentRecordedContext['bindingId'],
+  subscriptionId: 'subscription-a' as ScopeAgentRecordedContext['subscriptionId'], taskRevision: 8,
+  sharedBytes: 6023, selectedSourceCount: 3,
+  omittedSourceCounts: { 'self-published': 2, budget: 4, unsupported: 0, superseded: 1, withdrawn: 0, 'recipient-irrelevant': 0 },
 }

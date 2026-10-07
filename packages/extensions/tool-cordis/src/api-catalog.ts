@@ -2397,7 +2397,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'status\') async status(request: { readonly agentId: SessionId }): Promise<ScopeAgentStatusResult>',
-        description: 'Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.',
+        description: 'Observe live eligibility, exact Session state, recorded context and automatic activity, and local subscription intent.',
         parameters: [{ name: 'request', description: 'Session identity; lookup never starts or restores a cold Agent.' }],
         returns: 'a consistent projection watermark or not-live; no remote authorization is performed.',
       },
@@ -7100,6 +7100,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScopeAgentReadProjection = ScopeAccessProjection | DevelopmentTaskLocalContextProjection | ScopeAgentCompositeProjection;',
   },
   {
+    name: 'ScopeAgentRecordedContext',
+    declaration: 'export interface ScopeAgentRecordedContext {\n    readonly contextSeq: SessionSeq;\n    readonly bindingId: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly sharedBytes: number;\n    readonly taskRevision: number;\n    readonly selectedSourceCount: number;\n    readonly omittedSourceCounts: {\n        readonly \'self-published\': number;\n        readonly budget: number;\n        readonly unsupported: number;\n        readonly superseded: number;\n        readonly withdrawn: number;\n        readonly \'recipient-irrelevant\': number;\n    };\n}',
+  },
+  {
     name: 'ScopeAgentRemoteBinding',
     declaration: 'export interface ScopeAgentRemoteBinding {\n    readonly kind?: never;\n    readonly id: ScopeAgentBindingId;\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly invitation: ScopeInvitation;\n    readonly originalCapture?: ScopeOriginalCapture;\n}',
   },
@@ -7113,7 +7117,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentStatusResult',
-    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n    readonly activity: ScopeAgentActivity;\n};',
+    declaration: 'export type ScopeAgentStatusResult = {\n    readonly agentId: SessionId;\n    readonly eligibility: \'not-live\';\n} | {\n    readonly agentId: SessionId;\n    readonly eligibility: \'eligible\' | \'delegated\' | \'fork\' | \'task-conflict\';\n    readonly state: ScopeAgentBindingStatus;\n    readonly asOfSeq: SessionSeqCursor;\n    readonly readStateSeq: SessionSeqCursor;\n    readonly subscriptionState: ScopeAgentSubscriptionState;\n    readonly localTask: ScopeAgentLocalTaskTarget | null;\n    readonly activity: ScopeAgentActivity;\n    readonly recordedContext: ScopeAgentRecordedContext | null;\n};',
   },
   {
     name: 'ScopeAgentSubscriptionState',

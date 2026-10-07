@@ -79,7 +79,10 @@ await ctx.scopeAgentContext.resume({
 await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 ```
 
-`status` 只读取已运行的 Agent，不创建或恢复会话，并区分可接收、委派、分叉、冲突和未运行状态。其 `state` 与 `activity` 对应同一个 `asOfSeq` Session 日志位置。现有 Session control stream 通过 `scopeAgentContext` 提供调度状态，通过 `scopeAgentEvidence` 提供不含正文的活动记录。Status 将活动限定于当前符合资格的绑定和本地目标：当前轮次保留的实际请求、最近一次成功完成及最近一次评估。自动许可或合格目标缺失时清空活动。恢复的历史记录不会续期许可；完成只证明所记录的轮次已结束，不证明产物质量。`localTask` 标识当前 owner 本地 Task 代际。本地绑定的 `subscriptionState` 为 `unbound`；远端 `active` 仅记录本地意图，不证明 owner 当前授权或模型采用。
+`status` 只读取已运行的 Agent，不创建或恢复会话，并区分可接收、委派、分叉、冲突和未运行状态。其 `state`、`activity` 与 `recordedContext` 对应同一个 `asOfSeq` Session 日志位置。现有 Session control stream 通过 `scopeAgentContext` 提供调度状态，通过 `scopeAgentEvidence` 提供不含正文的活动记录。Status 将活动限定于当前符合资格的绑定和本地目标：当前轮次保留的实际请求、最近一次成功完成及最近一次评估。自动许可或合格目标缺失时清空活动。恢复的历史记录不会续期许可；完成只证明所记录的轮次已结束，不证明产物质量。`localTask` 标识当前 owner 本地 Task 代际。本地绑定的 `subscriptionState` 为 `unbound`；远端 `active` 仅记录本地意图，不证明 owner 当前授权或模型采用。
+
+
+`recordedContext` 描述当前已记录消息中唯一的共享快照，要求它与符合接收条件的绑定、有效的本地订阅意图和精确权限身份匹配。摘要包含快照序号、Task 修订、完整共享消息的 UTF-8 字节数、已选来源数及按原因划分的省略数。字节包含 consumer 说明文字，不包含本地上下文或其他消息；来源数不是事实数。撤回、缺少快照、快照不唯一或绑定已替换时返回 null。这些元数据不证明请求已经发出、模型已经理解或 owner 当前可用。恢复的历史可提供摘要，但不会续期授权；status 不启动未运行的 Agent。
 
 每个管理修改操作都会先比较 `expectedBindingId`；bind 仅在没有调度绑定时接受 null，此时 Session 可以已有本地 Task 分配。延迟的 bind 和 resume 在提交前还会复核准确的 Agent 实例与绑定。替换绑定会保留原绑定，直到新订阅准备完成；未被采用的迟到订阅会结束。RPC 回复丢失后应先读取 status：已经提交的绑定仍可查询，使用旧条件重试会被拒绝。修改响应不带 Session watermark，不能覆盖 Client 已收到的较新投影。
 
@@ -135,6 +138,7 @@ Session 先记录并落盘地址变更意图，再由 Access 修改接收记录�
 |---|---|
 | [index.ts](src/index.ts) | 本地管理、有界等待和启动的所有权、请求 admission。 |
 | [state.ts](src/state.ts)、[types.ts](src/types.ts) | 严格的重放验证和完整 Session 调度状态。 |
+| [recorded-context.ts](src/recorded-context.ts) | 当前匹配共享快照的不含正文元数据。 |
 | [messages.ts](src/messages.ts) | 精确上下文文本和持久替换。 |
 | [evidence.ts](src/evidence.ts) | 记录调度决定、实际请求证据，以及已完成自动目标的比较基线。 |
 

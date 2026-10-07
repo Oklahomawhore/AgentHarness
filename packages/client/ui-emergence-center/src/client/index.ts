@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import { EmergenceCenterPanel } from './EmergenceCenterPanel.tsx'
 import { NativeScopeAction, type NativeScopeInjected } from './NativeScopeAction.tsx'
-import { createNativeScopeSource } from './native-scopes.ts'
+import { createNativeScopeSource, type NativeScopeDependencies } from './native-scopes.ts'
 import { createNativeContributionDirectory } from './native-contributions.ts'
 import { createNativeLocalContributionDirectory } from './native-local-contributions.ts'
 import type { NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
@@ -191,6 +191,7 @@ export function apply(ctx: Context): void {
         agentId, port: ctx.remote.scopeAgentContext,
         projection: binding.session.projections.faceOf('scopeAgentContext'),
         evidence: binding.session.projections.faceOf('scopeAgentEvidence'),
+        contextProgress: binding.session.projections.faceOf('sessionStats') as NativeScopeDependencies['contextProgress'],
         session: binding.session,
         connection: (ctx.get('connection') as ConnectionHandle).generation,
         subscribeReset: listener => ctx.on('connection/reset', listener),

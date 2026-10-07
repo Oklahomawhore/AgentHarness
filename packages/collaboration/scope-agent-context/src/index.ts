@@ -25,6 +25,7 @@ import { completedMatches, goalDigest, scopeAgentEvidenceProjection } from './ev
 import { evidenceVersion } from './projection.ts'
 import { blocksCurrentCoverage } from './coverage.ts'
 import { currentScopeAgentActivity } from './activity.ts'
+import { recordedScopeContext } from './recorded-context.ts'
 import { initialState, policySchema, scopeAgentProjection } from './state.ts'
 import { hasLocal, readComposite, compositeProjection } from './composite.ts'
 import { joinReadEventSchema, joinReadHistory, departedState, joinCompositePlan, joinUsesLiveConsent } from './join-read.ts'
@@ -936,7 +937,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   /**
-   * Observe live eligibility, exact Session state, recorded automatic activity, and local subscription intent.
+   * Observe live eligibility, exact Session state, recorded context and automatic activity, and local subscription intent.
    * @param request - Session identity; lookup never starts or restores a cold Agent.
    * @returns a consistent projection watermark or not-live; no remote authorization is performed.
    */
@@ -968,6 +969,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       return { agentId, eligibility, state, asOfSeq: snapshot.asOfSeq,
         readStateSeq: joinReadHistory(agent.session).readStateSeq,
         subscriptionState, localTask: this.localTask(runtime),
+        recordedContext: recordedScopeContext(agent.session, current ? binding : null),
         activity: currentScopeAgentActivity(evidence, current ? binding.id : null,
           state.automatic === null ? null : goalDigest(state.automatic.goal)) }
     }

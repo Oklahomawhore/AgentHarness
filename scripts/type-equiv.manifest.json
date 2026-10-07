@@ -2578,6 +2578,11 @@
     },
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentRecordedContext",
+      "source": "packages/collaboration/scope-agent-context/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentStatusResult",
       "source": "packages/collaboration/scope-agent-context/src/types.ts"
     },

@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RemoteResult, ScopeAgentStatusResult, ScopeAgentBindingStatus } from '@deepseek-ai/dsh-api-remotes/client'
 import { createNativeScopeSource, type NativeScopePort } from '../src/client/native-scopes.ts'
 import { compositeExecution, localObservation, target } from './native-local-automatic-fixture.client.ts'
-import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
+import { bound, invitation, observation, observable, recordedContext, state } from './native-scope-fixture.client.ts'
 
 const ok = <T>(value: T): RemoteResult<T> => ({ ok: true, value })
 function fixture(overrides: Partial<NativeScopePort> = {}) {
   const projection = observable<unknown>(undefined)
   const evidence = observable<unknown>(undefined)
+  const contextProgress = observable<{ readonly steps: number } | undefined>(undefined)
   const session = observable({ running: false })
   const connection = observable<{ id: number } | undefined>({ id: 1 })
   const resets = observable(0)
@@ -16,9 +17,9 @@ function fixture(overrides: Partial<NativeScopePort> = {}) {
     leaveLocalTask: vi.fn(async () => ok(state)),
     status: vi.fn(async () => ok(observation())), bind: vi.fn(async () => ok(bound)),
     pause: vi.fn(async () => ok(bound)), resume: vi.fn(async () => ok(bound)), leave: vi.fn(async () => ok(state)), ...overrides }
-  const source = createNativeScopeSource({ agentId: state.agentId, port, projection, evidence, session, connection,
+  const source = createNativeScopeSource({ agentId: state.agentId, port, projection, evidence, contextProgress, session, connection,
     subscribeAssignments: listener => assignments.subscribe(listener), subscribeReset: listener => resets.subscribe(listener) })
-  return { source, port, projection, evidence, session, connection, resets, assignments }
+  return { source, port, projection, evidence, contextProgress, session, connection, resets, assignments }
 }
 const join = { kind: 'bind', request: { invitation, automatic: null, expectedBindingId: null } } as const
 
@@ -31,7 +32,8 @@ describe('native scope source', () => {
     expect(await f.source.act(join)).toBe(false)
     expect(f.port.bind).not.toHaveBeenCalled()
     stop()
-    expect([f.connection.count(), f.projection.count(), f.evidence.count(), f.session.count(), f.resets.count()]).toEqual([0, 0, 0, 0, 0])
+    expect([f.connection.count(), f.projection.count(), f.evidence.count(),
+      f.contextProgress.count(), f.session.count(), f.resets.count()]).toEqual([0, 0, 0, 0, 0, 0])
   })
   it('rejects reads overtaken by a projection and keeps the later watermark', async () => {
     const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()
@@ -62,6 +64,55 @@ describe('native scope source', () => {
     } finally { old.resolve(ok(observation())); stop() }
     expect(f.evidence.count()).toBe(0)
   })
+  it('refreshes completed steps while still running and discards a status overtaken by the new context', async () => {
+    const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()
+    const next = { ...observation(bound, 14), recordedContext }
+    const status = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(ok(next))
+    const f = fixture({ status })
+    f.session.set({ running: true })
+    f.contextProgress.set({ steps: 0 })
+    const ready: (ScopeAgentStatusResult | null)[] = []
+    const stop = f.source.subscribe(() => {
+      const snapshot = f.source.getSnapshot()
+      if (snapshot.phase === 'ready') ready.push(snapshot.observation)
+    })
+    try {
+      f.contextProgress.set({ steps: 1 })
+      f.contextProgress.set({ steps: 1 })
+      old.resolve(ok(observation(bound, 11)))
+      await vi.waitFor(() => { expect(f.source.getSnapshot().observation).toEqual(next) })
+      expect(ready).toEqual([next])
+      expect(status).toHaveBeenCalledTimes(2)
+      f.contextProgress.set({ steps: 1 })
+      expect(status).toHaveBeenCalledTimes(2)
+      f.contextProgress.set({ steps: 2 })
+      await vi.waitFor(() => { expect(status).toHaveBeenCalledTimes(3) })
+      expect(f.session.getSnapshot().running).toBe(true)
+      expect(f.port.bind).not.toHaveBeenCalled()
+      expect(f.port.resume).not.toHaveBeenCalled()
+    } finally { old.resolve(ok(observation())); stop() }
+    expect(f.contextProgress.count()).toBe(0)
+  })
+
+  it('resets the step observation when reconnecting to a changed projection', async () => {
+    const f = fixture()
+    f.contextProgress.set({ steps: 8 })
+    const stop = f.source.subscribe(vi.fn())
+    try {
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      f.connection.set(undefined)
+      f.contextProgress.set(undefined)
+      f.contextProgress.set({ steps: 0 })
+      f.connection.set({ id: 2 })
+      await vi.waitFor(() => { expect(f.source.getSnapshot().phase).toBe('ready') })
+      const calls = vi.mocked(f.port.status).mock.calls.length
+      f.contextProgress.set({ steps: 0 })
+      expect(f.port.status).toHaveBeenCalledTimes(calls)
+      f.contextProgress.set({ steps: 1 })
+      await vi.waitFor(() => { expect(f.port.status).toHaveBeenCalledTimes(calls + 1) })
+    } finally { stop() }
+  })
+
   it('clears trusted display while disconnected and discards prior connection replies', async () => {
     const old = Promise.withResolvers<RemoteResult<ScopeAgentStatusResult>>()
     const f = fixture({ status: vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(ok(observation(bound, 2))) })
