@@ -26,6 +26,42 @@ type ClaudeScopeSessionKey = Branded<'ClaudeScopeSessionKey'>
 ```
 
 ```ts type-equiv
+/** One source user's joint receiving consent, independent of capture lifetime. */
+type ClaudeScopeJointId = Branded<'ClaudeScopeJointId'>
+```
+
+```ts type-equiv
+/** Receiving retained by one joint application; active means local adoption, not model admission. */
+interface ClaudeScopeJointSummary {
+  readonly id: ClaudeScopeJointId
+  readonly capture: ClaudeScopeContributionSelection
+  /** Original consent revision, reused unchanged when retrying a pending application. */
+  readonly expectedReadRevision: number
+  readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
+  readonly intent: 'adopt' | 'cancel-pending' | 'leave'
+  /** Either original permission still has locally retained termination work. */
+  readonly cleanupPending: boolean
+  readonly subscriptionId?: ScopeSubscriptionId
+}
+```
+
+```ts type-equiv
+/** Withdraw only the receiving and contribution identities owned by this joint application. */
+interface ClaudeScopeLeaveJointRequest {
+  readonly sessionKey: ClaudeScopeSessionKey
+  readonly jointId: ClaudeScopeJointId
+}
+```
+
+```ts type-equiv
+/** Change only the address of this joint application's retained grants; never reopen stopped work. */
+interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {
+  readonly expectedReadRevision: number
+  readonly ownerAddress: string
+}
+```
+
+```ts type-equiv
 /** Explicit deployment inputs for project-local hook installation. */
 interface ClaudeScopeSetupConfig {
   /** Absolute Harness home used for the shared profile and the hook's DSH_HOME. */
@@ -139,6 +175,10 @@ interface ClaudeScopeSessionSummary {
   readonly cwd?: string
   readonly observedAt: number
   readonly ended: boolean
+  /** Monotonic local receive-management revision; unrelated Hook observations do not advance it. */
+  readonly readRevision: number
+  /** Latest joint operation remains visible after its contribution stops. */
+  readonly joint?: ClaudeScopeJointSummary
   readonly taskId?: DevelopmentTaskId
   readonly responsibility?: string
   /** Omitted when sharing has stopped and no owner confirmation remains pending. */
@@ -311,7 +351,7 @@ interface ScopeArtifactChain {
 
 ```ts type-equiv
 /** Local-only observed identity and its current authorization, if any. */
-interface ScopeSession {
+type ScopeSession = {
   readonly sessionKey: ClaudeScopeSessionKey
   readonly sessionId: string
   readonly participantId: DevelopmentParticipantId
@@ -329,6 +369,42 @@ interface ScopeSession {
     readonly receipt?: DevelopmentTaskObservedReceipt | undefined
   } | undefined
   readonly sharingIssue?: 'owner-unavailable' | 'capacity' | 'rejected' | undefined
+} & ({
+  readonly version?: undefined
+  readonly readRevision?: undefined
+  readonly joint?: undefined
+} | {
+  readonly version: 2
+  readonly readRevision: number
+  readonly joint?: ScopeJoint | undefined
+})
+```
+
+```ts type-equiv
+/** Original authorization plus independently retryable receiving and route work. */
+interface ScopeJoint {
+  readonly id: ClaudeScopeJointId
+  readonly proposal: ClaudeScopeContributionProposal
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  readonly expectedReadRevision: number
+  readonly authorizedReadRevision: number
+  readonly cleanupPending: boolean
+  readonly state: ClaudeScopeJointSummary['state']
+  readonly intent: ClaudeScopeJointSummary['intent']
+  /** Set only after the exact contribution grant is verified active or its terminal receipt is accepted. */
+  readonly ready: boolean
+  readonly subscription?: ScopeCaptureSubscription | undefined
+  readonly contributionInvitation?: ScopeContributionInvitation | undefined
+  readonly adoptedReadRevision?: number | undefined
+  readonly routeRevision: number
+  readonly routePending: boolean
+  /** The last explicit route selection permits an exact retry after its management reply is lost. */
+  readonly routeRequest?: {
+    readonly expectedReadRevision: number
+    readonly appliedReadRevision: number
+    readonly ownerAddress: string
+  } | undefined
 }
 ```
 
@@ -2582,6 +2658,8 @@ interface ScopeContributionEntryRecoverRequest {
 interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
+  /** Required for joint entries; grants passive receiving only at the displayed local read revision. */
+  readonly receive?: { readonly expectedReadRevision: number }
 }
 ```
 
@@ -2910,7 +2988,7 @@ Local authenticated management and command-hook service; no external Session is 
 
 /**
  * Retain local file permission and bounded consent, then reconcile the owner application without blocking other sessions.
- * @param request - exact local selection, single-capture owner entry, and accepted automatic-activation limits.
+ * @param request - exact local selection, owner entry, optional passive joint consent, and accepted automatic-activation limits.
  * @returns committed local intent; session-changed notifications report later waiting, active, or cancellation state.
  */
 @Remote('requestContribution') requestContribution(request: ClaudeScopeRequestContributionRequest): Promise<ClaudeScopeSessionSummary>
@@ -2928,6 +3006,20 @@ Local authenticated management and command-hook service; no external Session is 
  * @returns local stop state; withdrawal remains pending until the owner confirms it. Read details after a lost reply.
  */
 @Remote('contributionLeave') contributionLeave(request: ClaudeScopeContributionLeaveRequest): Promise<ClaudeScopeSessionSummary>
+
+/**
+ * Stop only the contribution and receiving interval created by the selected joint operation.
+ * @param request - original joint identity; later manual reading and later captures remain independent.
+ * @returns durable local stop state while exact remote cleanup continues in the background.
+ */
+@Remote('leaveJoint') async leaveJoint(request: ClaudeScopeLeaveJointRequest): Promise<ClaudeScopeSessionSummary>
+
+/**
+ * Retain one replacement owner address for both permissions of the original joint operation.
+ * @param request - displayed joint and read revision; only an identical lost-response retry bypasses the current revision.
+ * @returns committed route intent; background adoption preserves all grant and capture identities.
+ */
+@Remote('recoverJoint') async recoverJoint(request: ClaudeScopeRecoverJointRequest): Promise<ClaudeScopeSessionSummary>
 
 /**
  * Join a device-bound read invitation without collecting tools or creating a Task replica.

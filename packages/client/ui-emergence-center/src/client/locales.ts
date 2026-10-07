@@ -4,6 +4,26 @@ export const NS = 'emergenceCenter'
 
 /** Simplified Chinese messages. */
 export const zh = {
+  'claude.joint.title': '此次协作的共享上下文',
+  'claude.joint.hint': '确认下列两项许可后，所有者可一次批准读取与贡献，无需再粘贴只读邀请。',
+  'claude.joint.readConsent': '我允许这个 Claude 会话在正常工作时接收该目标的共享上下文。',
+  'claude.joint.collectionConsent': '我允许这个 Claude 会话在上述目录和限额内分享 Write/Edit 的完成结果。',
+  'claude.joint.conflict': '此会话已有读取或 Task 连接，或另一项加入尚未结束。请先处理原连接；此次申请不会替换它。',
+  'claude.joint.request': '申请加入并在批准后连接',
+  'claude.joint.state.waiting': '等待所有者批准读取与文件贡献。',
+  'claude.joint.state.adopting': '已获批准，正在连接此次共享上下文。',
+  'claude.joint.state.active': '此次协作的读取连接已就绪。',
+  'claude.joint.state.ended': '此次协作的读取已结束。',
+  'claude.joint.state.superseded': '此次加入已被后续接收操作替代。',
+  'claude.joint.state.failed': '此次读取尚未确认；Host 将继续核验。',
+  'claude.joint.ending': '正在确认此次协作已结束。',
+  'claude.joint.passiveHint': '上下文会在下一次支持的 Hook 中准备。不会唤醒 Claude 或启动模型；连接状态不代表模型已接收或理解。',
+  'claude.joint.leave': '退出此次协作',
+  'claude.joint.leaveHint': '停止这次文件贡献与其创建的读取，保留原 Claude 会话及后来独立建立的读取。',
+  'claude.joint.stopActiveHint': '仅停止分享会保留此次读取；要同时停止接收，请选择“退出此次协作”。',
+  'claude.joint.stopPendingHint': '停止分享也会取消尚未采用的读取。',
+  'claude.joint.routeHint': '输入同一所有者公布的新连接地址。保留原许可，只更新此次加入仍有效的贡献与读取地址；停止贡献后仍可恢复保留的读取。',
+
   'contribution.initialization': '既有记录分享',
   'contribution.recordedTools': '允许分享加入前已记录的工具操作，以及后续获准的新操作。',
   'native.initialization.consent': '同时分享本次范围内已记录的工具操作',
@@ -584,6 +604,26 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** English messages. */
 export const en = {
+  'claude.joint.title': 'Shared context for this collaboration',
+  'claude.joint.hint': 'Confirm both permissions so the owner can approve reading and contribution together, without another read invitation.',
+  'claude.joint.readConsent': 'Allow this Claude session to receive this goal’s shared context during ordinary work.',
+  'claude.joint.collectionConsent': 'Allow this Claude session to share completed Write/Edit results within the directories and limits above.',
+  'claude.joint.conflict': 'This session already has a read or Task connection, or another join is unfinished. Resolve it first; this application will not replace it.',
+  'claude.joint.request': 'Apply to join and connect after approval',
+  'claude.joint.state.waiting': 'Waiting for the owner to approve reading and file contribution.',
+  'claude.joint.state.adopting': 'Approved; connecting this shared context.',
+  'claude.joint.state.active': 'Reading for this collaboration is connected.',
+  'claude.joint.state.ended': 'Reading for this collaboration has ended.',
+  'claude.joint.state.superseded': 'A later receiving action replaced this join.',
+  'claude.joint.state.failed': 'Reading is unconfirmed; the Host will keep checking.',
+  'claude.joint.ending': 'Confirming that this collaboration has ended.',
+  'claude.joint.passiveHint': 'Context is prepared at the next supported Hook. This does not wake Claude or start a model; connection status does not establish model receipt or understanding.',
+  'claude.joint.leave': 'Leave this collaboration',
+  'claude.joint.leaveHint': 'Stop this contribution and the reading it created, preserving the original Claude session and any later independent reading.',
+  'claude.joint.stopActiveHint': 'Stopping sharing retains this reading. Choose “Leave this collaboration” to stop receiving as well.',
+  'claude.joint.stopPendingHint': 'Stopping sharing also cancels reading that has not yet been adopted.',
+  'claude.joint.routeHint': 'Enter a new address advertised by the same owner. Keep the original permission and update only this join’s retained contribution and read routes. Reading can still be recovered after contribution stops.',
+
   'contribution.initialization': 'Recorded work sharing',
   'contribution.recordedTools': 'Allows tool observations recorded before joining, as well as subsequent permitted work.',
   'native.initialization.consent': 'Also share recorded tool work within this permission',

@@ -15,6 +15,7 @@ import type { ScopeContribution, ScopeContributionLease } from './contribution-s
 import { sampleOpenApiSource } from './openapi.ts'
 import { contributionProposalSource, resolveContributionSource, contributionEntryMatches, contributionSourceSchema } from './contribution-source.ts'
 import { scopeDigest } from './projection.ts'
+import { ownsJointCapture, ownsJointRead, validateJointRequest, prepareJoint, selectJointApproval } from './joint.ts'
 import { ContributionController, type ContributionStore } from '@deepseek-ai/dsh-scope-access/contribution'
 import type { ScopeDomain, ScopeSession } from './state.ts'
 import type {
@@ -109,7 +110,19 @@ export class IndependentContribution {
   private async save(domain: ScopeDomain, key: ClaudeScopeSessionKey, contribution: ScopeContribution): Promise<ScopeSession> {
     const current = this.session(domain, key)
     if (isDeepStrictEqual(current.contribution, contribution)) return current
-    const session = { ...current, contribution }
+    let session: ScopeSession = { ...current, contribution }
+    if (current.joint !== undefined && ownsJointCapture(contribution, current.joint)) {
+      const joint = current.joint
+      const selected = contribution.invitation === undefined ? contribution
+        : { ...contribution, invitation: { ...contribution.invitation, ownerAddress: joint.entry.ownerAddress } }
+      session = { ...current, contribution: selected, joint: { ...joint,
+        ready: joint.subscription !== undefined && (joint.ready || selected.state === 'active' || selected.endReceipt !== undefined),
+        ...(selected.state !== 'ending' || selected.endReceipt !== undefined || ownsJointRead(current, joint) || joint.intent !== 'adopt' ? {} : {
+          intent: 'cancel-pending' as const, cleanupPending: joint.subscription !== undefined,
+          state: joint.subscription === undefined ? 'ended' as const : joint.state,
+        }),
+      } }
+    }
     await domain.table('sessions').put(key, session)
     this.ctx.emit('claude-scope/session-changed', key)
     return session
@@ -195,6 +208,7 @@ export class IndependentContribution {
         { sessionKey: request.sessionKey })
     }
     let session = this.session(domain, request.sessionKey)
+    validateJointRequest(session, request)
     const existing = session.contribution
     if (existing?.application !== undefined) {
       const { ownerAddress: _oldAddress, ...oldEntry } = existing.application.entry
@@ -210,7 +224,12 @@ export class IndependentContribution {
       if (!isDeepStrictEqual(oldEntry, newEntry) || !isDeepStrictEqual(existing.application.limits, limits) || !sameFiles) {
         throw new RemoteError('claude-scope/source-conflict', 'An application retry may change only the owner address', { sessionKey: request.sessionKey })
       }
-      return this.save(domain, request.sessionKey, { ...existing, application: { ...existing.application, entry } })
+      const retained = prepareJoint(session, request, existing)
+      const updated = { ...retained, contribution: { ...(retained.contribution ?? existing),
+        application: { ...existing.application, entry } } }
+      await domain.table('sessions').put(request.sessionKey, updated)
+      this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+      return updated
     }
     if (session.ended || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now()) {
       throw new RemoteError('claude-scope/local-permission-invalid', 'The selected application or permission has expired', { sessionKey: request.sessionKey })
@@ -227,7 +246,11 @@ export class IndependentContribution {
     if (Buffer.byteLength(JSON.stringify({ entry, proposal: capture.proposal, limits }), 'utf8') > this.limits.maxObservationBytes) {
       throw new RemoteError('claude-scope/local-permission-invalid', 'The online application exceeds the configured byte limit', { sessionKey: request.sessionKey })
     }
-    return this.save(domain, request.sessionKey, { ...capture, application: { entry, limits, state: 'applying' } })
+    const selected: ScopeSession = { ...prepareJoint(session, request, capture),
+      contribution: { ...capture, application: { entry, limits, state: 'applying' } } }
+    await domain.table('sessions').put(request.sessionKey, selected)
+    this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+    return selected
   }
 
   private controller(key: ClaudeScopeSessionKey): ContributionController<ScopeContribution> {
@@ -253,6 +276,15 @@ export class IndependentContribution {
         await leases.put(item.id, { ...lease, receipt })
       },
       requireCompatible: (invitation) => { this.requireCompatibleRead(this.session(domain, key), invitation) },
+      selectApproval: async (capture, approval) => {
+        const session = this.session(domain, key)
+        const selected = selectJointApproval(session, capture, approval)
+        if (selected !== session) {
+          await domain.table('sessions').put(key, selected)
+          this.ctx.emit('claude-scope/session-changed', key)
+        }
+        return selected.contribution ?? capture
+      },
       error: (code, message, expected) => {
         if (code === 'stale-capture') {
           const actual = this.session(domain, key).contribution?.proposal

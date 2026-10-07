@@ -643,7 +643,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: '@Remote(\'requestContribution\') requestContribution(request: ClaudeScopeRequestContributionRequest): Promise<ClaudeScopeSessionSummary>',
         description: 'Retain local file permission and bounded consent, then reconcile the owner application without blocking other sessions.',
-        parameters: [{ name: 'request', description: 'exact local selection, single-capture owner entry, and accepted automatic-activation limits.' }],
+        parameters: [{ name: 'request', description: 'exact local selection, owner entry, optional passive joint consent, and accepted automatic-activation limits.' }],
         returns: 'committed local intent; session-changed notifications report later waiting, active, or cancellation state.',
       },
       {
@@ -657,6 +657,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Stop only the selected contribution locally, retaining the independent read subscription.',
         parameters: [{ name: 'request', description: 'observed session, exact capture generation, and optional updated address for its identical retained grant.' }],
         returns: 'local stop state; withdrawal remains pending until the owner confirms it. Read details after a lost reply.',
+      },
+      {
+        signature: '@Remote(\'leaveJoint\') async leaveJoint(request: ClaudeScopeLeaveJointRequest): Promise<ClaudeScopeSessionSummary>',
+        description: 'Stop only the contribution and receiving interval created by the selected joint operation.',
+        parameters: [{ name: 'request', description: 'original joint identity; later manual reading and later captures remain independent.' }],
+        returns: 'durable local stop state while exact remote cleanup continues in the background.',
+      },
+      {
+        signature: '@Remote(\'recoverJoint\') async recoverJoint(request: ClaudeScopeRecoverJointRequest): Promise<ClaudeScopeSessionSummary>',
+        description: 'Retain one replacement owner address for both permissions of the original joint operation.',
+        parameters: [{ name: 'request', description: 'displayed joint and read revision; only an identical lost-response retry bypasses the current revision.' }],
+        returns: 'committed route intent; background adoption preserves all grant and capture identities.',
       },
       {
         signature: '@Remote(\'receive\') receive(request: ClaudeScopeReceiveRequest): Promise<ClaudeScopeSessionSummary>',
@@ -5076,6 +5088,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ClaudeScopeJoinRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly taskId: DevelopmentTaskId;\n    readonly responsibility: string;\n    readonly roots: readonly string[];\n    readonly bashCommands: readonly string[];\n    readonly openApiSources?: readonly ClaudeScopeOpenApiSource[];\n}',
   },
   {
+    name: 'ClaudeScopeJointId',
+    declaration: 'export type ClaudeScopeJointId = Branded<\'ClaudeScopeJointId\'>;',
+  },
+  {
+    name: 'ClaudeScopeJointSummary',
+    declaration: 'export interface ClaudeScopeJointSummary {\n    readonly id: ClaudeScopeJointId;\n    readonly capture: ClaudeScopeContributionSelection;\n    readonly expectedReadRevision: number;\n    readonly state: \'waiting\' | \'adopting\' | \'active\' | \'ended\' | \'superseded\' | \'failed\';\n    readonly intent: \'adopt\' | \'cancel-pending\' | \'leave\';\n    readonly cleanupPending: boolean;\n    readonly subscriptionId?: ScopeSubscriptionId;\n}',
+  },
+  {
+    name: 'ClaudeScopeLeaveJointRequest',
+    declaration: 'export interface ClaudeScopeLeaveJointRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly jointId: ClaudeScopeJointId;\n}',
+  },
+  {
     name: 'ClaudeScopeLeaveRequest',
     declaration: 'export interface ClaudeScopeLeaveRequest {\n    readonly sessionKey: ClaudeScopeSessionKey;\n}',
   },
@@ -5100,12 +5124,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ClaudeScopeReceiveStatus = \'pending\' | \'active\' | \'revoked\' | \'expired\' | \'unavailable\' | \'left\';',
   },
   {
+    name: 'ClaudeScopeRecoverJointRequest',
+    declaration: 'export interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {\n    readonly expectedReadRevision: number;\n    readonly ownerAddress: string;\n}',
+  },
+  {
     name: 'ClaudeScopeRemoveSetupResult',
     declaration: 'export interface ClaudeScopeRemoveSetupResult {\n    readonly projectPath: string;\n    readonly settingsPath: string;\n    readonly profileName: string;\n    readonly outcome: \'removed\' | \'already-removed\';\n}',
   },
   {
     name: 'ClaudeScopeRequestContributionRequest',
-    declaration: 'export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n}',
+    declaration: 'export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {\n    readonly entry: ScopeContributionEntry;\n    readonly limits: ScopeContributionLimits;\n    readonly receive?: {\n        readonly expectedReadRevision: number;\n    };\n}',
   },
   {
     name: 'ClaudeScopeSessionKey',
@@ -5113,7 +5141,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ClaudeScopeSessionSummary',
-    declaration: 'export interface ClaudeScopeSessionSummary {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly sessionId: string;\n    readonly cwd?: string;\n    readonly observedAt: number;\n    readonly ended: boolean;\n    readonly taskId?: DevelopmentTaskId;\n    readonly responsibility?: string;\n    readonly sharingState?: \'awaiting-approval\' | \'active\' | \'withdrawal-pending\';\n    readonly withdrawalTaskId?: DevelopmentTaskId;\n    readonly receiveSubscriptionId?: ScopeSubscriptionId;\n    readonly receiveTaskId?: DevelopmentTaskId;\n    readonly receiveOwnerPeerId?: ScopePeerId;\n    readonly receiveState?: ClaudeScopeReceiveStatus;\n    readonly sharingIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n    readonly contributionState?: \'prepared\' | \'active\' | \'withdrawal-pending\';\n    readonly contributionApplicationState?: ClaudeScopeContributionApplication[\'state\'];\n    readonly contributionTaskId?: DevelopmentTaskId;\n    readonly contributionOwnerPeerId?: ScopePeerId;\n    readonly contributionIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n}',
+    declaration: 'export interface ClaudeScopeSessionSummary {\n    readonly sessionKey: ClaudeScopeSessionKey;\n    readonly sessionId: string;\n    readonly cwd?: string;\n    readonly observedAt: number;\n    readonly ended: boolean;\n    readonly readRevision: number;\n    readonly joint?: ClaudeScopeJointSummary;\n    readonly taskId?: DevelopmentTaskId;\n    readonly responsibility?: string;\n    readonly sharingState?: \'awaiting-approval\' | \'active\' | \'withdrawal-pending\';\n    readonly withdrawalTaskId?: DevelopmentTaskId;\n    readonly receiveSubscriptionId?: ScopeSubscriptionId;\n    readonly receiveTaskId?: DevelopmentTaskId;\n    readonly receiveOwnerPeerId?: ScopePeerId;\n    readonly receiveState?: ClaudeScopeReceiveStatus;\n    readonly sharingIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n    readonly contributionState?: \'prepared\' | \'active\' | \'withdrawal-pending\';\n    readonly contributionApplicationState?: ClaudeScopeContributionApplication[\'state\'];\n    readonly contributionTaskId?: DevelopmentTaskId;\n    readonly contributionOwnerPeerId?: ScopePeerId;\n    readonly contributionIssue?: \'owner-unavailable\' | \'capacity\' | \'rejected\';\n}',
   },
   {
     name: 'ClaudeScopeSetupRequest',

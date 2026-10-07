@@ -148,6 +148,7 @@ export function EmergenceCenterPanel({
   refreshObservedScopes,
   readScopeAccess, inviteScope, revokeScope, receiveClaudeScope, stopClaudeReceive,
   readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
+  leaveJointContribution, recoverJointContribution, probeContributionEntry,
   readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
   createContributionEntry, recoverContributionEntry, approveContributionApplication, rejectContributionApplication,
   createGroupEntry, closeGroupEntry,
@@ -470,7 +471,8 @@ export function EmergenceCenterPanel({
             contributions={sourceContributions} readContribution={readContribution}
             requestContribution={requestContribution} prepareContribution={prepareContribution}
             activateContribution={activateContribution} stopContribution={stopContribution}
-            previewContributionText={previewContributionText} t={t} />
+            leaveJointContribution={leaveJointContribution} recoverJointContribution={recoverJointContribution}
+            probeContributionEntry={probeContributionEntry} previewContributionText={previewContributionText} t={t} />
           <OwnerContributionPanel key={selectedTask?.id ?? ''}
             taskId={selectedTask !== undefined && selectedTask.ownerNodeId === participants.nodeId && selectedTask.origin.kind === 'root' ? selectedTask.id : undefined}
             entry={selectedTask === undefined ? undefined : ownerContributions[selectedTask.id]}

@@ -24,9 +24,11 @@ Claude Code 会话可通过隐藏的 Task scope 共享获授权的工作观察�
 
 `claudeScope/receive` 为已观察到的会话选择一份独立发出的[只读邀请](../scope-access/README.zh.md)，不创建本地 Task 副本、采集授权或目录权限。独立读取可以与面向同一 owner 和 Task 的独立贡献并存；Task 采集绑定仍与二者互斥。每次支持的接收 Hook 都在线核验 owner，耐久保存确切输出，并区分已撤销或过期的权限与暂时不可达的 owner；两种情况都不复用旧事实。`receiveLeave` 仅停止接收；适配器无法抹去先前的 Claude 历史。
 
-`requestContribution` 同时接收一个 owner 申请入口、所选本地会话、明确的采集权限、授权最晚到期时间、采样次数和单次采样字节上限。它在联系 owner 前持久化自动启用匹配批准的同意。后台任务取回批准，检查其不超出这些限制，再在线核验原 grant 后启用采样。关闭浏览器不会停止该任务；重启后继续同一份耐久申请。读取权限仍单独授予。 本适配器在保存许可前拒绝原生多人入口；读取仍须单独授权。
+`requestContribution` 同时接收一个 owner 申请入口、所选本地会话、明确的采集权限、授权最晚到期时间、采样次数和单次采样字节上限。它在联系 owner 前持久化自动启用匹配批准的同意。后台任务取回批准，检查其不超出这些限制，再在线核验原 grant 后启用采样。关闭浏览器不会停止该任务；重启后继续同一份耐久申请。单次联合入口和可复用多人入口还要求按界面显示的 `readRevision` 明确同意被动读取。同一入口可以接纳原生与 Claude 会话，各自取得 owner 批准。适配器保留原接收计划，核验贡献权限或其终态回执后自动采用，无需再次交换只读邀请。它保留外部会话，不创建本地 Task assignment。联合申请前必须明确退出已有 Task 采集或独立读取。
 
 后台按 `contributionPollIntervalMs` 查询批准，每个 capture 最多一个在途请求，网络等待位于全局管理队列之外。已提交的状态变化发出 `claude-scope/session-changed`；状态不变的查询不发通知。退出和 SessionEnd 先保留取消意图，即使批准可能已经存在但回复丢失也如此。在 owner 确认取消或原 grant 终结前，采集始终停止。重试 `requestContribution` 只能更新同一入口的地址；取消中的意图继续取消。更改采集权限或已接受限制需要新 capture。
+
+`contributionLeave` 取消尚未采用的联合读取，但保留已经采用的读取。`leaveJoint` 按原联合 ID 只停止它所属的 capture 和订阅，保留后来手工选择的读取或其他 capture。即使订阅尚未创建，`leave`、`receiveLeave` 和 SessionEnd 也会持久化变更，防止迟到批准复活已取消的接收。SessionEnd 先停止两项本地权限，再清理；恢复运行的外部会话需要重新同意。本地订阅退出不撤销 owner 发出的 read grant。
 
 手工交换时，`prepareContribution` 选择一个已观察到的会话、明确的本地目录根，以及 `source`。工具来源使用 `{ kind: 'tool-observations', tools: ['Write', 'Edit'] }`；这些目录下获准的工作无需选择文件即可贡献。API 来源则指定一个精确的 OpenAPI 文件和操作，并明确授权读取该文件。它持久化尚未启用的本地权限，并返回稳定且不含路径的申请。owner 通过 [scope access](../scope-access/README.zh.md) 单独批准该申请，指定到期时间、采样次数和字节限制。`activateContribution` 仅接受匹配的邀请，在线核验 owner 批准后才启用采样。管理操作重试保留原 capture 与 grant 身份。
 
@@ -34,7 +36,9 @@ Claude Code 会话可通过隐藏的 Task scope 共享获授权的工作观察�
 
 恢复 owner 地址只能替换完整授权中相同 grant 的地址。激活先保存路由，再在线核验授权；已停止的贡献则将恢复的邀请传入 `contributionLeave`，只重试终结，不重新激活。Capture generation、原样本和回执均保持不变。远端问题持续显示为不可达、容量不足或被拒绝；本地结构化错误区分旧选择、无效权限、来源冲突、邀请不匹配、权限已结束，以及被后续操作取代的管理请求。
 
-工具贡献启用后，匹配已有 lease 的完成事件发送结构化 Write/Edit 报告。报告标识相对路径和目录根索引，在字节预算内保留完整的原始请求字段，并明确列出省略字段。失败报告省略尝试写入的内容和编辑，可保留报告的错误。该来源不读取文件或 transcript，也不授权 Bash 采集。API 贡献则在匹配完成事件后采样所选文件，包括失败事件，发送提取的声明及其摘要，而非请求写入的文件内容。两类来源均不发送绝对源路径或外部会话 ID。贡献不要求读取权限，写入权限也不授予读取权。`contributionLeave` 仅停止贡献；`leave` 和 SessionEnd 停止两者。请求 owner 撤回前，本地接收已经耐久停止；即使请求失败，SessionEnd 也会将会话记录为已结束。待 owner 确认的撤回持续可见，并阻止重新选择或激活贡献；普通 Claude 工作仍可继续。
+`recoverJoint` 选择当前联合 ID 和读取修订，再为原有两项权限保留一次地址更新。它支持待批准申请、当前读取、停止贡献后保留的读取，以及尚未完成的终结。它不更改权限身份，也不重开已停止的工作。丢失回复后的完全相同重试保持幂等；较新的地址或手工选择优先于旧重试。`cleanupPending` 表示仍有待终结工作。重试申请时，原入口、proposal、限制和接收同意保持固定。
+
+工具贡献启用后，匹配已有 lease 的完成事件发送结构化 Write/Edit 报告。报告标识相对路径和目录根索引，在字节预算内保留完整的原始请求字段，并明确列出省略字段。失败报告省略尝试写入的内容和编辑，可保留报告的错误。该来源不读取文件或 transcript，也不授权 Bash 采集。API 贡献则在匹配完成事件后采样所选文件，包括失败事件，发送提取的声明及其摘要，而非请求写入的文件内容。两类来源均不发送绝对源路径或外部会话 ID。贡献不要求读取权限，写入权限也不授予读取权。`leave` 和 SessionEnd 停止采集和接收。请求 owner 撤回前，本地接收已经耐久停止；即使请求失败，SessionEnd 也会将会话记录为已结束。待 owner 确认的撤回持续可见，并阻止重新选择或激活贡献；普通 Claude 工作仍可继续。
 
 本适配器用于 macOS 或 Linux 上的 Claude Code 主会话。Host 组合需要 Task 与 Room 服务及其耐久存储 provider、上下文后端、storage-domain、Connection 和带认证的 API gateway。常规 `dsh --profile` 启动器提供应用就绪和退出处理。包入口是 Cordis 插件，不是独立可执行程序或可安装的 profile bundle。
 
@@ -88,6 +92,8 @@ Web profile 在受支持的 Node Host 上挂载本适配器；浏览器 worker �
 
 `maxArtifactReadBytes` 限制每次完整文件读取；`maxOpenApiSourcesPerSession` 限制显式读取授权数量。采样支持 OpenAPI 3.1 JSON、内联 application/json 对象、直接声明的必填字段、不带额外约束的基本类型属性、声明的响应键以及操作元数据。引用、组合、方向相关属性、多种媒体类型和不支持的约束产生无效观察。无效、不可用和撤销证据不会恢复旧的有效采样。这些是文件声明，不证明线上行为或完整请求校验。
 
+独立读取先在配置的文本上限内预留完整 Hook 包装，再协商 owner 投影额度。后端按完整来源选择或省略；适配器不截断返回文本。不支持预算协议时失败，不回退到更大的投影。
+
 所有限制均为必填。`maxContextBytes` 限制完整 UTF-8 文本，包括适配器和后端的包装文本，且不能超过 10000。会话、lease 和投影保留量有界，容量耗尽时拒绝新增；Task 与独立采集共用 `maxLeases`。`maxObservationBytes` 限制可转交的申请文本，并与 owner 的贡献限制共同约束含完整出处的采样请求。`maxRequestBytes` 限制 stdin、描述符读取及序列化 RPC 请求；`maxResponseBytes` 限制 RPC 响应和包含换行的最终 Hook JSON。命令截止时间涵盖就绪到完整输出。失败时不输出投影，而向 stderr 写入分类诊断并以 1 退出；对应事件是否继续由 Claude 决定。私有描述符发布和令牌交换使用 Connection 的 [local-access 辅助函数](../../client/connection/README.zh.md#browser-authentication-and-request-trust)；命令保留其 generation 与安全失败分类。
 
 Setup 路径和启动器参数是显式部署输入，不查找 PATH，也不通过包管理器启动。Web 组合使用当前 Node 可执行文件、CLI 参数、工作目录和 Harness home。Hook 超时必须长于 command 截止时间，且不能超过 60 秒。`maxSettingsBytes` 限制每份配置的读取和完整写入；setup 不能占用已发布或保留的应用 profile。
@@ -105,6 +111,8 @@ Task publication 是去重权威。适配器在发送前持久化精确的完成
 API 采样使用同一串行队列。Task 准入前，耐久待提交记录保存原始摘要、提取的声明以及每项授权的序号；重试不会重新采样。拥有者将来源 Host 记为观察者，将自己记为提交权威。远端撤回在本地绑定清除前持久化；只有拥有者的耐久回执才允许删除来源待提交记录。适配器先核对收到的撤回回执，再保存它，因此不匹配的响应不会阻止重启后重试原请求。拥有者批准尚未到达或本地看不到 publication 副本时，同样遵守此规则。拥有者永久终结该来源区间并撤回其已准入证据。规范路径和同句柄检查可检测普通替换与并发写入，但不能对同一系统用户下的恶意进程提供内核隔离。
 
 申请、邀请、样本收据与终结协调使用[共用来源控制器](../scope-access/README.zh.md#understand-the-implementation)。本适配器保有自己的本地文件授权与原始 Hook 租约。
+
+版本 2 的 Session 记录保留联合操作、单调递增的读取管理修订、原 capture、固定的订阅身份和路由意图。无版本记录保留严格的历史解析规则，不获得读取同意。订阅计划先于幂等创建持久化；重启可找回已经提交但回复丢失的订阅。贡献清理后，接收恢复仍可继续。原 capture 关联只从自身投影省略该 capture 的普通报告；同 peer 的另一会话及手工复用的只读邀请保持独立。终结通知仍然可见。这种省略不能擦除先前的 Claude 会话 token。
 
 Host 运行期间，独立贡献 worker 按 `contributionPollIntervalMs` 重试待处理申请、原始样本和撤回。没有待办时停止；拥有者在保留地址恢复后，无需读取页面、新 Hook 或来源重启。后台 peer 请求在全局变更队列之外执行；采用结果时核对当前采集、邀请和样本。前景 hooks 与启动恢复仍可能等待 peer 请求。旧 Mesh 恢复由会话列表读取、副本变更和 peer 重连触发。会话列表读取直接返回本地状态，无需等待网络恢复。容量和授权失败保持可见。销毁取消并等待 workers。
 

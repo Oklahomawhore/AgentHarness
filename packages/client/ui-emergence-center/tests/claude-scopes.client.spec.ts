@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeScopeSessionKey, ClaudeScopeSessionSummary, ClaudeScopeSetupResult, DevelopmentTaskId } from '@deepseek-ai/dsh-api-remotes/client'
 import { createClaudeScopeDirectory, type ClaudeScopePort } from '../src/client/claude-scopes.ts'
 
-const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false }
+const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const B: ClaudeScopeSessionSummary = { ...A, sessionKey: 'b' as ClaudeScopeSessionKey, sessionId: 'claude-b' }
 const TASK = 'task' as DevelopmentTaskId
 const PROJECT = { projectPath: '/project', settingsPath: '/project/.claude/settings.local.json', profileName: 'scope-hook' }

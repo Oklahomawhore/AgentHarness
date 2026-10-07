@@ -18,6 +18,8 @@ English | [中文](README.zh.md)
 - [Dev Note](#dev-note)
 
 
+<a id="behavior"></a>
+
 ## Behavior
 
 Independent-device controls expose the local public identity, a recipient-pinned Root Task read invitation, and revocation. A recipient pastes the invitation and selects one observed Claude session without creating a local Task or authorizing directory reads. The panel reports the latest prepared context or unavailable, expired, and revoked state; it does not report model understanding. Direct network addresses must be reachable, and the default loopback listener supports only this computer.
@@ -46,6 +48,8 @@ The ordinary Task-join form collects supported Write/Edit outcomes within the se
 
 An independent source pastes one owner-issued application entry and selects an observed session, allowed directories, and expiry, sample, and byte limits. The default source captures that session's Write/Edit activity across the permitted directories without per-file registration; the alternative selects one OpenAPI file and operation. The owner reviews the exact peer, source kind, tools, and limits. Approval enables the source automatically in the Host background, including while its browser page is closed. Tool observations report arguments and success or failure, not verified facts. Local capture, owner contribution, reading, and native automatic starts have separate permissions. [Claude scope](../../collaboration/claude-scope/README.md) owns sampling and background recovery; [scope access](../../collaboration/scope-access/README.md) owns application and grant authority. The secondary manual path transfers a proposal and returned grant explicitly.
 
+A tool-observation joint or reusable group entry offers separate, initially unchecked reading and collection permissions for the selected Claude session. Existing Task or read connections are not replaced. One owner approval connects reading in the Host background without another invitation, including while the source page is closed. The connection prepares context for supported Hooks; it does not start Claude or establish model receipt. Stopping sharing retains adopted reading; leaving the exact collaboration ends its contribution and reading while preserving later independent reads. Its address recovery updates retained routes together, including reading after sharing stops.
+
 Source details recover the original capture after reload or an uncertain operation. Mutations carry its exact identity and remain owned by the Client directory across panel dismissal. Committed Host events invalidate in-flight reads and refresh observed source/application state; reconnect queries a fresh baseline because notifications are not replayed. Failed confirmation retains the last observation and disables mutation controls. Stop preserves cancellation until owner confirmation, including for ended sessions. Updating the same application entry's route preserves its original consent and cancellation state. A reviewed invitation can likewise update only the route of an existing grant; neither recovery path resumes cancelled contribution.
 
 Owner application and contribution inventories are independent of read grants. “Invite multiple sessions to one goal” creates one reusable entry with explicit total applicant slots; rejected, cancelled, and expired applicants retain their slots, and the Host also enforces its global capacity. Each applicant supplies separate consent and receives a separate approval. “Close entry to new applications” blocks new applicants while preserving pending approval until entry expiry and existing member permissions. “End this member’s collaboration” revokes only the selected member’s reading and contribution. Load more advances independent grant, single-entry, group-entry, and per-group application cursors; refresh starts each at its first page. Group members use distinct application identities; visible public capture IDs and generations match the source panel and distinguish sessions on the same peer. Ending remains available after file contribution ends if reading is still authorized. Single-use entries still accept one capture. Every entry displays its original text for recovery. The UI approves the exact displayed source limits; it does not silently expand them. Grant recovery returns the original permission after a lost reply, while ended grants retain their terminal status. Task changes isolate copied entries and late callbacks. Typed recovery messages omit private diagnostics, and an approved application or active grant does not establish delivery or model adoption.
@@ -58,9 +62,11 @@ Browser acceptance covers identity confirmation, the single creation entry, Root
 
 Native recovery controls update the displayed original capture or read binding. Contribution recovery previews the same application entry with a different owner address; it preserves file permission and pending withdrawal even for a cold Session or expired entry. Joint recovery also carries the displayed read-state comparison. The separate read-route form retains the original subscription, automatic policy, and consumed budget. Host durability and fresh status determine the result; saving a route does not confirm connectivity or model adoption. Without automatic permission, the header and receiving panel retain “Update while I work” after a recorded read issue. Historical read reasons do not establish the latest request’s result or current connectivity. The receiving panel separately shows the current binding’s recorded shared-context bytes, included source count, and size-limit omissions; other nonzero exclusion reasons are expandable. These figures exclude local goal context, chat history, and tool definitions, and establish neither request dispatch, model understanding, nor current remote authorization. Departure or a nonmatching recorded snapshot removes the summary. Step-count changes refresh it during an ongoing turn without polling or starting work.
 
+<a id="model-experience"></a>
+
 ## Model Experience
 
-Indirectly, through operations that delegate model-visible context admission to `dsh-development-task-context`, `dsh-agentharness-bridge`, `dsh-claude-scope`, or `dsh-scope-agent-context`. Explicit native automatic permission can start bounded turns while the Agent is idle; passive receiving does not.
+Indirectly, through operations that delegate model-visible context admission to `dsh-development-task-context`, `dsh-agentharness-bridge`, `dsh-claude-scope`, or `dsh-scope-agent-context`; explicit native automatic permission can start bounded turns while the Agent is idle, whereas passive receiving does not.
 
 #### KV Cache effect
 
@@ -68,9 +74,13 @@ Connecting a session or publishing Task context can change a later request prefi
 
 ## Known Limitations and Deferred Work
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - Node positions are not synchronized across browsers. The UI pins the revisions visible at form submission, and large neighborhoods use bounded placeholders rather than loading an unbounded graph.
 
 - Connection cards show unsupported platforms without setup or manual-configuration actions.
+
+<a id="dev-note"></a>
 
 ### Dev Note
 

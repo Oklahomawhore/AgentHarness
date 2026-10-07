@@ -1180,11 +1180,12 @@ async function independentScopes() {
   return { owner, receiver, task, secret, invitation, key }
 }
 
-async function contributionPair() {
+async function contributionPair(ownerPeerId = 'contribution-owner') {
   const network = new Map<ScopePeerId, ReadScopeTransport>()
   const host = async (id: string, pool = new MemoryMediaPool(), directory?: string) => {
+    const peerId = id === 'contribution-owner' ? ownerPeerId : id
     const result = await boot(pool, directory, { contributionPollIntervalMs: 25 }, id, async (ctx) => {
-      new ReadScopeTransport(ctx, id as ScopePeerId, network)
+      new ReadScopeTransport(ctx, peerId as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
         maxContextBytes: 6000, maxResponseBytes: 16000, requestTimeoutMs: 1000,
         maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8, waitTimeoutMs: 500, maxConcurrentWaits: 2,
@@ -1192,7 +1193,7 @@ async function contributionPair() {
         maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 })
       await ctx.scopeAccess.list()
     })
-    return { ...result, transport: network.get(id as ScopePeerId)! }
+    return { ...result, transport: network.get(peerId as ScopePeerId)! }
   }
   const owner = await host('contribution-owner')
   const source = await host('contribution-source')
@@ -1819,13 +1820,13 @@ async function onlineApplication() {
 }
 
 describe('online Claude contribution applications', () => {
-  it('rejects reusable native group entries before saving source consent or applying', async () => {
+  it('rejects a reusable group entry without separate receiving consent before saving or applying', async () => {
     const f = await onlineApplication()
     const issued = await f.owner.ctx.scopeAccess.createGroupEntry({ taskId: f.task.id,
       ownerAddress: f.entry.ownerAddress, expiresAt: f.entry.expiresAt, maxMembers: 2 })
     const apply = vi.spyOn(f.source.ctx.scopeAccess, 'applyContribution')
     await expect(f.source.scope.requestContribution({ ...f.request, entry: issued.entry,
-      source: { kind: 'tool-observations', tools: ['Write'] } })).rejects.toThrow('entry')
+      source: { kind: 'tool-observations', tools: ['Write'] } })).rejects.toThrow('receiving consent')
     expect((await f.detail()).capture).toBeNull()
     expect(apply).not.toHaveBeenCalled()
     expect((await f.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })).entries).toEqual([])
@@ -2459,4 +2460,340 @@ it('refuses a restored tool sample that disagrees with its durable completion', 
   await f.source.ctx.fiber.dispose()
   await expect(f.host('contribution-source', f.source.pool, f.source.directory))
     .rejects.toThrow('stored contribution sample has a different source identity')
+})
+
+// Valid public peer syntax permits real route validation; the controlled transport owns no sockets or private keys.
+const jointOwnerPeer = '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy'
+async function jointApplication(kind: 'single' | 'group' = 'group') {
+  const pair = await contributionPair(jointOwnerPeer)
+  const task = await pair.owner.createTask('Joint external session collaboration')
+  const key = await pair.source.observe('joint-source')
+  const ownerAddress = (await pair.owner.transport.identity()).addresses[0]!
+  const expiresAt = Date.now() + 60000
+  const issued = kind === 'group'
+    ? await pair.owner.ctx.scopeAccess.createGroupEntry({ taskId: task.id, ownerAddress, expiresAt, maxMembers: 4 })
+    : await pair.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+      taskId: task.id, ownerAddress, expiresAt })
+  const limits = { expiresAt, maxSamples: 8, maxSampleBytes: 4096 }
+  const request = { sessionKey: key, expectedCapture: null, roots: [pair.source.directory],
+    source: { kind: 'tool-observations' as const, tools: ['Write' as const] }, entry: issued.entry, limits,
+    receive: { expectedReadRevision: 0 } }
+  const detail = (source = pair.source) => source.scope.contributionDetail({ sessionKey: key })
+  const waiting = async (source = pair.source) => {
+    await expect.poll(async () => (await detail(source)).capture?.application?.state).toBe('waiting')
+    return (await detail(source)).capture!
+  }
+  const approve = async (source = pair.source, sessionKey = key) => {
+    const capture = (await source.scope.contributionDetail({ sessionKey })).capture!
+    const row = issued.entry.kind === 'scope-group-entry'
+      ? (await pair.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })).entries
+        .find(item => item.proposal.captureId === capture.proposal.captureId) : undefined
+    await pair.owner.ctx.scopeAccess.approveContributionApplication({ entryId: issued.entry.entryId,
+      ...(row === undefined ? {} : { applicationId: row.applicationId }), expectedProposal: capture.proposal,
+      limits, ownerAddress, read: { responsibility: 'Implement the source owner’s portion' } })
+    const inventory = issued.entry.kind === 'scope-group-entry'
+      ? await pair.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })
+      : await pair.owner.ctx.scopeAccess.contributionApplications({ taskId: task.id })
+    const approved = inventory.entries.find(item => item.entry.entryId === issued.entry.entryId
+      && item.proposal?.captureId === capture.proposal.captureId
+      && item.proposal.captureGeneration === capture.proposal.captureGeneration)
+    if (approved === undefined) throw new Error('Owner application disappeared after approval')
+    return approved.result
+  }
+  const active = async (source = pair.source) => {
+    await expect.poll(async () => (await detail(source)).session.joint?.state).toBe('active')
+    return (await detail(source)).session
+  }
+  return { ...pair, key, task, request, detail, waiting, approve, active, ownerAddress }
+}
+
+async function jointWrite(source: Awaited<ReturnType<typeof contributionPair>>['source'], sessionId: string, marker: string) {
+  const input = { tool_use_id: randomUUID(), tool_name: 'Write', tool_input: {
+    file_path: join(source.directory, `${marker}.ts`), content: `export const value = '${marker}'` } }
+  expect((await source.hook(sessionId, 'PreToolUse', input)).receipt.status).toBe('leased')
+  await writeFile(input.tool_input.file_path, input.tool_input.content)
+  expect((await source.hook(sessionId, 'PostToolUse', input)).receipt.status).toBe('published')
+}
+
+describe('Claude joint receiving consent', () => {
+  it.each(['single', 'group'] as const)('adopts a %s entry without a second read action and omits only its original capture', async (kind) => {
+    const f = await jointApplication(kind)
+    await f.source.scope.requestContribution(f.request)
+    await f.waiting()
+    const approved = await f.approve()
+    const active = await f.active()
+    expect(active.contributionState).toBe('active')
+    expect(active.readRevision).toBe(1)
+    expect(f.source.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
+    await jointWrite(f.source, 'joint-source', 'ORIGINAL_JOINT_WRITE')
+    const result = await f.source.hook('joint-source', 'UserPromptSubmit')
+    expect(result.receipt.status).toBe('projected')
+    expect(result.output.hookSpecificOutput?.additionalContext).toContain('Joint external session collaboration')
+    expect(result.output.hookSpecificOutput?.additionalContext).not.toContain('ORIGINAL_JOINT_WRITE')
+    if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing joint read approval')
+    const manual = await f.source.observe('same-peer-manual-reader')
+    await f.source.scope.receive({ sessionKey: manual, invitation: approved.readInvitation })
+    const other = await f.source.hook('same-peer-manual-reader', 'UserPromptSubmit')
+    expect(other.output.hookSpecificOutput?.additionalContext).toContain('ORIGINAL_JOINT_WRITE')
+    const subscriptions = (await f.source.ctx.scopeAccess.list()).subscriptions
+    expect(subscriptions.find(item => item.id === active.receiveSubscriptionId)).toMatchObject({ version: 2,
+      originalCapture: active.joint?.capture })
+    expect(subscriptions.find(item => item.id !== active.receiveSubscriptionId)?.version).toBeUndefined()
+  })
+
+  it('retains approved receiving after source stop, then leaves it without revoking the owner-issued read grant', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    const before = await f.active()
+    await f.source.scope.contributionLeave({ sessionKey: f.key, expectedCapture: before.joint!.capture })
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.detail()).session.receiveSubscriptionId).toBe(before.receiveSubscriptionId)
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: before.joint!.id })
+    await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions[0]?.state).toBe('left')
+    expect((await f.owner.ctx.scopeAccess.list()).grants[0]?.state).toBe('active')
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).output.hookSpecificOutput?.additionalContext)
+      .not.toContain('Joint external session collaboration')
+  })
+
+  it('restores a waiting joint application without interpreting its absent Task binding as withdrawal', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request)
+    const capture = await f.waiting()
+    const original = (await f.detail()).session.joint
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.detail(restored)).session.joint).toEqual(original)
+    expect((await f.detail(restored)).capture?.selection).toEqual(capture.selection)
+    await f.approve(restored)
+    expect((await f.active(restored)).joint?.id).toBe(original?.id)
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  })
+
+  it('restores the exact allocated subscription after ensure committed but its reply was lost', async () => {
+    const f = await jointApplication()
+    const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
+    vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementation(async (plan) => {
+      await ensure(plan)
+      throw new Error('fixture ensure reply lost')
+    })
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    await expect.poll(async () => (await f.detail()).session.joint?.state).toBe('failed')
+    const original = (await f.source.ctx.scopeAccess.list()).subscriptions
+    expect(original).toHaveLength(1)
+    expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.active(restored)).receiveSubscriptionId).toBe(original[0]?.id)
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  })
+
+  it('does not resurrect a pending read after leave and a later manual receive across a delayed ensure', async () => {
+    const f = await jointApplication()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
+    const held = vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementationOnce(async (plan) => {
+      const subscription = await ensure(plan)
+      entered.resolve(undefined)
+      await release.promise
+      return subscription
+    })
+    try {
+      await f.source.scope.requestContribution(f.request); await f.waiting()
+      const approved = await f.approve()
+      await entered.promise
+      const oldJoint = (await f.detail()).session.joint!
+      await f.source.scope.receiveLeave({ sessionKey: f.key })
+      if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing reading permission')
+      const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approved.readInvitation })
+      release.resolve(undefined)
+      await expect.poll(async () => (await f.source.ctx.scopeAccess.list()).subscriptions
+        .find(item => item.id === oldJoint.subscriptionId)?.state).toBe('left')
+      await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: oldJoint.id })
+      expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+      expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+  })
+
+  it('keeps SessionEnd locally terminal when receiving cleanup fails and never resumes consent on SessionStart', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve(); await f.active()
+    const leave = vi.spyOn(f.source.ctx.scopeAccess, 'leave').mockRejectedValue(new Error('fixture receive storage failure'))
+    try {
+      await f.source.hook('joint-source', 'SessionEnd')
+      const session = (await f.detail()).session
+      expect(session.ended).toBe(true)
+      expect(session.receiveState).toBe('left')
+      expect(session.joint?.intent).toBe('leave')
+      expect((await f.detail()).session.contributionState).not.toBe('active')
+      await f.source.hook('joint-source', 'SessionStart')
+      const resumed = await f.source.hook('joint-source', 'UserPromptSubmit')
+      expect(resumed.receipt.status).not.toBe('projected')
+      expect(JSON.stringify(resumed.output)).not.toContain('Joint external session collaboration')
+    } finally { leave.mockRestore() }
+  })
+
+  it('recovers both active routes with one durable intent and rejects stale management after manual replacement', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting()
+    const approval = await f.approve()
+    const before = await f.active()
+    const request = { sessionKey: f.key, jointId: before.joint!.id, expectedReadRevision: before.readRevision,
+      ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/2/') }
+    const changed = await f.source.scope.recoverJoint(request)
+    expect(changed.readRevision).toBe(before.readRevision + 1)
+    expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(request.ownerAddress)
+    await expect.poll(async () => (await f.source.ctx.scopeAccess.list()).subscriptions[0]?.invitation.ownerAddress)
+      .toBe(request.ownerAddress)
+    expect((await f.source.scope.recoverJoint(request)).readRevision).toBe(changed.readRevision)
+    await f.source.scope.receiveLeave({ sessionKey: f.key })
+    if (approval.status !== 'approved' || approval.readInvitation === undefined) throw new Error('Missing read approval')
+    const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approval.readInvitation })
+    await expect(f.source.scope.recoverJoint(request)).rejects.toThrow('stale')
+    expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+  })
+
+  it('keeps an address retry consistent after approval selection but before contribution verification finishes', async () => {
+    const f = await jointApplication()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const status = f.source.ctx.scopeAccess.contributionStatus.bind(f.source.ctx.scopeAccess)
+    const held = vi.spyOn(f.source.ctx.scopeAccess, 'contributionStatus').mockImplementationOnce(async (request, signal) => {
+      entered.resolve(undefined); await release.promise; return status(request, signal)
+    })
+    try {
+      await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+      await entered.promise
+      const capture = (await f.detail()).capture!
+      const address = f.ownerAddress.replace('/tcp/1/', '/tcp/3/')
+      await f.source.scope.requestContribution({ ...f.request, expectedCapture: capture.selection,
+        entry: { ...f.request.entry, ownerAddress: address } })
+      const saved = f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession
+      expect(saved.joint?.subscription?.invitation.ownerAddress).toBe(address)
+      expect(saved.joint?.contributionInvitation?.ownerAddress).toBe(address)
+      expect(saved.contribution?.invitation?.ownerAddress).toBe(address)
+      release.resolve(undefined)
+      await f.active()
+      await f.source.ctx.fiber.dispose()
+      const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+      expect((await f.active(restored)).joint?.id).toBe(saved.joint?.id)
+    } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+  })
+
+  it('recovers a stopped contribution at a new address without reopening its read subscription', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    const before = await f.active()
+    f.owner.transport.offline = true
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: before.joint!.id })
+    await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    const stopped = (await f.detail()).session
+    expect(stopped.joint?.cleanupPending).toBe(true)
+    const address = f.ownerAddress.replace('/tcp/1/', '/tcp/4/')
+    await f.source.scope.recoverJoint({ sessionKey: f.key, jointId: before.joint!.id,
+      expectedReadRevision: stopped.readRevision, ownerAddress: address })
+    expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(address)
+    f.owner.transport.offline = false
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions[0]?.state).toBe('left')
+  })
+
+  it('refuses to reinterpret an unversioned group row or a different capture as original joint consent', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting()
+    await f.source.ctx.fiber.dispose()
+    const records = f.source.pool.media.get('claude_scope')!.tables.get('sessions')!
+    const saved = structuredClone(records.get(f.key)) as ScopeSession
+    const { version: _version, readRevision: _revision, joint: _joint, ...legacy } = saved
+    records.set(f.key, legacy)
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow()
+    records.set(f.key, { ...saved, joint: { ...saved.joint!, proposal: { ...saved.joint!.proposal, captureGeneration: 'another-generation' } } })
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow()
+  })
+})
+
+it('rejects an older stopped-route retry after a newer route while retaining unrelated manual receiving', async () => {
+  const f = await jointApplication()
+  await f.source.scope.requestContribution(f.request); await f.waiting()
+  const approved = await f.approve()
+  const active = await f.active()
+  f.owner.transport.offline = true
+  await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: active.joint!.id })
+  await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+  if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing read permission')
+  const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approved.readInvitation })
+  const requestA = { sessionKey: f.key, jointId: active.joint!.id, expectedReadRevision: manual.readRevision,
+    ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/5/') }
+  const routeA = await f.source.scope.recoverJoint(requestA)
+  const requestB = { ...requestA, expectedReadRevision: routeA.readRevision,
+    ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/6/') }
+  const routeB = await f.source.scope.recoverJoint(requestB)
+  await expect(f.source.scope.recoverJoint(requestA)).rejects.toThrow('stale')
+  expect((await f.source.scope.recoverJoint(requestB)).readRevision).toBe(routeB.readRevision)
+  expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(requestB.ownerAddress)
+  expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+})
+
+it('adopts the independently active read grant when the owner ends contribution before first approval delivery', async () => {
+  const f = await jointApplication()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const status = f.source.ctx.scopeAccess.contributionApplicationStatus.bind(f.source.ctx.scopeAccess)
+  const held = vi.spyOn(f.source.ctx.scopeAccess, 'contributionApplicationStatus').mockImplementationOnce(async (request, signal) => {
+    entered.resolve(undefined); await release.promise; return status(request, signal)
+  })
+  try {
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await entered.promise
+    const approved = await f.approve()
+    if (approved.status !== 'approved') throw new Error('Missing contribution grant')
+    await f.owner.ctx.developmentTasks.endPeerContribution({ grant: approved.invitation.grant, reason: 'revoked' }, f.owner.transport.peerId)
+    release.resolve(undefined)
+    const active = await f.active()
+    expect(active.contributionState).toBeUndefined()
+    expect(active.receiveSubscriptionId).toBeDefined()
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+})
+
+it('restores contribution-only activation after pending joint reading was explicitly cancelled', async () => {
+  const f = await jointApplication()
+  await f.source.scope.requestContribution(f.request); await f.waiting()
+  await f.source.scope.receiveLeave({ sessionKey: f.key })
+  await f.approve()
+  await expect.poll(async () => (await f.detail()).session.contributionState).toBe('active')
+  expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+  await f.source.ctx.fiber.dispose()
+  const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+  expect((await f.detail(restored)).session.contributionState).toBe('active')
+  expect((await restored.ctx.scopeAccess.list()).subscriptions).toEqual([])
+  expect((await f.detail(restored)).session.joint?.intent).toBe('leave')
+})
+
+it('restores cancellation after an owner approval was committed but never selected locally', async () => {
+  const f = await jointApplication()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const apply = f.source.ctx.scopeAccess.applyContribution.bind(f.source.ctx.scopeAccess)
+  const held = vi.spyOn(f.source.ctx.scopeAccess, 'applyContribution').mockImplementationOnce(async (request, signal) => {
+    const result = await apply(request, signal)
+    entered.resolve(undefined); await release.promise; return result
+  })
+  try {
+    const requested = await f.source.scope.requestContribution(f.request)
+    await entered.promise
+    await f.approve()
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: requested.joint!.id })
+    release.resolve(undefined)
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions).toEqual([])
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.detail(restored)).session.joint?.intent).toBe('leave')
+    expect((await f.detail(restored)).session.receiveSubscriptionId).toBeUndefined()
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toEqual([])
+  } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
 })

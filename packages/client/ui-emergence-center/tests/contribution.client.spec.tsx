@@ -31,7 +31,7 @@ const applicationEntry: ScopeContributionEntry = {
 const proposal: ScopeContributionProposal = {
   contributorPeerId: G.contributorPeerId, captureId: G.captureId, captureGeneration: G.captureGeneration, source: G.source,
 }
-const session: ClaudeScopeSessionSummary = { sessionKey: 'session-a' as ClaudeScopeSessionSummary['sessionKey'], sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false }
+const session: ClaudeScopeSessionSummary = { sessionKey: 'session-a' as ClaudeScopeSessionSummary['sessionKey'], sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const captured: ClaudeScopeContributionDetail = {
   session: { ...session, contributionState: 'prepared' },
   capture: { selection: { captureId: G.captureId, captureGeneration: G.captureGeneration }, proposal, proposalText: 'versioned-request',
@@ -52,6 +52,8 @@ const noop = async (): Promise<void> => {}
 function sourceActions(overrides: Partial<SourceContributionActions> = {}): SourceContributionActions {
   return { readContribution: () => {}, requestContribution: vi.fn(noop), prepareContribution: vi.fn(noop),
     activateContribution: vi.fn(noop), stopContribution: vi.fn(noop),
+    leaveJointContribution: vi.fn(noop), recoverJointContribution: vi.fn(noop),
+    probeContributionEntry: vi.fn(async () => ({ status: 'ready' as const })),
     previewContributionText: vi.fn(async () => invitation), ...overrides }
 
 }

@@ -256,6 +256,19 @@ export function apply(ctx: Context): void {
         }
         finally { claudeScopes.refresh() }
       },
+      leaveJointContribution: async (request) => {
+        try {
+          await sourceContributions.mutate(request.sessionKey,
+            async () => unwrap(await ctx.remote.claudeScope.leaveJoint(request)))
+        } finally { claudeScopes.refresh() }
+      },
+      recoverJointContribution: async (request) => {
+        try {
+          await sourceContributions.mutate(request.sessionKey,
+            async () => unwrap(await ctx.remote.claudeScope.recoverJoint(request)))
+        } finally { claudeScopes.refresh() }
+      },
+      probeContributionEntry: async request => unwrap(await ctx.remote.scopeAccess.probeContributionEntry(request)),
       previewContributionText: async text => unwrap(await ctx.remote.scopeAccess.previewContributionText({ text })),
       readOwnedContributions: (taskId) => { void ownerContributions.refresh(taskId) },
       moreOwnedContributions: (taskId) => { void ownerContributions.more(taskId) },

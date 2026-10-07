@@ -44,7 +44,7 @@ const opaque = z.string().min(1).max(256)
 const proposal = peerContributionProposalSchema
 
 /** Strict additive record; missing records in older adapter data grant no contribution permission. */
-export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
+const contributionRecord = z.object({
   proposal,
   policy: z.object({ roots: z.array(z.string().min(1)), bashCommands: z.array(z.never()), revision: z.string().min(1) }).strict(),
   source: contributionSourceSchema,
@@ -71,6 +71,16 @@ export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
     context.addIssue({ code: 'custom', message: 'contribution permit and immutable source selection disagree' })
   }
 })
+
+/** Historical rows retain their original single-entry parser. */
+export const contributionSchema: z.ZodType<ScopeContribution> = contributionRecord.superRefine((value, context) => {
+  if (value.application?.entry.kind === 'scope-group-entry') {
+    context.addIssue({ code: 'custom', message: 'legacy contribution does not support reusable joint entries' })
+  }
+})
+
+/** Group entries require the containing version-2 Session's separately validated consent. */
+export const jointContributionSchema: z.ZodType<ScopeContribution> = contributionRecord
 
 /** Complete original sample is parsed without manufacturing a Task binding or node identity. */
 export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.object({

@@ -3536,6 +3536,31 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeRetrieveWithinBudgetRequest",
       "source": "packages/collaboration/scope-access/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeJointId",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeJointSummary",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeLeaveJointRequest",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ClaudeScopeRecoverJointRequest",
+      "source": "packages/collaboration/claude-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeJoint",
+      "source": "packages/collaboration/claude-scope/src/joint-state.ts"
     }
   ]
 }
