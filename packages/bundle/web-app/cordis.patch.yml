@@ -229,8 +229,8 @@
       name: '@deepseek-ai/dsh-development-task-mesh'
       disabled: !!js process.env.AGENTHARNESS_NODE_ID == null && process.env.DSH_ROOM_NODE_ID == null && process.env.AGENTHARNESS_MESH_PEER_URL == null && process.env.AGENTHARNESS_MESH_PEERS == null
 
-    - id: development-task-context-text
-      name: '@deepseek-ai/dsh-development-task-context/text'
+    - id: development-task-context-backend
+      name: '@deepseek-ai/dsh-development-task-context/reported'
 
     # Native Agent context is injected at the next pre-step and committed as a
     # replayable user/message event before the model request.

@@ -29,7 +29,7 @@ export function apply(ctx, config) {
     const claude = entry('claude-scope').fiber.config
     const semantic = [...service('loader').entries()].find(row => row.options.id === 'development-task-context-semantic')
     return { backend: service('developmentTaskContextBackend').identity,
-      textDisabled: entry('development-task-context-text').disabled,
+      defaultBackendDisabled: entry('development-task-context-backend').disabled,
       transportTimeoutMs: transport.requestTimeoutMs, connectionTimeoutMs: transport.connectionTimeoutMs,
       accessTimeoutMs: access.requestTimeoutMs, waitTimeoutMs: access.waitTimeoutMs,
       hook: { profileName: claude.setup.profileName, timeoutMs: claude.setup.timeoutMs,

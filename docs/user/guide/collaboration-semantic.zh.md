@@ -2,7 +2,7 @@
 
 [English](collaboration-semantic.md) | 中文
 
-当 Task 所有者希望模型按各接收者的职责整理获准工作报告时，可选择此配置。不启用时，Web profile 使用 text 后端选择有界原始报告。选择聊天模型不会自动启用语义摘要。
+当 Task 所有者希望模型按各接收者的职责整理获准工作报告时，可选择此配置。不启用时，Web profile 使用 [`/reported`](../../../packages/collaboration/development-task-context/README.zh.md#behavior) 交付有界 publication，并在不调用模型的情况下重建满足条件的文件报告组。选择聊天模型不会自动启用语义摘要。
 
 ## 1. 准备所有者的模型
 
@@ -46,7 +46,7 @@ semantic overlay 选择该 owner Host 的上下文后端，不是只影响某一
 
 ## 3. 核对配置与已记录的摘要
 
-启动前，可在所有者命令中添加 `--dump-config` 查看最终组合。确认 text 配置项已禁用、已选择 semantic，且模型 route 和限额符合自己的选择。配置预览不调用模型，也不能证明凭据可用。
+启动前，可在所有者命令中添加 `--dump-config` 查看最终组合。确认默认后端配置项已禁用、已选择 semantic，且模型 route 和限额符合自己的选择。配置预览不调用模型，也不能证明凭据可用。
 
 对于已获自动许可的 Session，**当前会话协作**展示当前目标已记录的请求与已完成轮次，也展示证据未变而跳过响应，以及证据不完整导致后续请求暂停。这些记录会自动更新；轮次完成不代表产物正确。
 
@@ -58,7 +58,7 @@ semantic overlay 选择该 owner Host 的上下文后端，不是只影响某一
 
 ## 4. 停用摘要或处理额度耗尽
 
-要停止摘要计算，重启所有者时移除 semantic overlay，并确认所选后端为 text。如果该 Host 还接收另一位所有者的摘要，应保留期限 overlay。选择后端不会授予新权限；重启时终结采集、暂停自动工作的规则仍然适用。不要通过删除审计目录或修改稳定 Session ID 来重置额度。
+要停止摘要计算，重启所有者时移除 semantic overlay，并确认所选后端为 `reported-files`。如果该 Host 还接收另一位所有者的摘要，应保留期限 overlay。选择后端不会授予新权限；重启时终结采集、暂停自动工作的规则仍然适用。不要通过删除审计目录或修改稳定 Session ID 来重置额度。
 
 累计额度耗尽时，先核对已有用量，再明确提高同一 semantic 配置的 `maxCalls`，保留原审计身份重启；也可以停用 semantic。审计保存在 `dshHomePath('scope-context-audit')`，Session ID 为 `scope-context-audit`；已失败或结果未知的预留调用仍可能消耗额度。普通 Agent 的自动工作额度另行计算。
 

@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-reported-file': {
+    expectedFinalResponse: 'Withdrawn reported file is no longer current context.',
+  },
   'scope-history-capacity': {
     expectedFinalResponse: 'The corrected policy arrived without repeating superseded history.',
   },

@@ -1,6 +1,6 @@
 # Opt-in recipient summaries; apply deadlines.cordis.yml on both scope peers first.
 # The ordinary DeepSeek provider resolves credentials from the existing store.
-- id: development-task-context-text
+- id: development-task-context-backend
   disabled: true
 
 - insert:

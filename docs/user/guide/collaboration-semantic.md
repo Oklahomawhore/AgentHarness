@@ -2,7 +2,7 @@
 
 English | [中文](collaboration-semantic.zh.md)
 
-Use this optional configuration when the Task owner wants a model to summarize authorized work reports for each recipient’s responsibility. Without it, the Web profile selects bounded original reports with the text backend. Semantic summaries are not enabled by selecting a chat model.
+Use this optional configuration when the Task owner wants a model to summarize authorized work reports for each recipient’s responsibility. Without it, the Web profile uses [`/reported`](../../../packages/collaboration/development-task-context/README.md#behavior) to deliver bounded publications and reconstruct eligible file-report groups without a model call. Semantic summaries are not enabled by selecting a chat model.
 
 ## 1. Prepare the owner’s model
 
@@ -46,7 +46,7 @@ Removing hooks retains the shared command profile and existing session grants. I
 
 ## 3. Inspect the configuration and recorded summary
 
-Before booting, add `--dump-config` to the owner command to inspect the composed configuration. Confirm that the text row is disabled, semantic is selected, and the model route and limits match your choice. A configuration preview makes no model call and does not prove credentials work.
+Before booting, add `--dump-config` to the owner command to inspect the composed configuration. Confirm that the default backend row is disabled, semantic is selected, and the model route and limits match your choice. A configuration preview makes no model call and does not prove credentials work.
 
 For a Session with automatic permission, **Current session collaboration** displays recorded requests and completed turns for its current goal. It also shows when unchanged evidence skips a response or incomplete evidence pauses further requests. These records update automatically; a completed turn does not establish that its output is correct.
 
@@ -58,7 +58,7 @@ Responsibility guides summarization; it is not a privacy ACL. A successful reque
 
 ## 4. Stop summaries or handle an exhausted allowance
 
-To stop summary computation, restart the owner without the semantic overlay and confirm that the selected backend is text. Keep the deadline overlay if this Host also receives summaries from another owner. Selecting a backend grants no new permission; the restart rules for ending captures and pausing automatic work still apply. Do not delete the audit directory or change its stable Session ID to reset the allowance.
+To stop summary computation, restart the owner without the semantic overlay and confirm that the selected backend is `reported-files`. Keep the deadline overlay if this Host also receives summaries from another owner. Selecting a backend grants no new permission; the restart rules for ending captures and pausing automatic work still apply. Do not delete the audit directory or change its stable Session ID to reset the allowance.
 
 If the cumulative allowance is exhausted, review prior use, then explicitly raise `maxCalls` in the same semantic configuration and restart with the same audit identity, or turn semantic off. The audit stays at `dshHomePath('scope-context-audit')` with Session ID `scope-context-audit`; failed and unknown reserved attempts can still consume allowance. Ordinary Agent automatic-work allowance is separate.
 

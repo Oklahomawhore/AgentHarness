@@ -24,14 +24,15 @@ class SourceAdapter extends LlmAdapter {
   }
 }
 
-/** Create a private Loader tree with real disk storage and native tools. */
-export async function host(root, role, { maxContextBytes = 8000, maxLocalContextBytes = Math.floor(maxContextBytes / 2) } = {}) {
+/** Create a private Loader tree with real disk storage and native tools; backend selection defaults to the original text provider. */
+export async function host(root, role, { maxContextBytes = 8000, maxLocalContextBytes = Math.floor(maxContextBytes / 2),
+  backend = '@deepseek-ai/dsh-development-task-context/text' } = {}) {
   const ctx = new Context()
   ctx.logger.exporter({ export(message) {
     if (message.type === 'error') process.stderr.write(`group ${role}: ${message.args.map(value => value instanceof Error ? value.stack : String(value)).join(' ')}\n`)
   } })
   try {
-    return await initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes)
+    return await initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes, backend)
   } catch (error) {
     process.stderr.write(`group ${role} initialization failed: ${error instanceof Error ? error.stack : String(error)}\n`)
     try { await ctx.fiber.dispose() } catch (cleanupError) {
@@ -41,7 +42,7 @@ export async function host(root, role, { maxContextBytes = 8000, maxLocalContext
   }
 }
 
-async function initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes) {
+async function initializeHost(ctx, root, role, maxContextBytes, maxLocalContextBytes, backend) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
   const workspace = join(root, 'workspace')
@@ -54,7 +55,7 @@ async function initializeHost(ctx, root, role, maxContextBytes, maxLocalContextB
   await add('storage-domain', '@deepseek-ai/dsh-storage-domain', '*')
   await add('rooms', '@deepseek-ai/dsh-development-room')
   await add('tasks', '@deepseek-ai/dsh-development-task')
-  await add('text', '@deepseek-ai/dsh-development-task-context/text')
+  await add('text', backend)
   await add('access', '@deepseek-ai/dsh-scope-access')
   await add('llm', '@deepseek-ai/dsh-llm')
   modules.set('transport', FixtureTransport)

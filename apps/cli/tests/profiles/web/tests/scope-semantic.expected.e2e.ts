@@ -138,10 +138,10 @@ it.skipIf(process.platform === 'win32')('enables semantic in shipped Web, surviv
       transportTimeoutMs: 35000, connectionTimeoutMs: 5000, accessTimeoutMs: 30000, waitTimeoutMs: 3000,
       hook: { profileName: 'claude-hook-summaries', timeoutMs: 45000, hookTimeoutSeconds: 60 },
     })
-    expect(owner.config).toMatchObject({ backend: { id: 'semantic' }, textDisabled: true,
+    expect(owner.config).toMatchObject({ backend: { id: 'semantic' }, defaultBackendDisabled: true,
       semantic: { auditSessionId: 'scope-context-audit', maxCalls: 100, maxConcurrentCalls: 2,
         maxInputBytes: 131072, maxOutputTokens: 2048, maxOutputBytes: 65536, timeoutMs: 20000 } })
-    expect(receiver.config).toMatchObject({ backend: { id: 'text', revision: '7' }, textDisabled: false, semantic: null })
+    expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '1' }, defaultBackendDisabled: false, semantic: null })
     const ownerIdentity = identitySchema.parse(await owner.invoke({ kind: 'identity' }))
     const receiverIdentity = identitySchema.parse(await receiver.invoke({ kind: 'identity' }))
     expect(ownerIdentity.peerId).not.toBe(receiverIdentity.peerId)

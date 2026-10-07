@@ -18,6 +18,7 @@
     "apps/web/tests/native-scope.e2e.ts",
     "apps/web/tests/native-contribution.e2e.ts",
     "apps/web/tests/native-owner-contribution.e2e.ts",
+    "apps/web/tests/continuous-edit-context.e2e.ts",
     "apps/web/tests/native-entry-support.ts",
     "apps/web/tests/contribution-scope.e2e.ts",
     "apps/web/tests/online-contribution-scope.e2e.ts",

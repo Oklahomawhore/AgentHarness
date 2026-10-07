@@ -43,6 +43,10 @@
     "./local": {
       "types": "./lib/types/local.d.ts",
       "default": "./lib/types/local.js"
+    },
+    "./reported": {
+      "types": "./lib/types/reported.d.ts",
+      "default": "./lib/types/reported.js"
     }
   },
   "files": [

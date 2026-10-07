@@ -187,7 +187,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     const overlay = join(directory, 'facts.patch.yml')
     await writeFile(replayOverride, JSON.stringify(replay()))
     await writeFile(overlay, JSON.stringify([
-      { id: 'development-task-context-text', disabled: true },
+      { id: 'development-task-context-backend', disabled: true },
       { insert: [{ id: 'contribution-facts', name: '@deepseek-ai/dsh-development-task-context/facts', config: {
         routes: [{ responsibility: 'frontend', fields: ['requiredRequestFields'] }], unmatchedFields: ['requiredRequestFields'],
       } }] },
