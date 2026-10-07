@@ -1471,6 +1471,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: reusable group entry joi
 // First-use joint receiving retains useful complete groups when the owner offers more text than this Session accepts.
 describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without preexisting local capture', () => {
   const snapshots = join(import.meta.dirname, 'snapshots/native-recipient-budget')
+  const budgetEntrySnapshots = join(import.meta.dirname, 'expected/native-recorded-budget')
   const groups = [1, 2, 3].map(index => `export const WEB_OWNER_BUDGET_${String(index)} = '${'界'.repeat(750)}';\n`)
   const beforeCode = 'export const WEB_PRIVATE_BEFORE = true;\n'
   const sharedCode = 'export const WEB_B_SHARED = true;\n'
@@ -1533,7 +1534,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
       await connectFreshWorkspaceZh(page, host.workspaceCwd, name)
       await mkdir(join(host.workspaceCwd, name, 'project'), { recursive: true })
     }
-    if (MODE === 'refresh') await mkdir(snapshots, { recursive: true })
+    if (MODE === 'refresh') {
+      await mkdir(snapshots, { recursive: true })
+      await mkdir(budgetEntrySnapshots, { recursive: true })
+    }
   }, 120_000)
   afterAll(async () => {
     const failures: unknown[] = []
@@ -1649,6 +1653,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(joined.state).toMatchObject({ automatic: null, mode: 'passive', usedBudget: 0 })
     expect(bRequests).toHaveLength(2)
     expect(await bPanel.locator('[data-native-recorded-context]').count()).toBe(0)
+    expect(await sourcePage.locator('[data-native-recorded-budget]').count()).toBe(0)
     expect((await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })).capture).toBeNull()
     await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
     const reports = () => a.ctx.developmentTasks.get({ taskId: sharedTask.id }).context
@@ -1687,11 +1692,33 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(localBytes + remoteFrameBytes).toBeLessThanOrEqual(8000)
     expect(textOf(localFrames)).toContain(localTask.objective)
     for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, request, kind)
-    await panel(sourcePage)
+    const budgetOmissions = projection.omittedSources.filter(item => item.reason === 'budget').length
+    const collaboration = sourcePage.getByRole('button', { name: '协作', exact: true })
+    const budgetIndicator = collaboration.locator('[data-native-recorded-budget]')
+    const entryLayout = (entry: Locator) => entry.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      const y = bounds.top + bounds.height / 2
+      return { left: bounds.left, right: bounds.right, width: bounds.width,
+        viewport: window.innerWidth, documentWidth: document.documentElement.scrollWidth,
+        hit: [bounds.left + 4, bounds.left + bounds.width / 2, bounds.right - 4]
+          .map(x => element.contains(document.elementFromPoint(x, y))) }
+    })
+    const entryFits = async (entry: Locator, width: number): Promise<boolean> => {
+      const layout = await entryLayout(entry)
+      return layout.width > 0 && layout.left >= 0 && layout.right <= width && layout.hit.every(Boolean)
+    }
+    expect(await sourcePage.locator(PANEL).isVisible()).toBe(false)
+    await budgetIndicator.waitFor()
+    expect(await budgetIndicator.innerText()).toBe('共享记录有容量遗漏')
+    expect(await collaboration.getAttribute('aria-expanded')).toBe('false')
+    await collaboration.click()
+    expect(await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).isChecked()).toBe(true)
+    const receivingDetails = bPanel.locator(':scope > dl')
+    await receivingDetails.getByText(joined.state.binding.invitation.ownerPeerId, { exact: true }).waitFor()
+    await receivingDetails.getByText(joined.state.binding.invitation.responsibility, { exact: true }).waitFor()
     const recorded = sourcePage.getByRole('region', { name: '已记录共享上下文', exact: true })
     await recorded.getByText(`共享内容 ${String(remoteFrameBytes)} 字节 · 纳入 ${String(projection.selectedSources.length)} 条来源记录。`,
       { exact: true }).waitFor()
-    const budgetOmissions = projection.omittedSources.filter(item => item.reason === 'budget').length
     await recorded.getByText(`因容量限制未纳入 ${String(budgetOmissions)} 条来源记录。`, { exact: true }).waitFor()
     const otherReasons = [
       ['self-published', '接收方自身发布的来源'], ['unsupported', '不支持的来源'], ['superseded', '已被更新替代'],
@@ -1708,6 +1735,71 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     }
     expect(await recorded.textContent()).not.toContain('WEB_OWNER_BUDGET_')
     expect(await recorded.textContent()).not.toContain('模型已采用')
+    await recorded.locator('[data-native-recorded-budget-hint]').waitFor()
+    await bPanel.getByRole('radio', { name: '本机创建的目标', exact: true }).check()
+    await sourcePage.keyboard.press('Escape')
+    expect(await collaboration.getAttribute('aria-expanded')).toBe('false')
+    await budgetIndicator.waitFor()
+    expect(await budgetIndicator.innerText()).toBe('共享记录有容量遗漏')
+    const shots = process.env.DSH_CONTRIBUTION_SCOPE_SHOTS
+    if (shots !== undefined) await mkdir(shots, { recursive: true })
+    for (const viewport of [DESKTOP, MOBILE]) {
+      await sourcePage.setViewportSize(viewport)
+      await expect.poll(() => entryFits(collaboration, viewport.width)).toBe(true)
+      expect(await sourcePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      expect(await budgetIndicator.isVisible()).toBe(true)
+      expect(await budgetIndicator.innerText()).toBe(viewport === MOBILE ? '容量遗漏' : '共享记录有容量遗漏')
+      expect(await budgetIndicator.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      expect(await collaboration.evaluate(element => document.getElementById(element.getAttribute('aria-describedby') ?? '')
+        ?.textContent?.trim())).toBe(`当前会话记录有 ${String(budgetOmissions)} 条共享来源因容量未纳入。`)
+      const entryAria = await captureStableAria(sourcePage, '[data-native-scope]', b.workspaceCwd)
+      await compareOrRefreshGolden(join(budgetEntrySnapshots, `entry-closed-${String(viewport.width)}.expected.md`), entryAria, MODE)
+      if (shots !== undefined) await sourcePage.screenshot({
+        path: join(shots, `budget-entry-closed-${String(viewport.width)}.png`), fullPage: true,
+      })
+    }
+    await sourcePage.setViewportSize(DESKTOP)
+    await sourcePage.getByRole('button', { name: '设置', exact: true }).click()
+    await sourcePage.getByRole('dialog', { name: '设置', exact: true }).getByRole('button', { name: '中文', exact: true }).click()
+    await sourcePage.getByRole('menuitem', { name: 'English', exact: true }).click()
+    const englishSettings = sourcePage.getByRole('dialog', { name: 'Settings', exact: true })
+    await englishSettings.waitFor()
+    await expect.poll(() => sourcePage.evaluate(() => document.documentElement.lang)).toBe('en')
+    await sourcePage.keyboard.press('Escape')
+    await englishSettings.waitFor({ state: 'hidden' })
+    await sourcePage.setViewportSize(MOBILE)
+    const englishCollaboration = sourcePage.getByRole('button', { name: 'Collaboration', exact: true })
+    const englishIndicator = englishCollaboration.locator('[data-native-recorded-budget]')
+    await expect.poll(() => englishIndicator.innerText()).toBe('Size limit')
+    expect(await englishCollaboration.getAttribute('aria-expanded')).toBe('false')
+    await expect.poll(() => entryFits(englishCollaboration, MOBILE.width)).toBe(true)
+    if (shots !== undefined) {
+      await sourcePage.screenshot({ path: join(shots, 'budget-entry-closed-en-390.png'), fullPage: true })
+      await writeFile(join(shots, 'budget-entry-layout-en-390.json'), `${JSON.stringify(await entryLayout(englishCollaboration), null, 2)}\n`)
+    }
+    expect(await sourcePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(await englishIndicator.isVisible()).toBe(true)
+    const englishTextBounds = await englishIndicator.evaluate(element => ({
+      scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+    }))
+    expect(englishTextBounds.scrollWidth).toBeLessThanOrEqual(englishTextBounds.clientWidth)
+    expect(await englishCollaboration.evaluate(element => document.getElementById(element.getAttribute('aria-describedby') ?? '')
+      ?.textContent?.trim())).toBe(`The current session record excludes ${String(budgetOmissions)} shared sources because of capacity.`)
+    const englishEntryAria = await captureStableAria(sourcePage, '[data-native-scope]', b.workspaceCwd)
+    await compareOrRefreshGolden(join(budgetEntrySnapshots, 'entry-closed-en-390.expected.md'), englishEntryAria, MODE)
+    await sourcePage.setViewportSize(DESKTOP)
+    await sourcePage.getByRole('button', { name: 'Settings', exact: true }).click()
+    await englishSettings.getByRole('button', { name: 'English', exact: true }).click()
+    await sourcePage.getByRole('menuitem', { name: '中文', exact: true }).click()
+    const restoredSettings = sourcePage.getByRole('dialog', { name: '设置', exact: true })
+    await restoredSettings.waitFor()
+    await expect.poll(() => sourcePage.evaluate(() => document.documentElement.lang)).toBe('zh-CN')
+    await sourcePage.keyboard.press('Escape')
+    await restoredSettings.waitFor({ state: 'hidden' })
+    await collaboration.click()
+    expect(await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).isChecked()).toBe(true)
+    await recorded.getByText(`因容量限制未纳入 ${String(budgetOmissions)} 条来源记录。`, { exact: true }).waitFor()
+    if (excluded.length > 0) await recorded.getByText('其他未纳入原因', { exact: true }).click()
     expect(bRequests).toHaveLength(3)
     const identity = await a.ctx.scopeAccess.identity()
     const replacements: (readonly [string, string])[] = [[sharedTask.id, '{{sharedTaskId}}'], [localTask.id, '{{localTaskId}}'],
@@ -1752,9 +1844,13 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     expect(aRequests).toHaveLength(6)
     expect(bRequests).toHaveLength(7)
     for (const kind of ['scope-agent-context', 'development-task-context'] as const) assertReconstructed(b, bId, last, kind)
+    await expect.poll(() => sourcePage.locator('[data-native-recorded-budget]').count()).toBe(0)
+    expect(await collaboration.getAttribute('aria-expanded')).toBe('false')
     await panel(sourcePage)
     expect(await sourcePage.locator('[data-native-recorded-context]').count()).toBe(0)
     await captureStage(sourcePage, b.workspaceCwd, 'budget-left', replacements, PANEL, snapshots)
+    await assertFixtureInventory(budgetEntrySnapshots, ['entry-closed-1440.expected.md', 'entry-closed-390.expected.md',
+      'entry-closed-en-390.expected.md'])
     for (const trip of trips) { expect(trip.pageErrors).toEqual([]); expect(trip.warnings).toEqual([]) }
     await assertFixtureInventory(snapshots, ['entry-main.expected.md', 'entry-permission.expected.md',
       'budget-passive.expected.md', 'budget-left.expected.md'])

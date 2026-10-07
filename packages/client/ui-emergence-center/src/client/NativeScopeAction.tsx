@@ -129,6 +129,11 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   const terminal = observation !== null && observation.eligibility !== 'not-live'
     && !['active', 'unbound'].includes(observation.subscriptionState)
   const ready = snapshot.phase === 'ready' && !snapshot.pending
+  const recorded = ready && observation?.eligibility === 'eligible' && observation.subscriptionState === 'active'
+    && observation.state.mode !== 'left'
+    && bound !== null && observation.recordedContext?.bindingId === bound.id
+    && observation.recordedContext.subscriptionId === bound.subscriptionId ? observation.recordedContext : null
+  const capacityLimited = recorded !== null && recorded.omittedSourceCounts.budget > 0
   const entryPreview = previewNativeEntry(invitationText)
   const invitation = entryPreview.kind === 'read' ? entryPreview.invitation : undefined
   const sharingEntry = entryPreview.kind === 'contribution'
@@ -157,17 +162,29 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
   }
   const close = (): void => { setOpen(false); trigger.current?.focus() }
   return <div ref={root} data-native-scope className={css.root}>
-    <button ref={trigger} type="button" className={css.trigger} aria-label={t('native.trigger')}
-      aria-expanded={open} aria-controls={`${id}-panel`} onClick={() => {
+    <button ref={trigger} type="button" className={capacityLimited ? `${css.trigger} ${css.capacityTrigger}` : css.trigger} aria-label={t('native.trigger')}
+      aria-expanded={open} aria-controls={`${id}-panel`} aria-describedby={capacityLimited ? `${id}-capacity` : undefined}
+      onClick={() => {
         setOpen(value => !value)
-        if (!open) refreshNativeScope()
+        if (!open) {
+          if (capacityLimited) setLocal(false)
+          refreshNativeScope()
+        }
       }}>
-      <IconLinkOutline14 /><span>{t('native.trigger')}</span>
+      <IconLinkOutline14 /><span className={css.triggerCaption}>{t('native.trigger')}</span>
       {localBound ? <><StateDot state={localStatus.capture?.collecting ? 'ongoing' : 'done'} />
         <span className={css.triggerState}>{localLabel}</span></> : bound !== null && <><StateDot state={mode === 'enabled' ? 'ongoing' : mode === 'paused' ? 'warning' : 'done'} />
         <span className={css.triggerState}>{label}</span></>}
+      {capacityLimited && <span data-native-recorded-budget className={css.capacity}>
+        <StateDot state="warning" />
+        <span className={css.capacityFull}>{t('native.recorded.capacity')}</span>
+        <span className={css.capacityShort}>{t('native.recorded.capacityShort')}</span>
+      </span>}
       <IconChevronDownOutline14 />
     </button>
+    {capacityLimited && <span id={`${id}-capacity`} className={css.capacityDescription}>
+      {t('native.recorded.capacityDescription', { count: recorded.omittedSourceCounts.budget })}
+    </span>}
     {open && createPortal(<section ref={panel} id={`${id}-panel`} data-native-scope-panel role="dialog"
       aria-label={t('native.title')} className={css.panel} style={position ?? { visibility: 'hidden', left: 0, top: 0 }}>
       <div className={css.heading}><h2>{t('native.title')}</h2><Button size="sm" aria-label={t('native.close')} onClick={close}><IconCloseOutline16 /></Button></div>
@@ -211,8 +228,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
           {bound.kind === 'local-task-scope' && bound.retainedLocal.automatic !== null
             && <p className={css.hint}>{t('native.local.retainedPolicy', { goal: bound.retainedLocal.automatic.goal })}</p>}
           <p className={css.hint}>{t('native.receiving')}</p>
-          {ready && observation?.eligibility === 'eligible' && observation.recordedContext !== null
-            && <NativeRecordedContext recorded={observation.recordedContext} t={t} />}
+          {recorded !== null && <NativeRecordedContext recorded={recorded} t={t} />}
           <div className={css.actions}>
             {mode === 'paused' && !terminal && grantedAutomatic != null && grantedAutomatic.activationLimit > usedBudget
               && <Button disabled={!editable} onClick={() => {

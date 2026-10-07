@@ -6,7 +6,7 @@ import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { DevelopmentTaskSnapshot, ScopeContributionEntry, ScopeContributionEntryProbeResult, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
 import { NativeScopeAction, type NativeScopeActionProps } from '../src/client/NativeScopeAction.tsx'
 import type { NativeScopeSnapshot } from '../src/client/native-scopes.ts'
-import { zh } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
 import { compositeExecution, localExecution, localSnapshot, target } from './native-local-automatic-fixture.client.ts'
 import { localCapture, assigned as localStatus } from './native-local-contribution-fixture.client.ts'
 import { applicationEntry, capturedStatus, capture, emptyStatus } from './native-contribution-fixture.client.ts'
@@ -35,7 +35,7 @@ function fixture(initial: NativeScopeSnapshot = { phase: 'ready', pending: false
     ...overrides,
   } as unknown as NativeScopeActionProps
   const view = render(<NativeScopeAction {...props} />)
-  fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+  fireEvent.click(screen.getByRole('button', { name: props.t('native.trigger') }))
   return { ...view, source, props, action, selectView }
 }
 function paste(text = JSON.stringify(invitation)) {
@@ -698,5 +698,137 @@ describe('native entrance while local collection or receiving is unavailable', (
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['native.invitation']).value).toBe(JSON.stringify(invitation))
     expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['native.bind'] }).disabled).toBe(true)
     expect(f.action).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('current recorded capacity status', () => {
+  const current = { ...observation(bound, 14), recordedContext }
+  const ready: NativeScopeSnapshot = { phase: 'ready', pending: false, issue: null, observation: current }
+
+  it.each([zh, en])('describes omissions while closed and opens the provider details without changing permission', (dictionary) => {
+    const t = makeTranslate(dictionary)
+    const f = fixture(ready, { t })
+    const trigger = screen.getByRole('button', { name: t('native.trigger'),
+      description: t('native.recorded.capacityDescription', { count: 4 }) })
+    fireEvent.click(trigger)
+    expect(screen.queryByRole('dialog', { name: t('native.title') })).toBeNull()
+    expect(within(trigger).getByText(t('native.recorded.capacity'))).not.toBeNull()
+    expect(within(trigger).getByText(t('native.recorded.capacityShort'))).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: t('native.target.remote') }).checked).toBe(true)
+    const dialog = screen.getByRole('dialog', { name: t('native.title') })
+    expect(within(dialog).getByText(invitation.ownerPeerId)).not.toBeNull()
+    expect(within(dialog).getByText(invitation.responsibility)).not.toBeNull()
+    expect(within(dialog).getByText(t('native.recorded.budget', { count: 4 }))).not.toBeNull()
+    expect(within(dialog).getByText(t('native.recorded.capacityOwner'))).not.toBeNull()
+    expect(f.action).not.toHaveBeenCalled()
+    expect(f.props.requestNativeContribution).not.toHaveBeenCalled()
+    expect(f.props.requestNativeLocalContribution).not.toHaveBeenCalled()
+  })
+
+  it('keeps the local responsibility visible and opens remote evidence when capacity is limited', () => {
+    const binding = compositeExecution.binding
+    if (binding?.kind !== 'local-task-scope') throw new Error('Expected a composite fixture')
+    const initial: NativeScopeSnapshot = { ...ready, observation: { ...current, state: compositeExecution,
+      localTask: target, recordedContext: null } }
+    const local = { status: 'ready' as const, pending: false, value: { ...localStatus, capture: localCapture } }
+    const f = fixture(initial, { useNativeLocalContributions: select => select({ [state.agentId]: local }) })
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: zh['native.target.local'] }).checked).toBe(true)
+    const trigger = screen.getByRole('button', { name: zh['native.trigger'] })
+    fireEvent.click(trigger)
+    act(() => { f.source.set({ ...initial, observation: { ...current, state: compositeExecution, localTask: target,
+      recordedContext: { ...recordedContext, bindingId: binding.id, subscriptionId: binding.subscriptionId } } }) })
+    expect(within(trigger).getByText(zh['native.recorded.capacity'])).not.toBeNull()
+    expect(within(trigger).getByText(zh['native.mode.enabled'])).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: zh['native.target.remote'] }).checked).toBe(true)
+    expect(screen.getByText(zh['native.local.scopeAdded'])).not.toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: zh['native.target.local'] }))
+    fireEvent.click(trigger)
+    expect(within(trigger).getByText(zh['native.recorded.capacity'])).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: zh['native.target.remote'] }).checked).toBe(true)
+    expect(f.action).not.toHaveBeenCalled()
+    expect(f.props.stopNativeLocalContribution).not.toHaveBeenCalled()
+    expect(f.props.stopNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it.each(['loading', 'disconnected', 'unavailable', 'error'] as const)('hides retained counts while status is %s', (phase) => {
+    const f = fixture(ready)
+    const trigger = screen.getByRole('button', { name: zh['native.trigger'] })
+    fireEvent.click(trigger)
+    act(() => { f.source.set({ ...ready, phase }) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+    expect(trigger.getAttribute('aria-describedby')).toBeNull()
+    act(() => { f.source.set(ready) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).not.toBeNull()
+  })
+
+  it('clears the indicator during management, after withdrawal and when reading ends', () => {
+    const f = fixture(ready)
+    const absent: NativeScopeSnapshot[] = [
+      { ...ready, pending: true },
+      { ...ready, observation: { ...current, recordedContext: null } },
+      { ...ready, observation: { ...current, state: { ...bound, mode: 'left' } } },
+      { ...ready, observation: { ...current, subscriptionState: 'left' } },
+      { ...ready, observation: { ...current, eligibility: 'task-conflict', recordedContext: null } },
+      { ...ready, observation: { agentId: state.agentId, eligibility: 'not-live' } },
+      { ...ready, observation: observation() },
+      localSnapshot(localExecution),
+    ]
+    for (const snapshot of absent) {
+      act(() => { f.source.set(snapshot) })
+      expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+      expect(screen.queryByRole('region', { name: zh['native.recorded.title'] })).toBeNull()
+      act(() => { f.source.set(ready) })
+      expect(f.container.querySelector('[data-native-recorded-budget]')).not.toBeNull()
+    }
+  })
+
+  it('does not attribute a retained record to another binding or subscription', () => {
+    const f = fixture(ready)
+    const binding = bound.binding
+    if (binding === null || binding.kind === 'local-task') throw new Error('Expected a remote fixture')
+    const replacement = { ...binding, id: 'binding-next' as typeof binding.id,
+      subscriptionId: 'subscription-next' as typeof binding.subscriptionId }
+    act(() => { f.source.set({ ...ready, observation: { ...current, state: { ...bound, binding: replacement } } }) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+    act(() => { f.source.set({ ...ready, observation: { ...current, state: { ...bound, binding: replacement },
+      recordedContext: { ...recordedContext, bindingId: replacement.id } } }) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+    act(() => { f.source.set({ ...ready, observation: { ...current, state: { ...bound, binding: replacement },
+      recordedContext: { ...recordedContext, bindingId: replacement.id, subscriptionId: replacement.subscriptionId } } }) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).not.toBeNull()
+  })
+
+  it('does not carry the description or a late source update into another Session', () => {
+    const f = fixture(ready)
+    const next = observable<NativeScopeSnapshot>({ phase: 'loading', pending: false, issue: null, observation: null })
+    f.rerender(<NativeScopeAction {...f.props} sessionId={'session-next' as typeof state.agentId}
+      useNativeScope={select => select(useSyncExternalStore(
+        listener => next.subscribe(listener), () => next.getSnapshot()))} />)
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+    expect(screen.getByRole('button', { name: zh['native.trigger'] }).getAttribute('aria-describedby')).toBeNull()
+    expect(screen.queryByRole('dialog', { name: zh['native.title'] })).toBeNull()
+    act(() => { f.source.set(ready) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+  })
+
+  it('updates the recorded count and separates capacity from other exclusion reasons', () => {
+    const f = fixture(ready)
+    const t = makeTranslate(zh)
+    act(() => { f.source.set({ ...ready, observation: { ...current, recordedContext: { ...recordedContext,
+      omittedSourceCounts: { ...recordedContext.omittedSourceCounts, budget: 1 } } } }) })
+    expect(screen.getByRole('button', { name: t('native.trigger'),
+      description: t('native.recorded.capacityDescription', { count: 1 }) })).not.toBeNull()
+    act(() => { f.source.set({ ...ready, observation: { ...current, recordedContext: { ...recordedContext,
+      omittedSourceCounts: { budget: 0, 'self-published': 2, unsupported: 3, superseded: 4, withdrawn: 5,
+        'recipient-irrelevant': 6 } } } }) })
+    expect(f.container.querySelector('[data-native-recorded-budget]')).toBeNull()
+    expect(screen.getByRole('button', { name: t('native.trigger') }).getAttribute('aria-describedby')).toBeNull()
+    expect(screen.getByRole('region', { name: t('native.recorded.title') })).not.toBeNull()
+    expect(screen.getByText(t('native.recorded.budget', { count: 0 }))).not.toBeNull()
+    expect(screen.queryByText(t('native.recorded.capacityOwner'))).toBeNull()
   })
 })

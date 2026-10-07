@@ -19,6 +19,7 @@ describe('recorded shared context counts', () => {
     expect(within(region).getByText(t('native.recorded.count', { count: 2 }))).not.toBeNull()
     expect(within(region).getByText(t('native.recorded.reason.superseded'))).not.toBeNull()
     expect(within(region).queryByText(t('native.recorded.reason.unsupported'))).toBeNull()
+    expect(within(region).getByText(t('native.recorded.capacityOwner'))).not.toBeNull()
     expect(within(region).getByText(t('native.recorded.bytesHint'))).not.toBeNull()
     expect(within(region).getByText(t('native.recorded.limit'))).not.toBeNull()
     expect(view.container.textContent).not.toContain(recordedContext.bindingId)
@@ -32,6 +33,7 @@ describe('recorded shared context counts', () => {
     const view = render(<NativeRecordedContext recorded={value} t={t} />)
     expect(screen.getByText(t('native.recorded.budget', { count: 0 }))).not.toBeNull()
     expect(screen.getByText(t('native.recorded.count', { count: 2 }))).not.toBeNull()
+    expect(screen.queryByText(t('native.recorded.capacityOwner'))).toBeNull()
     view.rerender(<NativeRecordedContext recorded={{ ...value, omittedSourceCounts: {
       ...value.omittedSourceCounts, 'self-published': 0,
     } }} t={t} />)

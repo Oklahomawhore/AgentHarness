@@ -18,6 +18,9 @@ export function NativeRecordedContext({ recorded, t }: PropsLocale<'emergenceCen
     <h3>{t('native.recorded.title')}</h3>
     <p>{t('native.recorded.summary', { bytes: recorded.sharedBytes, count: recorded.selectedSourceCount })}</p>
     <p>{t('native.recorded.budget', { count: recorded.omittedSourceCounts.budget })}</p>
+    {recorded.omittedSourceCounts.budget > 0 && <p data-native-recorded-budget-hint className={css.hint}>
+      {t('native.recorded.capacityOwner')}
+    </p>}
     {reasons.length > 0 && <details>
       <summary>{t('native.recorded.other')}</summary>
       <dl className={css.details}>{reasons.map(reason => <div key={reason} className={css.recordedReason}>
