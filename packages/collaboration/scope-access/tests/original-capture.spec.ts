@@ -242,7 +242,7 @@ it('retains associated expiry and never reopens it through exact adoption retry'
 })
 
 it('enforces the complete associated response budget before persistence', async () => {
-  const f = await fixture('group', { maxResponseBytes: 3000 })
+  const f = await fixture('group', { maxResponseBytes: 3000, maxDecodedResponseBytes: 3000 })
   await f.publish('我的原始写入', '另一职责事实'.repeat(150))
   await expect(f.b.access.retrieve(f.plan.id, signal())).rejects.toThrow('response exceeds budget')
   expect(projections(f.a).size).toBe(0)
@@ -302,8 +302,8 @@ it('negotiates an allowance while preserving exact source omission and independe
   expect(associated.projection.text).toContain('OTHER_CAPTURE_BODY')
   expect(compute.mock.calls[0]?.[0]).toMatchObject({ maxContextBytes: 5000,
     recipient: { peerCapture: associated.projection.peerCapture } })
-  expect(transport.mock.calls[0]?.[1]).toBe('/agentharness/scope-read/3')
-  expect(transport.mock.calls[0]?.[2]).toMatchObject({ version: 3, originalCapture: f.plan.originalCapture, maxContextBytes: 5000 })
+  expect(transport.mock.calls[0]?.[1]).toBe('/agentharness/scope-read/4')
+  expect(transport.mock.calls[0]?.[2]).toMatchObject({ version: 4, originalCapture: f.plan.originalCapture, maxContextBytes: 5000 })
   const manual = await f.b.access.join({ invitation: f.read })
   const current = await f.b.access.retrieveWithinBudget({ subscriptionId: manual.id, maxContextBytes: 5000 }, signal())
   if (current.status !== 'active') throw new Error('Manual budgeted result is missing')

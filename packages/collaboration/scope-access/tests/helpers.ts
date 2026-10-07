@@ -16,7 +16,7 @@ export const peer = (value: string): ScopePeerId => value as ScopePeerId
 const contexts: Context[] = []
 const network = new Map<ScopePeerId, ControlledTransport>()
 export const config: Config = {
-  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 6000, maxResponseBytes: 16384,
+  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 6000, maxResponseBytes: 16384, maxDecodedResponseBytes: 2097152,
   maxConcurrentContributions: 4, maxContributionRequestBytes: 16384,
   maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60_000,
   requestTimeoutMs: 5000, maxInvitationLifetimeMs: 60_000, maxConcurrentReads: 8, waitTimeoutMs: 3000, maxConcurrentWaits: 3,
@@ -65,7 +65,7 @@ export async function cleanup(): Promise<void> {
 }
 
 export async function host(id: string, pool = new MemoryMediaPool(), overrides: Partial<Config> = {},
-  taskEvents: readonly DevelopmentTaskLogEntry[] = [], transportPeerId: ScopePeerId = peer(id)) {
+  taskEvents: readonly DevelopmentTaskLogEntry[] = [], transportPeerId: ScopePeerId = peer(id), maxEventsPerTask = 32) {
   const ctx = new Context()
   contexts.push(ctx)
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
@@ -78,7 +78,7 @@ export async function host(id: string, pool = new MemoryMediaPool(), overrides: 
   ctx.effect(() => () => facility.closeAll())
   new DevelopmentRoomService(ctx, { nodeId: id, presenceTtlMs: 10_000, maxParticipants: 16, maxRooms: 32, maxTextBytes: 4096 })
   const tasks = new DevelopmentTaskService(ctx, {
-    maxTasks: 16, maxEventsPerTask: 32, maxMergeParents: 4, maxContextBlockBytes: 65536,
+    maxTasks: 16, maxEventsPerTask, maxMergeParents: 4, maxContextBlockBytes: 65536,
     maxLineageTasks: 16, maxTextBytes: 4096, roomRetryIntervalMs: 10_000,
   })
   const participantId = 'owner' as DevelopmentParticipantId

@@ -11,7 +11,7 @@
     - id: native-contribution-room
       name: '@deepseek-ai/dsh-development-room'
       config:
-        nodeId: snapshot-recipient-budget
+        nodeId: snapshot-history-capacity-receiver
         presenceTtlMs: 60000
         maxParticipants: 32
         maxRooms: 32
@@ -20,7 +20,7 @@
       name: '@deepseek-ai/dsh-development-task'
       config:
         maxTasks: 32
-        maxEventsPerTask: 128
+        maxEventsPerTask: 2000
         maxMergeParents: 8
         maxContextBlockBytes: 65536
         maxLineageTasks: 64
@@ -29,17 +29,17 @@
     - id: native-contribution-text
       name: '@deepseek-ai/dsh-development-task-context/text'
     - id: native-contribution-transport
-      name: '../scope-native-contribution/transport-fixture.mjs'
+      name: './transport-fixture.mjs'
       config:
-        peerId: snapshot-recipient-budget-peer
+        peerId: snapshot-history-capacity-receiver-peer
     - id: native-contribution-access
       name: '@deepseek-ai/dsh-scope-access'
       config:
         maxGrants: 16
         maxSubscriptions: 16
         maxProjections: 64
-        maxContextBytes: 12000
-        maxResponseBytes: 32768
+        maxContextBytes: 6000
+        maxResponseBytes: 60000
         maxDecodedResponseBytes: 2097152
         requestTimeoutMs: 5000
         maxInvitationLifetimeMs: 60000
@@ -51,23 +51,12 @@
         maxContributionApplications: 16
         maxApplicationRequestBytes: 16384
         maxApplicationLifetimeMs: 60000
-    - id: owner-local-context
-      name: '@deepseek-ai/dsh-development-task-context'
-      config:
-        maxContextBytesPerStep: 8000
-    - id: owner-local-source
-      name: '@deepseek-ai/dsh-scope-agent-contribution'
-      config:
-        maxSessions: 16
-        maxLeases: 64
-        maxObservationBytes: 65536
-        contributionPollIntervalMs: 25
-    - id: owner-local-scheduler
+    - id: native-contribution-recipient
       name: '@deepseek-ai/dsh-scope-agent-context'
       config:
         maxContextBytes: 8000
         maxLocalContextBytes: 4000
-        coalesceMs: 10
+        coalesceMs: 1
         retryDelayMs: 1000
     - id: native-contribution-assertions
       name: './native-fixture.mjs'

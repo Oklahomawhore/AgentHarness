@@ -1486,7 +1486,8 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     const aOverlay = join(directory, 'owner.patch.yml')
     const bOverlay = join(directory, 'source.patch.yml')
     const accessConfig = {
-      maxGrants: 1024, maxSubscriptions: 256, maxProjections: 8192, maxContextBytes: 12000, maxResponseBytes: 60000,
+      maxGrants: 1024, maxSubscriptions: 256, maxProjections: 8192, maxContextBytes: 12000,
+      maxResponseBytes: 60000, maxDecodedResponseBytes: 2097152,
       requestTimeoutMs: 5000, maxInvitationLifetimeMs: 604800000, maxConcurrentReads: 16,
       waitTimeoutMs: 3000, maxConcurrentWaits: 4, maxConcurrentContributions: 4, maxContributionRequestBytes: 16384,
       maxContributionApplications: 256, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 86400000,

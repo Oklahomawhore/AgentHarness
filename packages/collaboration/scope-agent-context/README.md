@@ -44,7 +44,7 @@ Mount this consumer in a `dsh` profile that already provides native Agents, Sess
 | `coalesceMs` | Required | Delay that combines pending changes before an idle activation attempt. |
 | `retryDelayMs` | Required | Delay before rechecking an unavailable owner; automatic permission remains paused. |
 
-The [configuration catalog](../../../docs/config-catalog.md) owns accepted ranges. Each remote read offers its available text bytes after reserving consumer framing and other managed context. Scope access clamps this offer to both Hosts’ limits before the owner computes complete source groups. A Task whose required representation cannot fit becomes an explicit withdrawal; text is never cut through Unicode characters or silently truncated.
+The [configuration catalog](../../../docs/config-catalog.md) owns accepted ranges. Each remote read offers its available text bytes after reserving consumer framing and other managed context. Scope access clamps this offer to both Hosts’ limits before the owner computes complete source groups. A Task whose required representation cannot fit becomes an explicit withdrawal; text is never cut through Unicode characters or silently truncated. [Scope access](../scope-access/README.md#use-this-package) separately bounds wire encoding and decoded source coverage; compression does not change this consumer’s text budget or logged context.
 
 ### Explicit binding and permission
 

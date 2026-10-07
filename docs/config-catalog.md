@@ -2334,8 +2334,10 @@ export interface Config {
   readonly maxProjections: number
   /** Complete backend text budget in UTF-8 bytes; consumer framing is additional. */
   readonly maxContextBytes: number
-  /** Complete JSON response limit including attribution and coverage. */
+  /** Complete encoded JSON response limit, including envelope and coverage. */
   readonly maxResponseBytes: number
+  /** Complete decoded read-response JSON limit, enforced before allocation by the decompressor. */
+  readonly maxDecodedResponseBytes: number
   /** Deadline covering remote authorization and projection computation. */
   readonly requestTimeoutMs: number
   /** Maximum lifetime of an invitation from local issuance. */
@@ -2359,7 +2361,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-access/src/index.ts:51`](../packages/collaboration/scope-access/src/index.ts)
+Source: [`packages/collaboration/scope-access/src/index.ts:52`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 

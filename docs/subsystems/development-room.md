@@ -904,7 +904,7 @@ Presence remains a transient lease outside durable logs. Room creation, join, an
 
 ## Independent device read scopes
 
-[Scope access](../../packages/collaboration/scope-access/README.md) authorizes and computes a single Root Task projection on its owner; [transport](../../packages/collaboration/scope-transport/README.md) authenticates device identity. Receivers retain invitations and exact projections without replicating Task or Room logs.
+[Scope access](../../packages/collaboration/scope-access/README.md) authorizes and computes a single Root Task projection on its owner; [transport](../../packages/collaboration/scope-transport/README.md) authenticates device identity. Receivers retain invitations and exact projections without replicating Task or Room logs. Read protocol version 4 separates complete wire and decoded-response limits from model text budgets; lossless encoding preserves exact projection text and source coverage. The package README owns encoding and protocol-version behavior.
 
 ```ts type-equiv
 /** Immutable original source selected by a joint receiving operation, never inferred from its peer. */

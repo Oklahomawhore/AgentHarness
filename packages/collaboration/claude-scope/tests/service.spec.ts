@@ -1160,7 +1160,7 @@ async function independentScopes() {
     const result = await boot(new MemoryMediaPool(), undefined, {}, id, async (ctx) => {
       new ReadScopeTransport(ctx, id as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
-        maxContextBytes: 6000, maxResponseBytes: 16000, requestTimeoutMs: 1000,
+        maxContextBytes: 6000, maxResponseBytes: 16000, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 1000,
         maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8, waitTimeoutMs: 500, maxConcurrentWaits: 2,
         maxConcurrentContributions: 4, maxContributionRequestBytes: 16384, maxContributionApplications: 16,
         maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 })
@@ -1187,7 +1187,7 @@ async function contributionPair(ownerPeerId = 'contribution-owner') {
     const result = await boot(pool, directory, { contributionPollIntervalMs: 25 }, id, async (ctx) => {
       new ReadScopeTransport(ctx, peerId as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
-        maxContextBytes: 6000, maxResponseBytes: 16000, requestTimeoutMs: 1000,
+        maxContextBytes: 6000, maxResponseBytes: 16000, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 1000,
         maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8, waitTimeoutMs: 500, maxConcurrentWaits: 2,
         maxConcurrentContributions: 4, maxContributionRequestBytes: 16384, maxContributionApplications: 16,
         maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 })

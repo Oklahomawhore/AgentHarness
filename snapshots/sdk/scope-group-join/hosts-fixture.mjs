@@ -107,7 +107,7 @@ async function initializeHost(ctx, root, role, maxContextBytes, maxLocalContextB
 
 /** Explicit test-only transport and source retention budgets, not product defaults. */
 export const accessConfig = {
-  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768,
+  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152,
   requestTimeoutMs: 5000, maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
   waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
   maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000,

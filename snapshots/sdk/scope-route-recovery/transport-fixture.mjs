@@ -62,10 +62,12 @@ export default class FixtureTransport extends ScopeTransport {
       signal.throwIfAborted()
       return { ...envelope, result: { status: 'changed', cursor: cursor() } }
     }
-    assert.equal(protocol, '/agentharness/scope-read/3')
-    assert.equal(payload.version, 3)
+    assert.equal(protocol, '/agentharness/scope-read/4')
+    assert.equal(payload.version, 4)
     assert.ok(Number.isSafeInteger(payload.maxContextBytes) && payload.maxContextBytes > 0)
     assert.ok(payload.maxContextBytes <= 8000, 'the native consumer must offer its remaining context allowance')
+    assert.ok(Number.isSafeInteger(payload.maxResponseBytes) && payload.maxResponseBytes > 0)
+    assert.equal(payload.maxDecodedResponseBytes, 2097152)
     this.reads++
     const values = ['Initial declaration: orderCode is required.', 'Corrected declaration: sku is required.', 'Final declaration: itemId is required.']
     const evidence = values[Math.min(this.revision, 3) - 1]

@@ -36,6 +36,7 @@
         maxProjections: 16
         maxContextBytes: 6000
         maxResponseBytes: 16384
+        maxDecodedResponseBytes: 2097152
         requestTimeoutMs: 30000
         maxInvitationLifetimeMs: 60000
         maxConcurrentReads: 2

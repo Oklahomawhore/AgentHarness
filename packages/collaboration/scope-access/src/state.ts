@@ -29,6 +29,14 @@ export const budgetReadRequestSchema = readRequestSchema.extend({ version: z.lit
   maxContextBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), originalCapture: originalCaptureSchema.optional(),
 })
 
+/** Version-4 reads bound both encoded and decoded responses while preserving optional text and source limits. */
+export const encodedReadRequestSchema = readRequestSchema.extend({ version: z.literal(4),
+  maxContextBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  maxResponseBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  maxDecodedResponseBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  originalCapture: originalCaptureSchema.optional(),
+})
+
 /** Response echoes one request identity; denied responses carry no scope metadata. */
 export const readResponseSchema = z.object({
   requestId: z.uuid(), subscriptionId, generation,

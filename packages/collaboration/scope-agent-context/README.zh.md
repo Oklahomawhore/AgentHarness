@@ -44,7 +44,7 @@ kind: "package-reference"
 | `coalesceMs` | 必填 | 空闲启动尝试前用于合并待处理变化的延迟。 |
 | `retryDelayMs` | 必填 | owner 不可用后再次检查的延迟；自动执行许可保持暂停。 |
 
-允许范围以[配置目录](../../../docs/config-catalog.zh.md)为准。每次远端读取先扣除 consumer 说明文字及其他受管上下文，再提交可用文本字节数。scope access 取该额度与双方 Host 上限的较小值，交由 owner 计算完整来源组。Task 必需的完整表示无法容纳时使用明确撤回标记，不会截断 Unicode 字符或静默裁剪。
+允许范围以[配置目录](../../../docs/config-catalog.zh.md)为准。每次远端读取先扣除 consumer 说明文字及其他受管上下文，再提交可用文本字节数。scope access 取该额度与双方 Host 上限的较小值，交由 owner 计算完整来源组。Task 必需的完整表示无法容纳时使用明确撤回标记，不会截断 Unicode 字符或静默裁剪。[Scope access](../scope-access/README.zh.md#use-this-package)另行限制 wire 编码与解码来源覆盖；压缩不改变本消费方的文本预算或已记录上下文。
 
 ### 显式绑定与许可
 

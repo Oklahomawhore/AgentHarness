@@ -904,7 +904,7 @@ Presence 仍是耐久日志之外的临时 lease。Room create、join、leave �
 
 ## 独立设备只读 scope
 
-[Scope 访问](../../packages/collaboration/scope-access/README.zh.md)在 owner 上授权并计算单个独立 Task 的投影；[传输](../../packages/collaboration/scope-transport/README.zh.md)认证设备身份。接收者保留邀请及确切投影，不复制 Task 或 Room 日志。
+[Scope 访问](../../packages/collaboration/scope-access/README.zh.md)在 owner 上授权并计算单个独立 Task 的投影；[传输](../../packages/collaboration/scope-transport/README.zh.md)认证设备身份。接收者保留邀请及确切投影，不复制 Task 或 Room 日志。读取协议 version 4 将完整 wire 与解码响应限制同模型文本预算分开；无损编码保留精确投影文本和来源覆盖。编码与协议版本行为归属包 README。
 
 ```ts type-equiv
 /** Immutable original source selected by a joint receiving operation, never inferred from its peer. */

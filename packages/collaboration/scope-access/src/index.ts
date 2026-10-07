@@ -15,12 +15,13 @@ import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import type { ScopePeerId, ScopeTransportRequest } from '@deepseek-ai/dsh-scope-transport/types'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { invitationSchema, sameReadGrant, projectionDigest, projectionSchema } from './schema.ts'
+import { encodeReadResponse, decodeReadResponse } from './read-codec.ts'
 import { ContributionAccess } from './contribution.ts'
 import { ContributionApplications } from './application.ts'
 import { ContributionEntryProbe } from './entry-probe.ts'
 import { groupReservedBytes, type ApplicationRecord, type GroupRecord, type ManagedApplicationRecord } from './application-schema.ts'
 import { readRequestSchema, captureReadRequestSchema, readResponseSchema, scopeAccessDomainSpec, scopeGroupDomainSpec,
-  budgetReadRequestSchema, waitRequestSchema, waitResponseSchema } from './state.ts'
+  budgetReadRequestSchema, encodedReadRequestSchema, waitRequestSchema, waitResponseSchema } from './state.ts'
 import type { ScopeAccessDomain, ScopeGroupDomain } from './state.ts'
 import type {
   ScopeContributionEntryRequest, ScopeContributionEntryResult, ScopeContributionEntryRecoverRequest,
@@ -57,8 +58,10 @@ export interface Config {
   readonly maxProjections: number
   /** Complete backend text budget in UTF-8 bytes; consumer framing is additional. */
   readonly maxContextBytes: number
-  /** Complete JSON response limit including attribution and coverage. */
+  /** Complete encoded JSON response limit, including envelope and coverage. */
   readonly maxResponseBytes: number
+  /** Complete decoded read-response JSON limit, enforced before allocation by the decompressor. */
+  readonly maxDecodedResponseBytes: number
   /** Deadline covering remote authorization and projection computation. */
   readonly requestTimeoutMs: number
   /** Maximum lifetime of an invitation from local issuance. */
@@ -88,6 +91,7 @@ export const Config: s<Config> = s.object({
   maxProjections: s.number().step(1).min(1).required(),
   maxContextBytes: s.number().step(1).min(1).required(),
   maxResponseBytes: s.number().step(1).min(1).required(),
+  maxDecodedResponseBytes: s.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
   requestTimeoutMs: s.number().step(1).min(1).max(2_147_483_647).required(),
   maxInvitationLifetimeMs: s.number().step(1).min(1).required(),
   maxConcurrentReads: s.number().step(1).min(1).required(),
@@ -103,9 +107,10 @@ export const Config: s<Config> = s.object({
 const PROTOCOL = '/agentharness/scope-read/1'
 const CAPTURE_PROTOCOL = '/agentharness/scope-read/2'
 const BUDGET_PROTOCOL = '/agentharness/scope-read/3'
+const ENCODED_PROTOCOL = '/agentharness/scope-read/4'
 const WAIT_PROTOCOL = '/agentharness/scope-watch/1'
 type ReadRequest = ReturnType<typeof readRequestSchema.parse> | ReturnType<typeof captureReadRequestSchema.parse>
-  | ReturnType<typeof budgetReadRequestSchema.parse>
+  | ReturnType<typeof budgetReadRequestSchema.parse> | ReturnType<typeof encodedReadRequestSchema.parse>
 type ReadResponse = ReturnType<typeof readResponseSchema.parse>
 type WaitRequest = ReturnType<typeof waitRequestSchema.parse>
 type WaitResponse = ReturnType<typeof waitResponseSchema.parse>
@@ -194,6 +199,8 @@ export default class ScopeAccessService extends TypertRemoteService {
       'scope-access: original-capture peer reads')
     ctx.effect(() => ctx.scopeTransport.register(BUDGET_PROTOCOL, request => this.track(this.respond(request, 3))),
       'scope-access: budgeted peer reads')
+    ctx.effect(() => ctx.scopeTransport.register(ENCODED_PROTOCOL, request => this.track(this.respond(request, 4))),
+      'scope-access: bounded encoded peer reads')
     ctx.effect(() => ctx.scopeTransport.register(WAIT_PROTOCOL, request => this.track(this.respondWait(request))), 'scope-access: change waits')
     ctx.effect(() => async () => {
       this.lifetime.abort(new Error('scope-access: service disposed'))
@@ -707,7 +714,7 @@ export default class ScopeAccessService extends TypertRemoteService {
       if (typeof checked === 'string') return { status: checked }
       const cursor = createHash('sha256').update(JSON.stringify([request.subscriptionId, request.generation,
         authority.invitation, view.task.revision, backend.identity.id, backend.identity.revision,
-        this.config.maxContextBytes, this.config.maxResponseBytes])).digest('hex') as ScopeChangeCursor
+        this.config.maxContextBytes, this.config.maxResponseBytes, this.config.maxDecodedResponseBytes])).digest('hex') as ScopeChangeCursor
       return { status: request.cursor === cursor ? 'unchanged' : 'changed', cursor }
     }
     const first = await current()
@@ -761,19 +768,17 @@ export default class ScopeAccessService extends TypertRemoteService {
     this.activeReads++; this.activeOrdinary++
     const signal = AbortSignal.any([consumerSignal, this.lifetime.signal, AbortSignal.timeout(this.config.requestTimeoutMs)])
     const fields = { requestId: randomUUID(), subscriptionId: id, generation: subscription.generation, invitation: subscription.invitation }
-    const request: ReadRequest = maxContextBytes === undefined
-      ? subscription.version === 2
-        ? { ...fields, version: 2, originalCapture: subscription.originalCapture } : { ...fields, version: 1 }
-      : { ...fields, version: 3, maxContextBytes,
-        ...(subscription.version === 2 ? { originalCapture: subscription.originalCapture } : {}) }
-    const protocol = request.version === 3 ? BUDGET_PROTOCOL : request.version === 2 ? CAPTURE_PROTOCOL : PROTOCOL
+    const request = { ...fields, version: 4 as const,
+      maxResponseBytes: this.config.maxResponseBytes, maxDecodedResponseBytes: this.config.maxDecodedResponseBytes,
+      ...(maxContextBytes === undefined ? {} : { maxContextBytes }),
+      ...(subscription.version === 2 ? { originalCapture: subscription.originalCapture } : {}) }
     this.requests.set(id, request.requestId)
     try {
       const raw = await this.ctx.scopeTransport.request({ peerId: subscription.invitation.ownerPeerId,
-        address: subscription.invitation.ownerAddress }, protocol, request, signal)
+        address: subscription.invitation.ownerAddress }, ENCODED_PROTOCOL, request, signal)
       signal.throwIfAborted()
-      if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > this.config.maxResponseBytes) throw new Error('scope-access: response exceeds budget')
-      const response = readResponseSchema.parse(raw)
+      const response = await decodeReadResponse(raw, this.config)
+      signal.throwIfAborted()
       if (response.requestId !== request.requestId || response.subscriptionId !== id || response.generation !== subscription.generation) {
         throw new Error('scope-access: response does not match its request')
       }
@@ -795,7 +800,7 @@ export default class ScopeAccessService extends TypertRemoteService {
           this.stopWaiting(id)
           return { status: response.result.status }
         }
-        if (request.version === 3 && response.result.projection.maxContextBytes > request.maxContextBytes) {
+        if (request.maxContextBytes !== undefined && response.result.projection.maxContextBytes > request.maxContextBytes) {
           throw new Error('scope-access: projection exceeds the requested text budget')
         }
         this.requireProjection(response.result.projection, subscription.invitation, subscription.originalCapture)
@@ -822,13 +827,21 @@ export default class ScopeAccessService extends TypertRemoteService {
     readonly peerId: ScopePeerId
     readonly payload: unknown
     readonly signal: AbortSignal
-  }, version: 1 | 2 | 3): Promise<unknown> {
+  }, version: 1 | 2 | 3 | 4): Promise<unknown> {
     const request = version === 1 ? readRequestSchema.parse(input.payload)
-      : version === 2 ? captureReadRequestSchema.parse(input.payload) : budgetReadRequestSchema.parse(input.payload)
+      : version === 2 ? captureReadRequestSchema.parse(input.payload)
+        : version === 3 ? budgetReadRequestSchema.parse(input.payload) : encodedReadRequestSchema.parse(input.payload)
     const domain = await this.ready
-    const respond = (result: ReadResponse['result']): ReadResponse => ({
-      requestId: request.requestId, subscriptionId: request.subscriptionId, generation: request.generation, result,
-    })
+    const respond = async (result: ReadResponse['result']): Promise<unknown> => {
+      const response: ReadResponse = { requestId: request.requestId, subscriptionId: request.subscriptionId,
+        generation: request.generation, result }
+      if (request.version === 4) return await encodeReadResponse(response, {
+        maxResponseBytes: Math.min(this.config.maxResponseBytes, request.maxResponseBytes),
+        maxDecodedResponseBytes: Math.min(this.config.maxDecodedResponseBytes, request.maxDecodedResponseBytes),
+      })
+      if (Buffer.byteLength(JSON.stringify(response), 'utf8') > this.config.maxResponseBytes) throw new Error('scope-access: response exceeds budget')
+      return response
+    }
     const authority = this.authorize(domain, request, input.peerId)
     if (typeof authority === 'string') return respond({ status: authority })
     if (this.activeReads >= this.config.maxConcurrentReads || this.activeOrdinary >= this.ordinaryCapacity) return respond({ status: 'unavailable' })
@@ -840,8 +853,8 @@ export default class ScopeAccessService extends TypertRemoteService {
       const originalCapture = request.version === 1 ? undefined : request.originalCapture
       const peerCapture = originalCapture === undefined ? undefined
         : this.originalPeerCapture(domain, authority.invitation, originalCapture)
-      if (originalCapture !== undefined && peerCapture === undefined) return respond({ status: 'denied' })
-      const maxContextBytes = request.version === 3
+      if (originalCapture !== undefined && peerCapture === undefined) return await respond({ status: 'denied' })
+      const maxContextBytes = (request.version === 3 || request.version === 4) && request.maxContextBytes !== undefined
         ? Math.min(this.config.maxContextBytes, request.maxContextBytes) : this.config.maxContextBytes
       const backend = this.ctx.developmentTaskContextBackend
       const identity = backend.identity
@@ -863,8 +876,8 @@ export default class ScopeAccessService extends TypertRemoteService {
       if (!isDeepStrictEqual(new Set(expected.map(item => JSON.stringify(item))), new Set(actual.map(item => JSON.stringify(item))))) {
         throw new Error('scope-access: backend coverage is not the authorized Root Task')
       }
-      const response = respond({ status: 'active', projection })
-      if (Buffer.byteLength(JSON.stringify(response), 'utf8') > this.config.maxResponseBytes) throw new Error('scope-access: response exceeds budget')
+      const encoded = await respond({ status: 'active', projection })
+      signal.throwIfAborted()
       return await this.enqueue(async (currentDomain) => {
         signal.throwIfAborted()
         const current = this.authorize(currentDomain, request, input.peerId)
@@ -882,7 +895,7 @@ export default class ScopeAccessService extends TypertRemoteService {
         await this.persistProjection(currentDomain, projection)
         signal.throwIfAborted()
         if (authority.invitation.expiresAt <= Date.now()) return respond({ status: 'expired' })
-        return await fresh() ? response : respond({ status: 'unavailable' })
+        return await fresh() ? encoded : respond({ status: 'unavailable' })
       })
     } finally { this.activeReads--; this.activeOrdinary-- }
   }

@@ -92,7 +92,7 @@ Web profile 在受支持的 Node Host 上挂载本适配器；浏览器 worker �
 
 `maxArtifactReadBytes` 限制每次完整文件读取；`maxOpenApiSourcesPerSession` 限制显式读取授权数量。采样支持 OpenAPI 3.1 JSON、内联 application/json 对象、直接声明的必填字段、不带额外约束的基本类型属性、声明的响应键以及操作元数据。引用、组合、方向相关属性、多种媒体类型和不支持的约束产生无效观察。无效、不可用和撤销证据不会恢复旧的有效采样。这些是文件声明，不证明线上行为或完整请求校验。
 
-独立读取先在配置的文本上限内预留完整 Hook 包装，再协商 owner 投影额度。后端按完整来源选择或省略；适配器不截断返回文本。不支持预算协议时失败，不回退到更大的投影。
+独立读取先在配置的文本上限内预留完整 Hook 包装，再协商 owner 投影额度。后端按完整来源选择或省略；适配器不截断返回文本。不支持读取协议时失败，不回退到其他版本或更大的投影。[Scope access](../scope-access/README.zh.md#use-this-package)负责有界 wire 解码；压缩既不改变 Hook 文本，也不改变其完整输出限制。
 
 所有限制均为必填。`maxContextBytes` 限制完整 UTF-8 文本，包括适配器和后端的包装文本，且不能超过 10000。会话、lease 和投影保留量有界，容量耗尽时拒绝新增；Task 与独立采集共用 `maxLeases`。`maxObservationBytes` 限制可转交的申请文本，并与 owner 的贡献限制共同约束含完整出处的采样请求。`maxRequestBytes` 限制 stdin、描述符读取及序列化 RPC 请求；`maxResponseBytes` 限制 RPC 响应和包含换行的最终 Hook JSON。命令截止时间涵盖就绪到完整输出。失败时不输出投影，而向 stderr 写入分类诊断并以 1 退出；对应事件是否继续由 Claude 决定。私有描述符发布和令牌交换使用 Connection 的 [local-access 辅助函数](../../client/connection/README.zh.md#browser-authentication-and-request-trust)；命令保留其 generation 与安全失败分类。
 

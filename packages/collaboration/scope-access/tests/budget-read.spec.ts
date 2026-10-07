@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { projectionDigest } from '../src/schema.ts'
-import { budgetReadRequestSchema, captureReadRequestSchema, readRequestSchema, readResponseSchema } from '../src/state.ts'
+import { budgetReadRequestSchema, encodedReadRequestSchema, captureReadRequestSchema, readRequestSchema, readResponseSchema } from '../src/state.ts'
 import { cleanup, host, peer } from './helpers.ts'
 
 const releases: Array<() => void> = []
@@ -11,7 +11,7 @@ afterEach(async () => {
   await cleanup()
 })
 const signal = (): AbortSignal => new AbortController().signal
-const protocol = '/agentharness/scope-read/3'
+const protocol = '/agentharness/scope-read/4'
 const projections = (node: Awaited<ReturnType<typeof host>>) =>
   node.pool.media.get('scope_access')!.tables.get('projections') ?? new Map<string, unknown>()
 
@@ -25,7 +25,8 @@ async function fixture(ownerBudget = 12000, receiverBudget = 6000) {
     expiresAt: Date.now() + 50000, responsibility: 'Maintain my independently owned client.' })
   const subscription = await b.access.join({ invitation })
   const target = { peerId: invitation.ownerPeerId, address: invitation.ownerAddress }
-  const wire = (maxContextBytes: number) => ({ version: 3, requestId: randomUUID(), subscriptionId: subscription.id,
+  const wire = (maxContextBytes: number) => ({ version: 4, maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152,
+    requestId: randomUUID(), subscriptionId: subscription.id,
     generation: subscription.generation, invitation, maxContextBytes })
   return { a, b, task, invitation, subscription, target, wire }
 }
@@ -49,7 +50,7 @@ it('delivers fitting current facts with explicit omissions instead of returning 
   expect(result.projection.selectedSources).toHaveLength(2)
   expect(compute.mock.calls[0]?.[0].maxContextBytes).toBe(1800)
   expect(transport.mock.calls[0]?.[1]).toBe(protocol)
-  expect(budgetReadRequestSchema.parse(transport.mock.calls[0]?.[2]).maxContextBytes).toBe(1800)
+  expect(encodedReadRequestSchema.parse(transport.mock.calls[0]?.[2]).maxContextBytes).toBe(1800)
   const retained = projections(f.b).size
   await expect(f.b.access.retrieveWithinBudget({ subscriptionId: f.subscription.id, maxContextBytes: 1800 }, signal()))
     .resolves.toEqual(result)
@@ -72,14 +73,15 @@ it.each([
   if (result.status !== 'active') throw new Error('Expected active bounded projection')
   expect(result.projection.maxContextBytes).toBe(limits.effective)
   expect(compute.mock.calls[0]?.[0].maxContextBytes).toBe(limits.effective)
-  expect(budgetReadRequestSchema.parse(transport.mock.calls[0]?.[2]).maxContextBytes).toBe(limits.offered)
+  expect(encodedReadRequestSchema.parse(transport.mock.calls[0]?.[2]).maxContextBytes).toBe(limits.offered)
 })
 
-it('keeps old read parsers strict and rejects invalid version-three budgets before reading Task facts', async () => {
+it('keeps old read parsers strict and rejects invalid version-four budgets before reading Task facts', async () => {
   const f = await fixture()
   const read = vi.spyOn(f.a.tasks, 'currentContextView')
   const request = f.wire(1800)
   expect(readRequestSchema.safeParse({ ...request, version: 1 }).success).toBe(false)
+  expect(budgetReadRequestSchema.safeParse({ ...request, version: 3 }).success).toBe(false)
   expect(captureReadRequestSchema.safeParse({ ...request, version: 2,
     originalCapture: { captureId: randomUUID(), captureGeneration: randomUUID() } }).success).toBe(false)
   for (const invalid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {

@@ -91,15 +91,18 @@ export class ContributionAccess {
   }
 
   /**
-   * Greatest committed terminal revision; ordinary new samples do not invalidate captured reads.
-   * @param taskId - Task whose committed contribution endings are inspected.
-   * @returns greatest terminal event revision, or zero when no ending is recorded for this Task.
+   * Greatest committed source-withdrawal revision; ordinary new samples do not invalidate captured reads.
+   * @param taskId - Task whose peer, local, Mesh-interval, and sampled-artifact withdrawals are inspected.
+   * @returns greatest withdrawal event revision, or zero when no source withdrawal is recorded for this Task.
    */
   terminalRevision(taskId: DevelopmentTaskId): number {
     let revision = 0
     for (const event of this.ctx.developmentTasks.log()) {
       if (event.taskId === taskId && (event.change.kind === 'peer-contribution-ended'
-        || event.change.kind === 'local-contribution-ended')) revision = Math.max(revision, event.revision)
+        || event.change.kind === 'local-contribution-ended' || event.change.kind === 'observed-interval-ended'
+        || (event.change.kind === 'context-published' && event.change.publication.observation?.state === 'revoked'))) {
+        revision = Math.max(revision, event.revision)
+      }
     }
     return revision
   }

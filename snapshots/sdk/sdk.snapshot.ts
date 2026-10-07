@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-history-capacity': {
+    expectedFinalResponse: 'The corrected policy arrived without repeating superseded history.',
+  },
   'scope-automatic-withdrawal': {
     expectedFinalResponse: 'Ordinary local work continues without the revoked shared facts.',
     expectedTurnReasons: ['completed', 'blocked', 'completed'],
