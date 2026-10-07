@@ -50,6 +50,44 @@ const digest = value => createHash('sha256').update(value).digest('hex')
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const content = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 
+// Expand delivered references independently of the production renderer before checking persisted source metadata.
+function expandDelivery(value) {
+  const at = (table, index) => {
+    assert.ok(Number.isInteger(index) && index >= 0 && index < table.length)
+    return table[index]
+  }
+  const source = index => {
+    const entry = at(value.sourceTable, index)
+    assert.ok(entry)
+    if (entry.kind === 'task') return { kind: entry.kind, taskId: entry.taskId, revision: entry.revision }
+    assert.equal(entry.kind, 'publication')
+    const task = at(value.sourceTable, entry.taskSourceIndex)
+    assert.equal(task.kind, 'task')
+    return { kind: entry.kind, taskId: task.taskId, revision: task.revision, publicationId: entry.publicationId }
+  }
+  const attribution = index => {
+    const entry = at(value.sourceTable, index).attribution
+    const result = { ...entry }
+    for (const key of ['authorization', 'localAuthorization']) {
+      if (entry[key] === undefined) continue
+      assert.deepEqual(Object.keys(entry[key]), ['authorizationIndex'])
+      const authorization = at(value.authorizationTable, entry[key].authorizationIndex)
+      assert.ok(authorization)
+      result[key] = authorization
+    }
+    return result
+  }
+  return { ...value,
+    coverage: {
+      selectedSources: value.coverage.selectedSources.map(source),
+      omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
+    },
+    updates: value.updates.map(update => ({ ...update, sources: update.sources.map(item => ({
+      source: source(item.sourceIndex), quote: item.quote, attribution: attribution(item.sourceIndex),
+    })) })),
+  }
+}
+
 class ControlledSummaryAdapter extends LlmAdapter {
   constructor(readAudit) { super(); this.readAudit = readAudit; this.requests = [] }
   async * stream(options) {
@@ -153,7 +191,7 @@ export async function apply(ctx) {
     assert.equal(message.source.revision, observedTurn + 4)
     const json = content(message).split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
     assert.ok(json)
-    const projection = JSON.parse(json)
+    const projection = expandDelivery(JSON.parse(json))
     assert.deepEqual(projection.coverage.omittedSources, message.source.omittedSources)
     assert.deepEqual(projection.coverage.selectedSources, message.source.selectedSources)
     assert.ok(message.source.omittedSources.some(item => item.reason === 'recipient-irrelevant'

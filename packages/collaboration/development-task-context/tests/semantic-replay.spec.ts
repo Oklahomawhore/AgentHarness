@@ -25,7 +25,7 @@ function reply(input: SemanticInput) {
       sources: [{ sourceId: source.sourceId, quote: source.body }] })) }
 }
 
-function audit(input = fixture().input, version: 1 | 2 | 3 = 3) {
+function audit(input = fixture().input, version: 1 | 2 | 3 | 4 = 4) {
   const response = reply(input)
   const projection = projectSemanticReply(input, response, 20_000, version)
   const request = semanticRequestSchema.parse({
@@ -189,7 +189,7 @@ it('round-trips a captured frozen-parent basis and its original publication with
   expect(projection.selectedSources).toContainEqual({ kind: 'task', ...parent })
 })
 
-it.each([1, 2, 3] as const)('rebuilds recorded v%s evidence without applying a newer comparison algorithm', (version) => {
+it.each([1, 2, 3, 4] as const)('rebuilds recorded v%s evidence without applying a newer comparison algorithm', (version) => {
   const { captured, source } = fixture()
   const input = restoreSemanticInput(semanticJson({ ...captured, coverage: { ...captured.coverage,
     omittedSources: [{ source: { ...source, publicationId: 'superseded-report' }, reason: 'superseded' }] } }))

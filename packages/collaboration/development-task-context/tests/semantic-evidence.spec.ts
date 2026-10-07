@@ -1,5 +1,6 @@
 /** Recipient evidence compares exact summaries and their original evidence without current revision noise. */
 import { expect, it } from 'vitest'
+import { expandSemanticText, semanticTextValue } from './fixtures/semantic-display.ts'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant, DevelopmentTaskOpenApiObservation } from '@deepseek-ai/dsh-development-task/types'
 import { prepareSemanticInput, projectSemanticReply } from '../src/semantic-input.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
@@ -169,7 +170,8 @@ it('retains legacy exact projection bytes through the explicit v1 algorithm', ()
     updates: [{ text: 'Use the reported retry limit.', sources: [{ sourceId, quote: 'retry limit' }] }] }
   const legacy = projectSemanticReply(prepared, response, value.maxContextBytes, 1)
   expect(legacy.activation).toEqual({ kind: 'exact' })
-  expect(legacy.text).toBe(projection(value).text)
+  expect(legacy.text).toBe(projectSemanticReply(prepared, response, value.maxContextBytes, 3).text)
+  expect(expandSemanticText(projection(value).text)).toEqual(semanticTextValue(legacy.text))
   expect(legacy.selectedSources).toEqual(projection(value).selectedSources)
 })
 

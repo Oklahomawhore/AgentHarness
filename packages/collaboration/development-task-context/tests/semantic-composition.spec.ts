@@ -1,5 +1,6 @@
 /** Real Loader and JSONL evidence for an isolated semantic audit directory. */
 
+import { expandSemanticText, semanticTextValue } from './fixtures/semantic-display.ts'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
@@ -197,7 +198,7 @@ it('serves a parent backend consumer while auditing separately and reuses the du
   const audit = await readAudit(first.auditPersistence)
   expect(audit.events.map(event => event.type)).toEqual(['context/semantic-request', 'context/semantic-result'])
   expect(audit.events[1]).toMatchObject({ ignorable: true,
-    data: { version: 3, status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
+    data: { version: 4, status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
   expect(audit.header).not.toHaveProperty('parentSession')
   expect(audit.header).not.toHaveProperty('origin')
   expect(audit.header.isSeeded).toBe(false)
@@ -324,7 +325,7 @@ async function seedLegacyAudit() {
   return { root: first.root, input, request, result, projection, audit, auditPath, bytes }
 }
 
-it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves the cumulative call budget', async () => {
+it('reopens a frozen v1 JSONL result unchanged while new computation preserves the cumulative call budget', async () => {
   const seed = await seedLegacyAudit()
   const { input, request, result, projection: legacyProjection } = seed
   const legacyProjectionBytes = JSON.stringify(legacyProjection)
@@ -333,7 +334,7 @@ it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves th
   const adapter = new CompositionAdapter()
   second.ctx.effect(() => second.ctx.llm.registerAdapter(['semantic-composition'], adapter))
   const backend = second.ctx.developmentTaskContextBackend
-  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 7,
+  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 8,
     system: legacySemanticSystem, config: legacyConfig }) })
   expect(backend.identity).not.toEqual(request.backend)
   const reopened = await readAudit(second.auditPersistence)
@@ -343,7 +344,7 @@ it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves th
   expect((await readFile(seed.auditPath, 'utf8')).startsWith(seed.bytes)).toBe(true)
 
   const current = await backend.compute(input)
-  expect(current.text).toBe(legacyProjection.text)
+  expect(expandSemanticText(current.text)).toEqual(semanticTextValue(legacyProjection.text))
   expect(current.selectedSources).toEqual(legacyProjection.selectedSources)
   expect(current.omittedSources).toEqual(legacyProjection.omittedSources)
   expect(current.activation).toMatchObject({ kind: 'recipient-evidence', version: 1, coverage: 'complete' })
@@ -358,7 +359,7 @@ it('reopens a frozen v1 JSONL result unchanged while v2 computation preserves th
   expect(requests.map(event => event.data.call)).toEqual([request.call, request.call])
   expect(new Set(requests.map(event => event.data.key)).size).toBe(2)
   const results = after.events.filter(event => event.type === 'context/semantic-result')
-  expect(results.map(event => event.data.version)).toEqual([1, 3])
+  expect(results.map(event => event.data.version)).toEqual([1, 4])
   expect(results.map(event => event.data.projection?.activation.kind)).toEqual(['exact', 'recipient-evidence'])
   expect(results.map(event => event.data.requestSeq)).toEqual(requests.map(event => event.seq))
   expect(await backend.compute(input)).toEqual(current)

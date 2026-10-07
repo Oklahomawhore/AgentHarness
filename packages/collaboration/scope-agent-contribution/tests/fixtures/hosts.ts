@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
+import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
 import AgentRegistry, { type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { WorkerThreadCodeRuntime } from '@deepseek-ai/dsh-code-runtime-worker-thread'
@@ -19,9 +19,10 @@ import * as TaskContext from '@deepseek-ai/dsh-development-task-context'
 import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task/types'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
 import ReportedBackend from '@deepseek-ai/dsh-development-task-context/reported'
+import SemanticBackend, { type Config as SemanticConfig } from '@deepseek-ai/dsh-development-task-context/semantic'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
-import LlmRuntime, { createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, type GenerateOptions, type StreamChunk, type LlmAdapter } from '@deepseek-ai/dsh-llm'
 import ScopeAccess from '@deepseek-ai/dsh-scope-access'
 import ScopeAgentContext from '@deepseek-ai/dsh-scope-agent-context'
 import ScopeTransport, { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
@@ -29,6 +30,7 @@ import type { ScopePeerId, ScopeTransportHandler, ScopeTransportTarget } from '@
 import SessionStore, { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
@@ -57,6 +59,7 @@ export interface TestHost {
   readonly root: string
   readonly workspace: string
   readonly sessionsRoot: string
+  readonly semanticAuditPersistence?: SessionPersistence
   readonly peerId: ScopePeerId
   readonly script: StreamChunk[][]
   readonly adapter: MockAdapter
@@ -100,13 +103,14 @@ export class LocalTestTransport extends ScopeTransport {
  * @param network - private sender-owned peer registry.
  * @param role - host identity and mounted native role.
  * @param mode - actual ToolRuntime dispatch mode for source calls.
- * @param options - explicit owner-local participation and receiving composition for two-host cases.
+ * @param options - explicit participation, context budgets, and optional separately controlled summary model.
  * @returns owned host; close drains its plugins before removing temporary files.
  */
 export async function createHost(network: TestNetwork, role: 'owner' | 'source' | 'receiver', mode: 'native' | 'ptc' = 'native',
   options: {
     readonly ownerLocal?: boolean
-    readonly contextBackend?: 'text' | 'reported'
+    readonly contextBackend?: 'text' | 'reported' | 'semantic'
+    readonly semantic?: { readonly config: SemanticConfig; readonly adapter: LlmAdapter }
     readonly maxContextBytes?: number
     readonly receive?: boolean
     readonly maxLeases?: number
@@ -116,6 +120,9 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly peerId?: ScopePeerId
   } = {},
 ): Promise<TestHost> {
+  if (options.contextBackend === 'semantic' && options.semantic === undefined) {
+    throw new Error('Semantic fixture requires an explicit summary adapter and configuration')
+  }
   const root = options.root ?? await mkdtemp(join(tmpdir(), `dsh-native-contribution-${role}-`))
   const workspace = join(root, 'workspace')
   await mkdir(workspace, { recursive: true })
@@ -139,12 +146,15 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     apply(inner: Context) {
       transport = new LocalTestTransport(inner, peerId, network)
       inner.effect(() => inner.llm.registerAdapter(['mock'], adapter))
+      const semantic = options.semantic
+      if (semantic !== undefined) inner.effect(() => inner.llm.registerAdapter([semantic.config.provider], semantic.adapter))
     },
   }
   const modules = new Map<string, unknown>([
     ['storage', Storage], ['storage-json', StorageJson], ['storage-domain', StorageDomain],
     ['room-storage', RoomStorage], ['task-storage', TaskStorage], ['agent-presence', AgentPresence], ['task-context', TaskContext],
-    ['rooms', Rooms], ['tasks', Tasks], ['text', TextBackend], ['reported', ReportedBackend], ['external', external], ['access', ScopeAccess],
+    ['rooms', Rooms], ['tasks', Tasks], ['text', TextBackend], ['reported', ReportedBackend],
+    ['semantic', SemanticBackend], ['external', external], ['access', ScopeAccess],
     ['agents', AgentRegistry], ['loop', AgentLoop], ['llm', LlmRuntime], ['sessions', SessionStore],
     ['session-projection', SessionProjection], ['jsonl', JsonlPersistence], ['system', SystemPrompt], ['tools', ToolRuntime],
     ['fs', LocalFileSystem], ['fs-policy', FsPolicy], ['tool-fs', ToolFs], ['code', WorkerThreadCodeRuntime],
@@ -159,7 +169,12 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000 } },
     ...(options.ownerLocal === true ? [{ name: 'room-storage' }, { name: 'task-storage', config: { orphanGraceMs: 60000 } },
       { name: 'agent-presence', config: { heartbeatMs: 20000 } }, { name: 'task-context', config: { maxContextBytesPerStep: 16000 } }] : []),
-    { name: options.contextBackend ?? 'text' }, { name: 'llm' }, { name: 'external' },
+    ...(options.contextBackend === 'semantic' ? [{ id: 'semantic-audit', name: 'cordis:group', group: true,
+      isolate: { sessionPersistence: true }, config: [
+        { id: 'semantic-audit-persistence', name: 'jsonl', config: { root: join(root, 'semantic-audit'), compression: 'none' } },
+        { name: 'semantic', config: options.semantic?.config },
+      ] }] : [{ name: options.contextBackend ?? 'text' }]),
+    { name: 'llm' }, { name: 'external' },
     { name: 'access', config: { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: options.maxContextBytes ?? 12000,
       maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 5000,
       maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
@@ -180,6 +195,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
   ]
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
+  ctx.loader.builtins.group = Group
   // Loader's import seam accepts module objects; its declaration intentionally requires a module loader object.
   ctx.loader.internal = { version: 'v2', async import(specifier: string) {
     if (!modules.has(specifier)) throw new Error(`unexpected fixture plugin: ${specifier}`)
@@ -195,7 +211,13 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readyListeners.clear()
     await ctx.scopeAccess.identity()
     if (transport === undefined) throw new Error('controlled transport did not activate')
+    const auditEntry = [...ctx.loader.entries()].find(entry => entry.options.id === 'semantic-audit-persistence')
+    const semanticAuditPersistence = auditEntry?.ctx.get('sessionPersistence')
+    if (options.contextBackend === 'semantic' && semanticAuditPersistence === undefined) {
+      throw new Error('Isolated semantic audit persistence did not activate')
+    }
     return { ctx, root, workspace, sessionsRoot, peerId, script, adapter, transport, exitCodes,
+      ...(semanticAuditPersistence === undefined ? {} : { semanticAuditPersistence }),
       async createAgent(id) {
         const handle = await ctx.agents.create({ sessionId: SessionId(id), agentOptions: { provider: 'mock', model: 'mock' },
           meta: { cwd: workspace } })

@@ -176,7 +176,7 @@ export async function apply(ctx) {
       const results = audit.filter(event => event.type === 'context/semantic-result')
       assert.equal(auxiliaryRequests.length, 5)
       assert.equal(results.length, 5)
-      assert.ok(results.every(event => event.data.version === 3 && event.data.status === 'completed'))
+      assert.ok(results.every(event => event.data.version === 4 && event.data.status === 'completed'))
       for (const result of results) {
         const request = auxiliaryRequests.find(value => value.seq === result.data.requestSeq)
         assert.equal(result.data.key, request.data.key)

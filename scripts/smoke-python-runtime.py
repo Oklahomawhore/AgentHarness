@@ -1128,8 +1128,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
         "scope-reported-file": "scope-reported-file-command-outcome-evidence-r2",
         "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
-        "scope-semantic-idle": "scope-semantic-idle-current-evidence-r4",
-        "task-context-semantic": "task-context-semantic-current-evidence-r5",
+        "scope-semantic-idle": "scope-semantic-idle-source-tables-r5",
+        "task-context-semantic": "task-context-semantic-source-tables-r6",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -2197,8 +2197,8 @@ def semantic_idle_snapshot_result(
         raise AssertionError("suppression can still spend an auxiliary call; empty or withdrawn-only evidence cannot")
     for request, result in zip(requests, results, strict=True):
         output = result["data"]
-        if output["version"] != 3 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
-            raise AssertionError("semantic audit must retain version 3 results for their exact requests")
+        if output["version"] != 4 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
+            raise AssertionError("semantic audit must retain version 4 results for their exact requests")
         if output["status"] != "completed" or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("semantic audit must retain completed evidence")
     if any(result["data"]["projection"]["activation"] != results[0]["data"]["projection"]["activation"] for result in results[1:3]):
@@ -2212,7 +2212,7 @@ def semantic_idle_snapshot_result(
             "contextRevisions": revisions, "suppressedRevisions": suppressed_revisions, "spentBeforeSuppression": 1,
             "automaticRequests": len(dispatches), "automaticPulses": len(pulses), "humanRequests": len(users),
             "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
-            "auditResultVersion": 3, "realModelCalls": 0, "withdrawnSources": 5,
+            "auditResultVersion": 4, "realModelCalls": 0, "withdrawnSources": 5,
             "wirePreservesExactEvidence": True}
 
 
@@ -2528,6 +2528,45 @@ def peer_facts_snapshot_result(records: list[dict[str, object]], turns: list[Run
     }
 
 
+def expand_semantic_delivery(value: dict[str, object]) -> dict[str, object]:
+    """Expand current delivered tables independently before comparing Python wire source metadata."""
+    def at(table: list[dict[str, object]], index: int) -> dict[str, object]:
+        if type(index) is not int or not 0 <= index < len(table):
+            raise AssertionError("semantic delivery index must be a zero-based integer within its table")
+        return table[index]
+
+    def source(index: int) -> dict[str, object]:
+        entry = at(value["sourceTable"], index)
+        if entry["kind"] == "task":
+            return {"kind": "task", "taskId": entry["taskId"], "revision": entry["revision"]}
+        if entry["kind"] != "publication":
+            raise AssertionError("semantic source table must identify a Task or publication")
+        task = at(value["sourceTable"], entry["taskSourceIndex"])
+        if task["kind"] != "task":
+            raise AssertionError("publication references must identify their exact Task revision")
+        return {"kind": "publication", "taskId": task["taskId"], "revision": task["revision"],
+                "publicationId": entry["publicationId"]}
+
+    def attribution(index: int) -> dict[str, object]:
+        entry = at(value["sourceTable"], index)["attribution"]
+        result = dict(entry)
+        for key in ("authorization", "localAuthorization"):
+            if key not in entry:
+                continue
+            if set(entry[key]) != {"authorizationIndex"}:
+                raise AssertionError("fixture authorization must reference the complete authorization table")
+            result[key] = at(value["authorizationTable"], entry[key]["authorizationIndex"])
+        return result
+
+    return {**value, "coverage": {
+        "selectedSources": [source(index) for index in value["coverage"]["selectedSources"]],
+        "omittedSources": [{"source": source(item["sourceIndex"]), "reason": item["reason"]}
+                           for item in value["coverage"]["omittedSources"]],
+    }, "updates": [{**update, "sources": [
+        {"source": source(item["sourceIndex"]), "quote": item["quote"], "attribution": attribution(item["sourceIndex"])}
+        for item in update["sources"]]} for update in value["updates"]]}
+
+
 def semantic_snapshot_result(
     records: list[dict[str, object]], turns: list[RunResult], audit: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -2544,7 +2583,7 @@ def semantic_snapshot_result(
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("semantic updates and withdrawal must replace the current native surface")
     texts = [event["data"]["content"][0]["text"] for event in contexts]
-    projections = [json.loads(text.split("<shared-work-updates>\n")[1].split("\n</shared-work-updates>")[0]) for text in texts]
+    projections = [expand_semantic_delivery(json.loads(text.split("<shared-work-updates>\n")[1].split("\n</shared-work-updates>")[0])) for text in texts]
     update_counts = [len(projection["updates"]) for projection in projections]
     if update_counts != [2, 2, 3, 0]:
         raise AssertionError("semantic updates must retain the current complete Write and later reports until source withdrawal")
@@ -2579,7 +2618,7 @@ def semantic_snapshot_result(
             raise AssertionError("semantic audit result must identify its exact completed model request")
         if request["data"]["purpose"] != "context-summary" or request["data"]["call"]["provider"] != "semantic-snapshot":
             raise AssertionError("semantic runtime must use the dedicated controlled auxiliary route")
-        if output["version"] != 3 or output["projection"]["activation"]["kind"] != "recipient-evidence":
+        if output["version"] != 4 or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("current semantic audit must record versioned recipient evidence")
         if output["projection"]["text"] != context["data"]["content"][0]["text"]:
             raise AssertionError("actual native context must equal the durably completed semantic projection")

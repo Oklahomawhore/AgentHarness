@@ -5,24 +5,13 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
-import { Session } from '@deepseek-ai/dsh-session'
-import { afterEach, expect, it } from 'vitest'
+import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { semanticCapturedInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
+import { expect, it, onTestFinished, type TestContext } from 'vitest'
+import { z } from 'zod'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
-
-const hosts: TestHost[] = []
-const temporaryArtifacts: string[] = []
-afterEach(async () => {
-  const failures: unknown[] = []
-  // Recipients and the contributing peer retire while the original owner can still acknowledge their cleanup.
-  for (const host of hosts.splice(0).reverse()) {
-    try { await host.close() } catch (error) { failures.push(error) }
-  }
-  for (const root of temporaryArtifacts.splice(0)) {
-    try { await rm(root, { recursive: true, force: true }) } catch (error) { failures.push(error) }
-  }
-  if (failures.length !== 0) throw new AggregateError(failures, 'Mixed-workload hosts did not settle')
-})
 
 type Phase = 'initial' | 'corrected' | 'mixed'
 type Role = 'client' | 'qa'
@@ -66,11 +55,97 @@ const documents = [
   ]],
 ] as const
 
-// This fixture executes the actual LocalBashExecutor; Windows uses a different shell provider.
-it.skipIf(process.platform === 'win32')('measures two responsibilities after API correction, command failure, and newer peer documents', async (test) => {
+const semanticConfig = {
+  auditSessionId: 'mixed-workload-summary', provider: 'mixed-summary', model: 'controlled-summary',
+  maxInputBytes: 64000, maxOutputTokens: 2048, maxOutputBytes: 16000, timeoutMs: 10000,
+  maxConcurrentCalls: 2, maxCalls: 16,
+}
+
+/** Fixed phase-aware replies from the same original policy reports; no budget-dependent shortening or recipient artifact. */
+class SummaryAdapter extends LlmAdapter {
+  readonly calls: { messages: GenerateOptions['messages']; system: GenerateOptions['system']; response: unknown }[] = []
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({ provider, id: model, name: model })
+  }
+
+  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    options.signal?.throwIfAborted()
+    expect(options.purpose).toBe('context-summary')
+    const block = options.messages[0]?.content[0]
+    if (block?.type !== 'text') throw new Error('Summary requires the actual authorized input')
+    const input = semanticCapturedInputSchema.parse(JSON.parse(block.text) as unknown)
+    const relevant = input.sources.filter(({ attribution }) => typeof attribution === 'object' && attribution !== null
+      && !Array.isArray(attribution) && attribution.path === 'policy.md')
+    const hasCorrection = relevant.some(source => source.body.includes('maxRetries: 1'))
+    const response = { version: 1, decisions: input.sources.map(source => ({ sourceId: source.sourceId,
+      relevant: relevant.includes(source) })), updates: relevant.map((source) => {
+      const corrected = source.body.includes('maxRetries: 1')
+      let text = corrected ? input.recipient.sessionLabel?.includes('QA') === true
+        ? 'Cover the corrected retry boundary: an initial request plus at most one retry.'
+        : 'Apply the reported correction: allow one retry after the initial request.'
+        : 'The reported policy requires orderId and accountId. Retry only NETWORK_TIMEOUT; preserve each complete body and never retry declines or unknown errors.'
+      if (!hasCorrection) {
+        expect(source.body).toContain('maxRetries: 3')
+        text += ' Initial maxRetries: 3 means at most three retries after the initial request.'
+      }
+      return { text, sources: [{ sourceId: source.sourceId, quote: corrected ? 'maxRetries: 1'
+        : 'Retry only NETWORK_TIMEOUT. Never retry PAYMENT_DECLINED or unknown external errors. Preserve each complete request body.' }] }
+    }) }
+    this.calls.push({ messages: structuredClone(options.messages), system: options.system, response })
+    const text = JSON.stringify(response)
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+const deliveryTables = z.object({
+  sourceTable: z.array(z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('task'), taskId: z.string(), revision: z.number().int().positive() }),
+    z.object({ kind: z.literal('publication'), taskSourceIndex: z.number().int().nonnegative(), publicationId: z.string() }),
+  ])),
+  coverage: z.object({ selectedSources: z.array(z.number().int().nonnegative()),
+    omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() })) }),
+})
+
+/** Independently expand only the delivery reference table; whole provenance remains separately logged in the projection. */
+function decodedCoverage(text: string) {
+  const payload = text.split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
+  if (payload === undefined) throw new Error('Semantic delivery frame missing')
+  const body = deliveryTables.parse(JSON.parse(payload) as unknown)
+  const sourceAt = (index: number) => {
+    const source = body.sourceTable[index]
+    if (source === undefined) throw new Error('Delivery source index is out of range')
+    if (source.kind === 'task') return source
+    const task = body.sourceTable[source.taskSourceIndex]
+    if (task?.kind !== 'task') throw new Error('Publication does not reference a Task row')
+    return { kind: source.kind, taskId: task.taskId, revision: task.revision, publicationId: source.publicationId }
+  }
+  return { selectedSources: body.coverage.selectedSources.map(sourceAt),
+    omittedSources: body.coverage.omittedSources.map(value => ({ source: sourceAt(value.sourceIndex), reason: value.reason })) }
+}
+
+async function mixedWorkload(backend: 'reported' | 'semantic', test: TestContext) {
+  const hosts: TestHost[] = []
+  const temporaryArtifacts: string[] = []
+  onTestFinished(async () => {
+    const failures: unknown[] = []
+    // Recipients and the contributing peer retire while the original owner can still acknowledge their cleanup.
+    for (const host of hosts.splice(0).reverse()) {
+      try { await host.close() } catch (error) { failures.push(error) }
+    }
+    for (const root of temporaryArtifacts.splice(0)) {
+      try { await rm(root, { recursive: true, force: true }) } catch (error) { failures.push(error) }
+    }
+    if (failures.length !== 0) throw new AggregateError(failures, 'Mixed-workload hosts did not settle')
+  })
   const polling = { timeout: test.task.timeout }
   const network = new TestNetwork()
-  const owner = await createHost(network, 'owner', 'native', { ownerLocal: true, contextBackend: 'reported' })
+  const summaryAdapter = new SummaryAdapter()
+  const owner = await createHost(network, 'owner', 'native', { ownerLocal: true, contextBackend: backend,
+    ...(backend === 'semantic' ? { semantic: { config: semanticConfig, adapter: summaryAdapter } } : {}) })
   hosts.push(owner)
   const peer = await createHost(network, 'source')
   hosts.push(peer)
@@ -107,6 +182,7 @@ it.skipIf(process.platform === 'win32')('measures two responsibilities after API
   let policySources: string[] = []
   let commandSource = ''
   const requests: unknown[] = []
+  const actualSharedTexts: string[] = []
   const timeline: unknown[] = []
   const commandOutcomes: { command: string; workdir: string; exitCode: number | null; result: unknown; elapsedMs: number }[] = []
   owner.ctx.on('tool-bash/foreground-completed', ({ operation, result }) => {
@@ -167,21 +243,41 @@ it.skipIf(process.platform === 'win32')('measures two responsibilities after API
       expect(remote).toHaveLength(1)
       const projection = remote[0]
       if (projection === undefined) throw new Error('Actual request has no active remote projection')
-      expect(projection.backend).toEqual({ id: 'reported-files', revision: '3' })
+      expect(projection.backend).toEqual(owner.ctx.developmentTaskContextBackend.identity)
+      actualSharedTexts.push(projection.text)
       const selectedIds = projection.selectedSources.flatMap(source => source.kind === 'publication' ? [source.publicationId] : [])
       const policyDelivered = policySources.every(id => selectedIds.includes(id))
       const commandDelivered = selectedIds.includes(commandSource)
-      if (phase !== 'mixed') {
+      if (backend === 'semantic' || phase !== 'mixed') {
         expect(policyDelivered).toBe(true)
         expect(commandDelivered).toBe(true)
       }
       if (phase !== 'initial') expect(projection.text).not.toContain('CHECK_INITIAL_OK')
       expect(projection.text).not.toContain('MIXED_PRIVATE_CHECK_IMPLEMENTATION')
+      if (backend === 'semantic') {
+        expect(decodedCoverage(projection.text)).toEqual({ selectedSources: projection.selectedSources,
+          omittedSources: projection.omittedSources })
+        expect(projection.text).toContain(phase === 'initial' ? 'CHECK_INITIAL_OK' : 'CHECK_CURRENT_FAILED')
+        expect(projection.text).toContain(phase === 'initial' ? 'maxRetries: 3' : 'maxRetries: 1')
+        if (phase !== 'initial') {
+          expect(projection.text).toContain('"exitCode":7')
+        }
+      }
       const view = await owner.ctx.developmentTasks.currentContextView(task.id)
       expect(projection.taskRevision).toBe(view.task.revision)
       const coveredIds = [...selectedIds, ...projection.omittedSources.flatMap(value => value.source.kind === 'publication'
         ? [value.source.publicationId] : [])]
       expect(coveredIds.toSorted()).toEqual(view.task.context.map(value => value.id).toSorted())
+      if (backend === 'semantic' && phase === 'mixed') {
+        const docs = view.task.context.filter(value => value.peerToolObservation !== undefined)
+        expect(docs).toHaveLength(4)
+        for (const [index, publication] of docs.entries()) {
+          expect(selectedIds).not.toContain(publication.id)
+          expect(projection.omittedSources.find(value => value.source.kind === 'publication'
+            && value.source.publicationId === publication.id)?.reason).toBe(index === 0 ? 'superseded' : 'recipient-irrelevant')
+        }
+        for (const [, title] of documents) expect(projection.text).not.toContain(title.trim())
+      }
       requests.push({ role, phase, requestStartedMs, header: agent.session.header, events, disk, messages, view,
         projection, managedBytes, recipient: { participantId: `scope-recipient-${invitation.grantId}`, sessionLabel: responsibility },
         localParticipantId: participant, remoteOfferBytes: projection.maxContextBytes, policySources: [...policySources], commandSource })
@@ -266,18 +362,49 @@ it.skipIf(process.platform === 'win32')('measures two responsibilities after API
   expect(commandOutcomes.map(value => ({ command: value.command, workdir: value.workdir, exitCode: value.exitCode })))
     .toEqual([0, 7].map(exitCode => ({ command, workdir: canonicalWorkspace, exitCode })))
   const finalAuthorizedView = await owner.ctx.developmentTasks.currentContextView(task.id)
-  let artifact = process.env.DSH_MIXED_WORKLOAD_ARTIFACTS
+  let semanticAudit: readonly SessionEvent[] = []
+  if (backend === 'semantic') {
+    const auditPersistence = owner.semanticAuditPersistence
+    if (auditPersistence === undefined) throw new Error('Semantic audit is not independently mounted')
+    expect(auditPersistence).not.toBe(owner.ctx.sessionPersistence)
+    expect(await owner.ctx.sessionPersistence.stat(SessionId(semanticConfig.auditSessionId))).toBeUndefined()
+    const handle = await auditPersistence.open(SessionId(semanticConfig.auditSessionId), 'read')
+    try { semanticAudit = (await handle.read()).events } finally { await handle.close() }
+    const results = semanticAudit.filter(event => event.type === 'context/semantic-result')
+    const reserved = semanticAudit.filter(event => event.type === 'context/semantic-request')
+    expect(summaryAdapter.calls).toHaveLength(6)
+    expect(reserved).toHaveLength(summaryAdapter.calls.length)
+    expect(results).toHaveLength(summaryAdapter.calls.length)
+    for (const result of results) expect(result.data).toMatchObject({ version: 4, status: 'completed' })
+    expect(results.map(event => event.data.projection?.text).toSorted()).toEqual(actualSharedTexts.toSorted())
+    for (const [index, request] of reserved.entries()) {
+      const dispatched = summaryAdapter.calls[index]
+      expect(dispatched?.messages).toEqual(request.data.messages)
+      expect(dispatched?.system).toBe(request.data.system)
+    }
+  } else expect(summaryAdapter.calls).toEqual([])
+  const requestedArtifact = process.env.DSH_MIXED_WORKLOAD_ARTIFACTS
+  let artifact = requestedArtifact === undefined || backend === 'reported' ? requestedArtifact : `${requestedArtifact}.semantic.json`
   if (artifact === undefined) {
     const root = await mkdtemp(join(tmpdir(), 'dsh-mixed-workload-evidence-'))
     temporaryArtifacts.push(root)
     artifact = join(root, 'measurement.json')
   }
-  await writeFile(artifact, JSON.stringify({ kind: 'keyless-mechanism-measurement', backend: 'reported-files/3',
+  await writeFile(artifact, JSON.stringify({ kind: 'keyless-mechanism-measurement',
+    backend: `${owner.ctx.developmentTaskContextBackend.identity.id}/${owner.ctx.developmentTaskContextBackend.identity.revision}`,
+    backendIdentity: owner.ctx.developmentTaskContextBackend.identity,
     contextBudgetBytes: 8000, hosts: hosts.map(host => ({ peerId: host.peerId, workspace: host.workspace })),
-    sourceFiles, sourceEvents, commandOutcomes, finalAuthorizedView,
+    sourceFiles, sourceEvents, commandOutcomes, finalAuthorizedView, semanticAudit, summaryCalls: summaryAdapter.calls,
     recipients: receivers.map(({ role, participantId, sessionLabel, backendParticipantId }) => ({
       role, localParticipantId: participantId, recipient: { participantId: backendParticipantId, sessionLabel },
     })), timeline, requests, summary }, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
-  console.info('mixed-workload measurement', JSON.stringify({ artifact, summary, actualToolCounts: { owner: calls.owner.length, peer: calls.peer.length },
+  console.info('mixed-workload measurement', JSON.stringify({ artifact, backend, summary,
+    actualToolCounts: { owner: calls.owner.length, peer: calls.peer.length },
     modelBenefitMeasured: false, transport: 'in-process' }))
-})
+}
+
+// These fixtures execute the actual LocalBashExecutor; Windows uses a different shell provider.
+for (const backend of ['reported', 'semantic'] as const) {
+  it.skipIf(process.platform === 'win32')(`measures ${backend} delivery after API correction, command failure, and newer peer documents`,
+    async (test) => { await mixedWorkload(backend, test) })
+}
