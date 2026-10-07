@@ -82,6 +82,6 @@
             maxOutputBytes: 16384
             timeoutMs: 10000
             maxConcurrentCalls: 2
-            maxCalls: 4
+            maxCalls: 5
         - id: semantic-idle-assertions
           name: './native-fixture.mjs'

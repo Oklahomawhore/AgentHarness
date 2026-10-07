@@ -1,4 +1,4 @@
-/** Production semantic projection and bounded native scheduling share one receiving SDK Session. */
+/** Semantic evidence suppresses repeated unrelated writes while bounded native responses retain exact provenance. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -33,6 +33,8 @@ const reports = [
     fields: { rootIndex: 0, path: 'src/retry.ts', content: 'export const retryPolicy = "RETRY_LIMIT_3";\n' } },
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
     fields: { rootIndex: 0, path: 'admin/catering.txt', content: 'UNRELATED_ADMIN: office catering inventory changed.\n' } },
+  { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
+    fields: { rootIndex: 0, path: 'admin/catering.txt', content: 'UNRELATED_ADMIN: office catering inventory corrected again.\n' } },
   { kind: 'tool-observation', version: 1, tool: 'Edit', reportedStatus: 'success', omissions: [],
     fields: { rootIndex: 0, path: 'src/retry.ts', oldString: 'RETRY_LIMIT_3', newString: 'RETRY_LIMIT_1', replaceAll: false } },
   { kind: 'tool-observation', version: 1, tool: 'Edit', reportedStatus: 'failure', omissions: ['oldString', 'newString'],
@@ -51,7 +53,7 @@ class ControlledSummaryAdapter extends LlmAdapter {
     assert.equal(options.sessionId, auditId)
     assert.deepEqual(options.tools ?? [], [])
     this.requests.push(options)
-    assert.ok(this.requests.length <= 4)
+    assert.ok(this.requests.length <= 5)
     const requests = (await this.readAudit()).filter(event => event.type === 'context/semantic-request')
     assert.equal(requests.length, this.requests.length, 'the real auxiliary request must be flushed before dispatch')
     assert.deepEqual(requests.at(-1).data.messages, options.messages)
@@ -92,7 +94,7 @@ export async function apply(ctx) {
   let grant
   let requests = 0
   let stage = 'setup'
-  let suppressed
+  const suppressed = []
   const admitted = []
   const pending = new Set()
   const own = promise => {
@@ -150,7 +152,7 @@ export async function apply(ctx) {
       grant = { version: 1, taskId: task.id, grantId: 'semantic-idle-grant', generation: 'semantic-idle-grant-generation',
         ownerPeerId, contributorPeerId, captureId: 'semantic-idle-capture', captureGeneration: 'semantic-idle-capture-generation',
         source: { kind: 'tool-observations', name: 'session-work', tools: ['Edit', 'Write'] },
-        expiresAt: Date.now() + 50000, maxSamples: 4, maxSampleBytes: 4096 }
+        expiresAt: Date.now() + 50000, maxSamples: 5, maxSampleBytes: 4096 }
       await ctx.developmentTasks.openPeerContribution(grant)
       const bound = await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target,
         automatic: { goal: 'Review relevant retry implementation reports within my existing permissions.',
@@ -161,7 +163,7 @@ export async function apply(ctx) {
       await completed(5)
       assert.equal(stage, 'withdrawn')
       assert.equal(requests, 5)
-      assert.ok(suppressed)
+      assert.equal(suppressed.length, 2)
       assert.equal(state().binding.id, bindingId)
       assert.equal(state().usedBudget, 4)
       assert.equal(state().automatic.activationLimit, 4)
@@ -172,9 +174,9 @@ export async function apply(ctx) {
       const audit = await readAudit()
       const auxiliaryRequests = audit.filter(event => event.type === 'context/semantic-request')
       const results = audit.filter(event => event.type === 'context/semantic-result')
-      assert.equal(auxiliaryRequests.length, 4)
-      assert.equal(results.length, 4)
-      assert.ok(results.every(event => event.data.version === 2 && event.data.status === 'completed'))
+      assert.equal(auxiliaryRequests.length, 5)
+      assert.equal(results.length, 5)
+      assert.ok(results.every(event => event.data.version === 3 && event.data.status === 'completed'))
       for (const result of results) {
         const request = auxiliaryRequests.find(value => value.seq === result.data.requestSeq)
         assert.equal(result.data.key, request.data.key)
@@ -197,7 +199,7 @@ export async function apply(ctx) {
       own((async () => { await completed(2); assert.equal(state().usedBudget, 1); await admit(1) })())
     } else if (stage === 'corrected') {
       stage = 'failed'
-      own((async () => { await completed(3); await admit(3) })())
+      own((async () => { await completed(3); await admit(4) })())
     } else if (stage === 'failed') {
       stage = 'withdrawn'
       own((async () => {
@@ -209,7 +211,9 @@ export async function apply(ctx) {
   })
   ctx.on('session/event', (session, event) => {
     if (session !== agent?.session || event.type !== 'scope-agent-context/evaluation'
-      || event.data.decision !== 'suppress-unchanged' || stage !== 'unrelated') return
+      || event.data.decision !== 'suppress-unchanged' || !['unrelated', 'unrelated-overwrite'].includes(stage)) return
+    const overwritten = stage === 'unrelated-overwrite'
+    stage = 'checking-suppression'
     own((async () => {
       assert.equal(requests, 2)
       assert.equal(state().usedBudget, 1)
@@ -224,9 +228,15 @@ export async function apply(ctx) {
       assert.notEqual(projection.projectionId, baseline.data.projection.projectionId)
       assert.ok(projection.taskRevision > baseline.data.projection.taskRevision)
       assert.ok(projection.omittedSources.some(value => value.reason === 'recipient-irrelevant'
-        && value.source.publicationId === admitted[1].id))
+        && value.source.publicationId === admitted[overwritten ? 2 : 1].id))
+      if (overwritten) {
+        assert.ok(projection.omittedSources.some(value => value.reason === 'superseded'
+          && value.source.publicationId === admitted[1].id))
+        assert.notEqual(projection.projectionId, suppressed[0].data.projection.projectionId)
+        assert.ok(projection.taskRevision > suppressed[0].data.projection.taskRevision)
+      }
       assert.ok(!projection.text.includes('UNRELATED_ADMIN'))
-      assert.equal(adapter.requests.length, 2)
+      assert.equal(adapter.requests.length, overwritten ? 3 : 2)
       const observed = await activity()
       assert.equal(observed.request, null)
       assert.deepEqual(observed.evaluation, { ...activityIdentity(event.data),
@@ -234,16 +244,16 @@ export async function apply(ctx) {
       assert.equal(observed.completed.requestSeq, baseline.seq)
       assert.equal(observed.completed.turnEndSeq, event.data.baseline.turnEndSeq)
       assert.equal(observed.completed.taskRevision, baseline.data.projection.taskRevision)
-      suppressed = event
-      stage = 'corrected'
-      await admit(2)
+      suppressed.push(event)
+      stage = overwritten ? 'corrected' : 'unrelated-overwrite'
+      await admit(overwritten ? 3 : 2)
     })())
   })
   ctx.on('llm/stream', async function* (options, next) {
     if (options.purpose === 'context-summary') return yield* next()
     requests++
     assert.ok(requests <= 6)
-    assert.equal(adapter.requests.length, [0, 1, 3, 4, 4, 4][requests - 1])
+    assert.equal(adapter.requests.length, [0, 1, 4, 5, 5, 5][requests - 1])
     const visible = contexts(options.messages)
     assert.equal(visible.length, 1)
     const message = visible[0]
@@ -269,7 +279,7 @@ export async function apply(ctx) {
       if (requests === 5) {
         assert.equal(body.mandatory.length, 1)
         assert.equal(body.mandatory[0].kind, 'withdrawal')
-        assert.equal(projection.omittedSources.filter(value => value.reason === 'withdrawn').length, 4)
+        assert.equal(projection.omittedSources.filter(value => value.reason === 'withdrawn').length, 5)
       } else if (requests > 1) {
         const audit = await readAudit()
         const result = audit.filter(event => event.type === 'context/semantic-result').at(-1)

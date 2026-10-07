@@ -18,6 +18,7 @@ import * as AgentPresence from '@deepseek-ai/dsh-development-room-agent-presence
 import * as TaskContext from '@deepseek-ai/dsh-development-task-context'
 import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task/types'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
+import ReportedBackend from '@deepseek-ai/dsh-development-task-context/reported'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import LlmRuntime, { createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -105,6 +106,8 @@ export class LocalTestTransport extends ScopeTransport {
 export async function createHost(network: TestNetwork, role: 'owner' | 'source' | 'receiver', mode: 'native' | 'ptc' = 'native',
   options: {
     readonly ownerLocal?: boolean
+    readonly contextBackend?: 'text' | 'reported'
+    readonly maxContextBytes?: number
     readonly receive?: boolean
     readonly maxLeases?: number
     readonly maxObservationBytes?: number
@@ -141,7 +144,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
   const modules = new Map<string, unknown>([
     ['storage', Storage], ['storage-json', StorageJson], ['storage-domain', StorageDomain],
     ['room-storage', RoomStorage], ['task-storage', TaskStorage], ['agent-presence', AgentPresence], ['task-context', TaskContext],
-    ['rooms', Rooms], ['tasks', Tasks], ['text', TextBackend], ['external', external], ['access', ScopeAccess],
+    ['rooms', Rooms], ['tasks', Tasks], ['text', TextBackend], ['reported', ReportedBackend], ['external', external], ['access', ScopeAccess],
     ['agents', AgentRegistry], ['loop', AgentLoop], ['llm', LlmRuntime], ['sessions', SessionStore],
     ['session-projection', SessionProjection], ['jsonl', JsonlPersistence], ['system', SystemPrompt], ['tools', ToolRuntime],
     ['fs', LocalFileSystem], ['fs-policy', FsPolicy], ['tool-fs', ToolFs], ['code', WorkerThreadCodeRuntime],
@@ -156,8 +159,8 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000 } },
     ...(options.ownerLocal === true ? [{ name: 'room-storage' }, { name: 'task-storage', config: { orphanGraceMs: 60000 } },
       { name: 'agent-presence', config: { heartbeatMs: 20000 } }, { name: 'task-context', config: { maxContextBytesPerStep: 16000 } }] : []),
-    { name: 'text' }, { name: 'llm' }, { name: 'external' },
-    { name: 'access', config: { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: 12000,
+    { name: options.contextBackend ?? 'text' }, { name: 'llm' }, { name: 'external' },
+    { name: 'access', config: { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: options.maxContextBytes ?? 12000,
       maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 5000,
       maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
       waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
@@ -171,7 +174,9 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25,
         ...(options.permissionDefaults === undefined ? {} : { permissionDefaults: options.permissionDefaults }) } },
     ] : []),
-    ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: 16000, maxLocalContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } }] : []),
+    ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: options.maxContextBytes ?? 16000,
+      maxLocalContextBytes: options.maxContextBytes === undefined ? 8000 : Math.floor(options.maxContextBytes / 2),
+      coalesceMs: 1, retryDelayMs: 1000 } }] : []),
   ]
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include

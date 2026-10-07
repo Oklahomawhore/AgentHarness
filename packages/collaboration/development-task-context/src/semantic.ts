@@ -78,7 +78,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     if ([config.auditSessionId, config.provider, config.model].some(value => value.trim() === '')
       || config.reasoningEffort?.trim() === '') throw new Error('semantic backend: identity and route must be nonempty')
     // Selection and evidence comparison changes invalidate outer caches without rewriting retained audit requests.
-    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 6, system: SYSTEM, config: this.config }) })
+    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 7, system: SYSTEM, config: this.config }) })
     this.ready = SemanticAudit.open(ctx, this.config.auditSessionId)
     // compute and disposal observe the same initialization failure; construction must not leave an unhandled rejection.
     void this.ready.catch(() => undefined)
@@ -207,7 +207,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
       const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
       projection = projectSemanticReply(evidence, JSON.parse(text) as unknown, request.maxContextBytes)
     } catch (error) { failure = error }
-    const result = semanticResultSchema.parse({ version: 2, key: request.key, requestSeq: seq,
+    const result = semanticResultSchema.parse({ version: 3, key: request.key, requestSeq: seq,
       status: projection === null ? 'failed' : 'completed', rawOutput: assembler.blocks(), finish,
       usage: assembler.usage ?? null, elapsedMs: performance.now() - started,
       error: projection === null ? failure instanceof Error ? failure.message : 'semantic model computation failed' : null,

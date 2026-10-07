@@ -4144,8 +4144,10 @@ Actual native execution observations become durable original reports, then the e
 @Remote('permissionDraft') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>
 
 /**
- * Persist one Session's explicit file and command sharing permission and request automatic activation of an equal or narrower owner approval.
- * @param request - exact capture expectation, owner entry, file and command selections, limits, and optional recorded-local-tool export consent.
+ * Persist one Session's explicit file and command sharing permission and request automatic activation
+ * of an equal or narrower owner approval.
+ * @param request - exact capture expectation, owner entry, file and command selections, limits,
+ * and optional recorded-local-tool export consent.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>

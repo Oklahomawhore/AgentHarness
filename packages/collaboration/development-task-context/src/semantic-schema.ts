@@ -111,6 +111,7 @@ const resultFields = {
 export const semanticResultSchema = z.discriminatedUnion('version', [
   z.object({ ...resultFields, version: z.literal(1), projection: legacyProjection.nullable() }).strict(),
   z.object({ ...resultFields, version: z.literal(2), projection: evidenceProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(3), projection: evidenceProjection.nullable() }).strict(),
 ]).superRefine((record, ctx) => {
   if (record.status === 'completed' ? record.projection === null || record.error !== null
     : record.projection !== null || record.error === null) {

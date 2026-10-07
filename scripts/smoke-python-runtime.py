@@ -1128,8 +1128,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
         "scope-reported-file": "scope-reported-file-command-outcome-evidence-r2",
         "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
-        "scope-semantic-idle": "scope-semantic-idle-command-outcome-evidence-r3",
-        "task-context-semantic": "task-context-semantic-command-outcome-evidence-r4",
+        "scope-semantic-idle": "scope-semantic-idle-current-evidence-r4",
+        "task-context-semantic": "task-context-semantic-current-evidence-r5",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -2128,35 +2128,52 @@ def semantic_idle_snapshot_result(
         raise AssertionError("Python notifications lost exact semantic request evidence")
     suppressed = [event for event in records if event.get("type") == "scope-agent-context/evaluation"
                   and event["data"]["decision"] == "suppress-unchanged"]
-    if len(suppressed) != 1 or suppressed[0]["data"]["projection"]["taskRevision"] != 4:
-        raise AssertionError("only the unrelated report must be suppressed")
-    suppression = suppressed[0]
-    data = suppression["data"]
-    baseline = next(event for event in records if event.get("seq") == data["baseline"]["requestSeq"])
-    if baseline["type"] != "scope-agent-context/request" or baseline["data"]["turn"] != 2:
-        raise AssertionError("suppression must point to an actual completed automatic request")
-    current, previous = data["projection"], baseline["data"]["projection"]
-    if current["activation"] != previous["activation"] or current["projectionId"] == previous["projectionId"]:
-        raise AssertionError("current exact projection must change while recipient evidence stays identical")
-    if current["activation"]["kind"] != "recipient-evidence" or current["activation"]["coverage"] != "complete":
-        raise AssertionError("suppression requires complete semantic recipient evidence")
-    if not any(item["reason"] == "recipient-irrelevant" for item in current["omittedSources"]):
-        raise AssertionError("suppressed unrelated report must remain in source accounting")
-    preceding_states = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"
-                        and event["seq"] < suppression["seq"]]
-    if preceding_states[-1]["usedBudget"] != 1 or data["activationId"] is not None:
-        raise AssertionError("an unrelated report must not reserve another automatic turn")
+    suppressed_revisions = [event["data"]["projection"]["taskRevision"] for event in suppressed]
+    if suppressed_revisions != [4, 5]:
+        raise AssertionError("the unrelated report and its complete overwrite must both be suppressed")
+    for index, suppression in enumerate(suppressed):
+        data = suppression["data"]
+        baseline = next(event for event in records if event.get("seq") == data["baseline"]["requestSeq"])
+        if baseline["type"] != "scope-agent-context/request" or baseline["data"]["turn"] != 2:
+            raise AssertionError("both suppressions must point to the same completed automatic request")
+        current, previous = data["projection"], baseline["data"]["projection"]
+        if current["activation"] != previous["activation"] or current["projectionId"] == previous["projectionId"]:
+            raise AssertionError("current exact projection must change while recipient evidence stays identical")
+        if current["activation"]["kind"] != "recipient-evidence" or current["activation"]["coverage"] != "complete":
+            raise AssertionError("suppression requires complete semantic recipient evidence")
+        irrelevant = [item for item in current["omittedSources"] if item["reason"] == "recipient-irrelevant"]
+        if len(irrelevant) != 1:
+            raise AssertionError("each current unrelated report must remain in source accounting")
+        if index == 1:
+            first_projection = suppressed[0]["data"]["projection"]
+            old_irrelevant = next(item["source"] for item in first_projection["omittedSources"]
+                                  if item["reason"] == "recipient-irrelevant")
+            identity_keys = ("kind", "taskId", "publicationId")
+            old_identity = tuple(old_irrelevant[key] for key in identity_keys)
+            superseded = [item["source"] for item in current["omittedSources"] if item["reason"] == "superseded"
+                          and tuple(item["source"][key] for key in identity_keys) == old_identity]
+            if len(superseded) != 1:
+                raise AssertionError("the complete overwrite must retain the original unrelated report as superseded")
+            if old_irrelevant["revision"] != 4 or superseded[0]["revision"] != 5 or irrelevant[0]["source"]["revision"] != 5:
+                raise AssertionError("both original and overwritten provenance must name their current Task revision")
+            if (current["projectionId"] == first_projection["projectionId"]
+                    or tuple(irrelevant[0]["source"][key] for key in identity_keys) == old_identity):
+                raise AssertionError("the overwrite must change exact provenance without waking the recipient")
+        preceding_states = [event["data"] for event in records if event.get("type") == "scope-agent-context/state"
+                            and event["seq"] < suppression["seq"]]
+        if preceding_states[-1]["usedBudget"] != 1 or data["activationId"] is not None:
+            raise AssertionError("neither unrelated report may reserve another automatic turn")
     wire_suppressed = [event["data"] for event in observed if event.get("type") == "scope-agent-context/evaluation"
                        and event["data"]["decision"] == "suppress-unchanged"]
-    if wire_suppressed != [data]:
-        raise AssertionError("Python wire must preserve the complete suppression decision")
+    if wire_suppressed != [event["data"] for event in suppressed]:
+        raise AssertionError("Python wire must preserve both complete suppression decisions")
     contexts = [event["data"] for event in records if event.get("type") == "user/message"
                 and event["data"]["source"]["kind"] == "development-task-context"]
     if len(contexts) != 6 or contexts[-1]["source"]["form"] != "disconnected":
         raise AssertionError("the six requests must retain current context and final departure")
     projections = [item["source"]["projection"] for item in contexts[:-1]]
     revisions = [item["taskRevision"] for item in projections]
-    if revisions != [2, 3, 5, 6, 7]:
+    if revisions != [2, 3, 6, 7, 8]:
         raise AssertionError("unrelated revision must not create another automatic model request")
     if any("UNRELATED_ADMIN" in item["text"] for item in projections):
         raise AssertionError("the unrelated report body leaked into receiving context")
@@ -2165,7 +2182,7 @@ def semantic_idle_snapshot_result(
     terminal = projections[-1]
     if any(marker in terminal["text"] for marker in ("RETRY_LIMIT_3", "RETRY_LIMIT_1", "FAILED_RETRY_9", "src/retry.ts")):
         raise AssertionError("withdrawal must remove prior report bodies from current context")
-    if len([item for item in terminal["omittedSources"] if item["reason"] == "withdrawn"]) != 4:
+    if len([item for item in terminal["omittedSources"] if item["reason"] == "withdrawn"]) != 5:
         raise AssertionError("withdrawal must account for every admitted report")
     users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
     pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
@@ -2176,26 +2193,26 @@ def semantic_idle_snapshot_result(
         raise AssertionError("departure must retain spent allowance and end scheduling")
     requests = [event for event in audit if event.get("type") == "context/semantic-request"]
     results = [event for event in audit if event.get("type") == "context/semantic-result"]
-    if len(requests) != 4 or len(results) != 4:
+    if len(requests) != 5 or len(results) != 5:
         raise AssertionError("suppression can still spend an auxiliary call; empty or withdrawn-only evidence cannot")
     for request, result in zip(requests, results, strict=True):
         output = result["data"]
-        if output["version"] != 2 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
-            raise AssertionError("semantic audit must retain version 2 results for their exact requests")
+        if output["version"] != 3 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
+            raise AssertionError("semantic audit must retain version 3 results for their exact requests")
         if output["status"] != "completed" or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("semantic audit must retain completed evidence")
-    if results[0]["data"]["projection"]["activation"] != results[1]["data"]["projection"]["activation"]:
-        raise AssertionError("the unrelated audited summary must preserve completed evidence")
+    if any(result["data"]["projection"]["activation"] != results[0]["data"]["projection"]["activation"] for result in results[1:3]):
+        raise AssertionError("both unrelated audited summaries must preserve completed evidence")
     if any(str(event.get("type", "")).startswith("context/semantic-") for event in records):
         raise AssertionError("auxiliary audit must remain separate from the receiving Session")
     if first.finish_reason != "completed" or last.finish_reason != "completed":
         raise AssertionError("explicit join and leave requests must complete")
     return {"first": {"text": first.final_response, "finishReason": first.finish_reason},
             "last": {"text": last.final_response, "finishReason": last.finish_reason},
-            "contextRevisions": revisions, "suppressedRevision": 4, "spentBeforeSuppression": 1,
+            "contextRevisions": revisions, "suppressedRevisions": suppressed_revisions, "spentBeforeSuppression": 1,
             "automaticRequests": len(dispatches), "automaticPulses": len(pulses), "humanRequests": len(users),
             "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
-            "auditResultVersion": 2, "realModelCalls": 0, "withdrawnSources": 4,
+            "auditResultVersion": 3, "realModelCalls": 0, "withdrawnSources": 5,
             "wirePreservesExactEvidence": True}
 
 
@@ -2562,7 +2579,7 @@ def semantic_snapshot_result(
             raise AssertionError("semantic audit result must identify its exact completed model request")
         if request["data"]["purpose"] != "context-summary" or request["data"]["call"]["provider"] != "semantic-snapshot":
             raise AssertionError("semantic runtime must use the dedicated controlled auxiliary route")
-        if output["version"] != 2 or output["projection"]["activation"]["kind"] != "recipient-evidence":
+        if output["version"] != 3 or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("current semantic audit must record versioned recipient evidence")
         if output["projection"]["text"] != context["data"]["content"][0]["text"]:
             raise AssertionError("actual native context must equal the durably completed semantic projection")

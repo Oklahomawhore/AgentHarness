@@ -25,9 +25,9 @@ function reply(input: SemanticInput) {
       sources: [{ sourceId: source.sourceId, quote: source.body }] })) }
 }
 
-function audit(input = fixture().input) {
+function audit(input = fixture().input, version: 1 | 2 | 3 = 3) {
   const response = reply(input)
-  const projection = projectSemanticReply(input, response, 20_000)
+  const projection = projectSemanticReply(input, response, 20_000, version)
   const request = semanticRequestSchema.parse({
     version: 1, key: 'a'.repeat(64), ordinal: 1, backend: { id: 'semantic', revision: 'b'.repeat(64) },
     call: { provider: 'fixture', model: 'fixture', maxTokens: 1000 }, system: 'Summarize the authorized evidence.',
@@ -36,7 +36,7 @@ function audit(input = fixture().input) {
       content: [{ type: 'text', text: semanticModelInput(input) }] }],
     purpose: 'context-summary', maxContextBytes: 20_000,
   })
-  const result = semanticResultSchema.parse({ version: 2, key: request.key, requestSeq: 1, status: 'completed',
+  const result = semanticResultSchema.parse({ version, key: request.key, requestSeq: 1, status: 'completed',
     rawOutput: [{ type: 'text', text: JSON.stringify(response) }], finish: { kind: 'stop' }, projection,
     usage: null, elapsedMs: 1, error: null, rejectedChunk: null })
   return { request, result, response, projection }
@@ -187,4 +187,15 @@ it('round-trips a captured frozen-parent basis and its original publication with
   const { request, result, projection } = audit(restored)
   expect(restoreSemanticProjection(request, result)).toEqual(projection)
   expect(projection.selectedSources).toContainEqual({ kind: 'task', ...parent })
+})
+
+it.each([1, 2, 3] as const)('rebuilds recorded v%s evidence without applying a newer comparison algorithm', (version) => {
+  const { captured, source } = fixture()
+  const input = restoreSemanticInput(semanticJson({ ...captured, coverage: { ...captured.coverage,
+    omittedSources: [{ source: { ...source, publicationId: 'superseded-report' }, reason: 'superseded' }] } }))
+  const { request, result, projection } = audit(input, version)
+  expect(restoreSemanticProjection(request, result)).toEqual(projection)
+  if (version === 1) return
+  const changedVersion = semanticResultSchema.parse({ ...result, version: version === 2 ? 3 : 2 })
+  expect(() => restoreSemanticProjection(request, changedVersion)).toThrow('cached projection disagrees with recorded output')
 })

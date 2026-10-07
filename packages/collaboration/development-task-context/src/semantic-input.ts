@@ -155,7 +155,7 @@ function evidenceMandatory(input: SemanticInput, value: unknown): unknown {
  * @returns Exact projected context and its versioned scheduling evidence.
  */
 export function projectSemanticReply(
-  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 = 2,
+  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 | 3 = 3,
 ): DevelopmentTaskContextProjection {
   const reply: SemanticReply = semanticReplySchema.parse(response)
   const sources = new Map(input.sources.map(source => [source.sourceId, source]))
@@ -188,7 +188,7 @@ export function projectSemanticReply(
   if (resultVersion === 1) return { activation: { kind: 'exact' }, text, selectedSources: selected, omittedSources: omitted }
   const { revision: _revision, ...task } = input.task
   const relevant = input.sources.filter(source => represented.has(source.sourceId))
-  const digest = semanticDigest({ version: 1, task, recipient: input.recipient, inherited: input.inherited,
+  const digest = semanticDigest({ version: resultVersion === 2 ? 1 : 2, task, recipient: input.recipient, inherited: input.inherited,
     sources: relevant.map(item => ({ source: evidenceSource(input, item.source, currentReport(item)),
       body: item.body, attribution: item.attribution })),
     updates: updates.map(update => ({ text: update.text, sources: update.sources.map(reference => ({
@@ -196,7 +196,8 @@ export function projectSemanticReply(
         record(reference.attribution) && reference.attribution.basis === 'current-task-report'), quote: reference.quote,
     })) })),
     mandatory: input.mandatory.map(value => evidenceMandatory(input, value)),
-    omitted: omitted.filter(item => item.reason !== 'recipient-irrelevant' && item.reason !== 'self-published').map(item => ({
+    omitted: omitted.filter(item => item.reason !== 'recipient-irrelevant' && item.reason !== 'self-published'
+      && (resultVersion === 2 || item.reason !== 'superseded')).map(item => ({
       ...item, source: evidenceSource(input, item.source,
         !input.inherited.some(value => value.parent.taskId === item.source.taskId && value.parent.revision === item.source.revision)),
     })),

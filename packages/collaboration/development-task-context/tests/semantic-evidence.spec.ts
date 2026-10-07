@@ -151,13 +151,13 @@ it('keeps structured errors, sequence, and binding epochs in mandatory evidence 
   }
 })
 
-it('keeps superseded source identity as conservative evidence even when every current body is judged irrelevant', () => {
+it('keeps superseded coverage without activating again for an unchanged current structured head', () => {
   const original = structured(2, 'valid')
   const superseded = { ...structured(1, 'valid'), id: 'previous-report' }
   const current = projection(input([original]), [])
   const withHistory = projection(input([superseded, original]), [])
   expect(withHistory.omittedSources.map(item => item.reason)).toEqual(['superseded'])
-  expect(withHistory.activation).not.toEqual(current.activation)
+  expect(withHistory.activation).toEqual(current.activation)
   expect(projection(input([superseded, original], 3), []).activation).toEqual(withHistory.activation)
 })
 
