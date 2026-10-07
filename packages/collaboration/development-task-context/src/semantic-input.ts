@@ -46,7 +46,7 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
   const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef, historical: boolean): void => {
     selected.push({ kind: 'task', ...basis })
     const ended = new Set(context.filter(isTerminalPublication).map(publicationInterval))
-    const toolHistory = publicationToolHistory(context)
+    const toolHistory = publicationToolHistory(context, false)
     const samples = context.map((publication) => {
       const sample = publicationObservation(publication)
       return sample === undefined ? undefined : { ...sample,

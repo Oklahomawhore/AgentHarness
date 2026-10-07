@@ -330,6 +330,10 @@ export class IndependentContribution {
    */
   async activate(domain: ScopeDomain, request: ClaudeScopeActivateContributionRequest, signal: AbortSignal): Promise<ScopeSession> {
     this.assertExpected(domain, request.sessionKey, request.expectedCapture)
+    if (request.invitation.grant.source.kind === 'tool-observations' && request.invitation.grant.source.version === 3) {
+      throw new RemoteError('claude-scope/invitation-mismatch', 'Completed native file permission is not supported by Claude Hooks',
+        { sessionKey: request.sessionKey })
+    }
     const controller = this.controller(request.sessionKey)
     const store = this.store(domain, request.sessionKey)
     const selected = await controller.selectActivation(store, request.invitation, signal)

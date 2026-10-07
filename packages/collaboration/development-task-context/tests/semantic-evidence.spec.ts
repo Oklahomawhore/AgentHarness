@@ -172,3 +172,26 @@ it('retains legacy exact projection bytes through the explicit v1 algorithm', ()
   expect(legacy.text).toBe(projection(value).text)
   expect(legacy.selectedSources).toEqual(projection(value).selectedSources)
 })
+
+it('keeps frozen-parent structured evidence and superseded source identities separate from current revision bookkeeping', () => {
+  const base = input([])
+  const parent = { taskId: 'parent' as typeof base.view.task.id, revision: 1 }
+  const current = structured(2, 'invalid')
+  const previous = { ...structured(1, 'valid'), id: 'previous-parent-report' }
+  const frozen: DevelopmentTaskContextInput = { ...base, recipient: { participantId: base.recipient.participantId },
+    view: { ...base.view, inherited: {
+      id: 'block' as NonNullable<DevelopmentTaskContextInput['view']['inherited']>['id'], createdAt: 1,
+      sources: [{ parent, objective: 'Parent responsibility', scope: 'Frozen API', context: [previous, current] }],
+    } } }
+  const prepared = prepareSemanticInput(frozen)
+  expect(prepared.mandatory).toEqual([expect.objectContaining({ basis: 'frozen-parent-snapshot', kind: 'structured-evidence',
+    source: { kind: 'publication', ...parent, publicationId: current.id } })])
+  const projected = projection(frozen, [])
+  expect(projected.omittedSources).toEqual([{ source: {
+    kind: 'publication', ...parent, publicationId: previous.id,
+  }, reason: 'superseded' }])
+  expect(projected.activation).toEqual(projection({ ...frozen,
+    view: { ...frozen.view, task: { ...frozen.view.task, revision: 9 } },
+  }, []).activation)
+  expect(projected.text).toContain('invalid-json')
+})

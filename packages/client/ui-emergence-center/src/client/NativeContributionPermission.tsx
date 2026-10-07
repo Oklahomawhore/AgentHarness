@@ -13,6 +13,7 @@ export interface NativeContributionDraft {
   readonly samples: string
   readonly bytes: string
   readonly consent: boolean
+  readonly fileContent: boolean
 }
 
 /**
@@ -20,10 +21,12 @@ export interface NativeContributionDraft {
  * @param props - unique field prefix, local draft, editing state and localized consent label.
  * @returns controlled file-permission fields without a submit action.
  */
-export function NativeContributionPermission({ id, draft, disabled, consentKey, change, t }: PropsLocale<'emergenceCenter'> & {
+export function NativeContributionPermission({ id, draft, disabled, fileContentDisabled, consentKey, change, t,
+}: PropsLocale<'emergenceCenter'> & {
   id: string
   draft: NativeContributionDraft
   disabled: boolean
+  fileContentDisabled?: boolean
   consentKey: EmergenceCenterKey
   change: (value: NativeContributionDraft) => void
 }) {
@@ -40,6 +43,9 @@ export function NativeContributionPermission({ id, draft, disabled, consentKey, 
       <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" required value={draft.samples} disabled={disabled} onChange={(event) => { change({ ...draft, samples: event.target.value }) }} /></label>
       <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" required value={draft.bytes} disabled={disabled} onChange={(event) => { change({ ...draft, bytes: event.target.value }) }} /></label>
     </div>
+    <label className={css.consent}><input type="checkbox" checked={draft.fileContent} disabled={disabled || fileContentDisabled}
+      onChange={(event) => { change({ ...draft, fileContent: event.target.checked }) }} />{t('native.fileContent.consent')}</label>
+    <p className={css.hint}>{t('native.fileContent.hint')}</p>
     <label className={css.consent}><input type="checkbox" checked={draft.consent} disabled={disabled}
       onChange={(event) => { change({ ...draft, consent: event.target.checked }) }} />{t(consentKey)}</label>
   </>

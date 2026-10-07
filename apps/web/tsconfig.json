@@ -124,6 +124,7 @@
     "tests/native-contribution.e2e.ts",
     "tests/native-owner-contribution.e2e.ts",
     "tests/continuous-edit-context.e2e.ts",
+    "tests/existing-edit-context.e2e.ts",
     "tests/contribution-scope.e2e.ts",
     "tests/online-contribution-scope.e2e.ts",
     "tests/claude-joint-scope.e2e.ts",

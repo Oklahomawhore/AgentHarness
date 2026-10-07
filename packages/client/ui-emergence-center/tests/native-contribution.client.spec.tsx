@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
   ScopeContributionTransfer, ScopeContributionEntryProbeResult, ScopeAgentContributionStatus, ScopeAgentContributionCapture,
@@ -48,6 +49,58 @@ async function consentFields(): Promise<void> {
 const submit = (): HTMLButtonElement => screen.getByRole('button', { name: zh['native.share.request'] })
 
 describe('native file-work consent', () => {
+  it.each([false, true])('sends complete file permission only for an explicitly selected application (%s)', async (completeFile) => {
+    const f = fixture()
+    await consentFields()
+    const full = screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.fileContent.consent'] })
+    expect(full.checked).toBe(false)
+    if (completeFile) fireEvent.click(full)
+    expect(submit().disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.share.consent'] }))
+    fireEvent.click(submit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    const sent = vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]
+    expect(sent?.fileContent).toBe(completeFile ? 'completed-native-file' : undefined)
+    expect(sent?.initialization).toBeUndefined()
+  })
+
+  it('renews complete-file consent after changed limits, entry, capture or Session but preserves ordinary refresh', async () => {
+    const f = fixture()
+    await consentFields()
+    const full = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.fileContent.consent'] })
+    fireEvent.click(full())
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ ...f.props.entry,
+      value: { ...emptyStatus, revision: 1 } }} />)
+    expect(full().checked).toBe(true)
+    change(zh['contribution.maxBytes'], '2048')
+    expect(full().checked).toBe(false)
+    fireEvent.click(full())
+    change(zh['native.invitation'], 'another-entry')
+    expect(screen.queryByRole('checkbox', { name: zh['native.fileContent.consent'] })).toBeNull()
+    await consentFields()
+    expect(full().checked).toBe(false)
+    fireEvent.click(full())
+    f.rerender(<NativeContributionPanel {...f.props} entry={{ ...f.props.entry, value: capturedStatus }} />)
+    expect(screen.getByText(zh['native.fileContent.arguments'])).toBeTruthy()
+    f.rerender(<NativeContributionPanel {...f.props} />)
+    await consentFields()
+    expect(full().checked).toBe(false)
+    fireEvent.click(full())
+    f.rerender(<NativeContributionPanel {...f.props} agentId={'another-source' as SessionId} />)
+    await consentFields()
+    expect(full().checked).toBe(false)
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+  })
+
+  it('shows the complete-file scope of a pending application without treating it as active collection', () => {
+    fixture({ ...capturedStatus, capture: { ...capture, proposal: { ...capture.proposal,
+      source: { kind: 'tool-observations', name: 'Completed native file work', tools: ['Edit'],
+        version: 3, fileContent: 'completed-native-file' } } } })
+    expect(screen.getByText(zh['native.fileContent.complete'])).toBeTruthy()
+    expect(screen.getByText(zh['contribution.application.waiting'])).toBeTruthy()
+    expect(screen.queryByText(zh['native.share.active'])).toBeNull()
+  })
+
   it('reports an unspecified management failure without discarding the last observed capture', () => {
     const f = fixture(capturedStatus)
     f.rerender(<NativeContributionPanel {...f.props} entry={{ value: capturedStatus, status: 'error', pending: false }} />)

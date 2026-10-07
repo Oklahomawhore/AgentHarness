@@ -816,7 +816,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task/src/index.ts:141`](../packages/collaboration/development-task/src/index.ts)
+Source: [`packages/collaboration/development-task/src/index.ts:143`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
@@ -3387,7 +3387,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/fs/tool-fs/src/index.ts:50`](../packages/fs/tool-fs/src/index.ts)
+Source: [`packages/fs/tool-fs/src/index.ts:63`](../packages/fs/tool-fs/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs-search"></a>
 

@@ -21,7 +21,7 @@
   - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
   - region "已记录共享上下文":
     - heading "已记录共享上下文" [level=3]
-    - paragraph: 共享内容 4416 字节 · 纳入 2 条来源记录。
+    - paragraph: 共享内容 4458 字节 · 纳入 2 条来源记录。
     - paragraph: 因容量限制未纳入 2 条来源记录。
     - paragraph: 字节数包含共享上下文的说明文字，不含本地目标、聊天历史或工具定义。
     - paragraph: 这是保存在当前会话中的记录，不代表模型请求已发送、模型已理解或读取权限当前仍有效。
@@ -46,6 +46,8 @@
     - definition: {{ownerPeerId}}
     - term: 允许采集的目录
     - definition: {{cwd}}/budget-source/project
+    - term: 文件内容范围
+    - definition: 原始工具参数及完成状态
     - term: 允许分享的文件操作
     - definition: 写入文件（write）
     - term: 授权到期时间

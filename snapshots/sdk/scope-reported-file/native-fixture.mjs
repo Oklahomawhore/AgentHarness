@@ -114,7 +114,7 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     assert.equal(visible[0].source.form, 'snapshot')
     const projection = visible[0].source.projection
-    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '1' })
+    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '2' })
     const text = body(visible[0])
     assert.ok(Buffer.byteLength(text, 'utf8') <= 8000)
     const events = structuredClone(receiver.session.snapshotEvents())

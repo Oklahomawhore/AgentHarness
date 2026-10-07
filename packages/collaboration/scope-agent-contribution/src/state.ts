@@ -9,7 +9,7 @@ import { contributionEntrySchema, contributionLimitsSchema, invitationSchema, va
 import type { ScopeContributionEntry, ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
 import { scopeAgentAutomaticPolicySchema } from '@deepseek-ai/dsh-scope-agent-context'
 import type { ScopeAgentLocalTaskTarget } from '@deepseek-ai/dsh-scope-agent-context/types'
-import { peerContributionSampleSchema, peerContributionAdmissionReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
+import { peerContributionSampleSchema, peerContributionAdmissionReceiptSchema, peerContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
 
 import type { ScopeAgentContributionReceiving } from './types.ts'
 import { initializationSchema, executionDigest } from './initialization.ts'
@@ -146,7 +146,7 @@ const captureSchema = contributionRecordSchema.safeExtend({
     || capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
     || new Set(capture.tools).size !== capture.tools.length || source.kind !== 'tool-observations'
     || JSON.stringify(source.tools) !== JSON.stringify(tools) || source.name !== 'session-work'
-    || ('version' in source) !== (capture.initialization !== undefined)
+    || (source.version === 2) !== (capture.initialization !== undefined)
     || (grant !== undefined && (grant.ownerPeerId !== capture.entry.ownerPeerId || grant.taskId !== capture.entry.taskId
       || grant.expiresAt > capture.limits.expiresAt || grant.maxSamples > capture.limits.maxSamples
       || grant.maxSampleBytes > capture.limits.maxSampleBytes))) {
@@ -180,6 +180,7 @@ const recordFields = {
   capture: captureSchema.nullable(), samples: z.array(sampleSchema), receivingContinuation: continuationSchema.optional(),
 }
 const legacyRecord = z.strictObject(recordFields).refine(record => record.capture?.initialization === undefined
+  && !(record.capture?.proposal.source.kind === 'tool-observations' && record.capture.proposal.source.version === 3)
   && !(record.receivingContinuation !== undefined && 'version' in record.receivingContinuation.proposal.source)
   && record.samples.every(item => !('kind' in item.sample.result) || item.sample.result.version === 1),
 'historical native source rows cannot acquire initialization')
@@ -220,6 +221,7 @@ export function validateNativeSample(agentId: SessionId, item: NativeSample, cap
     || !('kind' in item.sample.result) || !capture.tools.includes(item.sample.result.tool === 'Write' ? 'write' : 'edit')) {
     throw new Error('native contribution sample has different source coordinates')
   }
+  peerContributionRequestSchema.parse({ grant: capture.invitation.grant, ...item.sample })
   const report = item.sample.result
   if ('kind' in report && report.version === 2) {
     const initialization = capture.initialization

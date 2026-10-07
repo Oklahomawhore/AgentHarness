@@ -741,7 +741,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -760,10 +760,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-recipient-budget, sdk-scope-reported-file, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-recipient-budget, sdk-scope-reported-file, sdk-scope-completed-file, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -779,7 +779,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1110,9 +1110,10 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-completed-file", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
+        "scope-reported-file": "scope-reported-file-backend-v2",
         "scope-capture-self-omission": "scope-capture-self-omission-recipient-budget",
         "scope-prejoin-initialization": "scope-prejoin-initialization-recipient-budget",
         "scope-automatic-withdrawal": "scope-automatic-withdrawal-capture-origin-evidence",
@@ -1195,7 +1196,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
-            elif scenario == "scope-reported-file":
+            elif scenario in {"scope-reported-file", "scope-completed-file"}:
                 turns = [session.run(prompt) for prompt in (
                     "Use the initially permitted file work.",
                     "Use subsequent permitted file changes.",
@@ -1278,6 +1279,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-completed-file":
+            result = completed_file_snapshot_result(records, turns, json.loads((home / "completed-file-audit.json").read_text()))
         elif scenario == "scope-reported-file":
             result = reported_file_snapshot_result(records, turns, json.loads((home / "reported-file-audit.json").read_text()))
         elif scenario == "scope-recipient-budget":
@@ -1346,6 +1349,96 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                                update_snapshots, expected, ("result.json", "session.v3.jsonl"))
 
 
+def completed_file_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Check explicitly permitted native operation outputs without a preceding Write or receiver recall."""
+    requests, reports = audit["requests"], audit["reports"]
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 6:
+        raise AssertionError("completed-file evidence must use two executing Hosts and six source requests")
+    if len(turns) != 3 or len(requests) != 3 or audit["ownerToolNames"] != ["read", "edit", "edit", "edit"]:
+        raise AssertionError("an actual Read and three actual Edits must operate on the preexisting file without Write")
+    if any(record.get("type") == "tool/call" for record in records):
+        raise AssertionError("the receiver must not recall or reread the source file")
+    logged = [record["data"]["source"]["projection"] for record in records
+              if record.get("type") == "user/message"
+              and record["data"].get("source", {}).get("kind") == "scope-agent-context"
+              and record["data"]["source"].get("form") == "snapshot"]
+    if logged != [request["projection"] for request in requests]:
+        raise AssertionError("actual receiving projections differ from the durable shared-context messages")
+    values = ["COMPLETED_INITIAL", "COMPLETED_FIRST", "COMPLETED_SECOND", "COMPLETED_FINAL"]
+    contents = [f'export const current = "{value}";\nexport const retained = "PREEXISTING_UNCHANGED";\n'
+                for value in values]
+    if len(reports) != 3:
+        raise AssertionError("only the three permitted Edit outcomes should produce reports")
+    authority = {"kind": "local", **reports[0]["localContribution"]}
+    source = authority["grant"]["source"]
+    if source.get("version") != 3 or source.get("fileContent") != "completed-native-file":
+        raise AssertionError("complete content requires the explicit source permission")
+    for index, report in enumerate(reports):
+        observed = report["localToolObservation"]
+        if report["localContribution"] != reports[0]["localContribution"] or report["publishedBy"] != reports[0]["publishedBy"]:
+            raise AssertionError("a completed output changed the original capture authority")
+        if observed["version"] != 3 or observed["tool"] != "Edit" or observed["reportedStatus"] != "success":
+            raise AssertionError("complete content must retain the successful original Edit report")
+        if observed["sequence"] != index + 1 or observed["omissions"]:
+            raise AssertionError("the original completed report sequence or fields were changed")
+        if observed["fields"] != {"rootIndex": 0, "path": "state.ts", "replaceAll": False,
+                                  "oldString": values[index], "newString": values[index + 1]}:
+            raise AssertionError("the completion report lost its original Edit arguments")
+        sha256 = hashlib.sha256(contents[index + 1].encode("utf-8")).hexdigest()
+        if observed["completedFile"] != {"state": "included", "content": contents[index + 1], "sha256": sha256}:
+            raise AssertionError("the complete operation output or its independent SHA-256 differs")
+    for index, request in enumerate(requests):
+        projection = request["projection"]
+        if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
+            raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
+        if projection["backend"] != {"id": "reported-files", "revision": "2"}:
+            raise AssertionError("the request did not use the current reported-file provider")
+        if "PRIVATE_UNTOUCHED" in request["text"]:
+            raise AssertionError("an untouched private file entered the receiving context")
+        refs = [{"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
+                 "publicationId": report["id"]} for report in reports]
+        selected = [item for item in projection["selectedSources"] if item["kind"] == "publication"]
+        payload = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        if index == 2:
+            if projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in refs]:
+                raise AssertionError("the exact completed-output capture interval was not withdrawn")
+            if len(selected) != 1 or any(item.get("kind") == "completed-native-file" for item in payload["publications"]):
+                raise AssertionError("withdrawal must retain its terminal publication and remove completed content")
+            if "COMPLETED_" in request["text"] or "PREEXISTING_UNCHANGED" in request["text"]:
+                raise AssertionError("previously shared file content survived withdrawal")
+            continue
+        latest = 0 if index == 0 else 2
+        if selected != [refs[latest]] or projection["omittedSources"] != [
+            {"source": ref, "reason": "superseded"} for ref in refs[:latest]
+        ]:
+            raise AssertionError("the completed file must select its exact latest source and supersede only earlier reports")
+        if len(payload["publications"]) != 1:
+            raise AssertionError("one latest complete operation output should enter the model request")
+        file = payload["publications"][0]
+        if file.get("kind") != "completed-native-file" or file.get("version") != 1:
+            raise AssertionError("the complete operation output lost its explicit provenance kind")
+        if file.get("content") != contents[latest + 1] or file.get("sha256") != hashlib.sha256(contents[latest + 1].encode("utf-8")).hexdigest():
+            raise AssertionError("the selected complete output differs from the independently expected text")
+        if file.get("file") != {"rootIndex": 0, "path": "state.ts"} or file.get("authority") != authority:
+            raise AssertionError("the selected file or original full-content authority differs")
+        if file.get("source") != refs[latest] or file.get("sequence") != latest + 1 or file.get("publishedBy") != reports[latest]["publishedBy"]:
+            raise AssertionError("the selected output lost its exact original source")
+        if "not a verified current file snapshot" not in file.get("warning", ""):
+            raise AssertionError("operation output must not claim verified current filesystem state")
+        if any(previous in request["text"] for previous in values[:latest + 1]):
+            raise AssertionError("an obsolete value remains in the selected complete output")
+    if audit["finalContent"] != contents[3] or audit["diskReconstructed"] is not True:
+        raise AssertionError("the actual source file or full receiving log reconstruction differs")
+    return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
+            "requestCounts": {"owner": 6, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
+            "contextBytes": [request["bytes"] for request in requests], "originalReportCount": 3,
+            "completedContentDigest": hashlib.sha256(contents[3].encode("utf-8")).hexdigest(),
+            "explicitCompleteFilePermission": True, "exactSourceWithdrawal": True,
+            "receiverDiskReconstruction": True, "noRecall": True}
+
+
 def reported_file_snapshot_result(
     records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
 ) -> dict[str, object]:
@@ -1366,7 +1459,7 @@ def reported_file_snapshot_result(
     for request in requests:
         if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
             raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
-        if request["projection"]["backend"] != {"id": "reported-files", "revision": "1"}:
+        if request["projection"]["backend"] != {"id": "reported-files", "revision": "2"}:
             raise AssertionError("the recorded requests did not use the selected reported-file provider")
     current = requests[1]["projection"]
     payload = json.loads(current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])

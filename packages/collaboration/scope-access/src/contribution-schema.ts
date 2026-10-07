@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import {
   peerContributionGrantSchema, peerContributionProposalSchema, legacyPeerContributionSampleSchema,
-  recordedPeerContributionSampleSchema, peerContributionReceiptSchema,
+  recordedPeerContributionSampleSchema, completedFilePeerContributionSampleSchema, peerContributionReceiptSchema,
   peerContributionAdmissionReceiptSchema, peerContributionPayloadDigest, peerContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {
@@ -137,6 +137,11 @@ export const recordedContributionRequestSchema = request.extend({
   version: z.literal(2), op: z.literal('sample'), sample: recordedPeerContributionSampleSchema,
 })
 
+/** Version-three requests carry only explicitly permitted native completed-file samples. */
+export const completedFileContributionRequestSchema = request.extend({
+  version: z.literal(3), op: z.literal('sample'), sample: completedFilePeerContributionSampleSchema,
+})
+
 const response = z.object({ version: z.literal(1), requestId: z.uuid() }).strict()
 /** A response is correlated to the operation as well as the unique request identifier. */
 export const contributionResponseSchema = z.discriminatedUnion('op', [
@@ -148,6 +153,11 @@ export const contributionResponseSchema = z.discriminatedUnion('op', [
 /** Version-two sample replies retain exact receipts and cannot acknowledge legacy operations. */
 export const recordedContributionResponseSchema = response.extend({
   version: z.literal(2), op: z.literal('sample'), result: contributionSubmitSchema,
+})
+
+/** Version-three replies acknowledge only the exact completed-file sample operation. */
+export const completedFileContributionResponseSchema = response.extend({
+  version: z.literal(3), op: z.literal('sample'), result: contributionSubmitSchema,
 })
 
 /**

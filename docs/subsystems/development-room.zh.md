@@ -1194,6 +1194,8 @@ interface ScopeAgentContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
   /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
   readonly initialization?: ScopeAgentContributionInitializationRequest
@@ -1838,7 +1840,7 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 ```ts type-equiv
 /** Immutable source permission without local filesystem roots or session identifiers. */
 type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
-  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
 ```
 
 ```ts type-equiv
@@ -2688,6 +2690,7 @@ interface DevelopmentTaskToolObservationSource {
   readonly kind: 'tool-observations'
   readonly version?: never
   readonly initialization?: never
+  readonly fileContent?: never
   readonly name: string
   readonly tools: readonly ('Write' | 'Edit')[]
 }
@@ -2743,8 +2746,38 @@ type DevelopmentTaskRecordedToolObservationResult = (
 ```
 
 ```ts type-equiv
-/** Peer reports distinguish live observations from explicitly authorized recorded work. */
-type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskRecordedToolObservationResult
+/** Explicit permission to share the LF text produced by future native file operations. */
+type DevelopmentTaskCompletedFileToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'fileContent'> & {
+  readonly version: 3
+  readonly fileContent: 'completed-native-file'
+}
+```
+
+```ts type-equiv
+/** Native completion text is a separate whole-field disclosure from the original tool arguments. */
+type DevelopmentTaskCompletedFileToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 3
+  readonly completedFile:
+    | { readonly state: 'included'; readonly content: string; readonly sha256: string }
+    | { readonly state: 'omitted'; readonly reason: 'tool-failed' | 'budget' | 'unavailable' }
+}
+```
+
+```ts type-equiv
+/** Local reports require explicit permission before carrying a native completion's full text. */
+type DevelopmentTaskLocalToolObservationResult =
+  | DevelopmentTaskToolObservationResult
+  | DevelopmentTaskCompletedFileToolObservationResult
+```
+
+```ts type-equiv
+/** Peer reports preserve separate live, recorded-work, and completed-file permissions. */
+type DevelopmentTaskPeerToolObservationResult =
+  | DevelopmentTaskLocalToolObservationResult
+  | DevelopmentTaskRecordedToolObservationResult
 ```
 
 ```ts type-equiv
@@ -2786,7 +2819,7 @@ interface DevelopmentTaskLocalContributionGrant {
   readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
-  readonly source: DevelopmentTaskToolObservationSource
+  readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -2830,7 +2863,7 @@ interface DevelopmentTaskLocalContributionRequest {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: DevelopmentTaskToolObservationResult
+  readonly result: DevelopmentTaskLocalToolObservationResult
 }
 ```
 
@@ -2872,7 +2905,7 @@ interface DevelopmentTaskLocalContributionMetadata {
 
 ```ts type-equiv
 /** Ordered local tool evidence; source Session execution remains the original execution authority. */
-type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {
+type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
 }
@@ -2891,6 +2924,8 @@ interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContribution
   readonly expectedCapture: ScopeAgentContributionSelection | null
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
 }
 ```

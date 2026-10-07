@@ -6,7 +6,7 @@ import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection } fr
 
 /** Reconstructs bounded literal file text from complete live reports; unprovable groups retain their original publications. */
 export default class ReportedDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
-  readonly identity = { id: 'reported-files', revision: '1' }
+  readonly identity = { id: 'reported-files', revision: '2' }
 
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   override async compute(input: DevelopmentTaskContextInput): Promise<DevelopmentTaskContextProjection> {

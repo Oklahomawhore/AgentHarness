@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-completed-file': {
+    expectedFinalResponse: 'Withdrawn completed file is no longer shared context.',
+  },
   'scope-reported-file': {
     expectedFinalResponse: 'Withdrawn reported file is no longer current context.',
   },

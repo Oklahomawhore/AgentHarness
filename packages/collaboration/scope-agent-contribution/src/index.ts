@@ -1,5 +1,5 @@
 /** Native filesystem-tool source with explicit local consent and independent owner contribution authority. */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { symbols, type Context } from '@deepseek-ai/cordis'
@@ -7,7 +7,7 @@ import s from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
-import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
+import type { ToolFsCompletion, ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentJoinReadId } from '@deepseek-ai/dsh-scope-agent-context/types'
@@ -95,6 +95,7 @@ interface Pending {
   readonly mutation: ToolFsMutation
   readonly callSeq: SessionSeq
   readonly path: { readonly rootIndex: number; readonly path: string }
+  completedFile?: import('@deepseek-ai/dsh-development-task/types').DevelopmentTaskCompletedFileToolObservationResult['completedFile']
 }
 /** Local and remote consent own separate cancellation, sampling, and reconciliation. */
 function captureOperations() {
@@ -211,6 +212,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       try { this.observe(mutation) }
       catch (error) { ctx.logger.error('scope-agent-contribution: observation rejected: %s', String(error)) }
     }, { global: true })
+    ctx.on('tool-fs/mutation-completed', (completion) => { this.completedFile(completion) }, { global: true })
     ctx.on('session/event', (session, event) => { this.settled(session, event) }, { global: true })
     ctx.on('internal/service', (name) => {
       if (name !== 'scopeAgentContext') return
@@ -286,6 +288,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
     const initialization = request.initialization === undefined ? undefined : initializationRequestSchema.parse(request.initialization)
+    if (request.fileContent !== undefined && initialization !== undefined) {
+      throw this.invalid(agent.id, 'Complete file-result sharing cannot include recorded-tool initialization')
+    }
     const automatic = request.receive?.automatic === undefined
       ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
     if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry' && entry.kind !== 'scope-group-entry') || entry.sourceKind !== 'tool-observations'
@@ -348,6 +353,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             || !isDeepStrictEqual(retained.receiving?.localTask, request.receive?.localTask)
             || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
             || !isDeepStrictEqual(retained.initialization?.request, initialization)
+            || (retained.proposal.source.kind === 'tool-observations' && retained.proposal.source.version === 3
+              ? retained.proposal.source.fileContent : undefined) !== request.fileContent
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -391,7 +398,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             captureId: randomUUID() as NativeCapture['proposal']['captureId'],
             captureGeneration: randomUUID() as NativeCapture['proposal']['captureGeneration'],
             source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
-              ...(initialization === undefined ? {} : { version: 2 as const, initialization: 'recorded-local-tools' as const }) } },
+              ...(request.fileContent === undefined
+                ? initialization === undefined ? {} : { version: 2 as const, initialization: 'recorded-local-tools' as const }
+                : { version: 3 as const, fileContent: request.fileContent }) } },
           roots: localRoots, rootUrls, tools, entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
           ...(initialization === undefined ? {} : { initialization: pendingInitialization(initialization) }),
           ...(request.receive === undefined ? {} : { receiving: { version: 2 as const, adoptionId: randomUUID() as ScopeAgentJoinReadId,
@@ -622,6 +631,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           const { expiresAt, maxSamples, maxSampleBytes } = retained.grant
           if (retained.state === 'ending' || !this.matchesBinding(agent.id, retained.grant)
             || !isDeepStrictEqual({ expiresAt, maxSamples, maxSampleBytes }, limits)
+            || (retained.grant.source.version === 3 ? retained.grant.source.fileContent : undefined) !== request.fileContent
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
             throw this.invalid(agent.id, 'Stop the existing source before changing its permission')
           }
@@ -634,7 +644,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             participantId: developmentAgentParticipantId(agent.id),
             captureId: randomUUID() as DevelopmentTaskLocalContributionGrant['captureId'],
             captureGeneration: randomUUID() as DevelopmentTaskLocalContributionGrant['captureGeneration'],
-            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit') }, ...limits }
+            source: { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
+              ...(request.fileContent === undefined ? {} : { version: 3 as const, fileContent: request.fileContent }) }, ...limits }
           capture = { grant, roots: roots.map(root => filesystem.processPath(root)), rootUrls, tools, state: 'opening', sequence: 0 }
         }
         await this.saveLocal(agent.id, capture, row?.samples ?? [])
@@ -921,7 +932,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const revision = (previous?.revision ?? 0) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: source revision exhausted')
     const record: NativeSourceRecord = { agentId: id, revision, capture, samples,
-      ...(previous?.version === 2 || capture?.initialization !== undefined ? { version: 2 as const } : {}),
+      ...(previous?.version === 2 || capture?.initialization !== undefined
+        || (capture?.proposal.source.kind === 'tool-observations' && capture.proposal.source.version === 3) ? { version: 2 as const } : {}),
       ...(receivingContinuation === undefined ? {} : { receivingContinuation }) }
     await domain.table('sessions').put(id, record)
     this.notify(domain, id)
@@ -931,7 +943,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const capture = row?.capture
     const runtime = this.sources.local.runtimes.get(id)
     const currentFs = runtime?.agent.ctx.get('fs')
-    const eligible = capture != null && capture.state === 'active' && this.collecting(id, capture)
+    const eligible = capture != null && capture.grant.source.version !== 3 && capture.state === 'active' && this.collecting(id, capture)
       && currentFs !== undefined && runtime !== undefined
       && filesystemIdentity(currentFs) === filesystemIdentity(runtime.filesystem)
     return { eligible, recordedSamples: row?.samples.length ?? 0,
@@ -1011,7 +1023,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const tool = result.tool === 'Write' ? 'write' : 'edit'
       if (rootIndex < 0 || !capture.tools.includes(tool)) continue
       const proof = recordedProof(localRuntime.agent.session, item)
-      if (proof === undefined) return unavailable('coverage-invalid', coverage.recorded, coverage.unconfirmed)
+      if (proof === undefined || result.version !== 1) return unavailable('coverage-invalid', coverage.recorded, coverage.unconfirmed)
       if (selected.length >= capacity) continue
       const sequence = grant.maxSamples
       const leaseId = nativeDigest(['native-tool', id, capture.proposal.captureId, capture.proposal.captureGeneration,
@@ -1427,7 +1439,30 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
     let observations = this.sources[role].pending.get(agent.id)
     if (observations === undefined) { observations = new Map(); this.sources[role].pending.set(agent.id, observations) }
-    observations.set(call.seq, { runtime, mutation, callSeq: call.seq, path })
+    const source = 'grant' in capture ? capture.grant.source : capture.proposal.source
+    observations.set(call.seq, { runtime, mutation, callSeq: call.seq, path,
+      ...(source.kind === 'tool-observations' && source.version === 3 ? { completedFile: { state: 'omitted' as const, reason: 'unavailable' as const } } : {}) })
+  }
+  private completedFile(completion: ToolFsCompletion): void {
+    const agent = completion.mutation.execution.agent
+    if (agent === undefined) return
+    for (const role of captureRoles) {
+      const capture = this.capture(agent.id, role)
+      if (capture == null || !this.collecting(agent.id, capture)) continue
+      const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+      for (const pending of this.sources[role].pending.get(agent.id)?.values() ?? []) {
+        if (pending.mutation !== completion.mutation || pending.completedFile === undefined
+          || this.sources[role].runtimes.get(agent.id) !== pending.runtime) continue
+        if (grant === undefined || Buffer.byteLength(completion.content, 'utf8') > Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)) {
+          pending.completedFile = { state: 'omitted', reason: 'budget' }
+        } else if (!completion.content.isWellFormed() || completion.content.includes('\r')) {
+          pending.completedFile = { state: 'omitted', reason: 'unavailable' }
+        } else {
+          pending.completedFile = { state: 'included', content: completion.content,
+            sha256: createHash('sha256').update(completion.content).digest('hex') }
+        }
+      }
+    }
   }
   private settled(session: Session, event: SessionEvent): void {
     if (event.type === 'scope-agent-context/state') {
@@ -1494,7 +1529,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const sourceId = nativeDigest([leaseId, sequence]) as DevelopmentTaskObservedSourceId
       const fits = (result: ScopeContributionSample['result']) => Buffer.byteLength(JSON.stringify({ grant, sourceId, sequence, result }), 'utf8')
         <= Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)
-      const result = nativeToolReport(mutation, pending.path, failed, fits)
+      const result = nativeToolReport(mutation, pending.path, failed, fits, pending.completedFile)
       if (result === undefined) {
         this.sources[role].collectionIssues.set(id, 'attribution-budget'); this.notify(domain, id); return false
       }

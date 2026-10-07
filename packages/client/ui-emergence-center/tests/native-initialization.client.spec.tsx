@@ -44,6 +44,27 @@ function fixture(initial: ScopeAgentLocalContributionStatus | undefined = local,
 }
 
 describe('recorded native tool consent', () => {
+  it('keeps historical initialization and complete-file permission mutually exclusive without upgrading saved records', async () => {
+    const f = fixture()
+    await f.verify()
+    const full = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.fileContent.consent'] })
+    expect(full().checked).toBe(false)
+    fireEvent.click(history())
+    expect(full().disabled).toBe(true)
+    expect(full().checked).toBe(false)
+    fireEvent.click(history())
+    expect(full().disabled).toBe(false)
+    fireEvent.click(full())
+    expect(history().disabled).toBe(true)
+    expect(history().checked).toBe(false)
+    expect(screen.getByText(zh['native.fileContent.historyExclusive'])).toBeTruthy()
+    fireEvent.click(sharing()); fireEvent.click(submit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    const sent = vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]
+    expect(sent?.fileContent).toBe('completed-native-file')
+    expect(sent?.initialization).toBeUndefined()
+  })
+
   it('keeps permission blank when the retained local capture has expired', async () => {
     const f = fixture({ ...local, capture: { ...localCapture, collecting: false,
       grant: { ...localCapture.grant, expiresAt: Date.now() - 3_600_000 } } })
@@ -206,6 +227,14 @@ const initialization: ScopeAgentContributionInitialization = {
   coverage: { recorded: 4, selected: 3, omitted: 1, unconfirmed: 1, inFlight: 1, acknowledged: 2 }, reason: null,
 }
 describe('recorded work coverage', () => {
+  it('makes the requested full-content scope visible in the owner permission summary', () => {
+    render(<dl><ContributionSourceSummary source={{ kind: 'tool-observations', name: 'Completed native file work',
+      tools: ['Edit'], version: 3, fileContent: 'completed-native-file' }} t={t} /></dl>)
+    expect(screen.getByText(zh['native.fileContent.scope'])).toBeTruthy()
+    expect(screen.getByText(zh['native.fileContent.complete'])).toBeTruthy()
+    expect(screen.queryByText(zh['contribution.recordedTools'])).toBeNull()
+  })
+
   it('shows frozen historical selection and owner receipts on the retained capture panel', () => {
     const f = fixture()
     f.rerender(<NativeContributionPanel {...f.props} entry={{ status: 'ready', pending: false,

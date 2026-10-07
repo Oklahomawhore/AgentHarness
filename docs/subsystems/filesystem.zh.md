@@ -522,6 +522,24 @@ Source: [`packages/fs/fs/src/index.ts`](../../packages/fs/fs/src/index.ts)
 
 ### `tool-fs/*` events
 
+<a id="tool-fsmutation-completed--emit"></a>
+
+#### `tool-fs/mutation-completed` — emit
+
+Observe the same provider's successful result before tool settlement; later failure or cancellation remains possible. Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.
+
+```ts cordis-catalog
+/**
+ * Observe the same provider's successful result before tool settlement; later failure or cancellation remains possible.
+ * Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.
+ * @param completion - Original mutation identity and produced text, without a second filesystem read.
+ * @mode emit
+ */
+'tool-fs/mutation-completed'(completion: ToolFsCompletion): void
+```
+
+Source: [`packages/fs/tool-fs/src/index.ts`](../../packages/fs/tool-fs/src/index.ts)
+
 <a id="tool-fsmutation-start--emit"></a>
 
 #### `tool-fs/mutation-start` — emit
@@ -557,4 +575,14 @@ type ToolFsMutation = {
   | { readonly tool: 'write'; readonly input: { readonly content: string } }
   | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
 )
+```
+
+`tool-fs/mutation-completed` 将成功的 provider 结果与原先已准入的 mutation 关联。完整 LF 规范化文本包含未修改的文件内容，不代表最终工具结果成功或当前磁盘状态。Consumer 必须取得独立完整内容许可后才能保留或分享它，并在最终结果失败或取消时拒绝发布；此过程不增加文件系统读取。
+
+```ts type-equiv
+/** Successful provider result; content is the complete LF-normalized text produced by this exact mutation. */
+interface ToolFsCompletion {
+  readonly mutation: ToolFsMutation
+  readonly content: string
+}
 ```

@@ -24,6 +24,7 @@ import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-
 import ClaudeScopeService, { type Config } from '../src/index.ts'
 import type { ClaudeScopeOpenApiSource, ClaudeScopeSessionKey } from '../src/types.ts'
 import type { ScopeContributionLease } from '../src/contribution-state.ts'
+import { contributionSchema, contributionLeaseSchema } from '../src/contribution-state.ts'
 import type { DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import type { ScopeSession, ScopeToolLease } from '../src/state.ts'
 import * as OpenApi from '../src/openapi.ts'
@@ -2796,4 +2797,30 @@ it('restores cancellation after an owner approval was committed but never select
     expect((await f.detail(restored)).session.receiveSubscriptionId).toBeUndefined()
     expect((await restored.ctx.scopeAccess.list()).subscriptions).toEqual([])
   } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+})
+
+
+it('refuses native completed-file grants before Claude Hook activation and in durable source records', async () => {
+  const f = await toolContributionHosts()
+  const completeSource = { kind: 'tool-observations' as const, version: 3 as const, name: 'session-work',
+    tools: ['Write', 'Edit'] as const, fileContent: 'completed-native-file' as const }
+  const invitation = { ...f.invitation, grant: { ...f.invitation.grant, source: completeSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  expect(detail.capture.invitation).toEqual(f.invitation)
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: completeSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-native', toolName: 'Edit',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'tool-observation', version: 3, tool: 'Edit', reportedStatus: 'success', omissions: ['oldString', 'newString'],
+      fields: { rootIndex: 0, path: 'old.ts', replaceAll: false }, completedFile: { state: 'omitted', reason: 'unavailable' },
+    } } }).success).toBe(false)
 })

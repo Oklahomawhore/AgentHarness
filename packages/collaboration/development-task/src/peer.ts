@@ -51,7 +51,9 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
     ? [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
       ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
       result.fields.error ?? null, result.omissions,
-      ...result.version === 2 ? [result.origin.kind, result.origin.planDigest, result.origin.executionDigest] : []]
+      ...result.version === 2 ? [result.origin.kind, result.origin.planDigest, result.origin.executionDigest] : [],
+      ...result.version === 3 ? [result.completedFile.state, ...result.completedFile.state === 'included'
+        ? [result.completedFile.content, result.completedFile.sha256] : [result.completedFile.reason]] : []]
     : result.state === 'valid'
       ? [result.state, result.sha256, result.facts.operationId ?? null, result.facts.requestBodyRequired,
         result.facts.requiredRequestFields, result.facts.responseStatuses, result.facts.deprecated]
@@ -59,7 +61,8 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
   return digest([grant.version, grant.taskId, grant.grantId, grant.generation, grant.ownerPeerId, grant.contributorPeerId,
     grant.captureId, grant.captureGeneration,
     ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
-      ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : []]
+      ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : [],
+      ...grant.source.version === 3 ? [grant.source.version, grant.source.fileContent] : []]
       : [grant.source.name, grant.source.method, grant.source.path],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, values])
 }
@@ -73,7 +76,8 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
 export function peerPublication(request: DevelopmentTaskPeerContributionRequest, at: number): DevelopmentTaskContextPublication {
   const { grant } = request
   if ('kind' in request.result) {
-    if (grant.source.kind !== 'tool-observations' || (request.result.version === 2 && grant.source.version !== 2)) {
+    if (grant.source.kind !== 'tool-observations' || (grant.source.version === 3 ? request.result.version !== 3
+      : request.result.version === 3 || (request.result.version === 2 && grant.source.version !== 2))) {
       throw new Error('tool report requires its matching live or recorded observation authorization')
     }
     const observation: DevelopmentTaskPeerToolObservation = {
@@ -111,7 +115,8 @@ export function peerPublicationRequest(publication: DevelopmentTaskContextPublic
   const tool = publication.peerToolObservation
   if (grant !== undefined && tool !== undefined) {
     return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-      kind: tool.kind, ...(tool.version === 2 ? { version: 2, origin: tool.origin } : { version: 1 }),
+      kind: tool.kind, ...(tool.version === 2 ? { version: 2, origin: tool.origin }
+        : tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
       reportedStatus: tool.reportedStatus, omissions: tool.omissions,
       ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
     } }

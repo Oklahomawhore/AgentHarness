@@ -81,6 +81,8 @@ export type {
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionEndReason,
   DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId, DevelopmentTaskCaptureGeneration,
   DevelopmentTaskContributionSource, DevelopmentTaskOpenApiContributionSource, DevelopmentTaskToolObservationSource,
+  DevelopmentTaskCompletedFileToolObservationSource, DevelopmentTaskCompletedFileToolObservationResult,
+  DevelopmentTaskLocalToolObservationResult,
   DevelopmentTaskToolObservationResult, DevelopmentTaskPeerToolObservation, DevelopmentTaskPeerOpenApiObservation,
   DevelopmentTaskPeerContributionMetadata,
   DevelopmentTaskPeerContributionAdmissionReceipt,

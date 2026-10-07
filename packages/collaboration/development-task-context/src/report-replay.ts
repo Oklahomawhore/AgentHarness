@@ -116,3 +116,41 @@ export function replayReportedFile(context: readonly DevelopmentTaskContextPubli
     },
   }
 }
+
+/** Explicitly permitted native completion with its exact owner-admitted source. */
+interface CompletedNativeFile {
+  readonly kind: 'completed-native-file'
+  readonly version: 1
+  readonly warning: string
+  readonly authority: ReportedFile['authority']
+  readonly publishedBy?: NonNullable<DevelopmentTaskContextPublication['publishedBy']>
+  readonly file: { readonly rootIndex: number; readonly path: string }
+  readonly content: string
+  readonly sha256: string
+  readonly source: DevelopmentTaskContextSourceRef
+  readonly sequence: number
+}
+
+/**
+ * Present one independently complete native operation result without replaying earlier reports.
+ * @param group - The entire selected file group; a later omitted or failed report prevents this representation.
+ * @param maxBytes - Complete context allowance, also bounding the candidate content.
+ * @returns Explicit completed-operation text, or undefined to retain the original atomic report group.
+ */
+export function completedNativeFile(group: readonly [ReportSource, ...ReportSource[]], maxBytes: number): CompletedNativeFile | undefined {
+  if (group.length !== 1) return undefined
+  const [{ publication, source }] = group
+  const tool = observation(publication)
+  if (tool?.version !== 3 || tool.completedFile.state !== 'included' || publication.uri !== undefined
+    || !canonical(publication, tool) || Buffer.byteLength(tool.completedFile.content, 'utf8') > maxBytes) return undefined
+  const authority = publication.peerContribution ?? publication.localContribution
+  return {
+    kind: 'completed-native-file', version: 1,
+    warning: 'This is the LF text returned by one explicitly authorized native file operation. '
+      + 'It is not a verified current file snapshot; subsequent or unreported work may differ.',
+    authority: publication.peerContribution === undefined ? { kind: 'local', ...authority } : { kind: 'peer', ...authority },
+    ...(publication.publishedBy === undefined ? {} : { publishedBy: publication.publishedBy }),
+    file: { rootIndex: tool.fields.rootIndex, path: tool.fields.path }, content: tool.completedFile.content,
+    sha256: tool.completedFile.sha256, source, sequence: tool.sequence,
+  }
+}

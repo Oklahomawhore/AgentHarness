@@ -138,6 +138,7 @@
       "@deepseek-ai/dsh-scope-access/schema": ["./packages/collaboration/scope-access/src/schema.ts"],
       "@deepseek-ai/dsh-scope-agent-context/types": ["./packages/collaboration/scope-agent-context/src/types.ts"],
       "@deepseek-ai/dsh-development-task-context/text": ["./packages/collaboration/development-task-context/src/text.ts"],
+      "@deepseek-ai/dsh-development-task-context/reported": ["./packages/collaboration/development-task-context/src/reported.ts"],
       "@deepseek-ai/dsh-development-task-context/types": ["./packages/collaboration/development-task-context/src/types.ts"],
       "@deepseek-ai/dsh-scope/invariant": ["./packages/core/scope/src/invariant.ts"],
       "@deepseek-ai/dsh-agent-loop/invariant": ["./packages/core/agent-loop/src/invariant.ts"],

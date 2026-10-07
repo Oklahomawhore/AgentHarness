@@ -17,6 +17,8 @@ export interface ScopeAgentContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
   /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
   readonly initialization?: ScopeAgentContributionInitializationRequest
@@ -53,6 +55,8 @@ export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContr
   readonly expectedCapture: ScopeAgentContributionSelection | null
   readonly roots: string[]
   readonly tools: ('write' | 'edit')[]
+  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
+  readonly fileContent?: 'completed-native-file'
   readonly limits: ScopeContributionLimits
 }
 

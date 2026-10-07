@@ -19,6 +19,8 @@
 - definition: 两位用户共同维护重试行为
 - term: 允许采集的目录
 - definition: {{cwd}}/owner-native/project
+- term: 文件内容范围
+- definition: 原始工具参数及完成状态
 - term: 允许分享的文件操作
 - definition: 写入文件（write）
 - term: 授权到期时间

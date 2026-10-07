@@ -94,6 +94,7 @@ export interface DevelopmentTaskToolObservationSource {
   readonly kind: 'tool-observations'
   readonly version?: never
   readonly initialization?: never
+  readonly fileContent?: never
   readonly name: string
   readonly tools: readonly ('Write' | 'Edit')[]
 }
@@ -104,9 +105,15 @@ export type DevelopmentTaskRecordedToolObservationSource = Omit<DevelopmentTaskT
   readonly initialization: 'recorded-local-tools'
 }
 
+/** Explicit permission to share the LF text produced by future native file operations. */
+export type DevelopmentTaskCompletedFileToolObservationSource = Omit<DevelopmentTaskToolObservationSource, 'version' | 'fileContent'> & {
+  readonly version: 3
+  readonly fileContent: 'completed-native-file'
+}
+
 /** Immutable source permission without local filesystem roots or session identifiers. */
 export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
-  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
+  | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -145,8 +152,26 @@ export type DevelopmentTaskRecordedToolObservationResult = (
   }
 }
 
-/** Peer reports distinguish live observations from explicitly authorized recorded work. */
-export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskRecordedToolObservationResult
+/** Native completion text is a separate whole-field disclosure from the original tool arguments. */
+export type DevelopmentTaskCompletedFileToolObservationResult = (
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Write' }>, 'version'>
+  | Omit<Extract<DevelopmentTaskToolObservationResult, { readonly tool: 'Edit' }>, 'version'>
+) & {
+  readonly version: 3
+  readonly completedFile:
+    | { readonly state: 'included'; readonly content: string; readonly sha256: string }
+    | { readonly state: 'omitted'; readonly reason: 'tool-failed' | 'budget' | 'unavailable' }
+}
+
+/** Local reports require explicit permission before carrying a native completion's full text. */
+export type DevelopmentTaskLocalToolObservationResult =
+  | DevelopmentTaskToolObservationResult
+  | DevelopmentTaskCompletedFileToolObservationResult
+
+/** Peer reports preserve separate live, recorded-work, and completed-file permissions. */
+export type DevelopmentTaskPeerToolObservationResult =
+  | DevelopmentTaskLocalToolObservationResult
+  | DevelopmentTaskRecordedToolObservationResult
 
 /** Identity of one owner-local capture interval; it is never a transport peer identity. */
 export type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContributionId'>
@@ -160,7 +185,7 @@ export interface DevelopmentTaskLocalContributionGrant {
   readonly expectedBindingEpoch: { readonly nodeId: DevelopmentNodeId; readonly seq: number }
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
-  readonly source: DevelopmentTaskToolObservationSource
+  readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -198,7 +223,7 @@ export interface DevelopmentTaskLocalContributionRequest {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: DevelopmentTaskToolObservationResult
+  readonly result: DevelopmentTaskLocalToolObservationResult
 }
 
 /** Irreversible local capture withdrawal using its original permission. */
@@ -230,7 +255,7 @@ export interface DevelopmentTaskLocalContributionMetadata {
 }
 
 /** Ordered local tool evidence; source Session execution remains the original execution authority. */
-export type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {
+export type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
 }

@@ -113,6 +113,7 @@ export function initializationPlanDigest(request: ScopeAgentContributionInitiali
  * @returns Stable proof when start and settlement exactly match the recorded observation.
  */
 export function recordedProof(session: Session, sample: LocalSample): InitializationProof | undefined {
+  if (sample.sample.result.version !== 1) return undefined
   const call = session.eventAt(sample.callSeq)
   const result = session.eventAt(sample.resultSeq)
   if (call === undefined || result === undefined || sample.callSeq >= sample.resultSeq

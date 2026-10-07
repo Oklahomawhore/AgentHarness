@@ -4,6 +4,7 @@ import type {
   DevelopmentTaskContextPublication, DevelopmentTaskLocalContributionGrant, DevelopmentTaskPeerContributionGrant,
   DevelopmentTaskPeerToolObservationResult, DevelopmentTaskToolObservationResult, DevelopmentTaskObservedSourceId,
 } from '@deepseek-ai/dsh-development-task/types'
+import { completedFileToolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { createHash } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -48,8 +49,10 @@ function report(mode: Mode, sequence: number, result: DevelopmentTaskPeerToolObs
   const id = `${mode}-${capture}-${sequence}`
   const sourceId = brandString<DevelopmentTaskObservedSourceId>(createHash('sha256').update(id).digest('hex'))
   if (mode === 'local') {
-    if (result.version !== 1) throw new Error('local fixture requires a live report')
-    const grant = { ...local, captureId: brandString<typeof local.captureId>(capture) }
+    if (result.version === 2) throw new Error('local fixture requires a live report')
+    const grant = { ...local, captureId: brandString<typeof local.captureId>(capture),
+      ...(result.version === 3 ? { source: { kind: 'tool-observations' as const, version: 3 as const,
+        fileContent: 'completed-native-file' as const, name: local.source.name, tools: ['Write', 'Edit'] as const } } : {}) }
     const localToolObservation = { ...result, sequence, sourceId }
     return { id, publishedAt: sequence, publishedBy: grant.participantId,
       localContribution: { version: 1, grant }, localToolObservation,
@@ -58,7 +61,9 @@ function report(mode: Mode, sequence: number, result: DevelopmentTaskPeerToolObs
   }
   const grant = { ...peer, captureId: brandString<typeof peer.captureId>(capture),
     ...(result.version === 2 ? { source: { kind: 'tool-observations' as const, name: peer.source.name,
-      tools: ['Write', 'Edit'] as const, version: 2 as const, initialization: 'recorded-local-tools' as const } } : {}) }
+      tools: ['Write', 'Edit'] as const, version: 2 as const, initialization: 'recorded-local-tools' as const } }
+      : result.version === 3 ? { source: { kind: 'tool-observations' as const, version: 3 as const,
+        fileContent: 'completed-native-file' as const, name: peer.source.name, tools: ['Write', 'Edit'] as const } } : {}) }
   const peerToolObservation = { ...result, sequence, sourceId, sourceName: grant.source.name,
     grantId: grant.grantId, observerPeerId: grant.contributorPeerId,
     capture: { id: grant.captureId, generation: grant.captureGeneration } }
@@ -134,7 +139,7 @@ it.each(['peer', 'local'] as const)('keeps a small %s file visible after forty s
   expect(derived(result)[0]?.warning).toContain('not a verified current file snapshot')
   expect(Buffer.byteLength(result.text, 'utf8')).toBeLessThanOrEqual(6000)
   expect(history).toEqual(before)
-  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '1' })
+  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '2' })
   expect(backend.text.identity).toEqual({ id: 'text', revision: '8' })
   const next = await backend.reported.compute(input([...history, report(mode, 42, edit('40', '41'))], 6000))
   expect(derived(next)[0]?.content).toBe('version=41;中文🙂')
@@ -301,4 +306,101 @@ it('retains all provenance when successive edits restore the original file conte
   expect(payload(restored).publications).toMatchObject([{
     authority: { kind: 'local', version: 1, grant: base.localContribution.grant }, publishedBy: base.publishedBy,
   }])
+})
+
+
+function completed(content: string) {
+  return completedFileToolObservationResultSchema.parse({ ...edit('before', 'after'), version: 3,
+    completedFile: { state: 'included', content, sha256: createHash('sha256').update(content).digest('hex') } })
+}
+const completedSchema = z.object({ kind: z.literal('completed-native-file'), version: z.literal(1), warning: z.string(),
+  file: z.object({ rootIndex: z.number(), path: z.string() }), content: z.string(), sha256: z.string(),
+  source: z.json(), sequence: z.number(), authority: z.json() })
+function completions(result: DevelopmentTaskContextProjection) {
+  return payload(result).publications.flatMap((value) => {
+    const parsed = completedSchema.safeParse(value)
+    return parsed.success ? [parsed.data] : []
+  })
+}
+
+it.each(['peer', 'local'] as const)('delivers an explicitly permitted %s Edit completion without any shared Write baseline', async (mode) => {
+  const history = [report(mode, 1, completed('PRIVATE_BASE\nfirst operation')), report(mode, 7, completed('PRIVATE_BASE\n最新🙂'))]
+  const backend = providers()
+  const result = await backend.reported.compute(input(history))
+  expect(completions(result)).toMatchObject([{ content: 'PRIVATE_BASE\n最新🙂', sequence: 7,
+    sha256: createHash('sha256').update('PRIVATE_BASE\n最新🙂').digest('hex'),
+    file: { rootIndex: 0, path: 'src/small.txt' }, authority: { kind: mode } }])
+  expect(completions(result)[0]?.warning).toContain('not a verified current file snapshot')
+  expect(ids(result)).toEqual([history[1]?.id])
+  expect(result.omittedSources.map(item => item.reason)).toEqual(['superseded'])
+  expect(result.activation).toEqual({ kind: 'exact' })
+  expect(derived(result)).toEqual([])
+  const original = await backend.text.compute(input(history))
+  expect(completions(original)).toEqual([])
+  expect(ids(original)).toEqual(history.map(item => item.id))
+})
+
+it.each(['budget', 'unavailable', 'tool-failed'] as const)('never presents an older completion alone after later %s evidence', async (reason) => {
+  const next = completedFileToolObservationResultSchema.parse({ ...completed('not-retained'),
+    reportedStatus: reason === 'tool-failed' ? 'failure' : 'success', omissions: ['oldString', 'newString'],
+    fields: { rootIndex: 0, path: 'src/small.txt', replaceAll: false }, completedFile: { state: 'omitted', reason } })
+  const history = [report('peer', 1, completed('OLDER_COMPLETION')), report('peer', 2, next)]
+  const backend = providers().reported
+  const result = await backend.compute(input(history))
+  expect(completions(result)).toEqual([])
+  expect(ids(result)).toEqual(history.map(item => item.id))
+  const prior = await backend.compute(input(history.slice(0, 1)))
+  const tight = await backend.compute(input(history, Buffer.byteLength(prior.text, 'utf8')))
+  expect(completions(tight)).toEqual([])
+  expect(tight.text).not.toContain('OLDER_COMPLETION')
+  expect(tight.omittedSources.map(item => item.reason)).toEqual(['budget', 'budget'])
+})
+
+it('budgets the complete completion representation in UTF-8 and omits an overlarge file as a whole', async () => {
+  const history = [report('local', 1, completed('界🙂'.repeat(100)))]
+  const backend = providers().reported
+  const full = await backend.compute(input(history))
+  const bytes = Buffer.byteLength(full.text, 'utf8')
+  expect((await backend.compute(input(history, bytes))).text).toBe(full.text)
+  const short = await backend.compute(input(history, bytes - 1))
+  expect(completions(short)).toEqual([])
+  expect(short.omittedSources.map(item => item.reason)).toEqual(['budget'])
+  expect(Buffer.byteLength(short.text, 'utf8')).toBeLessThanOrEqual(bytes - 1)
+  const oversized = await backend.compute(input([report('local', 1, completed('界'.repeat(4000)))], 4000))
+  expect(completions(oversized)).toEqual([])
+  expect(oversized.text).not.toContain('界')
+})
+
+it.each(['custom', 'uri', 'duplicate'] as const)('retains original completed-file reports with %s attribution', async (change) => {
+  const current = report('peer', 1, completed('COMPLETE'))
+  const history = change === 'custom' ? [{ ...current, text: `Important additional claim\n${current.text}` }]
+    : change === 'uri' ? [{ ...current, uri: 'artifact:explicit' }] : [current, { ...current, id: 'duplicate' }]
+  const result = await providers().reported.compute(input(history))
+  expect(completions(result)).toEqual([])
+  expect(ids(result)).toEqual(history.map(item => item.id))
+  if (change === 'custom') expect(result.text).toContain('Important additional claim')
+})
+
+it.each(['peer', 'local'] as const)('withdraws %s completion text and keeps only the exact terminal notice', async (mode) => {
+  const publication = report(mode, 1, completed('REMOVE_FULL_COMPLETION'))
+  const terminal: DevelopmentTaskContextPublication = publication.peerContribution !== undefined
+    ? { id: 'ended', text: 'Grant ended', publishedAt: 2, peerContribution: { ...publication.peerContribution, ended: 'left' } }
+    : { id: 'ended', text: 'Grant ended', publishedAt: 2, publishedBy: local.participantId,
+      localContribution: { version: 1, grant: publication.localContribution?.grant ?? local, ended: 'left' } }
+  const result = await providers().reported.compute(input([publication, terminal]))
+  expect(completions(result)).toEqual([])
+  expect(ids(result)).toEqual(['ended'])
+  expect(result.text).not.toContain('REMOVE_FULL_COMPLETION')
+  expect(result.omittedSources.map(item => item.reason)).toEqual(['withdrawn'])
+})
+
+it('omits only the exact recipient completed-file capture while preserving another Session on that peer', async () => {
+  const own = report('peer', 1, completed('OWN_COMPLETION'))
+  if (own.peerContribution === undefined) throw new Error('Missing peer provenance')
+  const other = report('peer', 1, completed('OTHER_SESSION_COMPLETION'), 'second')
+  const value = input([own, other])
+  const result = await providers().reported.compute({ ...value,
+    recipient: { ...value.recipient, peerCapture: own.peerContribution.grant } })
+  expect(completions(result).map(item => item.content)).toEqual(['OTHER_SESSION_COMPLETION'])
+  expect(result.omittedSources.map(item => item.reason)).toEqual(['self-published'])
 })

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
-  localContributionGrantSchema, localContributionSampleSchema,
+  localContributionGrantSchema, localContributionSampleSchema, localContributionRequestSchema,
   localContributionAdmissionReceiptSchema, localContributionId, localContributionPayloadDigest, localContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
 import type {
@@ -105,6 +105,7 @@ const recordSchema: z.ZodType<LocalSourceRecord> = z.object({
         || item.callSeq >= item.resultSeq || item.sample.sourceId !== nativeDigest([id, item.sample.sequence])
         || item.sample.sequence > capture.sequence || seen.has(item.sample.sequence)
         || !capture.grant.source.tools.includes(item.sample.result.tool)) throw new Error('local sample has different execution coordinates')
+      localContributionRequestSchema.parse({ grant: capture.grant, ...item.sample })
       seen.add(item.sample.sequence)
       if (item.receipt !== undefined) validateLocalReceipt(capture.grant, item.receipt, item.sample)
     }

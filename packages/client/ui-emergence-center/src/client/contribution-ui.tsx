@@ -70,7 +70,8 @@ export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceC
     <dt>{t('contribution.sourceName')}</dt><dd>{source.name}</dd>
     {source.kind === 'tool-observations' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('contribution.toolObservations')}</dd>
       <dt>{t('contribution.tools')}</dt><dd>{source.tools.join(', ')}</dd>
-      {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}</>
+      {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}
+      {source.version === 3 && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
       : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
   </>
 }

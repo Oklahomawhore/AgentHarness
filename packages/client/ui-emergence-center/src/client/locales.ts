@@ -26,6 +26,12 @@ export const zh = {
 
   'contribution.initialization': '既有记录分享',
   'contribution.recordedTools': '允许分享加入前已记录的工具操作，以及后续获准的新操作。',
+  'native.fileContent.consent': '分享修改后的完整文件内容',
+  'native.fileContent.hint': '包含文件未修改的部分。仅分享本会话在获准目录执行原生工具操作时产生的完成文本，不扫描目录或另行读取文件；它不保证发送时仍是磁盘上的当前内容。',
+  'native.fileContent.historyExclusive': '完整文件内容与已有工具记录初始化不能同时选择；已有记录不会因此取得新的内容许可。',
+  'native.fileContent.scope': '文件内容范围',
+  'native.fileContent.complete': '本次操作完成后的完整文件内容（包含未修改部分）',
+  'native.fileContent.arguments': '原始工具参数及完成状态',
   'native.initialization.consent': '同时分享本次范围内已记录的工具操作',
   'native.initialization.hint': '批准后一次性选取当前本地采集已保存的完成记录。复用上述目录、工具和额度，历史与后续新操作共用样本上限；不会读取或扫描现有文件。',
   'native.initialization.available': '本地已记录 {count} 条，其中 {unconfirmed} 条尚未获本地目标确认。实际选取范围在批准时确定。',
@@ -628,6 +634,14 @@ export const en = {
 
   'contribution.initialization': 'Recorded work sharing',
   'contribution.recordedTools': 'Allows tool observations recorded before joining, as well as subsequent permitted work.',
+  'native.fileContent.consent': 'Share complete file contents after changes',
+  'native.fileContent.hint': 'Includes unchanged parts. Shares completion text from this session’s permitted native file operations ' +
+    'without scanning directories or reading files again; it does not prove current disk contents when sent.',
+  'native.fileContent.historyExclusive': 'Complete file contents and recorded-tool initialization cannot be selected together. ' +
+    'Existing records receive no new content permission.',
+  'native.fileContent.scope': 'File content scope',
+  'native.fileContent.complete': 'Complete contents produced by this operation, including unchanged parts',
+  'native.fileContent.arguments': 'Original tool arguments and completion status',
   'native.initialization.consent': 'Also share recorded tool work within this permission',
   'native.initialization.hint': 'After approval, select completed observations saved by the current local capture once. These directories, tools, and limits apply; recorded and subsequent work share the sample allowance. Existing files are not read or scanned.',
   'native.initialization.available': 'Local capture has {count} records, including {unconfirmed} not yet acknowledged by the local goal. The approved selection is determined after approval.',

@@ -3561,6 +3561,26 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeJoint",
       "source": "packages/collaboration/claude-scope/src/joint-state.ts"
+    },
+    {
+      "doc": "docs/subsystems/filesystem.md",
+      "symbol": "ToolFsCompletion",
+      "source": "packages/fs/tool-fs/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedFileToolObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedFileToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskLocalToolObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
     }
   ]
 }

@@ -4664,6 +4664,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'tool-fs/mutation-completed',
+    mode: 'emit',
+    signature: '\'tool-fs/mutation-completed\'(completion: ToolFsCompletion): void',
+    summary: 'Observe the same provider\'s successful result before tool settlement; later failure or cancellation remains possible.',
+    description: 'Observe the same provider\'s successful result before tool settlement; later failure or cancellation remains possible. Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.',
+    parameters: [{ name: 'completion', description: 'Original mutation identity and produced text, without a second filesystem read.' }],
+  },
+  {
     name: 'tool-fs/mutation-start',
     mode: 'emit',
     signature: '\'tool-fs/mutation-start\'(mutation: ToolFsMutation): void',
@@ -5624,6 +5632,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskClearRequest {\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly expectedBindingEpoch?: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n}',
   },
   {
+    name: 'DevelopmentTaskCompletedFileToolObservationResult',
+    declaration: 'export type DevelopmentTaskCompletedFileToolObservationResult = (Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Write\';\n}>, \'version\'> | Omit<Extract<DevelopmentTaskToolObservationResult, {\n    readonly tool: \'Edit\';\n}>, \'version\'>) & {\n    readonly version: 3;\n    readonly completedFile: {\n        readonly state: \'included\';\n        readonly content: string;\n        readonly sha256: string;\n    } | {\n        readonly state: \'omitted\';\n        readonly reason: \'tool-failed\' | \'budget\' | \'unavailable\';\n    };\n};',
+  },
+  {
+    name: 'DevelopmentTaskCompletedFileToolObservationSource',
+    declaration: 'export type DevelopmentTaskCompletedFileToolObservationSource = Omit<DevelopmentTaskToolObservationSource, \'version\' | \'fileContent\'> & {\n    readonly version: 3;\n    readonly fileContent: \'completed-native-file\';\n};',
+  },
+  {
     name: 'DevelopmentTaskContextActivation',
     declaration: 'export type DevelopmentTaskContextActivation = {\n    readonly kind: \'exact\';\n} | {\n    readonly kind: \'recipient-evidence\';\n    readonly version: 1;\n    readonly digest: DevelopmentTaskContextEvidenceId;\n    readonly coverage: \'complete\' | \'blocked-current\';\n};',
   },
@@ -5685,7 +5701,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContributionSource',
-    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource;',
+    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource;',
   },
   {
     name: 'DevelopmentTaskCreateRequest',
@@ -5757,7 +5773,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalContributionGrant',
-    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
+    declaration: 'export interface DevelopmentTaskLocalContributionGrant {\n    readonly version: 1;\n    readonly taskId: DevelopmentTaskId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly expectedBindingEpoch: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n    readonly captureId: DevelopmentTaskCaptureId;\n    readonly captureGeneration: DevelopmentTaskCaptureGeneration;\n    readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource;\n    readonly expiresAt: number;\n    readonly maxSamples: number;\n    readonly maxSampleBytes: number;\n}',
   },
   {
     name: 'DevelopmentTaskLocalContributionId',
@@ -5773,7 +5789,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalContributionRequest',
-    declaration: 'export interface DevelopmentTaskLocalContributionRequest {\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: DevelopmentTaskToolObservationResult;\n}',
+    declaration: 'export interface DevelopmentTaskLocalContributionRequest {\n    readonly grant: DevelopmentTaskLocalContributionGrant;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n    readonly result: DevelopmentTaskLocalToolObservationResult;\n}',
   },
   {
     name: 'DevelopmentTaskLocalContributionResult',
@@ -5781,7 +5797,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskLocalToolObservation',
-    declaration: 'export type DevelopmentTaskLocalToolObservation = DevelopmentTaskToolObservationResult & {\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n};',
+    declaration: 'export type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly sequence: number;\n};',
+  },
+  {
+    name: 'DevelopmentTaskLocalToolObservationResult',
+    declaration: 'export type DevelopmentTaskLocalToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskCompletedFileToolObservationResult;',
   },
   {
     name: 'DevelopmentTaskLogChange',
@@ -5893,7 +5913,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskPeerToolObservationResult',
-    declaration: 'export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskToolObservationResult | DevelopmentTaskRecordedToolObservationResult;',
+    declaration: 'export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskLocalToolObservationResult | DevelopmentTaskRecordedToolObservationResult;',
   },
   {
     name: 'DevelopmentTaskPublishContextRequest',
@@ -5921,7 +5941,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskToolObservationSource',
-    declaration: 'export interface DevelopmentTaskToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly version?: never;\n    readonly initialization?: never;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n}',
+    declaration: 'export interface DevelopmentTaskToolObservationSource {\n    readonly kind: \'tool-observations\';\n    readonly version?: never;\n    readonly initialization?: never;\n    readonly fileContent?: never;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n}',
   },
   {
     name: 'DevWorkbenchEntryId',
@@ -7057,7 +7077,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentContributionRequest',
-    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n    readonly initialization?: ScopeAgentContributionInitializationRequest;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly localTask?: ScopeAgentLocalTaskTarget;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
+    declaration: 'export interface ScopeAgentContributionRequest {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly entry: ScopeContributionEntry;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n    readonly initialization?: ScopeAgentContributionInitializationRequest;\n    readonly receive?: {\n        readonly expectedReadStateSeq: SessionSeqCursor;\n        readonly localTask?: ScopeAgentLocalTaskTarget;\n        readonly automatic?: ScopeAgentAutomaticPolicy;\n    };\n}',
   },
   {
     name: 'ScopeAgentContributionSelection',
@@ -7109,7 +7129,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeAgentLocalContributionRequest',
-    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly limits: ScopeContributionLimits;\n}',
+    declaration: 'export interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {\n    readonly agentId: SessionId;\n    readonly expectedCapture: ScopeAgentContributionSelection | null;\n    readonly roots: string[];\n    readonly tools: (\'write\' | \'edit\')[];\n    readonly fileContent?: \'completed-native-file\';\n    readonly limits: ScopeContributionLimits;\n}',
   },
   {
     name: 'ScopeAgentLocalContributionStatus',
@@ -8490,6 +8510,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ToolFailure',
     declaration: 'export interface ToolFailure {\n    message: string;\n    info?: ToolErrorInfo;\n}',
+  },
+  {
+    name: 'ToolFsCompletion',
+    declaration: 'export interface ToolFsCompletion {\n    readonly mutation: ToolFsMutation;\n    readonly content: string;\n}',
   },
   {
     name: 'ToolFsMutation',

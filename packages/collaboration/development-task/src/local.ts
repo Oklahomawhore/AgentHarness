@@ -27,7 +27,8 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
   return Object.freeze({ version: grant.version, taskId: grant.taskId, participantId: grant.participantId, bindingId: grant.bindingId,
     expectedBindingEpoch: Object.freeze({ nodeId: grant.expectedBindingEpoch.nodeId, seq: grant.expectedBindingEpoch.seq }),
     captureId: grant.captureId, captureGeneration: grant.captureGeneration,
-    source: Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]) }),
+    source: Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
+      ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent } : {}) }),
     expiresAt: grant.expiresAt, maxSamples: grant.maxSamples, maxSampleBytes: grant.maxSampleBytes })
 }
 
@@ -42,7 +43,9 @@ export function localContributionPayloadDigest(request: DevelopmentTaskLocalCont
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence,
     result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
     ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
-    result.fields.error ?? null, result.omissions])
+    result.fields.error ?? null, result.omissions,
+    ...result.version === 3 ? [grant.source.version, grant.source.fileContent, result.completedFile.state,
+      ...result.completedFile.state === 'included' ? [result.completedFile.content, result.completedFile.sha256] : [result.completedFile.reason]] : []])
 }
 
 /**
@@ -60,8 +63,9 @@ export function localContributionPublicationId(request: DevelopmentTaskLocalCont
  * @returns deeply frozen report with canonical property order.
  */
 export function freezeLocalToolObservation(tool: DevelopmentTaskLocalToolObservation): DevelopmentTaskLocalToolObservation {
-  const common = { kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus,
-    omissions: Object.freeze([...tool.omissions]) }
+  const common = { kind: tool.kind,
+    ...(tool.version === 3 ? { version: 3 as const, completedFile: Object.freeze({ ...tool.completedFile }) } : { version: 1 as const }),
+    reportedStatus: tool.reportedStatus, omissions: Object.freeze([...tool.omissions]) }
   const location = { rootIndex: tool.fields.rootIndex, path: tool.fields.path }
   const error = tool.fields.error === undefined ? {} : { error: tool.fields.error }
   const source = { sourceId: tool.sourceId, sequence: tool.sequence }
@@ -97,7 +101,8 @@ export function localPublicationRequest(publication: DevelopmentTaskContextPubli
   const tool = publication.localToolObservation
   if (grant === undefined || tool === undefined) throw new Error('local sample publication is required')
   return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-    kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+    kind: tool.kind, ...(tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
+    reportedStatus: tool.reportedStatus, omissions: tool.omissions,
     ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
   } }
 }

@@ -42,6 +42,8 @@
     - definition: {{ownerPeerId}}
     - term: 允许采集的目录
     - definition: {{cwd}}/local-joint-source/project
+    - term: 文件内容范围
+    - definition: 原始工具参数及完成状态
     - term: 允许分享的文件操作
     - definition: 写入文件（write）
     - term: 授权到期时间

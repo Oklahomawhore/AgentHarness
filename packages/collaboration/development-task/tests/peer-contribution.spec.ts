@@ -9,9 +9,9 @@ import type { Config, DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerC
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId,
   DevelopmentTaskCaptureGeneration, DevelopmentTaskObservedSourceId } from '../src/index.ts'
 import { developmentTaskContextBlockSchema, developmentTaskEventSchema, peerContributionAdmissionReceiptSchema,
-  peerContributionStateSchema, toolObservationResultSchema,
+  peerContributionStateSchema, toolObservationResultSchema, completedFileToolObservationResultSchema,
   recordedToolObservationResultSchema, legacyPeerContributionSampleSchema, recordedPeerContributionSampleSchema, localContributionSampleSchema } from '../src/schema.ts'
-import { peerPublicationRequest } from '../src/peer.ts'
+import { peerPublication, peerPublicationRequest } from '../src/peer.ts'
 
 const contexts: Context[] = []
 const owner = 'owner-peer' as ScopePeerId
@@ -603,4 +603,71 @@ it.each(['history', 'tool'] as const)('rejects serialized inherited recorded rep
     rejected.tasks.restoreContextBlocks([developmentTaskContextBlockSchema.parse(JSON.parse(serialized))])
   }).toThrow()
   expect(rejected.tasks.blocks()).toEqual([])
+})
+
+
+it('requires exact peer completed-file permission and preserves the complete payload in receipts and restored publications', async () => {
+  const complete = { kind: 'tool-observations' as const, version: 3 as const, name: 'session-work',
+    tools: ['Edit'] as const, fileContent: 'completed-native-file' as const }
+  const result = completedFileToolObservationResultSchema.parse({ kind: 'tool-observation', version: 3, tool: 'Edit',
+    reportedStatus: 'success', omissions: [],
+    fields: { rootIndex: 0, path: 'src/old.ts', oldString: 'one', newString: 'two', replaceAll: false },
+    completedFile: { state: 'included', content: 'UNSHARED_BEFORE_CONSENT two',
+      sha256: createHash('sha256').update('UNSHARED_BEFORE_CONSENT two').digest('hex') } })
+  for (const permission of [
+    { kind: 'tool-observations' as const, name: 'session-work', tools: ['Edit'] as const },
+    { kind: 'tool-observations' as const, version: 2 as const, name: 'session-work', tools: ['Edit'] as const,
+      initialization: 'recorded-local-tools' as const },
+  ]) {
+    const f = await scenario({}, { source: permission })
+    await f.tasks.openPeerContribution(f.grant)
+    await expect(f.tasks.admitPeerContribution({ ...toolSample(f.grant), result }, source)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(f.tasks.get({ taskId: f.task.id }).context).toEqual([])
+  }
+  const f = await scenario({}, { source: complete })
+  await f.tasks.openPeerContribution(f.grant)
+  const request = { ...toolSample(f.grant), result }
+  const accepted = await f.tasks.admitPeerContribution(request, source)
+  expect(peerPublicationRequest(accepted.publication)).toEqual(request)
+  const observation = accepted.publication.peerToolObservation
+  if (observation?.version !== 3) throw new Error('Missing completed-file observation')
+  expect(Object.isFrozen(observation.completedFile)).toBe(true)
+  const restored = await setup()
+  restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(f.tasks.log()))))
+  expect((await restored.tasks.admitPeerContribution(request, source)).receipt).toEqual(accepted.receipt)
+  const changed = { ...request, result: { ...result, completedFile: { state: 'omitted' as const, reason: 'budget' as const } } }
+  expect(peerContributionPayloadDigest(changed)).not.toBe(accepted.receipt.payloadDigest)
+  await expect(restored.tasks.admitPeerContribution(changed, source)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  await restored.tasks.endPeerContribution({ grant: f.grant, reason: 'revoked' }, owner)
+  expect((await restored.tasks.currentContextView(f.task.id)).task.context.at(-1)?.peerContribution?.ended).toBe('revoked')
+})
+
+it('rejects independently typed report and permission versions when constructing peer publications', () => {
+  const live = toolObservationResultSchema.parse({ kind: 'tool-observation', version: 1, tool: 'Edit',
+    reportedStatus: 'success', omissions: [],
+    fields: { rootIndex: 0, path: 'src/old.ts', oldString: 'one', newString: 'two', replaceAll: false } })
+  const recorded = recordedToolObservationResultSchema.parse({ ...live, version: 2,
+    origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } })
+  const completed = completedFileToolObservationResultSchema.parse({ ...live, version: 3,
+    completedFile: { state: 'omitted', reason: 'budget' } })
+  const ordinary = grantFor('task' as DevelopmentTaskId, { source: {
+    kind: 'tool-observations', name: 'session-work', tools: ['Edit'],
+  } })
+  const historical = grantFor(ordinary.taskId, { source: {
+    kind: 'tool-observations', version: 2, initialization: 'recorded-local-tools', name: 'session-work', tools: ['Edit'],
+  } })
+  const complete = grantFor(ordinary.taskId, { source: {
+    kind: 'tool-observations', version: 3, fileContent: 'completed-native-file', name: 'session-work', tools: ['Edit'],
+  } })
+  const mismatches: DevelopmentTaskPeerContributionRequest[] = [
+    { ...toolSample(complete), result: live },
+    { ...toolSample(complete), result: recorded },
+    { ...toolSample(ordinary), result: completed },
+    { ...toolSample(historical), result: completed },
+    { ...toolSample(ordinary), result: recorded },
+    { ...toolSample(grantFor(ordinary.taskId)), result: completed },
+  ]
+  for (const request of mismatches) {
+    expect(() => peerPublication(request, 1)).toThrow('tool report requires its matching live or recorded observation authorization')
+  }
 })
