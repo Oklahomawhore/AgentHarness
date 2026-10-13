@@ -17,7 +17,7 @@ async function fixture(): Promise<{ repo: string; root: string }> {
   for (const folder of ['scripts/scope-evaluation', 'packages/test-support/llm-replay/lib']) {
     await mkdir(join(repo, folder), { recursive: true })
   }
-  for (const name of ['scripts/scope-evaluation/two-device-observer.mjs', 'scripts/scope-evaluation/two-device-prepare.ts',
+  for (const name of ['scripts/scope-evaluation/two-device-observer.mjs', 'scripts/scope-evaluation/two-device-verify-replay.mjs', 'scripts/scope-evaluation/two-device-prepare.ts',
     'packages/test-support/llm-replay/lib/index.js']) await writeFile(join(repo, name), 'controlled test artifact\n')
   return { repo, root }
 }

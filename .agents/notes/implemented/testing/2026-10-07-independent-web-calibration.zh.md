@@ -16,6 +16,8 @@ Status: implemented
 
 [观察插件](../../../../scripts/scope-evaluation/two-device-observer.mjs)在 LLM waterfall 捕获完整普通模型请求，通过 `next` 委派，并核对内存及磁盘严格恢复的事件前缀。完整 messages、tools 和已记录请求配置必须一致。它不添加 Session 事件、不调用 scope 管理 API。每端拥有自己的观察目录和有限证据上限。最终成功要求完整预期请求及已结束回合；中间前缀通过明确不是最终结果。观察插件等待其拥有的文件系统工作并记录收尾预算超限。进程所有者执行独立的硬终止期限，强制终止不能通过。
 
+[离线合验工具](../../../../scripts/scope-evaluation/two-device-verify.ts)比较独立导出的两端材料，不信任它们的成功标记。它从持久事件前缀重建请求，将接收发布与对端已完成的工具及文件关联，并核对记录的加入计划、后续本地投影和退出行为。原始绝对路径标识运行，但不能授权读取给定导出以外的文件。这使证据可以跨机器移动，无需复制私有传输凭据。结果证明内部一致性，不能认证伪造导出，也不能代替浏览器对加入前身份的观察。准入可能晚于所有者的最后一次请求，因此合验器区分推导出的发布标识与捕获的准入证据；浏览器另行等待真实发布，再执行退出后的工作。
+
 [操作说明](../../../../scripts/scope-evaluation/two-device/README.zh.md)明确已构建仓库依赖、隔离的发现目录、browse 选择器覆盖和回环传输限制。本机双进程校准与物理双设备验收属于不同结果。自报主机名或两个私有目录都不能证明物理隔离。
 
 ## Alternatives considered
@@ -23,6 +25,8 @@ Status: implemented
 **复用协调器的远程文件工具。** 这保留了共同的执行所有者，并绕过每人的生产文件权限机制，不能验证独立文件系统工作。
 
 **通过夹具 API 预填 Task 或权限。** 这会跳过正在验收的首次使用路径，可能隐藏加入或工作区步骤的问题。观察插件保持只读，变更使用可见产品操作。
+
+**信任端侧验证标记。** 看似完整的报告可以伴随缺失或被修改的日志。重建实际请求并交叉核对两端可以发现这类分歧，但仍不能认证物理隔离或报告来源。
 
 **把固定回复当作模型采用事实。** 固定回复无需理解上下文也可成功。测试要求真实请求中出现精确的对端证据，并保持真实模型实验次数为零。
 
@@ -32,4 +36,4 @@ Status: implemented
 
 ## Verification
 
-[准备器测试](../../../../scripts/scope-evaluation/two-device-prepare.spec.ts)覆盖独立程序和拒绝覆盖。[观察插件测试](../../../../scripts/scope-evaluation/two-device-observer.spec.ts)运行真实 Agent 循环和 JSONL 持久化，覆盖请求数量失败、字节上限、磁盘篡改、调用方拥有的活跃回合销毁及独立目录。[浏览器用例](../../../../apps/web/tests/two-device-profile.e2e.ts)检查原生文件的双向流转、排除私有历史、工具与 Session 前缀保留、退出后本地工作、响应式 UI 证据以及子进程完整终止。
+[离线检查](../../../../scripts/scope-evaluation/two-device-verify.spec.ts)拒绝不一致的请求、文件执行、权限和有界导出。浏览器用例在子进程正常退出后，将真实成功证据交给同一合验工具。[准备器测试](../../../../scripts/scope-evaluation/two-device-prepare.spec.ts)覆盖独立程序和拒绝覆盖。[观察插件测试](../../../../scripts/scope-evaluation/two-device-observer.spec.ts)运行真实 Agent 循环和 JSONL 持久化，覆盖请求数量失败、字节上限、磁盘篡改、调用方拥有的活跃回合销毁及独立目录。[浏览器用例](../../../../apps/web/tests/two-device-profile.e2e.ts)检查原生文件的双向流转、排除私有历史、工具与 Session 前缀保留、退出后本地工作、响应式 UI 证据以及子进程完整终止。

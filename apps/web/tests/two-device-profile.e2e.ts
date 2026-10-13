@@ -8,6 +8,7 @@ import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { prepareDevice, type DeviceFile, type DevicePreparation, type DeviceStage } from '../../../scripts/scope-evaluation/two-device-prepare.ts'
+import { verifyTwoDeviceEvidence } from '../../../scripts/scope-evaluation/two-device-verify.ts'
 import { connectFreshWorkspaceZh, ZH_BROWSER_LOCALE } from './support.ts'
 import { persisted, readRequests, readVerification, settled, startDevice,
   type ObservedRequest, type PersistedEvent } from './two-device-profile-support.ts'
@@ -348,6 +349,9 @@ it.skipIf(process.platform === 'win32')('calibrates two independent dsh Web proc
     expect(await readVerification(device)).toMatchObject({ final: true, status: 'passed',
       observedRequests: device.expectedRequests, verifiedRequests: device.expectedRequests, failures: [] })
   }
+  const verified = await verifyTwoDeviceEvidence({ aDirectory: a.root, bDirectory: b.root })
+  expect(verified).toMatchObject({ version: 1, status: 'passed', physicalDevicesVerified: false, controlledRequests: 13 })
+  await writeFile(join(directory, 'offline-verification.json'), JSON.stringify(verified, null, 2) + '\n')
   await writeFile(join(directory, 'calibration.json'), JSON.stringify({ version: 1, topology: 'two-processes-one-machine',
     physicalDevicesVerified: false, controlledRequests: aRequests.length + bRequests.length,
     roles: { A: { pid: aProcess.pid, taskId: aTask, sessionId: aRequests[0]?.sessionId },

@@ -55,7 +55,7 @@ export async function prepareDevice(options: { repo: string; root: string; role:
   const modules = resolveNativeModules(repo)
   const observer = join(repo, 'scripts/scope-evaluation/two-device-observer.mjs')
   const replay = join(repo, 'packages/test-support/llm-replay/lib/index.js')
-  const sources = [observer, replay, join(repo, 'scripts/scope-evaluation/two-device-prepare.ts')]
+  const sources = [observer, join(repo, 'scripts/scope-evaluation/two-device-verify-replay.mjs'), replay, join(repo, 'scripts/scope-evaluation/two-device-prepare.ts')]
   const sourceHashes = Object.fromEntries(await Promise.all(sources.map(async path =>
     [path, createHash('sha256').update(await readFile(path)).digest('hex')] as const)))
   await mkdir(root, { mode: 0o700 })

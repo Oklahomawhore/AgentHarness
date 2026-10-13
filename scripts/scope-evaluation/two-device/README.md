@@ -11,6 +11,7 @@ This reference prepares independent Web endpoints for controlled scope collabora
 - [Prepare and launch](#prepare-and-launch)
 - [Controlled interaction](#controlled-interaction)
 - [Evidence and limits](#evidence-and-limits)
+- [Verify two exported endpoints](#verify-exports)
 - [Local browser check](#local-browser-check)
 - [Dev Note](#dev-note)
 
@@ -32,7 +33,7 @@ cd /tmp/scope-device-a/workspace
 env -i PATH="$PATH" DSH_HOME=/tmp/scope-device-a/home DSH_AGENTS_HOME=/tmp/scope-device-a/agents DSH_BUNDLED_SKILL_DIR=/tmp/scope-device-a/skills node /absolute/checkout/apps/cli/lib/bin.js --profile web --patch /tmp/scope-device-a/device.cordis.yml --host 127.0.0.1 --port 0 --no-open
 ```
 
-The printed launch URL authenticates the local browser; keep it private. Web management and scope transport use separate listeners. The default scope listener is loopback, suitable only for the local calibration. Physical endpoints need an explicitly reachable LAN or VPN scope address at startup through `AGENTHARNESS_SCOPE_LISTEN`; see the [Web bundle's transport configuration](../../../packages/bundle/web-app/README.md). A host restart requires a new evidence directory and a new calibration; an existing observer directory is never overwritten.
+The printed launch URL authenticates the local browser; keep it private. Web management and scope transport use separate listeners. The default scope listener is loopback, suitable only for the local calibration. Physical endpoints need an explicitly reachable LAN or VPN scope address at startup through `AGENTHARNESS_SCOPE_LISTEN`, supplied explicitly inside the `env -i` command because it discards inherited variables; see the [Web bundle's transport configuration](../../../packages/bundle/web-app/README.md). A host restart requires a new evidence directory and a new calibration; an existing observer directory is never overwritten.
 
 The overlay disables real model providers, title generation, telemetry and host application setup. It pins the existing browse directory picker for browser automation. The manifest's three environment values also isolate skill discovery inside the standard preset. File access still uses the production sandbox and ordinary permission stack. The observer adds synchronous evidence persistence overhead; timings are not uninstrumented network latency.
 
@@ -56,6 +57,21 @@ Intermediate `passed` means the observed settled prefix reconstructs; only `fina
 
 The local browser result retains actual Session files, private generated programs, screenshots, process exits and `calibration.json` when `DSH_TWO_DEVICE_ARTIFACTS` is set. Authentication URLs and local descriptor credentials must not be shared with result artifacts. Device manifests and two different peer IDs alone do not establish two physical machines. Actual second-device identity, network reachability and end-to-end execution remain separate acceptance evidence. This controlled route makes zero paid model calls and cannot measure collaboration benefit, semantic summary quality or cost savings.
 
+<a id="verify-exports"></a>
+## Verify two exported endpoints
+
+The [browser process helper](../../../apps/web/tests/two-device-profile-support.ts) records `process-exit.json` after observing each child's actual exit. The manual launch command above does not create this record. Its exports remain incomplete for this verifier unless a process supervisor also records the actual exit; do not fill in a successful exit by hand. The local browser check supplies the complete supported export path.
+
+After both endpoints stop, export each role to a separate directory containing only `device.json`, `process-exit.json`, `evidence/requests.jsonl`, `evidence/verification.json`, the `sessions` tree and the manifest-listed business files under `workspace`. Keep the original relative paths. Do not copy the private home, transport credentials, generated response program or launch logs. The verifier reads these explicit export roots; recorded absolute paths identify the original run and are not file-read permissions.
+
+```sh
+pnpm exec tsx scripts/scope-evaluation/two-device-verify.ts --a /tmp/scope-export-a --b /tmp/scope-export-b
+```
+
+The offline command prints a JSON report and fails on incomplete or inconsistent evidence. It independently restores both Session logs, reconstructs every recorded request, and compares received publications with the peer's completed file tools and exported file bytes. It also checks private-history exclusion, joined and ended permissions, retained local identity and tools, and post-leave work. Neither an observer's `passed` field nor `calibration.json` supplies that proof. The verifier reads finite, stationary exports, rejects symbolic links and escaping paths, and does not launch an application or call a model.
+
+The report establishes consistency of the supplied records, not their origin. A later owner publication may be admitted after the last captured request: `derivedOwnerAfterPublicationId` remains a derived identity, and `ownerAfterAdmissionVerified` is false unless an exact captured projection proves admission. The browser separately waits for that publication in the owner UI. Independent endpoint clocks cannot establish the order of work across devices; the browser case separately waits for A's publication before continuing B after leave. A clean exit record cannot prove that a process is currently absent; the caller that launched it owns that observation. The recorded join plan and subsequent local projections establish the retained Task identity; the browser case separately observes that identity before joining. The report sets `localBaseline: "join-plan"`, `preJoinUiAssignmentVerified: false`, and `crossDeviceAfterLeaveOrderVerified: false`. `physicalDevicesVerified` also remains `false`, including when two exports have different paths or peer identities.
+
 <a id="local-browser-check"></a>
 ## Local browser check
 
@@ -65,7 +81,7 @@ After building the checkout and installing Playwright's Chromium, run the focuse
 pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/two-device-profile.e2e.ts
 ```
 
-The [preparation checks](../two-device-prepare.spec.ts) cover private per-role programs and refusal to overwrite. The [observer checks](../two-device-observer.spec.ts) cover request reconstruction, incomplete and extra requests, byte limits, durable divergence, independent roots and disposal while a caller-owned turn remains active. The [decision record](../../../.agents/notes/implemented/testing/2026-10-07-independent-web-calibration.md) explains why this evidence stays separate from physical-device and model studies.
+The [offline verifier checks](../two-device-verify.spec.ts) reject altered requests, execution evidence and exports. The browser case runs the same verifier after both child processes exit. The [preparation checks](../two-device-prepare.spec.ts) cover private per-role programs and refusal to overwrite. The [observer checks](../two-device-observer.spec.ts) cover request reconstruction, incomplete and extra requests, byte limits, durable divergence, independent roots and disposal while a caller-owned turn remains active. The [decision record](../../../.agents/notes/implemented/testing/2026-10-07-independent-web-calibration.md) explains why this evidence stays separate from physical-device and model studies.
 
 <a id="dev-note"></a>
 ## Dev Note

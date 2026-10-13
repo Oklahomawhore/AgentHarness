@@ -11,6 +11,7 @@
 - [准备与启动](#prepare-and-launch)
 - [受控交互](#controlled-interaction)
 - [证据与限制](#evidence-and-limits)
+- [合验两端导出](#verify-exports)
 - [本机浏览器检查](#local-browser-check)
 - [开发说明](#dev-note)
 
@@ -32,7 +33,7 @@ cd /tmp/scope-device-a/workspace
 env -i PATH="$PATH" DSH_HOME=/tmp/scope-device-a/home DSH_AGENTS_HOME=/tmp/scope-device-a/agents DSH_BUNDLED_SKILL_DIR=/tmp/scope-device-a/skills node /absolute/checkout/apps/cli/lib/bin.js --profile web --patch /tmp/scope-device-a/device.cordis.yml --host 127.0.0.1 --port 0 --no-open
 ```
 
-打印的启动 URL 用于本地浏览器认证，应保持私密。Web 管理与 scope 传输使用不同监听。scope 默认监听回环地址，仅适用于本机校准。物理端需在启动时通过 `AGENTHARNESS_SCOPE_LISTEN` 提供明确可达的 LAN 或 VPN scope 地址；见 [Web bundle 的传输配置](../../../packages/bundle/web-app/README.zh.md)。Host 重启需使用新证据目录并重新校准；观察插件不会覆盖已有目录。
+打印的启动 URL 用于本地浏览器认证，应保持私密。Web 管理与 scope 传输使用不同监听。scope 默认监听回环地址，仅适用于本机校准。物理端需在启动时通过 `AGENTHARNESS_SCOPE_LISTEN` 提供明确可达的 LAN 或 VPN scope 地址，并将其显式写入 `env -i` 命令，因为该命令会丢弃继承的变量；见 [Web bundle 的传输配置](../../../packages/bundle/web-app/README.zh.md)。Host 重启需使用新证据目录并重新校准；观察插件不会覆盖已有目录。
 
 覆盖配置禁用真实模型提供方、标题生成、遥测和宿主应用设置，并为浏览器自动化固定使用已有的 browse 目录选择器。清单中的三个环境变量也隔离 standard 预设内部的技能发现。文件访问仍使用生产沙箱和普通权限机制。观察插件增加同步证据持久化开销；其耗时不是未插桩的网络延迟。
 
@@ -56,6 +57,21 @@ A 创建一个联合加入入口。B 验证入口，允许自身 `workspace/proj
 
 设置 `DSH_TWO_DEVICE_ARTIFACTS` 时，本机浏览器结果保留真实 Session 文件、私有生成程序、截图、进程退出和 `calibration.json`。认证 URL 和本地描述文件中的凭据不得随结果材料分享。仅凭设备清单和两个不同 peer ID 不能证明两台物理机器。第二设备身份、网络可达性和端到端执行仍需单独验收。此受控路径不产生付费模型调用，不能衡量协作收益、语义摘要质量或成本节省。
 
+<a id="verify-exports"></a>
+## 合验两端导出
+
+[浏览器进程辅助程序](../../../apps/web/tests/two-device-profile-support.ts)观察每个子进程的实际退出后，记录 `process-exit.json`。上面的手工启动命令不会生成该记录；除非进程监督程序同时记录实际退出，否则其导出对本合验工具仍不完整。不要手填成功退出记录。本机浏览器检查提供完整受支持的导出路径。
+
+两端停止后，分别导出到独立目录，仅包含 `device.json`、`process-exit.json`、`evidence/requests.jsonl`、`evidence/verification.json`、`sessions` 树，以及 `workspace` 下清单列出的业务文件。保留原相对路径，不复制私有 home、传输凭据、生成的响应程序或启动日志。合验工具只读取显式指定的导出目录；记录中的绝对路径用于标识原运行，不构成文件读取许可。
+
+```sh
+pnpm exec tsx scripts/scope-evaluation/two-device-verify.ts --a /tmp/scope-export-a --b /tmp/scope-export-b
+```
+
+此离线命令输出 JSON 报告，证据不完整或不一致时失败。它独立恢复两端 Session 日志，重建每条记录请求，将接收发布与对端已完成的文件工具及导出文件字节核对。它还检查私有历史排除、加入与退出权限、本地身份及工具保留，以及退出后的工作。观察程序的 `passed` 字段和 `calibration.json` 均不提供这些证明。合验工具读取有限且静止的导出，拒绝符号链接和越界路径，不启动应用、不调用模型。
+
+报告证明所提供记录相互一致，不认证其来源。所有者的后续发布可能在最后一次捕获请求之后才获准入：`derivedOwnerAfterPublicationId` 仍是推导标识，只有捕获投影提供精确准入证据时，`ownerAfterAdmissionVerified` 才为 true。浏览器另行等待所有者界面出现该发布。独立端的时钟不能证明跨设备工作的先后；浏览器用例另行等待 A 发布完成，再让退出后的 B 继续。正常退出记录不能证明进程当前不存在；该观察由启动进程的调用方负责。记录的加入计划及后续本地投影证明保留的 Task 身份，浏览器用例另行观察加入前的身份。报告设置 `localBaseline: "join-plan"`、`preJoinUiAssignmentVerified: false` 和 `crossDeviceAfterLeaveOrderVerified: false`。即使两份导出路径或 peer 身份不同，`physicalDevicesVerified` 也保持为 `false`。
+
 <a id="local-browser-check"></a>
 ## 本机浏览器检查
 
@@ -65,7 +81,7 @@ A 创建一个联合加入入口。B 验证入口，允许自身 `workspace/proj
 pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/two-device-profile.e2e.ts
 ```
 
-[准备器检查](../two-device-prepare.spec.ts)覆盖各角色私有程序与拒绝覆盖。[观察插件检查](../two-device-observer.spec.ts)覆盖请求重建、少跑和超额请求、字节上限、持久化分歧、独立目录，以及调用方回合仍活跃时的销毁。[决策记录](../../../.agents/notes/implemented/testing/2026-10-07-independent-web-calibration.zh.md)说明此证据为何与物理设备和模型实验分开。
+[离线合验检查](../two-device-verify.spec.ts)拒绝被修改的请求、执行证据和导出。浏览器用例在两个子进程退出后运行同一合验工具。[准备器检查](../two-device-prepare.spec.ts)覆盖各角色私有程序与拒绝覆盖。[观察插件检查](../two-device-observer.spec.ts)覆盖请求重建、少跑和超额请求、字节上限、持久化分歧、独立目录，以及调用方回合仍活跃时的销毁。[决策记录](../../../.agents/notes/implemented/testing/2026-10-07-independent-web-calibration.zh.md)说明此证据为何与物理设备和模型实验分开。
 
 <a id="dev-note"></a>
 ## 开发说明

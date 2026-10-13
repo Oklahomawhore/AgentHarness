@@ -1,20 +1,17 @@
 /** Read-only, bounded actual-request evidence for independent named Web profiles. */
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdir, open, opendir, rename, unlink } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { isDeepStrictEqual } from 'node:util'
+import { evidenceDigest as digest, canonicalEvidence as canonical, persistedEvidenceHeader as persistedHeader,
+  reconstructEvidenceRequest as reconstruct } from './two-device-verify-replay.mjs'
 
 export const name = 'two-device-observer'
 export const inject = ['llm', 'sessions', 'sessionPersistence', 'agents']
 
-const digest = value => createHash('sha256').update(value).digest('hex')
 const encoded = value => JSON.stringify(value)
 const bytes = value => Buffer.byteLength(value, 'utf8')
-const canonical = value => JSON.stringify(value, (_key, item) => item !== null && typeof item === 'object' && !Array.isArray(item)
-  ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)
-// JSONL explicitly materializes the current header's optional zero delegation depth.
-const persistedHeader = header => ({ ...header, delegationDepth: header.delegationDepth ?? 0 })
 
 function validateConfig(config) {
   for (const key of ['directory', 'sessionRoot']) {
@@ -69,14 +66,6 @@ async function sessionFiles(root, maximum) {
 function requestConfig(options) {
   return Object.fromEntries(['provider', 'model', 'reasoningEffort', 'temperature', 'maxTokens', 'stop']
     .filter(key => options[key] !== undefined).map(key => [key, options[key]]))
-}
-
-function reconstruct(SessionModule, sessionId, header, events, record) {
-  const detached = SessionModule.Session.create(sessionId, events, header)
-  const requestHeader = SessionModule.foldRequestHeader(events)
-  if (!isDeepStrictEqual(detached.deriveMessages(), record.messages)) throw new Error('observer actual messages differ from Session derivation')
-  if (requestHeader === undefined || !isDeepStrictEqual(requestHeader.config, record.config)
-    || !isDeepStrictEqual(requestHeader.tools ?? [], record.tools)) throw new Error('observer actual request header differs from Session')
 }
 
 /** Install the observer using explicit public runtime modules, without changing Session or model input.
