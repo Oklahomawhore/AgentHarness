@@ -316,7 +316,7 @@ export async function launchNativeHost(root: string, role: string,
       ]) }).loose().parse(await post(`/api/${method}`, { type: 'client-request', rpcId, method, payload: { args } }))
       if (!value.result.ok) throw new Error(`${method}: ${value.result.error.code}: ${value.result.error.message}`)
       return value.result.value
-    }, native: (kind: 'status' | 'start' | 'finish' | 'cancel') => post('/evaluation/session', { kind }) }
+    }, native: (kind: 'status' | 'start' | 'continue' | 'finish' | 'cancel') => post('/evaluation/session', { kind }) }
   } }
 }
 

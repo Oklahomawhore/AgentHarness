@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { inspectDataStudy, prepareDataStudy, runDataPhase } from './data-cli.ts'
 
 const owned: string[] = []
@@ -100,6 +101,30 @@ describe.skipIf(process.env['DSH_NATIVE_EVALUATION'] !== '1')('ordinary data reg
       hostsStarted: 0, modelDispatches: 0, liveModelDispatches: 0 })
     for (const changed of [{ ...manifest, protocol: 'single-wave' }, { ...manifest, conditions: ['N', 'E', 'R'] },
       { ...manifest, maximumDispatches: 26 }]) {
+      await writeFile(join(root, 'manifest.json'), JSON.stringify(changed) + '\n')
+      await expect(runDataPhase('execute', root)).rejects.toThrow()
+      expect(await readdir(root)).not.toContain('execute')
+    }
+  })
+
+  it('freezes mixed work separately with 8000 bytes and a cumulative per-Session call ceiling', async () => {
+    const root = await fresh()
+    await expect(prepareDataStudy({ root, seed: 37, execution: 'live', config, protocol: 'mixed' }))
+      .rejects.toThrow('exactly 8000 context bytes')
+    const selected = { ...config, semantic: { ...route, maxCalls: 4 }, limits: { ...config.limits, contextBytes: 8000 } }
+    const manifest = await prepareDataStudy({ root, seed: 37, execution: 'live', config: selected, protocol: 'mixed' })
+    expect(manifest).toMatchObject({ id: 'payment-mixed-work-v1', protocol: 'mixed',
+      conditions: ['N', 'reported', 'semantic'], maximumDispatches: 28 })
+    const inspected = await inspectDataStudy(root)
+    expect(inspected.study.runtime.roles.B.writableFiles).toEqual(['client/payment-policy.json', 'verification.json'])
+    expect(inspected.study.runtime.roles.C.writableFiles).toEqual(['qa/payment-cases.json', 'verification.json'])
+    expect(await runDataPhase('preflight', root)).toMatchObject({ failed: false, credentialRead: false,
+      hostsStarted: 0, modelDispatches: 0, liveModelDispatches: 0, maximumDispatches: 28 })
+    const registration = JSON.parse(await readFile(join(root, 'registration.json'), 'utf8')) as unknown
+    expect(z.object({ budgetScope: z.string() }).parse(registration).budgetScope).toContain('cumulative across initial and mixed')
+    for (const changed of [{ ...manifest, protocol: 'single-wave' }, { ...manifest, id: 'payment-json-work-v1' },
+      { ...manifest, conditions: ['N', 'E', 'R'] }, { ...manifest, maximumDispatches: 30 },
+      { ...manifest, config: { ...selected, limits: { ...selected.limits, contextBytes: 8192 } } }]) {
       await writeFile(join(root, 'manifest.json'), JSON.stringify(changed) + '\n')
       await expect(runDataPhase('execute', root)).rejects.toThrow()
       expect(await readdir(root)).not.toContain('execute')

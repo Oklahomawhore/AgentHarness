@@ -37,16 +37,30 @@ Run from the repository root with installed dependencies and the supported Node 
 pnpm exec vitest run scripts/scope-evaluation/mixed-study.spec.ts packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts --maxWorkers=1
 ```
 
-The [owning calibration](../../../packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts) uses four independent Loader compositions and an in-process transport. Ordinary controlled responses derive artifacts from actual admitted messages and public project data; they receive no condition or grading reference. Source tools, capture, projection, receiving context, file writes and Session persistence remain real. The check retains complete model-message reconstruction, original history and Task identity, complete context framing, source receipts, artifact seals and awaited cleanup.
+The [Loader calibration](../../../packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts) uses four independent Loader compositions and an in-process transport. Ordinary controlled responses derive artifacts from actual admitted messages and public project data; they receive no condition or grading reference. Source tools, capture, projection, receiving context, file writes and Session persistence remain real. The check retains complete model-message reconstruction, original history and Task identity, complete context framing, source receipts, artifact seals and awaited cleanup.
 
 Set `DSH_MIXED_ARTIFACTS` to an existing private output directory to retain one exclusively created JSON result per condition. Existing results are not replaced. Without this setting, temporary evidence is removed after the owned Hosts settle. No credential file or external model is needed.
+
+The [native driver](../native-mixed-run.ts) launches five named `dsh` profiles with independent identities: a scope owner, policy and documentation sources, and two receiving Agents. Source tools and TCP/Noise delivery are real; ordinary and summary requests use the production HTTP provider adapter. Both recipients complete initial local work, then continue in their original Sessions only after all source receipts settle. Leaving retains the original local Task and consumes no model call.
+
+With built public packages available, run its local HTTP calibration:
+
+```sh
+DSH_NATIVE_DATA_EVALUATION=1 pnpm exec vitest run scripts/scope-evaluation/native-mixed-run.spec.ts --maxWorkers=1
+```
+
+Set `DSH_MIXED_NATIVE_EVIDENCE_ROOT` to an existing private directory to retain uniquely allocated results, actual HTTP requests, dispatch ledgers, source receipts, Session bytes, original Task state, sealed artifacts and awaited cleanup. Controlled HTTP replies derive decisions from message contents and public files. Failure controls exercise cumulative call exhaustion, missing usage and cancellation; later conditions stop after runtime or accounting failure. A business grade failure in N or reported does not stop the comparison.
+
+For explicit execution, use the [ordinary study's route configuration and registration phases](../data-study/README.md#register-and-run), adding `--protocol mixed` to `prepare` and setting `limits.contextBytes` to exactly `8000`. The manifest fixes conditions `N`, `reported`, `semantic`. `ordinary.maxCalls` spans both initial and mixed work for one receiving Session per condition; `semantic.maxCalls` covers the semantic owner. The maximum is `6 × ordinary.maxCalls + semantic.maxCalls`, with no automatic retries. Source-controlled requests are counted separately. Preparation and preflight perform zero model calls.
 
 <a id="limits"></a>
 ## Limits
 
+The fixed native workload exceeds the first recipient's allowance even with a short controlled semantic reply. Native calibration records this capacity failure after N and reported; it does not complete semantic artifact grading. The separate Loader calibration uses different identity and local-context overhead.
+
 The controlled summary identifies the registered policy reports deliberately. A passing summary-path artifact does not show that a real model can select those reports, interpret corrections, or produce useful work. The protocol records mechanism, artifact validity and current-evidence availability separately. Its unit checks reject stale policy and command results; the default reported backend retains its actual omissions rather than changing selection for this fixture.
 
-This calibration is not a named-profile live runner, a physical-device test, or a measurement of autonomous response latency. A live comparison still requires an independently authorized model account, fixed cumulative calls, identical work opportunities and inaccessible grading data. The existing live protocols cannot substitute their different inputs or budgets for this comparison.
+Local HTTP calibration does not test physical devices or autonomous response latency. Live execution requires an independently authorized account and model; a configured call ceiling does not grant that authorization or guarantee completion. Existing live protocols cannot substitute their different inputs or budgets for this comparison.
 
 <a id="dev-note"></a>
 ## Dev Note

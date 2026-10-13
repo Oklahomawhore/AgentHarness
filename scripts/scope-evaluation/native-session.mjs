@@ -20,12 +20,26 @@ export async function mountNativeSession(ctx, config, modules) {
   if (config.mode !== 'data-source') await ctx.plugin(modules.Native.default, {
     maxContextBytes: config.contextBytes ?? 10000,
     maxLocalContextBytes: Math.floor((config.contextBytes ?? 10000) / 2), coalesceMs: 50, retryDelayMs: 1000 })
-  if (config.mode === 'data-source') {
+  if (config.mode === 'data-source' || config.mixed) {
     await ctx.plugin(modules.FsLocal.LocalFileSystem, { cwd: config.project })
+  }
+  if (config.mode === 'data-source') {
     await ctx.plugin(modules.FsPolicy)
     await ctx.plugin(modules.ToolFs, {})
+    if (config.mixed) {
+      await ctx.plugin(modules.Subprocess.default)
+      await ctx.plugin(modules.ShellEnv, { dshHome: join(config.project, '.dsh-home') })
+      await ctx.plugin(modules.Bash.LocalBashExecutor, { timeoutMs: config.operationTimeoutMs })
+      await ctx.plugin(modules.ToolBash)
+    }
+  }
+  if (config.mode === 'data-source' || config.mixed) {
     await ctx.plugin(modules.Contribution.default, { maxSessions: 4, maxLeases: 16,
       maxObservationBytes: 16384, contributionPollIntervalMs: 50 })
+  }
+  if (config.mixed && config.mode === 'data-recipient') {
+    await ctx.plugin(modules.Presence, { heartbeatMs: 20000 })
+    await ctx.plugin(modules.TaskContext, { maxContextBytesPerStep: config.contextBytes })
   }
   const lifetime = new AbortController()
   const phaseGate = async (operation, signal) => {
@@ -95,9 +109,12 @@ export async function mountNativeSession(ctx, config, modules) {
     }, { global: true, prepend: true })
   }
   let started = false
+  let continued = false
   const manage = async input => {
     if (input.kind === 'status') return { agentId: agent.id, started, requests: requests.length,
-      ...config.continuity ? { sessionId: config.sessionId, agentStatus: agent.status,
+      ...config.mixed ? { continued, participantId: modules.Presence.developmentAgentParticipantId(agent.id),
+        local: await ctx.get('scopeAgentContributions').localStatus({ agentId: agent.id }) } : {},
+      ...config.continuity || config.mixed ? { sessionId: config.sessionId, agentStatus: agent.status,
         lastTurnEnd: agent.session.snapshotEvents().findLast(event => event.type === 'turn/end') ?? null,
         scopeState: config.mode === 'data-recipient' ? ctx.get('sessionProjections').stateOf(agent.session, 'scopeAgentContext') ?? null : null,
         completed: config.mode === 'data-recipient' ? ctx.get('sessionProjections').stateOf(agent.session, 'scopeAgentEvidence')?.completed ?? null : null } : {} }
@@ -107,6 +124,15 @@ export async function mountNativeSession(ctx, config, modules) {
       started = true
       agent.followup(modules.Llm.createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: config.goal }] }))
       return { started: true }
+    }
+    if (input.kind === 'continue') {
+      if (!config.mixed || config.mode !== 'data-recipient' || !started || continued || agent.status !== 'idle') {
+        throw new Error('mixed continuation is not available')
+      }
+      continued = true
+      agent.followup(modules.Llm.createUserMessage({ source: { kind: 'user' },
+        content: [{ type: 'text', text: config.continueGoal }] }))
+      return { continued: true }
     }
     if (input.kind !== 'finish') throw new Error('unknown native management action')
     if (!started && !config.continuity) throw new Error('session has not started')

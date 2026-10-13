@@ -14,7 +14,11 @@ The separate [mixed-work protocol](../../../../scripts/scope-evaluation/mixed-st
 
 The parent grades independently sealed client policy, QA cases and verification observations. Available-evidence accuracy and current-source availability are separate results: unavailable evidence permits an unavailable declaration but does not count as completed current work. Seeded source fields, initial projects and behavior references share one definition; hidden checks remain outside recipient projects and controlled responses.
 
-Ordinary calibration responses consume actual request messages and public project data without a condition label or oracle. A controlled summary deliberately selects the registered policy reports. Source operations, file artifacts, captured provenance and model-message reconstruction from persisted events use production implementations in independent Loader compositions.
+Ordinary calibration responses consume actual request messages and public project data without a condition label or oracle. A controlled summary deliberately selects the registered policy reports. Source operations, file artifacts, captured provenance and model-message reconstruction from persisted events use production implementations. Loader calibration and five named `dsh` Hosts with TCP/Noise provide separate execution checks.
+
+The named-profile driver owns independent scope, policy-source, documentation-source and two recipient processes. Ordinary HTTP-provider reservations are cumulative across initial and mixed work; leaving requires no model turn. Runtime or accounting failure stops later work, while an unsuccessful artifact grade remains a completed observation. Loopback SSE responses consume only actual HTTP message text and public projects, keeping the parent observer and artifact grader independent. This permits transport and lifecycle calibration without substituting scripted success for live inference.
+
+The native calibration also records failure when a short controlled summary and its required source and authorization records exceed the fixed allowance. Production identities and existing local Task text consume capacity that a smaller Loader fixture does not reproduce. A completed native driver therefore does not imply a completed semantic artifact comparison; widening the budget would change this protocol rather than repair that limitation.
 
 ## Alternatives considered
 

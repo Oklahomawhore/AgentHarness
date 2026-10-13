@@ -37,16 +37,30 @@
 pnpm exec vitest run scripts/scope-evaluation/mixed-study.spec.ts packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts --maxWorkers=1
 ```
 
-[所属校准](../../../packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts)使用四个独立 Loader 组合与进程内传输。普通受控回复只从实际进入请求的消息及公开项目数据生成产物，不接收条件名或评分参考。来源工具、采集、投影、接收上下文、文件写入与 Session 持久化均使用真实实现。检查保留完整模型消息重建、原历史与 Task 身份、完整上下文外框、来源回执、产物封存及等待完成的资源清理。
+[Loader 校准](../../../packages/collaboration/scope-agent-contribution/tests/mixed-artifacts.spec.ts)使用四个独立 Loader 组合与进程内传输。普通受控回复只从实际进入请求的消息及公开项目数据生成产物，不接收条件名或评分参考。来源工具、采集、投影、接收上下文、文件写入与 Session 持久化均使用真实实现。检查保留完整模型消息重建、原历史与 Task 身份、完整上下文外框、来源回执、产物封存及等待完成的资源清理。
 
 将 `DSH_MIXED_ARTIFACTS` 设为已存在的私有输出目录，可为每个条件保留一份排他创建的 JSON 结果。不会替换已有结果。没有该设置时，所属 Host 完成清理后删除临时证据。不需要凭据文件或外部模型。
+
+[原生驱动](../native-mixed-run.ts)启动五个身份独立的命名 `dsh` profile：scope 所有者、策略与文档来源，以及两个接收 Agent。来源工具与 TCP/Noise 投递使用真实实现；普通及摘要请求使用生产 HTTP provider 适配器。两个接收者完成初始本地工作后，只有在全部来源回执完成时才在原 Session 中继续。离开保留原本地 Task，且不消耗模型调用。
+
+公共包构建完成后，可运行本地 HTTP 校准：
+
+```sh
+DSH_NATIVE_DATA_EVALUATION=1 pnpm exec vitest run scripts/scope-evaluation/native-mixed-run.spec.ts --maxWorkers=1
+```
+
+将 `DSH_MIXED_NATIVE_EVIDENCE_ROOT` 设为已存在的私有目录，可保留独立分配的结果、实际 HTTP 请求、调用账本、来源回执、Session 字节、原 Task 状态、封存产物及等待完成的清理。受控 HTTP 回复从消息内容与公开文件产生决策。故障对照检查累计调用耗尽、usage 缺失与取消；运行或记账失败后停止后续条件。N 或 reported 的业务评分失败不会停止对照。
+
+显式执行使用[普通实验的路由配置及注册阶段](../data-study/README.zh.md#register-and-run)，在 `prepare` 中增加 `--protocol mixed`，并将 `limits.contextBytes` 设为精确的 `8000`。清单固定采用 `N`、`reported`、`semantic` 条件。`ordinary.maxCalls` 覆盖每个条件中同一接收 Session 的初始及混合工作；`semantic.maxCalls` 覆盖 semantic 所有者。总上限为 `6 × ordinary.maxCalls + semantic.maxCalls`，不自动重试。受控来源请求另行计数。准备与预检不调用模型。
 
 <a id="limits"></a>
 ## 限制
 
+固定原生工作负载即使使用短受控摘要，仍超过首个接收者的可用额度。原生校准在 N 与 reported 后记录此容量失败，不完成 semantic 产物评分。独立 Loader 校准的身份和本地上下文开销不同。
+
 受控摘要有意识别注册的策略报告。摘要路径的产物通过，不代表真实模型能够选出这些报告、理解纠正或完成有用工作。协议分别记录机制、产物有效性及当前证据可用性。单测拒绝陈旧策略与命令结果；默认 reported 后端保留其实际省略，不为此夹具改变选择。
 
-本校准不是经命名 profile 启动的真实模型执行器、物理设备测试或自主响应延迟测量。真实对照仍需要独立获准的模型账户、固定累计调用、相同工作机会与不可访问的评分数据。不能用既有真实模型协议的不同输入或预算替代此对照。
+本地 HTTP 校准不测试物理设备或自主响应延迟。真实执行需要独立获准的账户与模型；配置调用上限不代表获得授权，也不保证完成。不能用既有真实模型协议的不同输入或预算替代此对照。
 
 <a id="dev-note"></a>
 ## 开发说明

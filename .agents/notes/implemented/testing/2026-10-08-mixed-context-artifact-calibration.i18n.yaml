@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-10-08-mixed-context-artifact-calibration.md
-2026-10-08-mixed-context-artifact-calibration.md: 33fb0825dbf26a046646d6697095cd6d1fc561e6
-2026-10-08-mixed-context-artifact-calibration.zh.md: 1620a8a397e654ce56e113a63ea05680beb75131
+2026-10-08-mixed-context-artifact-calibration.md: 67cfad112148e8cbcfe032f33c04abcb0b46fd41
+2026-10-08-mixed-context-artifact-calibration.zh.md: 45557681f46f849f9cd3f5710762be08e5006442

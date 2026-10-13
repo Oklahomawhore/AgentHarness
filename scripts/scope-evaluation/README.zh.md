@@ -10,7 +10,7 @@
 
 独立的[每端 Web 校准](two-device/README.zh.md)使用各自的正式 Web 进程、普通文件工具及只读真实请求证据。
 
-独立的[混合工作协议](mixed-study/README.zh.md)在相同固定预算下比较实际输入与独立评分产物。
+独立的[混合工作协议](mixed-study/README.zh.md)通过 Loader 校准或五个命名应用 profile，在相同固定预算下比较实际输入与独立评分的产物。
 
 ## 目录
 

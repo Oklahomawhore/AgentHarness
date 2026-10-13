@@ -29,8 +29,8 @@ export async function apply(ctx, config) {
     { responsibility: 'qa', fields: ['operationId', 'requestBodyRequired', 'requiredRequestFields', 'responseStatuses', 'deprecated'] },
   ], unmatchedFields: ['operationId', 'requestBodyRequired', 'requiredRequestFields', 'responseStatuses', 'deprecated'] })
   if (config.data !== undefined) {
-    if (config.data.condition === 'R' && config.data.role === 'O') manage = await mountDataSemantic(ctx, config.data, modules)
-    else await mount('Text')
+    if ((config.data.condition === 'R' || config.data.condition === 'semantic') && config.data.role === 'O') manage = await mountDataSemantic(ctx, config.data, modules)
+    else await mount(config.data.mixed ? 'Reported' : 'Text')
   }
   const peerTimeoutMs = config.data?.peerTimeoutMs ?? 30000
   await mount('Transport', { listenAddresses: ['/ip4/127.0.0.1/tcp/0'], maxRequestBytes: config.data === undefined ? 65536 : 262144, maxResponseBytes: config.data === undefined ? 65536 : 262144,
@@ -60,7 +60,7 @@ export async function apply(ctx, config) {
         }
         const input = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         if (input === null || typeof input !== 'object' || Object.keys(input).length !== 1
-          || !['status', 'start', 'finish', 'cancel'].includes(input.kind)) throw new Error('invalid management action')
+          || !['status', 'start', 'continue', 'finish', 'cancel'].includes(input.kind)) throw new Error('invalid management action')
         const value = await manage.invoke(input)
         response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value))
       })()
