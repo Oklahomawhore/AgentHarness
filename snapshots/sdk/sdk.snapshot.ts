@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-initialization-reservations': {
+    expectedFinalResponse: 'The initialized file is withdrawn; the independent answer remains.',
+  },
   'scope-mixed-source': {
     expectedFinalResponse: 'The completed answer is withdrawn; command reports remain.',
   },

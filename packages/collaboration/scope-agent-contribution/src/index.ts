@@ -853,7 +853,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private retainedSamples(domain: NativeContributionDomain): number {
     return [...domain.table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
       + [...this.local().table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
-      + [...this.sources.remote.runtimes.values()].reduce((sum, runtime) => sum + (runtime.initializationPlan?.samples.length ?? 0), 0)
+      + [...this.sources.remote.runtimes.entries()].reduce((sum, [id, runtime]) => {
+        // A frozen plan remains cached until the committed outbox write resolves.
+        const saved = new Set(domain.table('sessions').get(id)?.samples.map(sample => sample.id))
+        return sum + (runtime.initializationPlan?.samples.filter(sample => !saved.has(sample.id)).length ?? 0)
+      }, 0)
   }
   private completionReservations(id: SessionId, role: CaptureRole): number {
     const samples = role === 'local' ? this.local().table('sessions').get(id)?.samples

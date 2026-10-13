@@ -73,7 +73,8 @@ async function initializeHost(ctx, root, role, overrides) {
     await add('tools', '@deepseek-ai/dsh-tools')
     await add('loop', '@deepseek-ai/dsh-agent-loop')
     if (overrides.fileTools !== false) {
-      await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
+      if (overrides.filesystemProvider === undefined) await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
+      else modules.set('fs', overrides.filesystemProvider)
       await add('fs-policy', '@deepseek-ai/dsh-fs-observation-policy', '*')
       await add('tool-fs', '@deepseek-ai/dsh-tool-fs', '*')
     }
@@ -87,7 +88,7 @@ async function initializeHost(ctx, root, role, overrides) {
       ...overrides.fileTools === false ? [] : [
         { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
       ],
-      { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25 } })
+      { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25, ...overrides.contribution } })
   }
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include

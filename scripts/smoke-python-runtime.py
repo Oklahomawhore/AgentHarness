@@ -742,7 +742,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-initialization-reservations", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "sdk-profile-plugin", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -761,10 +761,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-initialization-reservations", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, fs-search, spawn-node, snapshot, restart, scope-context, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-recipient-budget, sdk-scope-reported-file, sdk-scope-completed-file, sdk-scope-command-outcomes, sdk-scope-turn-outcomes, sdk-scope-mixed-source, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-snapshot", "sdk-restart", "sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-initialization-reservations", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-snapshot, sdk-restart, sdk-scope-context, sdk-task-context-peer-facts, sdk-task-context-semantic, sdk-scope-native-contribution, sdk-scope-owner-participation, sdk-scope-dual-contribution, sdk-scope-local-joint, sdk-scope-group-join, sdk-scope-capture-self-omission, sdk-scope-prejoin-initialization, sdk-scope-recipient-budget, sdk-scope-reported-file, sdk-scope-completed-file, sdk-scope-command-outcomes, sdk-scope-turn-outcomes, sdk-scope-mixed-source, sdk-scope-initialization-reservations, sdk-scope-owner-idle, sdk-scope-joint-automatic, sdk-scope-semantic-idle, sdk-scope-automatic-withdrawal, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -780,7 +780,7 @@ def main() -> None:
         print("smoke-python-runtime: sdk-live passed")
         return
 
-    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
+    if args.scenario in {"sdk-scope-route-recovery", "sdk-scope-context", "sdk-task-context-peer-facts", "sdk-task-context-semantic", "sdk-scope-native-contribution", "sdk-scope-owner-participation", "sdk-scope-dual-contribution", "sdk-scope-local-joint", "sdk-scope-group-join", "sdk-scope-capture-self-omission", "sdk-scope-prejoin-initialization", "sdk-scope-recipient-budget", "sdk-scope-reported-file", "sdk-scope-completed-file", "sdk-scope-command-outcomes", "sdk-scope-turn-outcomes", "sdk-scope-mixed-source", "sdk-scope-initialization-reservations", "sdk-scope-owner-idle", "sdk-scope-joint-automatic", "sdk-scope-semantic-idle", "sdk-scope-automatic-withdrawal"}:
         assert args.exe is not None
         scenario = "scope-context-live" if args.scenario == "sdk-scope-context" else args.scenario.removeprefix("sdk-")
         smoke_sdk_scope_context(args.exe.resolve(), args.update_snapshots, scenario=scenario)
@@ -1111,7 +1111,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
 
     repository = Path(__file__).resolve().parent.parent
     helper = repository / "scripts/fixtures/python-scope-profile.ts"
-    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-completed-file", "scope-command-outcomes", "scope-turn-outcomes", "scope-mixed-source", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
+    if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-completed-file", "scope-command-outcomes", "scope-turn-outcomes", "scope-mixed-source", "scope-initialization-reservations", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-automatic-withdrawal": "scope-automatic-withdrawal-command-outcome-evidence-r2",
@@ -1201,6 +1201,12 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session, first_prompt=first_prompt, last_prompt=last_prompt,
                     coverage_revision=6 if scenario == "scope-owner-idle" else None,
                 )
+            elif scenario == "scope-initialization-reservations":
+                turns = [session.run(prompt) for prompt in (
+                    "Keep my existing review work.",
+                    "Inspect the initialized work and the independent answer.",
+                    "Continue after initialization sharing is revoked.",
+                )]
             elif scenario == "scope-mixed-source":
                 turns = [session.run(prompt) for prompt in (
                     "Compare implementation checks and the customer review.",
@@ -1302,6 +1308,9 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
             sentinel = "permission-sentinel.txt"
             if (root / sentinel).read_bytes() != (expected_workspace / sentinel).read_bytes():
                 raise AssertionError("automatic response changed the read-only workspace file")
+        elif scenario == "scope-initialization-reservations":
+            result = initialization_reservations_snapshot_result(
+                records, turns, json.loads((home / "initialization-reservations-audit.json").read_text()))
         elif scenario == "scope-mixed-source":
             result = mixed_source_snapshot_result(records, turns, json.loads((home / "mixed-source-audit.json").read_text()))
         elif scenario == "scope-turn-outcomes":
@@ -1376,6 +1385,264 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         normalized = normalized_result["session"]
         compare_snapshot_files({"result.json": json.dumps(result, indent=2) + "\n", "session.v3.jsonl": normalized},
                                update_snapshots, expected, ("result.json", "session.v3.jsonl"))
+
+
+def initialization_reservations_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
+    """Derive initialization capacity, source provenance and exact withdrawal from actual durable evidence."""
+    file_text, answer, rejected = "ACTUAL_PERMITTED_HISTORY", "AUTHORIZED_NONCODE_ANSWER", "FOURTH_LEASE_IS_NOT_AUTHORIZED"
+    replies = ["The existing review Session is ready.",
+               "The initialized file and the independent answer are visible.",
+               "The initialized file is withdrawn; the independent answer remains."]
+    if len(turns) != 3 or [turn.final_response for turn in turns] != replies or any(
+            turn.finish_reason != "completed" for turn in turns):
+        raise AssertionError("all three original receiver turns must complete")
+    configurations = [row["config"] for row in audit["sourceConfiguration"] if row["name"] == "contribution"]
+    if len(configurations) != 1 or configurations[0]["maxLeases"] != 3 or audit["maxLeases"] != 3:
+        raise AssertionError("the actual source Loader must enforce exactly three retained leases")
+    rows, sessions = audit["rows"], audit["sourceSessions"]
+    if set(sessions) != {"writer", "reporter"} or len({item["id"] for item in sessions.values()}) != 2:
+        raise AssertionError("the original writer and independent reporter Sessions must remain distinct")
+    retained = {}
+    for phase in ("before", "afterAdmission", "afterLimit", "afterWithdrawal"):
+        state = rows[phase]
+        if set(state) != {"local", "remote"} or any(set(domain) != {"writer", "reporter"} for domain in state.values()):
+            raise AssertionError("retention evidence must cover both source domains and both Sessions")
+        if state["local"]["reporter"] is not None:
+            raise AssertionError("the reporter must use its separate remote answer permission")
+        retained[phase] = sum(len(row["samples"]) for domain in state.values() for row in domain.values() if row is not None)
+        for domain in state.values():
+            for role, row in domain.items():
+                if row is not None and row["agentId"] != sessions[role]["id"]:
+                    raise AssertionError("a retained sample moved to another original source Session")
+    if {phase: retained[phase] for phase in ("before", "afterAdmission", "afterLimit")} != {
+            "before": 1, "afterAdmission": 3, "afterLimit": 3} or retained["afterWithdrawal"] not in (2, 3):
+        raise AssertionError("the committed initialization copy must occupy one lease and leave one for the answer")
+    original = rows["before"]["local"]["writer"]["samples"]
+    initialized = rows["afterAdmission"]["remote"]["writer"]["samples"]
+    answers = rows["afterAdmission"]["remote"]["reporter"]["samples"]
+    if len(original) != 1 or len(initialized) != 1 or len(answers) != 1:
+        raise AssertionError("exactly one original Write, one initialization copy and one completed answer must be retained")
+    local, copied, outcome = original[0], initialized[0], answers[0]
+    withdrawn_row = rows["afterWithdrawal"]["remote"]["writer"]
+    if withdrawn_row is not None and withdrawn_row["samples"] not in ([], initialized):
+        raise AssertionError("source retention after owner withdrawal must not mutate the original initialized sample")
+    if audit["statuses"]["ownerRevocation"]["status"] != "ended" or audit["statuses"]["ownerRevocation"]["reason"] != "revoked":
+        raise AssertionError("the owner must acknowledge actual revocation independently of source polling")
+    if not all(item.get("receipt") for item in (local, copied, outcome)):
+        raise AssertionError("all three retained samples must have actual owner admission receipts")
+    for phase in ("afterAdmission", "afterLimit", "afterWithdrawal"):
+        if rows[phase]["local"]["writer"] != rows["before"]["local"]["writer"]:
+            raise AssertionError("remote initialization and withdrawal must preserve the complete local source row")
+    if rows["afterLimit"]["remote"]["reporter"]["samples"] != answers or rows["afterWithdrawal"]["remote"]["reporter"]["samples"] != answers:
+        raise AssertionError("the capacity rejection and other source withdrawal changed the admitted independent answer")
+    if audit["statuses"]["afterLimit"]["capture"]["collectionIssue"] != "retention-limit":
+        raise AssertionError("the fourth lease must be rejected by shared retention capacity")
+    init_capture = rows["afterAdmission"]["remote"]["writer"]["capture"]
+    answer_capture = rows["afterAdmission"]["remote"]["reporter"]["capture"]
+    grants = {"writer": init_capture["invitation"]["grant"], "reporter": answer_capture["invitation"]["grant"]}
+    if (grants["writer"]["source"] != {"kind": "tool-observations", "version": 2,
+            "name": grants["writer"]["source"]["name"], "tools": ["Write"], "initialization": "recorded-local-tools"}
+            or grants["reporter"]["source"] != {"kind": "completed-turn-outcomes", "version": 5,
+                "name": grants["reporter"]["source"]["name"]}
+            or any(grant["maxSamples"] != 4 for grant in grants.values())
+            or grants["writer"]["taskId"] != grants["reporter"]["taskId"]
+            or grants["writer"]["grantId"] == grants["reporter"]["grantId"]):
+        raise AssertionError("the independent source grants or their per-source allowance changed")
+    public_answer = audit["captures"]["answer"]
+    if public_answer["sourceKind"] != "completed-turn-outcomes" or any(
+            field in public_answer for field in ("roots", "tools", "commands", "fileContent", "initialization")):
+        raise AssertionError("answer sharing acquired unrelated file permissions")
+    def digest(value: object) -> str:
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    writer_events = sessions["writer"]["events"]
+    calls = [event for event in writer_events if event["type"] == "tool/call"]
+    results = [event for event in writer_events if event["type"] == "tool/result"]
+    if len(calls) != 1 or len(results) != 1 or calls[0]["data"]["name"] != "write":
+        raise AssertionError("initialization must reuse one actual Write without re-executing it")
+    call, result = calls[0], results[0]
+    arguments = json.loads(call["data"]["arguments"])
+    if (arguments != {"file_path": "handoff.txt", "content": file_text} or audit["actualFile"] != file_text
+            or result["data"]["message"]["content"][0].get("isError") is True
+            or result["data"]["message"]["content"][0]["toolCallId"] != call["data"]["callId"]
+            or call["seq"] not in result.get("sourceEventSeqs", [])):
+        raise AssertionError("the actual completed Write or its independently read file differs")
+    for item in (local, copied):
+        if (item["callSeq"] != call["seq"] or item["resultSeq"] != result["seq"]
+                or item["callId"] != call["data"]["callId"] or item["rootCallId"] != item["callId"]
+                or item["argumentDigest"] != digest(arguments) or item["completionDigest"] != digest(result["data"])):
+            raise AssertionError("the historical copy lost its original tool coordinates or exact digests")
+    if copied["id"] == local["id"]:
+        raise AssertionError("the independently authorized copy must have its own lease identity")
+    initialization = init_capture["initialization"]
+    request, cutoff, plan = initialization["request"], initialization["cutoff"], initialization["plan"]
+    if (initialization["state"] != "frozen" or initialization["reason"] is not None
+            or initialization["coverage"] != {"recorded": 1, "selected": 1, "omitted": 0, "unconfirmed": 0, "inFlight": 0}
+            or request["localTask"] != audit["sourceAssignment"]
+            or request["expectedLocalCapture"] != audit["captures"]["local"]["selection"]):
+        raise AssertionError("the frozen historical selection must retain the original capture and local Task assignment")
+    proof = {"sourceSampleId": local["id"], "sourceSequence": local["sample"]["sequence"],
+             **{key: local[key] for key in ("callSeq", "resultSeq", "callId", "rootCallId", "argumentDigest", "completionDigest")}}
+    capture = request["expectedLocalCapture"]
+    execution_digest = digest(["recorded-local-tools", capture["captureId"], capture["captureGeneration"],
+        *[proof[key] for key in ("sourceSampleId", "sourceSequence", "callSeq", "resultSeq", "callId", "rootCallId", "argumentDigest", "completionDigest")]])
+    assignment = request["localTask"]
+    plan_digest = digest(["recorded-local-tools-plan", capture["captureId"], capture["captureGeneration"],
+        assignment["taskId"], assignment["bindingId"], assignment["expectedBindingEpoch"]["nodeId"],
+        assignment["expectedBindingEpoch"]["seq"], cutoff["localSequence"], cutoff["sessionSeq"], [execution_digest]])
+    if plan != {"digest": plan_digest, "sources": [proof]} or cutoff["sessionSeq"] < result["seq"] or cutoff["localSequence"] != 1:
+        raise AssertionError("the frozen plan does not match the exact original completed execution")
+    expected_local = {"kind": "tool-observation", "version": 1, "tool": "Write", "reportedStatus": "success",
+                      "fields": {"rootIndex": 0, "path": "handoff.txt", "content": file_text}, "omissions": []}
+    if local["sample"]["result"] != expected_local or copied["sample"]["result"] != {
+            **expected_local, "version": 2, "origin": {"kind": "recorded-local-tools",
+                "planDigest": plan_digest, "executionDigest": execution_digest}}:
+        raise AssertionError("initialization changed the complete original report")
+    reporter_events = sessions["reporter"]["events"]
+    if any(event["type"] == "tool/call" for event in reporter_events):
+        raise AssertionError("the independent answer must not use tool-call evidence")
+    finals = [event["data"]["message"] for event in reporter_events if event["type"] == "assistant/message"]
+    if ["".join(block["text"] for block in message["content"] if block["type"] == "text") for message in finals] != [
+            "PRIVATE_BEFORE_PERMISSION", answer, rejected]:
+        raise AssertionError("the original reporter history must retain private, authorized and capacity-rejected answers")
+    if [event["data"] for event in reporter_events if event["type"] == "turn/end"] != [
+            {"turn": turn, "reason": {"kind": "completed"}} for turn in (1, 2, 3)]:
+        raise AssertionError("capacity limits sharing, not completion of the reporter's own ordinary work")
+    expected_answer = {"kind": "completed-turn-outcome", "version": 5, "text": answer,
+                       "sha256": hashlib.sha256(answer.encode()).hexdigest()}
+    if outcome["sample"]["result"] != expected_answer or "turnProof" not in outcome or any(
+            key in outcome for key in ("callSeq", "resultSeq", "callId", "rootCallId")):
+        raise AssertionError("the admitted complete answer must retain independent turn evidence")
+    turn_proof = outcome["turnProof"]
+    by_seq = {event["seq"]: event for event in reporter_events}
+    if (turn_proof["turn"] != 2 or turn_proof["textDigest"] != expected_answer["sha256"]
+            or not turn_proof["activationSeq"] < turn_proof["startSeq"] < turn_proof["inputSeq"] < turn_proof["assistantSeq"] < turn_proof["endSeq"]
+            or by_seq[turn_proof["inputSeq"]]["data"]["source"]["kind"] != "user"
+            or by_seq[turn_proof["assistantSeq"]]["data"]["message"] != finals[1]
+            or by_seq[turn_proof["endSeq"]]["data"] != {"turn": 2, "reason": {"kind": "completed"}}):
+        raise AssertionError("the answer proof must identify its exact authorized ordinary completed turn")
+    barrier = audit["barrier"]
+    trace = barrier["trace"]
+    events = [entry["event"] for entry in trace]
+    expected_events = {"reporter-stopping", "initialization-commit", "reporter-completed",
+                       "third-lease-before-initialization-send", "answer-send-after-initialization-admission"}
+    if len(events) != len(expected_events) or set(events) != expected_events:
+        raise AssertionError("the recorded public barrier must include each completion, retention and delivery event once")
+    positions = {name: events.index(name) for name in expected_events}
+    if not (positions["reporter-stopping"] < positions["initialization-commit"] < positions["reporter-completed"]
+            and positions["initialization-commit"] < positions["third-lease-before-initialization-send"]
+            < positions["answer-send-after-initialization-admission"]):
+        raise AssertionError("the third lease must precede initialization sending and the answer must wait for initialization admission")
+    commit = trace[positions["initialization-commit"]]
+    if commit != {"event": "initialization-commit", "domain": "scope_agent_contributions",
+                  "key": sessions["writer"]["id"], "operation": "put"}:
+        raise AssertionError("the initialization barrier must observe the writer's actual remote storage commit")
+    frozen = barrier["committedRow"]
+    if (frozen["capture"]["initialization"] != initialization or len(frozen["samples"]) != 1
+            or "receipt" in frozen["samples"][0]
+            or frozen["samples"][0] != {key: value for key, value in copied.items() if key != "receipt"}):
+        raise AssertionError("the public commit must already retain its exact initialization sample before the receipt")
+    before_send = barrier["rowsBeforeInitializationSend"]
+    if (set(before_send) != {"local", "remote"}
+            or any(set(domain) != {"writer", "reporter"} for domain in before_send.values())
+            or before_send["local"] != rows["before"]["local"]
+            or before_send["remote"]["writer"]["samples"] != frozen["samples"]
+            or before_send["remote"]["reporter"]["samples"] != [{key: value for key, value in outcome.items() if key != "receipt"}]
+            or any(before_send["remote"][role]["agentId"] != sessions[role]["id"] for role in sessions)
+            or sum(len(row["samples"]) for domain in before_send.values() for row in domain.values() if row is not None) != 3):
+        raise AssertionError("all three distinct samples must be retained before initialization delivery and either remote receipt")
+    release_events = barrier["reporterEventsAtRelease"]
+    if (release_events != reporter_events[:len(release_events)] or release_events != trace[positions["reporter-stopping"]]["events"]
+            or by_seq[turn_proof["assistantSeq"]] not in release_events
+            or any(event["type"] == "turn/end" and event["data"]["turn"] == 2 for event in release_events)):
+        raise AssertionError("the ordinary answer must be held after final text and before its completed-turn event")
+    completed_events = trace[positions["reporter-completed"]]["events"]
+    if (completed_events != reporter_events[:len(completed_events)]
+            or by_seq[turn_proof["endSeq"]] not in completed_events):
+        raise AssertionError("the released reporter must preserve the complete original history through its completed second turn")
+    sends = audit["durableSends"]
+    if len(sends) != 2 or {sent["sourceSessionId"] for sent in sends} != {item["id"] for item in sessions.values()}:
+        raise AssertionError("exactly the initialized file and authorized answer may be sent")
+    for sent in sends:
+        role = next(role for role, item in sessions.items() if item["id"] == sent["sourceSessionId"])
+        item = copied if role == "writer" else outcome
+        if (sent["sample"] != item["sample"] or sent["grant"] != grants[role]
+                or sent["header"] != sessions[role]["header"]
+                or sent["events"] != sessions[role]["events"][:len(sent["events"])]):
+            raise AssertionError("each send must match its complete grant, retained sample and durable source prefix")
+        terminal_seq = result["seq"] if role == "writer" else turn_proof["endSeq"]
+        if not any(event["seq"] == terminal_seq for event in sent["events"]):
+            raise AssertionError("source completion must be durable before sending its contribution")
+    requests, receiver = audit["requests"], audit["originalReceiver"]
+    contexts = [event for event in records if event.get("type") == "user/message"
+                and event["data"]["source"]["kind"] == "scope-agent-context"]
+    wire = [event for turn in turns for event in turn.events if event.get("type") == "user/message"
+            and event["data"]["source"]["kind"] == "scope-agent-context"]
+    if (len(requests) != 3 or len(contexts) != 2 or [event["data"] for event in contexts] != [event["data"] for event in wire]
+            or records[0]["id"] != receiver["id"] or receiver["id"] in {item["id"] for item in sessions.values()}
+            or any(event.get("type") == "tool/call" for event in records)):
+        raise AssertionError("the original receiver must retain both exact wire updates without recall")
+    for index, current in enumerate(requests):
+        if current["header"] != receiver["header"] or index and current["events"][:len(requests[index - 1]["events"])] != requests[index - 1]["events"]:
+            raise AssertionError("the original receiving header and complete history prefix must be preserved")
+        visible = [message for message in current["messages"] if message.get("source", {}).get("kind") == "scope-agent-context"]
+        text = "\n".join(block["text"] for message in visible for block in message["content"] if block["type"] == "text")
+        if current["managedBytes"] != len(text.encode()) or current["managedBytes"] > 8000:
+            raise AssertionError("the actual managed request must fit the unchanged 8000-byte allowance")
+        all_text = "\n".join(block["text"] for message in current["messages"] for block in message["content"] if block["type"] == "text")
+        if any(marker in all_text for marker in ("PRIVATE_USER_INPUT", "PRIVATE_BEFORE_PERMISSION", rejected)):
+            raise AssertionError("private and capacity-rejected source text must not enter receiver requests")
+        if index == 0:
+            if visible or current["projection"] is not None:
+                raise AssertionError("the original receiving baseline must precede joining shared context")
+            continue
+        projection = current["projection"]
+        if (visible != [contexts[index - 1]["data"]] or projection != visible[0]["source"]["projection"]
+                or projection["backend"] != {"id": "text", "revision": "9"}
+                or projection["taskId"] != grants["writer"]["taskId"]):
+            raise AssertionError("the actual receiving projection lost its original shared Task or backend")
+        document = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        reports = current["reports"]
+        originals = {report["id"]: report for report in reports}
+        copy_report = next(report for report in reports if report.get("peerToolObservation", {}).get("version") == 2)
+        answer_report = next(report for report in reports if "peerTurnOutcome" in report)
+        for role, report, item, key in (("writer", copy_report, copied, "peerToolObservation"),
+                                      ("reporter", answer_report, outcome, "peerTurnOutcome")):
+            grant = grants[role]
+            if (report["id"] != item["receipt"]["publicationId"] or report["peerContribution"] != {"version": 1, "grant": grant}
+                    or report[key] != {**item["sample"]["result"], "sourceName": grant["source"]["name"],
+                        "grantId": grant["grantId"], "sequence": item["sample"]["sequence"],
+                        "observerPeerId": grant["contributorPeerId"], "sourceId": item["sample"]["sourceId"],
+                        "capture": {"id": grant["captureId"], "generation": grant["captureGeneration"]}}):
+                raise AssertionError("owner reports must retain the exact durably transmitted result and grant")
+        for publication in document["publications"]:
+            original_report = originals[publication["id"]]
+            literal = {key: value for key, value in original_report.items() if key not in ("peerToolObservation", "peerTurnOutcome")}
+            reference = {"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
+                         "publicationId": original_report["id"]}
+            if publication != {"source": reference, **literal}:
+                raise AssertionError("the delivered publication lost original text, source or grant")
+        selected = [source for source in projection["selectedSources"] if source["kind"] == "publication"]
+        if selected != [publication["source"] for publication in document["publications"]] or answer not in text:
+            raise AssertionError("visible publication coverage must retain the independent answer")
+        included = {publication["id"] for publication in document["publications"]}
+        if index == 1:
+            if included != {copy_report["id"], answer_report["id"]} or projection["omittedSources"] or file_text not in text:
+                raise AssertionError("both authorized sources must be delivered without capacity omissions")
+        else:
+            terminal = next(report for report in reports if report.get("peerContribution", {}).get("ended") == "revoked")
+            ref = {"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"], "publicationId": copy_report["id"]}
+            if (included != {terminal["id"], answer_report["id"]} or file_text in text
+                    or terminal["peerContribution"]["grant"] != grants["writer"]
+                    or projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"}]):
+                raise AssertionError("only initialization sharing must be withdrawn while its terminal and independent answer remain")
+    return {"turns": 3, "sourceSessionCount": 2, "sourceHostCount": 1, "sourceMaxLeases": 3,
+            "retainedSamples": {phase: retained[phase] for phase in ("before", "afterAdmission", "afterLimit")},
+            "actualWriteCount": 1, "transmittedSamples": 2,
+            "backend": {"id": "text", "revision": "9"}, "contextBytes": [item["managedBytes"] for item in requests],
+            "historicalPlanDigestMatches": True, "durableBeforeSend": True, "capacityRejectionKeepsLocalWork": True,
+            "independentAnswerRetained": True, "exactInitializationWithdrawal": True, "originalReceivingSessionRetained": True}
 
 
 def mixed_source_snapshot_result(

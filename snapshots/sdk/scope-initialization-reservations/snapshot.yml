@@ -1,0 +1,12 @@
+version: 1
+scenario: scope-initialization-reservations
+profile: sdk
+composition: sdk-scope-initialization-reservations
+recording: authored
+header:
+  class: scope-initialization-reservations
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+  toolSchemasSource: sdk/scope-turn-outcomes
+replay:
+  override: true
