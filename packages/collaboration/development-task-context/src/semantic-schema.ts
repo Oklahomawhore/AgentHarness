@@ -75,6 +75,13 @@ export const semanticCapturedInputSchema = z.object({
   coverage,
 }).strict()
 
+/** Actual version-two summary input; complete historical identities remain in the separate durable capture. */
+export const semanticSummaryInputSchema = semanticCapturedInputSchema.extend({ coverage: coverage.extend({
+  supersededSources: z.array(z.object({ source: z.object({ kind: z.literal('task'),
+    taskId: z.string().min(1).transform(brandString<DevelopmentTaskId>), revision: z.number().int().positive(),
+  }).strict(), count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()),
+}).strict() }).strict()
+
 const call = z.object({ provider: z.string().min(1), model: z.string().min(1),
   maxTokens: z.number().int().positive(), temperature: z.number().optional(),
   reasoningEffort: z.string().min(1).optional(), stop: z.array(z.string()).optional(),
@@ -84,16 +91,29 @@ const userMessage = z.object({ id: z.string().min(1).transform(MessageId), role:
   source: z.object({ kind: z.literal('plugin'), plugin: z.literal('dsh-development-task-context/semantic') }).strict(),
 }).strict()
 
-/** Persisted reservation and exact effective request before adapter dispatch. */
-export const semanticRequestSchema = z.object({
+const legacyRequest = z.object({
   version: z.literal(1), key: digest, ordinal: z.number().int().positive(),
   backend: z.object({ id: z.literal('semantic'), revision: digest }).strict(),
   call, system: z.string(), messages: z.array(userMessage).length(1),
   purpose: z.literal('context-summary'), maxContextBytes: z.number().int().positive(),
 }).strict()
 
-/** Durable request record; each record consumes one deployment call reservation, including interrupted attempts. */
+const capturedRequest = legacyRequest.extend({ version: z.literal(2), capturedInput: z.string().min(1) }).strict()
+
+/** Persisted reservation and exact model request, with full capture kept separately in version two. */
+export const semanticRequestSchema = z.discriminatedUnion('version', [legacyRequest, capturedRequest])
+
+/** Durable request record; each version consumes one cumulative reservation, including interrupted attempts. */
 export type SemanticRequestRecord = z.infer<typeof semanticRequestSchema>
+
+/** Exact request fields before the audit owner assigns its cumulative ordinal. */
+export type SemanticRequestReservation = Omit<z.infer<typeof legacyRequest>, 'ordinal'>
+  | Omit<z.infer<typeof capturedRequest>, 'ordinal'>
+
+/** Version-one key inputs retain their historical optional discriminator; version two binds the complete capture. */
+export type SemanticRequestKeyInput = (Pick<z.infer<typeof legacyRequest>, 'backend' | 'call' | 'system' | 'messages' | 'maxContextBytes'>
+  & { readonly version?: 1 })
+  | Pick<z.infer<typeof capturedRequest>, 'version' | 'capturedInput' | 'backend' | 'call' | 'system' | 'messages' | 'maxContextBytes'>
 
 const usage = z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(),
   totalTokens: z.number().nonnegative().optional(), cacheReadTokens: z.number().nonnegative().optional(),
@@ -115,6 +135,7 @@ export const semanticResultSchema = z.discriminatedUnion('version', [
   z.object({ ...resultFields, version: z.literal(4), projection: evidenceProjection.nullable() }).strict(),
   z.object({ ...resultFields, version: z.literal(5), projection: evidenceProjection.nullable() }).strict(),
   z.object({ ...resultFields, version: z.literal(6), projection: evidenceProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(7), projection: evidenceProjection.nullable() }).strict(),
 ]).superRefine((record, ctx) => {
   if (record.status === 'completed' ? record.projection === null || record.error !== null
     : record.projection !== null || record.error === null) {
@@ -132,7 +153,10 @@ export type SemanticResultRecord = z.infer<typeof semanticResultSchema>
  * @param request - Request fields.
  * @returns Stable cache key.
  */
-export function semanticRequestKey(request: Omit<SemanticRequestRecord, 'key' | 'ordinal' | 'version' | 'purpose'>): string {
+export function semanticRequestKey(request: SemanticRequestKeyInput): string {
+  if (request.version === 2) return semanticDigest({ version: 2, capturedInput: request.capturedInput,
+    backend: request.backend, call: request.call, system: request.system,
+    input: request.messages[0]?.content, maxContextBytes: request.maxContextBytes })
   return semanticDigest({ backend: request.backend, call: request.call, system: request.system,
     input: request.messages[0]?.content, maxContextBytes: request.maxContextBytes })
 }

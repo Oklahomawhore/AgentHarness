@@ -409,7 +409,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'context/semantic-request': SemanticRequestRecord
 ```
 
-来源：[`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+来源：[`packages/collaboration/development-task-context/src/semantic.ts:22`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="contextsemantic-result--log-only"></a>
 
@@ -420,7 +420,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'context/semantic-result': SemanticResultRecord
 ```
 
-来源：[`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+来源：[`packages/collaboration/development-task-context/src/semantic.ts:24`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 ### `deliverables/*`
 

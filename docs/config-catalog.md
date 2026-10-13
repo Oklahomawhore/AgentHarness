@@ -910,7 +910,9 @@ export interface Config {
   readonly temperature?: number
   /** Optional exact reasoning effort; absent values use the resolved adapter default. */
   readonly reasoningEffort?: string
-  /** Maximum complete system plus user-message UTF-8 bytes. */
+  /** Maximum complete captured-evidence UTF-8 bytes, including history retained only for audit and replay. */
+  readonly maxCapturedInputBytes: number
+  /** Maximum complete system plus actual model user-message UTF-8 bytes. */
   readonly maxInputBytes: number
   /** Requested model output token ceiling. */
   readonly maxOutputTokens: number
@@ -925,7 +927,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task-context/src/semantic.ts:28`](../packages/collaboration/development-task-context/src/semantic.ts)
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:29`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="deepseek-aidsh-development-task-storage-domain"></a>
 

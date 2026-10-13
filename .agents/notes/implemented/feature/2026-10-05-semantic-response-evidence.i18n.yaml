@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-05-semantic-response-evidence.md
-2026-10-05-semantic-response-evidence.md: 6f9e4c47b5d48a903a2a57d30188e9ed661c21cd
-2026-10-05-semantic-response-evidence.zh.md: 44870842c15d6b10f666c8ceebbb54a75ec4832f
+2026-10-05-semantic-response-evidence.md: 1bf06ae20766ce0111c82919477f23052aa19f10
+2026-10-05-semantic-response-evidence.zh.md: 5ae864e3e5d7405051f72743780769407ceb5137

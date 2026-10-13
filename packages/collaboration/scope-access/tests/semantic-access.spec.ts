@@ -33,7 +33,7 @@ const secondCanary = 'semantic-source-in-flight-canary'
 const inputSchema = z.object({ sources: z.array(z.object({ sourceId: z.string(), body: z.string() })) })
 const semanticConfig: SemanticConfig = {
   auditSessionId: auditId, provider: 'controlled-semantic', model: 'recorded-summary',
-  maxInputBytes: 32768, maxOutputTokens: 4096, maxOutputBytes: 6000,
+  maxInputBytes: 32768, maxCapturedInputBytes: 1048576, maxOutputTokens: 4096, maxOutputBytes: 6000,
   timeoutMs: 4000, maxConcurrentCalls: 2, maxCalls: 8,
 }
 

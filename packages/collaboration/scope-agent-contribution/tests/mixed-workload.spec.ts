@@ -7,7 +7,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
-import { semanticCapturedInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
+import { semanticSummaryInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
 import { expect, it, onTestFinished, type TestContext } from 'vitest'
 import { z } from 'zod'
 import { mixedDocuments as documents } from '../../../../scripts/scope-evaluation/mixed-study.ts'
@@ -25,7 +25,7 @@ const checkSource = '// MIXED_PRIVATE_CHECK_IMPLEMENTATION\n'
   + 'process.stdout.write(state.output);process.exit(state.code);\n'
 const semanticConfig = {
   auditSessionId: 'mixed-workload-summary', provider: 'mixed-summary', model: 'controlled-summary',
-  maxInputBytes: 64000, maxOutputTokens: 2048, maxOutputBytes: 16000, timeoutMs: 10000,
+  maxInputBytes: 64000, maxCapturedInputBytes: 1048576, maxOutputTokens: 2048, maxOutputBytes: 16000, timeoutMs: 10000,
   maxConcurrentCalls: 2, maxCalls: 16,
 }
 
@@ -42,7 +42,7 @@ class SummaryAdapter extends LlmAdapter {
     expect(options.purpose).toBe('context-summary')
     const block = options.messages[0]?.content[0]
     if (block?.type !== 'text') throw new Error('Summary requires the actual authorized input')
-    const input = semanticCapturedInputSchema.parse(JSON.parse(block.text) as unknown)
+    const input = semanticSummaryInputSchema.parse(JSON.parse(block.text) as unknown)
     const relevant = input.sources.filter(({ attribution }) => typeof attribution === 'object' && attribution !== null
       && !Array.isArray(attribution) && attribution.path === 'policy.md')
     const hasCorrection = relevant.some(source => source.body.includes('maxRetries: 1'))
@@ -363,7 +363,7 @@ async function mixedWorkload(backend: 'reported' | 'semantic', test: TestContext
     expect(summaryAdapter.calls).toHaveLength(6)
     expect(reserved).toHaveLength(summaryAdapter.calls.length)
     expect(results).toHaveLength(summaryAdapter.calls.length)
-    for (const result of results) expect(result.data).toMatchObject({ version: 6, status: 'completed' })
+    for (const result of results) expect(result.data).toMatchObject({ version: 7, status: 'completed' })
     expect(results.map(event => event.data.projection?.text).toSorted()).toEqual(actualSharedTexts.toSorted())
     for (const [index, request] of reserved.entries()) {
       const dispatched = summaryAdapter.calls[index]

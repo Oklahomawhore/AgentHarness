@@ -246,3 +246,30 @@ it('accepts an independently authorized native completed-file checkpoint after a
   expect(ids(result)).toEqual(reports.map(value => value.id))
   expect(publications(result)).toContainEqual(expect.objectContaining({ kind: 'completed-native-file', content }))
 })
+
+it('withdraws one grant without hiding another grant current command, quoted report, or authorization', () => {
+  const withdrawn = report('peer', 1, completed(0, 'ENDED_COMMAND'), 'ended')
+  const activeCommand = report('peer', 1, completed(7, 'ACTIVE_FAILURE'), 'active')
+  const activeReport = report('peer', 2, write('LIVE_POLICY'), 'active')
+  const terminal: DevelopmentTaskContextPublication = { id: 'ended-notice', publishedAt: 3,
+    text: 'Sharing from the ended grant stopped.', peerContribution: { version: 1, grant: grant('ended'), ended: 'revoked' } }
+  const prepared = prepareSemanticInput(input([withdrawn, activeCommand, activeReport, terminal]))
+  expect(prepared.sources).toHaveLength(1)
+  expect(prepared.sources[0]?.source).toMatchObject({ publicationId: activeReport.id })
+  expect(prepared.sources[0]?.body).toBe(activeReport.text)
+  expect(prepared.mandatory).toHaveLength(2)
+  const reply = { version: 1, decisions: prepared.sources.map(source => ({ sourceId: source.sourceId, relevant: true })),
+    updates: [{ text: 'Follow the active policy.', sources: prepared.sources.map(source => ({ sourceId: source.sourceId, quote: 'LIVE_POLICY' })) }] }
+  const previous = projectSemanticReply(prepared, reply, 100_000, 6)
+  const current = projectSemanticReply(prepared, reply, 100_000)
+  expect(current.omittedSources).toEqual([{ source: { kind: 'publication', taskId: grant().taskId,
+    revision: 100, publicationId: withdrawn.id }, reason: 'withdrawn' }])
+  expect(current.selectedSources).toEqual(previous.selectedSources)
+  expect(current.omittedSources).toEqual(previous.omittedSources)
+  expect(current.activation).toEqual(previous.activation)
+  expect(current.text).toContain('ACTIVE_FAILURE')
+  expect(current.text).toContain('LIVE_POLICY')
+  expect(current.text).not.toContain('ENDED_COMMAND')
+  expect(prepared.mandatory).toContainEqual({ source: { kind: 'publication', taskId: grant().taskId,
+    revision: 100, publicationId: terminal.id }, basis: 'current-task-as-reported', kind: 'withdrawal', publication: terminal })
+})

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { semanticCapturedInputSchema, semanticRequestSchema, semanticSummaryInputSchema } from '../../packages/collaboration/development-task-context/src/semantic-schema.ts'
 import { scanLog } from '../../packages/session/session-persistence-jsonl/src/format.ts'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
@@ -312,10 +313,30 @@ it.skipIf(!enabled)('completes mixed work for all three conditions through froze
     const audit = await semanticAudit(output, 'semantic')
     expect(audit.requests).toHaveLength(2)
     expect(audit.results).toHaveLength(2)
+    const summaryHttp = http.calls.filter(call => call.kind === 'semantic')
+    for (const [index, event] of audit.requests.entries()) {
+      const request = semanticRequestSchema.parse(event.data)
+      if (request.version !== 2) throw new Error('Current summary requests require a complete capture')
+      const text = request.messages[0]?.content[0]?.text
+      if (text === undefined) throw new Error('Actual summary text is absent')
+      const observed = summaryHttp[index]
+      if (observed === undefined) throw new Error('Actual summary HTTP request is absent')
+      expect(mixedHttpTexts(observed.body)).toEqual([request.system, text])
+      expect(mixedHttpTexts(observed.body)).not.toContain(request.capturedInput)
+      const capture = semanticCapturedInputSchema.parse(JSON.parse(request.capturedInput) as unknown)
+      const wire = semanticSummaryInputSchema.parse(JSON.parse(text) as unknown)
+      expect(wire.mandatory).toEqual(capture.mandatory)
+      expect(wire.sources).toEqual(capture.sources)
+      expect(wire.coverage.selectedSources).toEqual(capture.coverage.selectedSources)
+      expect(wire.coverage.omittedSources).toEqual(capture.coverage.omittedSources
+        .filter(item => item.reason !== 'superseded' || item.source.kind !== 'publication'))
+      expect(wire.coverage.supersededSources.reduce((count, item) => count + item.count, 0)).toBe(
+        capture.coverage.omittedSources.filter(item => item.reason === 'superseded' && item.source.kind === 'publication').length)
+    }
     const allowances = audit.requests.map(request => z.object({ maxContextBytes: z.number() }).parse(request.data).maxContextBytes)
     expect(allowances).toEqual([6681, 6552])
     for (const [index, event] of audit.results.entries()) {
-      const summary = z.object({ version: z.literal(6), status: z.literal('completed'), error: z.null(), requestSeq: z.number(),
+      const summary = z.object({ version: z.literal(7), status: z.literal('completed'), error: z.null(), requestSeq: z.number(),
         projection: z.object({ text: z.string() }), usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
         finish: z.object({ kind: z.literal('stop') }) }).parse(event.data)
       expect(summary.requestSeq).toBe(audit.requests[index]?.seq)
@@ -397,7 +418,7 @@ it.skipIf(!enabled)('records semantic capacity failure before dispatching a prep
     expect(audit.requests).toHaveLength(1)
     expect(audit.results).toHaveLength(1)
     expect(z.object({ maxContextBytes: z.number() }).parse(audit.requests[0]?.data).maxContextBytes).toBe(6681)
-    const summaryResult = z.object({ version: z.literal(6), status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
+    const summaryResult = z.object({ version: z.literal(7), status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
       error: z.literal('semantic output: relevant updates and mandatory evidence exceed maxContextBytes'),
       usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }), finish: z.object({ kind: z.literal('stop') }) })
       .parse(audit.results[0]?.data)

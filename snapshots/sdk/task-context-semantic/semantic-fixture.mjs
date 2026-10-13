@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { assertDeliveryCoverage, capturedSummaryInput } from '../semantic-audit-fixture.mjs'
 
 const packageRequire = createRequire(new URL('../../../packages/collaboration/development-task-context/package.json', import.meta.url))
 const { Session } = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-session')).href)
@@ -131,6 +132,7 @@ class ControlledSummaryAdapter extends LlmAdapter {
     assert.deepEqual(request.data.messages, options.messages)
     assert.equal(request.data.system, options.system)
     assert.equal(request.data.call.maxTokens, options.maxTokens)
+    capturedSummaryInput(requests.at(-1).data, 32768)
     const input = JSON.parse(content(options.messages[0]))
     assert.equal(input.recipient.sessionLabel, 'Implementation and documentation')
     const decisions = []
@@ -246,20 +248,7 @@ export async function apply(ctx) {
     const delivered = JSON.parse(json)
     const projection = expandDelivery(delivered)
     const superseded = message.source.omittedSources.filter(item => item.reason === 'superseded' && item.source.kind === 'publication')
-    assert.deepEqual(projection.coverage.omittedSources,
-      message.source.omittedSources.filter(item => item.reason !== 'superseded' || item.source.kind !== 'publication'))
-    const groups = new Map()
-    for (const item of superseded) {
-      const taskSourceIndex = delivered.sourceTable.findIndex(row => row.kind === 'task'
-        && row.taskId === item.source.taskId && row.revision === item.source.revision)
-      assert.ok(taskSourceIndex >= 0)
-      groups.set(taskSourceIndex, (groups.get(taskSourceIndex) ?? 0) + 1)
-      assert.ok(!delivered.sourceTable.some(row => row.kind === 'publication' && row.publicationId === item.source.publicationId))
-    }
-    const counts = delivered.coverage.supersededSources
-    assert.ok(Array.isArray(counts))
-    assert.deepEqual(counts, [...groups].sort(([a], [b]) => a - b).map(([taskSourceIndex, count]) => ({ taskSourceIndex, count })))
-    assert.deepEqual(projection.coverage.selectedSources, message.source.selectedSources)
+    assertDeliveryCoverage(delivered, message.source)
     assert.ok(message.source.omittedSources.some(item => item.reason === 'recipient-irrelevant'
       && item.source.publicationId === unrelated.id))
     assert.ok(!JSON.stringify(options.messages).includes('UNRELATED_ADMIN'))
@@ -305,9 +294,9 @@ export async function apply(ctx) {
     const result = audit.filter(event => event.type === 'context/semantic-result').at(-1)
     const request = audit.find(event => event.type === 'context/semantic-request' && event.seq === result.data.requestSeq)
     assert.equal(result.data.status, 'completed')
-    assert.equal(result.data.version, 6)
+    assert.equal(result.data.version, 7)
     assert.equal(result.data.key, request.data.key)
-    const captured = JSON.parse(content(request.data.messages[0]))
+    const captured = capturedSummaryInput(request.data, 32768)
     assert.deepEqual(projection.mandatory, captured.mandatory)
     assert.deepEqual(captured.coverage.omittedSources,
       message.source.omittedSources.filter(item => item.reason !== 'recipient-irrelevant'))

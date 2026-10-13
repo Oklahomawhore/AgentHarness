@@ -11,8 +11,9 @@ import { performance } from 'node:perf_hooks'
 import DevelopmentTaskContextBackend from './backend.ts'
 import { SemanticAudit } from './semantic-audit.ts'
 import { semanticDigest, semanticProjectionSchema, semanticRequestKey, semanticResultSchema,
-  type SemanticRequestRecord, type SemanticResultRecord } from './semantic-schema.ts'
+  type SemanticRequestRecord, type SemanticRequestReservation, type SemanticResultRecord } from './semantic-schema.ts'
 import { prepareSemanticInput, projectSemanticReply, semanticModelInput, restoreSemanticProjection, type SemanticInput } from './semantic-input.ts'
+import { semanticSummaryInput } from './semantic-summary-input.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection } from './types.ts'
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -36,7 +37,9 @@ export interface Config {
   readonly temperature?: number
   /** Optional exact reasoning effort; absent values use the resolved adapter default. */
   readonly reasoningEffort?: string
-  /** Maximum complete system plus user-message UTF-8 bytes. */
+  /** Maximum complete captured-evidence UTF-8 bytes, including history retained only for audit and replay. */
+  readonly maxCapturedInputBytes: number
+  /** Maximum complete system plus actual model user-message UTF-8 bytes. */
   readonly maxInputBytes: number
   /** Requested model output token ceiling. */
   readonly maxOutputTokens: number
@@ -62,7 +65,8 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
   static inject = ['llm', 'sessions', 'sessionPersistence']
   static Config: s<Config> = s.object({
     auditSessionId: s.string().required(), provider: s.string().required(), model: s.string().required(),
-    temperature: s.number(), reasoningEffort: s.string(), maxInputBytes: positive(), maxOutputTokens: positive(),
+    temperature: s.number(), reasoningEffort: s.string(),
+    maxCapturedInputBytes: positive(), maxInputBytes: positive(), maxOutputTokens: positive(),
     maxOutputBytes: positive(), timeoutMs: s.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).required(),
     maxConcurrentCalls: positive(), maxCalls: positive() })
   readonly identity: { readonly id: 'semantic'; readonly revision: string }
@@ -78,7 +82,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     if ([config.auditSessionId, config.provider, config.model].some(value => value.trim() === '')
       || config.reasoningEffort?.trim() === '') throw new Error('semantic backend: identity and route must be nonempty')
     // Selection and evidence comparison changes invalidate outer caches without rewriting retained audit requests.
-    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 10, system: SYSTEM, config: this.config }) })
+    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 12, system: SYSTEM, config: this.config }) })
     this.ready = SemanticAudit.open(ctx, this.config.auditSessionId)
     // compute and disposal observe the same initialization failure; construction must not leave an unhandled rejection.
     void this.ready.catch(() => undefined)
@@ -106,14 +110,18 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     using timer = deadline(signal, this.config.timeoutMs, 'SEMANTIC_CONTEXT_TIMEOUT')
     timer.signal.throwIfAborted()
     const evidence = prepareSemanticInput(input)
-    const framed = semanticModelInput(evidence)
-    if (Buffer.byteLength(SYSTEM + framed, 'utf8') > this.config.maxInputBytes) {
-      throw new Error('semantic backend: complete input exceeds maxInputBytes')
+    const capturedInput = semanticModelInput(evidence)
+    if (Buffer.byteLength(capturedInput, 'utf8') > this.config.maxCapturedInputBytes) {
+      throw new Error('semantic backend: complete capture exceeds maxCapturedInputBytes')
     }
     const audit = await this.ready
     timer.signal.throwIfAborted()
     if (evidence.sources.length === 0) {
       return projectSemanticReply(evidence, { version: 1, decisions: [], updates: [] }, input.maxContextBytes)
+    }
+    const framed = semanticSummaryInput(evidence)
+    if (Buffer.byteLength(SYSTEM + framed, 'utf8') > this.config.maxInputBytes) {
+      throw new Error('semantic backend: complete input exceeds maxInputBytes')
     }
     const prepared = await this.ctx.llm.prepareCall({ provider: this.config.provider, model: this.config.model,
       maxTokens: this.config.maxOutputTokens,
@@ -124,7 +132,8 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     const message: SemanticRequestRecord['messages'][number] = { id: MessageId('semantic-input'), role: 'user',
       content: [{ type: 'text', text: framed }],
       source: { kind: 'plugin', plugin: 'dsh-development-task-context/semantic' } }
-    const fields = { backend: this.identity, call: { ...prepared.config, maxTokens: this.config.maxOutputTokens },
+    const fields = { version: 2 as const, capturedInput, backend: this.identity,
+      call: { ...prepared.config, maxTokens: this.config.maxOutputTokens },
       system: SYSTEM, messages: [message], maxContextBytes: input.maxContextBytes }
     const key = semanticRequestKey(fields)
     const running = this.jobs.get(key)
@@ -138,7 +147,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     }
     if (this.jobs.size >= this.config.maxConcurrentCalls) throw new Error('semantic backend: maxConcurrentCalls exhausted')
     const controller = new AbortController()
-    const request = { version: 1 as const, ...fields, key, purpose: 'context-summary' as const,
+    const request = { ...fields, key, purpose: 'context-summary' as const,
       messages: [{ ...message, id: MessageId(`semantic-${key}`) }] }
     const work = this.run(audit, prepared, request, evidence, AbortSignal.any([controller.signal, this.lifetime.signal]))
     const job = { controller, work, readers: 0 }
@@ -164,7 +173,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     }
   }
 
-  private async run(audit: SemanticAudit, prepared: PreparedLlmCall, request: Omit<SemanticRequestRecord, 'ordinal'>,
+  private async run(audit: SemanticAudit, prepared: PreparedLlmCall, request: SemanticRequestReservation,
     evidence: SemanticInput, signal: AbortSignal): Promise<DevelopmentTaskContextProjection> {
     using timer = deadline(signal, this.config.timeoutMs, 'SEMANTIC_CONTEXT_TIMEOUT')
     timer.signal.throwIfAborted()
@@ -199,7 +208,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
       const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
       projection = projectSemanticReply(evidence, JSON.parse(text) as unknown, request.maxContextBytes)
     } catch (error) { failure = error }
-    const result = semanticResultSchema.parse({ version: 6, key: request.key, requestSeq: seq,
+    const result = semanticResultSchema.parse({ version: 7, key: request.key, requestSeq: seq,
       status: projection === null ? 'failed' : 'completed', rawOutput: assembler.blocks(), finish,
       usage: assembler.usage ?? null, elapsedMs: performance.now() - started,
       error: projection === null ? failure instanceof Error ? failure.message : 'semantic model computation failed' : null,

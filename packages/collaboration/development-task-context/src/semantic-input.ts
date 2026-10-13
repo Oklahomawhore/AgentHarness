@@ -3,6 +3,8 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { semanticTableDelivery } from './semantic-display.ts'
 import { semanticMandatoryTableDelivery } from './semantic-mandatory-display.ts'
 import { semanticHistoryTableDelivery } from './semantic-history-display.ts'
+import { semanticWithdrawalTableDelivery } from './semantic-withdrawal-display.ts'
+import { semanticSummaryInput } from './semantic-summary-input.ts'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
 import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection, DevelopmentTaskContextOmission,
@@ -118,9 +120,9 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
       objective: value.objective, scope: value.scope })) ?? [], sources, mandatory, selected, omitted }
 }
 
-/** Source JSON presented to the model, excluding delivery bookkeeping.
+/** Complete captured evidence, also used as the exact version-one model input.
  * @param input - Selected evidence.
- * @returns Exact user-message text.
+ * @returns Canonical full capture text; version-two requests retain it separately from their model messages.
  */
 export function semanticModelInput(input: SemanticInput): string {
   return semanticJson({ task: input.task, recipient: input.recipient, inherited: input.inherited,
@@ -154,11 +156,12 @@ function evidenceMandatory(input: SemanticInput, value: unknown): unknown {
  * @param input - Exact captured evidence.
  * @param response - Untrusted model JSON.
  * @param maxContextBytes - Complete UTF-8 delivery budget.
- * @param resultVersion - Durable algorithm: v1–3 expand text, v4 shares tables, v5 references commands, v6 counts superseded publications.
+ * @param resultVersion - Durable algorithm: v1–3 expand text, v4 shares tables, v5 references commands,
+ * v6 counts superseded publications, v7 also counts withdrawals.
  * @returns Exact projected context and its versioned scheduling evidence.
  */
 export function projectSemanticReply(
-  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 | 3 | 4 | 5 | 6 = 6,
+  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 7,
 ): DevelopmentTaskContextProjection {
   const reply: SemanticReply = semanticReplySchema.parse(response)
   const sources = new Map(input.sources.map(source => [source.sourceId, source]))
@@ -187,9 +190,10 @@ export function projectSemanticReply(
   const selected = [...input.selected, ...input.sources.filter(source => represented.has(source.sourceId)).map(source => source.source)]
   const delivery = { task: input.task, recipient: input.recipient, inherited: input.inherited,
     mandatory: input.mandatory, updates, coverage: { selectedSources: selected, omittedSources: omitted } }
-  const displayed = resultVersion === 6 ? semanticHistoryTableDelivery(delivery)
-    : resultVersion === 5 ? semanticMandatoryTableDelivery(delivery)
-      : resultVersion === 4 ? semanticTableDelivery(delivery) : delivery
+  const displayed = resultVersion === 7 ? semanticWithdrawalTableDelivery(delivery)
+    : resultVersion === 6 ? semanticHistoryTableDelivery(delivery)
+      : resultVersion === 5 ? semanticMandatoryTableDelivery(delivery)
+        : resultVersion === 4 ? semanticTableDelivery(delivery) : delivery
   const text = PREFIX + semanticJson(displayed).replaceAll('<', '\\u003c') + SUFFIX
   if (Buffer.byteLength(text, 'utf8') > maxContextBytes) throw new Error('semantic output: relevant updates and mandatory evidence exceed maxContextBytes')
   if (resultVersion === 1) return { activation: { kind: 'exact' }, text, selectedSources: selected, omittedSources: omitted }
@@ -215,7 +219,7 @@ export function projectSemanticReply(
 }
 
 /** Restore captured prompt evidence and reject unrelated or duplicated source references.
- * @param text - Exact persisted model input.
+ * @param text - Complete captured input, also used as the version-one model input.
  * @returns Validated captured evidence.
  */
 export function restoreSemanticInput(text: string): SemanticInput {
@@ -241,6 +245,19 @@ export function restoreSemanticInput(text: string): SemanticInput {
   selected: value.coverage.selectedSources, omitted: value.coverage.omittedSources }
 }
 
+/** Restore complete request evidence and verify that the recorded model message is its versioned rendering.
+ * @param request - Validated durable request of either supported version.
+ * @returns Complete captured evidence; compact model coverage is never expanded into fabricated publication identities.
+ */
+export function restoreSemanticRequestInput(request: SemanticRequestRecord): SemanticInput {
+  const text = request.messages[0]?.content[0]?.text
+  if (text === undefined) throw new Error('semantic audit: missing captured prompt')
+  if (request.version === 1) return restoreSemanticInput(text)
+  const captured = restoreSemanticInput(request.capturedInput)
+  if (semanticSummaryInput(captured) !== text) throw new Error('semantic audit: model input disagrees with captured evidence')
+  return captured
+}
+
 /** Rebuild a completed projection from recorded raw output, without dispatching the model.
  * @param request - Exact recorded request.
  * @param result - Matching completed result.
@@ -259,9 +276,8 @@ export function restoreSemanticProjection(request: SemanticRequestRecord, result
     }
     if (block.type === 'text') chunks.push(block.text)
   }
-  const text = request.messages[0]?.content[0]?.text
-  if (text === undefined) throw new Error('semantic audit: missing captured prompt')
-  const projection = projectSemanticReply(restoreSemanticInput(text), JSON.parse(chunks.join('')) as unknown, request.maxContextBytes, result.version)
+  const projection = projectSemanticReply(restoreSemanticRequestInput(request), JSON.parse(chunks.join('')) as unknown,
+    request.maxContextBytes, result.version)
   if (semanticJson(projection) !== semanticJson(result.projection)) {
     throw new Error('semantic audit: cached projection disagrees with recorded output')
   }

@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import SemanticBackend, { type Config } from '../src/semantic.ts'
-import { restoreSemanticProjection } from '../src/semantic-input.ts'
+import { restoreSemanticProjection, restoreSemanticRequestInput } from '../src/semantic-input.ts'
 import { semanticDigest, semanticJson, type SemanticRequestRecord, type SemanticResultRecord } from '../src/semantic-schema.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection } from '../src/types.ts'
 
@@ -198,7 +198,7 @@ it('serves a parent backend consumer while auditing separately and reuses the du
   const audit = await readAudit(first.auditPersistence)
   expect(audit.events.map(event => event.type)).toEqual(['context/semantic-request', 'context/semantic-result'])
   expect(audit.events[1]).toMatchObject({ ignorable: true,
-    data: { version: 6, status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
+    data: { version: 7, status: 'completed', requestSeq: audit.events[0]?.seq, projection, usage: null } })
   expect(audit.header).not.toHaveProperty('parentSession')
   expect(audit.header).not.toHaveProperty('origin')
   expect(audit.header.isSeeded).toBe(false)
@@ -256,7 +256,7 @@ These updates summarize authorized reports for your responsibility. They do not 
 `
 
 // The v1 result seed uses the former request identity and renderer, never the current compute/project implementation.
-const legacyConfig: Config = {
+const legacyConfig: Omit<Config, 'maxCapturedInputBytes'> = {
   auditSessionId: 'semantic-composition-audit', provider: 'semantic-composition', model: 'controlled-summary',
   maxInputBytes: 32768, maxOutputTokens: 1024, maxOutputBytes: 16384, timeoutMs: 3000, maxConcurrentCalls: 2, maxCalls: 2,
 }
@@ -334,8 +334,8 @@ it('reopens a frozen v1 JSONL result unchanged while new computation preserves t
   const adapter = new CompositionAdapter()
   second.ctx.effect(() => second.ctx.llm.registerAdapter(['semantic-composition'], adapter))
   const backend = second.ctx.developmentTaskContextBackend
-  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 10,
-    system: legacySemanticSystem, config: legacyConfig }) })
+  expect(backend.identity).toEqual({ id: 'semantic', revision: semanticDigest({ version: 12,
+    system: legacySemanticSystem, config: { ...legacyConfig, maxCapturedInputBytes: 1_048_576 } }) })
   expect(backend.identity).not.toEqual(request.backend)
   const reopened = await readAudit(second.auditPersistence)
   expect(reopened.events.slice(0, seed.audit.events.length)).toEqual(seed.audit.events)
@@ -346,7 +346,7 @@ it('reopens a frozen v1 JSONL result unchanged while new computation preserves t
   const current = await backend.compute(input)
   const legacyDelivery = z.object({ coverage: z.record(z.string(), z.json()) }).loose().parse(semanticTextValue(legacyProjection.text))
   expect(expandSemanticText(current.text)).toEqual({ ...legacyDelivery,
-    coverage: { ...legacyDelivery.coverage, supersededSources: [] } })
+    coverage: { ...legacyDelivery.coverage, supersededSources: [], withdrawnSources: [] } })
   expect(current.selectedSources).toEqual(legacyProjection.selectedSources)
   expect(current.omittedSources).toEqual(legacyProjection.omittedSources)
   expect(current.activation).toMatchObject({ kind: 'recipient-evidence', version: 1, coverage: 'complete' })
@@ -354,14 +354,15 @@ it('reopens a frozen v1 JSONL result unchanged while new computation preserves t
   const after = await readAudit(second.auditPersistence)
   const requests = after.events.filter(event => event.type === 'context/semantic-request')
   expect(requests.map(event => event.data.ordinal)).toEqual([1, 2])
-  expect(requests.map(event => event.data.version)).toEqual([1, 1])
+  expect(requests.map(event => event.data.version)).toEqual([1, 2])
   expect(requests.map(event => event.data.backend)).toEqual([request.backend, backend.identity])
-  expect(requests.map(event => event.data.messages[0]?.content))
-    .toEqual([request.messages[0]?.content, request.messages[0]?.content])
+  expect(requests.map(event => restoreSemanticRequestInput(event.data)))
+    .toEqual([restoreSemanticRequestInput(request), restoreSemanticRequestInput(request)])
+  expect(requests[1]?.data.messages[0]?.content).not.toEqual(request.messages[0]?.content)
   expect(requests.map(event => event.data.call)).toEqual([request.call, request.call])
   expect(new Set(requests.map(event => event.data.key)).size).toBe(2)
   const results = after.events.filter(event => event.type === 'context/semantic-result')
-  expect(results.map(event => event.data.version)).toEqual([1, 6])
+  expect(results.map(event => event.data.version)).toEqual([1, 7])
   expect(results.map(event => event.data.projection?.activation.kind)).toEqual(['exact', 'recipient-evidence'])
   expect(results.map(event => event.data.requestSeq)).toEqual(requests.map(event => event.seq))
   expect(await backend.compute(input)).toEqual(current)

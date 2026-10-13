@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { semanticCapturedInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
+import { semanticSummaryInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
 import { parsePolicy, sealDataArtifact }
   from '../../../../../scripts/scope-evaluation/data-artifacts.ts'
 import { mixedCalibrationEvidence, mixedCalibrationSummary, mixedPublicCases } from '../../../../../scripts/scope-evaluation/mixed-calibration.ts'
@@ -53,7 +53,7 @@ export class MixedArtifactSummaryAdapter extends LlmAdapter {
     options.signal?.throwIfAborted()
     const block = options.messages[0]?.content[0]
     if (options.purpose !== 'context-summary' || block?.type !== 'text') throw new Error('Expected actual summary input')
-    const input = semanticCapturedInputSchema.parse(JSON.parse(block.text) as unknown)
+    const input = semanticSummaryInputSchema.parse(JSON.parse(block.text) as unknown)
     const response = mixedCalibrationSummary(input.sources)
     this.calls.push({ messages: structuredClone(options.messages), response })
     const text = JSON.stringify(response)

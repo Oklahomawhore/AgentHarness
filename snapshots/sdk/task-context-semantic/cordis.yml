@@ -49,6 +49,7 @@
               model: controlled-summary
               maxCalls: 8
             maxInputBytes: 32768
+            maxCapturedInputBytes: 1048576
             maxOutputTokens: 1024
             maxOutputBytes: 16384
             timeoutMs: 10000

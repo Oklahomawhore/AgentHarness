@@ -78,6 +78,7 @@
             provider: semantic-idle-snapshot
             model: controlled-summary
             maxInputBytes: 65536
+            maxCapturedInputBytes: 1048576
             maxOutputTokens: 1024
             maxOutputBytes: 16384
             timeoutMs: 10000

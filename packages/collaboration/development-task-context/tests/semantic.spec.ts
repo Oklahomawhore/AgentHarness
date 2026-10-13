@@ -8,17 +8,20 @@ import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persis
 import type { DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { developmentTaskContextBlockSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import SemanticBackend, { type Config } from '../src/semantic.ts'
-import { prepareSemanticInput, projectSemanticReply, restoreSemanticProjection } from '../src/semantic-input.ts'
-import { semanticRequestSchema, semanticResultSchema } from '../src/semantic-schema.ts'
+import { prepareSemanticInput, projectSemanticReply, restoreSemanticProjection, semanticModelInput } from '../src/semantic-input.ts'
+import { semanticRequestSchema, semanticRequestKey, semanticResultSchema } from '../src/semantic-schema.ts'
+import { SemanticAudit } from '../src/semantic-audit.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
 
 const contexts: Context[] = []
 const roots: string[] = []
 const config: Config = { auditSessionId: 'semantic-audit-test', provider: 'fixture', model: 'fixture-model',
-  maxInputBytes: 30_000, maxOutputTokens: 1000, maxOutputBytes: 20_000, timeoutMs: 10_000,
+  maxCapturedInputBytes: 1_048_576, maxInputBytes: 30_000, maxOutputTokens: 1000, maxOutputBytes: 20_000, timeoutMs: 10_000,
   maxConcurrentCalls: 2, maxCalls: 8 }
 
 afterEach(async () => {
@@ -260,7 +263,7 @@ it('rebuilds cached output from the raw reply and refuses a valid-shaped unrelat
   const recordedResult = events.find(event => event.type === 'context/semantic-result')
   const request = semanticRequestSchema.parse(recordedRequest?.data)
   const result = semanticResultSchema.parse(recordedResult?.data)
-  if (result.version !== 6) throw new Error('new computations must persist result version six')
+  if (result.version !== 7) throw new Error('new computations must persist result version seven')
   const projection = result.projection
   if (projection === null) throw new Error('missing completed projection')
   expect(restoreSemanticProjection(request, result)).toEqual(projection)
@@ -489,4 +492,198 @@ it('reports a non-Error caller cancellation and drains its last-reader job befor
   await value.fork.dispose()
   const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
   expect(result?.data).toMatchObject({ status: 'failed', projection: null })
+})
+
+
+function nativeInput(): DevelopmentTaskContextInput {
+  const raw: unknown = JSON.parse(readFileSync(new URL('./fixtures/semantic-native-command-context.json', import.meta.url), 'utf8'))
+  if (typeof raw !== 'object' || raw === null || !('block' in raw)) throw new Error('missing native context block')
+  const source = developmentTaskContextBlockSchema.parse(raw.block).sources[0]!
+  const original = input()
+  return { ...original, view: { task: { ...original.view.task, id: source.parent.taskId, revision: source.parent.revision,
+    context: source.context } } }
+}
+
+function nativeCommandInput(): DevelopmentTaskContextInput {
+  const original = nativeInput()
+  return { ...original, view: { task: { ...original.view.task, context: original.view.task.context.filter(
+    publication => publication.peerToolObservation?.kind === 'command-observation') } } }
+}
+
+it('enforces capture and actual model byte limits independently at their inclusive boundaries', async () => {
+  const original = await harness()
+  await original.backend.compute(input())
+  const request = semanticRequestSchema.parse((await auditEvents(original)).find(event => event.type === 'context/semantic-request')?.data)
+  if (request.version !== 2) throw new Error('new request did not retain a separate capture')
+  expect(request.capturedInput).toBe(semanticModelInput(prepareSemanticInput(input())))
+  expect(original.adapter.requests[0]?.messages).toEqual(request.messages)
+  expect(original.adapter.requests[0]).not.toHaveProperty('capturedInput')
+  const captureBytes = Buffer.byteLength(request.capturedInput)
+  const modelBytes = Buffer.byteLength(request.system + request.messages[0]!.content[0]!.text)
+  const exact = await harness({ maxCapturedInputBytes: captureBytes, maxInputBytes: modelBytes })
+  expect((await exact.backend.compute(input())).text).toContain('three retries')
+  expect(exact.adapter.requests).toHaveLength(1)
+  for (const [limits, message] of [
+    [{ maxCapturedInputBytes: captureBytes - 1 }, 'complete capture exceeds maxCapturedInputBytes'],
+    [{ maxInputBytes: modelBytes - 1 }, 'complete input exceeds maxInputBytes'],
+  ] as const) {
+    const limited = await harness(limits)
+    const prepare = vi.spyOn(limited.ctx.llm, 'prepareCall')
+    await expect(limited.backend.compute(input())).rejects.toThrow(message)
+    expect(prepare).not.toHaveBeenCalled()
+    expect(limited.adapter.requests).toEqual([])
+    expect(await auditEvents(limited)).toEqual([])
+  }
+})
+
+it('delivers mandatory-only evidence without a model route while retaining capture and delivery limits', async () => {
+  const current = nativeCommandInput()
+  const prepared = prepareSemanticInput(current)
+  expect(prepared.sources).toEqual([])
+  expect(prepared.mandatory).toHaveLength(1)
+  const captureBytes = Buffer.byteLength(semanticModelInput(prepared))
+  const value = await harness({ provider: 'unregistered-route', maxInputBytes: 1, maxCapturedInputBytes: captureBytes })
+  const prepare = vi.spyOn(value.ctx.llm, 'prepareCall')
+  const projection = await value.backend.compute(current)
+  expect(projection.text).toContain('CHECK_CURRENT_FAILED')
+  expect(projection.text).toContain('"exitCode":7')
+  const deliveryBytes = Buffer.byteLength(projection.text)
+  expect(await value.backend.compute({ ...current, maxContextBytes: deliveryBytes })).toEqual(projection)
+  await expect(value.backend.compute({ ...current, maxContextBytes: deliveryBytes - 1 })).rejects.toThrow('maxContextBytes')
+  expect(prepare).not.toHaveBeenCalled()
+  expect(value.adapter.requests).toEqual([])
+  expect(await auditEvents(value)).toEqual([])
+  const limited = await harness({ provider: 'unregistered-route', maxInputBytes: 1, maxCapturedInputBytes: captureBytes - 1 })
+  await expect(limited.backend.compute(current)).rejects.toThrow('maxCapturedInputBytes')
+  expect(await auditEvents(limited)).toEqual([])
+})
+
+it('does not consume or require remaining summary reservations for mandatory-only delivery', async () => {
+  const value = await harness({ maxCalls: 1 })
+  await value.backend.compute(input())
+  const before = await auditEvents(value)
+  expect((await value.backend.compute(nativeCommandInput())).text).toContain('CHECK_CURRENT_FAILED')
+  expect(await auditEvents(value)).toEqual(before)
+  expect(value.adapter.requests).toHaveLength(1)
+})
+
+it('reopens historical full captures under a smaller new deployment limit without retrospectively rejecting the audit', async () => {
+  const first = await harness()
+  await first.backend.compute(input())
+  const before = await auditEvents(first)
+  await first.ctx.fiber.dispose()
+  const second = await harness({ maxCapturedInputBytes: 1 }, first.root)
+  const restored = await auditEvents(second)
+  expect(restored.slice(0, before.length)).toEqual(before)
+  expect(restored.slice(before.length)).toMatchObject([{ type: 'session/end-seed', seq: before.length, data: {} }])
+  await expect(second.backend.compute(input())).rejects.toThrow('maxCapturedInputBytes')
+  expect(second.adapter.requests).toEqual([])
+  expect(await auditEvents(second)).toEqual(restored)
+})
+
+it.each(['pending', 'failed', 'completed'] as const)(
+  'refuses a re-keyed capture/wire mismatch before restoring a %s reservation', async (state) => {
+    const original = await harness()
+    await original.backend.compute(input())
+    const events = await auditEvents(original)
+    const request = semanticRequestSchema.parse(events.find(event => event.type === 'context/semantic-request')?.data)
+    const result = semanticResultSchema.parse(events.find(event => event.type === 'context/semantic-result')?.data)
+    const changed = { ...request, messages: request.messages.map(message => ({ ...message,
+      content: message.content.map(block => ({ ...block, text: block.text.replace('retry limit is 3', 'retry limit is 9') })) })) }
+    const altered = { ...changed, key: semanticRequestKey(changed) }
+    expect(altered.key).not.toBe(request.key)
+    const destination = await harness()
+    await destination.fork.dispose()
+    const session = destination.ctx.sessions.prepare(SessionId(config.auditSessionId))
+    const reserved = session.append('context/semantic-request', altered)
+    if (state !== 'pending') session.append('context/semantic-result', semanticResultSchema.parse({ ...result,
+      key: altered.key, requestSeq: reserved.seq, ...(state === 'failed'
+        ? { status: 'failed', projection: null, error: 'Recorded model failure.' } : {}) }))
+    const writer = await destination.ctx.sessionPersistence.create(session.header)
+    try { await writer.append(session.snapshotEvents()); await writer.flush() }
+    finally { await writer.close() }
+    const before = await auditEvents(destination)
+    await expect(SemanticAudit.open(destination.ctx, config.auditSessionId)).rejects.toThrow('model input disagrees with captured evidence')
+    expect(destination.adapter.requests).toEqual([])
+    expect(await auditEvents(destination)).toEqual(before)
+  },
+)
+
+it('validates a new reservation before duplicate, quota, or append state changes', async () => {
+  const value = await harness()
+  await value.backend.compute(input())
+  const request = semanticRequestSchema.parse((await auditEvents(value)).find(event => event.type === 'context/semantic-request')?.data)
+  const audit = await SemanticAudit.open(value.ctx, 'reservation-validation')
+  try {
+    await audit.reserve(request, 1)
+    const changed = { ...request, messages: request.messages.map(message => ({ ...message,
+      content: message.content.map(block => ({ ...block, text: block.text + ' ' })) })) }
+    await expect(audit.reserve(changed, 1)).rejects.toThrow('model input disagrees')
+    await expect(audit.reserve({ ...request, key: '0'.repeat(64) }, 1)).rejects.toThrow('invalid reservation key')
+    await expect(audit.reserve(request, 1)).rejects.toThrow('already reserved')
+    const handle = await value.ctx.sessionPersistence.open(SessionId('reservation-validation'), 'read')
+    try { expect((await handle.read()).events).toHaveLength(1) }
+    finally { await handle.close() }
+  } finally { await audit.close() }
+})
+
+
+it('keeps separate durable cache entries for equal model text with different historical publication identities', async () => {
+  const first = nativeInput()
+  const obsolete = new Set(prepareSemanticInput(first).omitted.flatMap(item =>
+    item.reason === 'superseded' && item.source.kind === 'publication' ? [item.source.publicationId] : []))
+  expect(obsolete.size).toBe(2)
+  const second = { ...first, view: { task: { ...first.view.task, context: first.view.task.context.map(publication =>
+    obsolete.has(publication.id) ? { ...publication, id: publication.id + '-different' } : publication) } } }
+  const value = await harness()
+  const one = await value.backend.compute(first)
+  const two = await value.backend.compute(second)
+  expect(value.adapter.requests).toHaveLength(2)
+  expect(value.adapter.requests[0]?.messages.map(message => message.content))
+    .toEqual(value.adapter.requests[1]?.messages.map(message => message.content))
+  expect(value.adapter.requests[0]?.messages[0]?.id).not.toBe(value.adapter.requests[1]?.messages[0]?.id)
+  expect(one.text).toBe(two.text)
+  expect(one.omittedSources).not.toEqual(two.omittedSources)
+  const requests = (await auditEvents(value)).filter(event => event.type === 'context/semantic-request')
+    .map(event => semanticRequestSchema.parse(event.data))
+  expect(requests.map(request => request.ordinal)).toEqual([1, 2])
+  expect(requests[0]?.key).not.toBe(requests[1]?.key)
+  expect(await value.backend.compute(first)).toEqual(one)
+  expect(await value.backend.compute(second)).toEqual(two)
+  expect(value.adapter.requests).toHaveLength(2)
+  await value.ctx.fiber.dispose()
+  const reopened = await harness({}, value.root)
+  expect(await reopened.backend.compute(first)).toEqual(one)
+  expect(await reopened.backend.compute(second)).toEqual(two)
+  expect(reopened.adapter.requests).toEqual([])
+})
+
+it('delivers a withdrawal without summary dispatch and still enforces independent capture and delivery limits', async () => {
+  const initial = nativeCommandInput()
+  const contribution = initial.view.task.context[0]?.peerContribution
+  if (contribution === undefined) throw new Error('captured peer grant is absent')
+  const terminal: DevelopmentTaskContextPublication = { id: 'terminal', publishedAt: 1,
+    text: 'Authorized command reporting ended.', peerContribution: { ...contribution, ended: 'left' } }
+  const current = { ...initial, view: { task: { ...initial.view.task, context: [...initial.view.task.context, terminal] } } }
+  const captured = prepareSemanticInput(current)
+  expect(captured.sources).toEqual([])
+  expect(captured.mandatory).toHaveLength(1)
+  expect(captured.omitted).toHaveLength(2)
+  const captureBytes = Buffer.byteLength(semanticModelInput(captured))
+  const value = await harness({ provider: 'unregistered', maxInputBytes: 1, maxCapturedInputBytes: captureBytes })
+  const prepare = vi.spyOn(value.ctx.llm, 'prepareCall')
+  const projection = await value.backend.compute(current)
+  expect(projection.text).toContain('Authorized command reporting ended.')
+  expect(projection.text).not.toContain('CHECK_CURRENT_')
+  expect(projection.omittedSources).toEqual(captured.omitted)
+  const bytes = Buffer.byteLength(projection.text)
+  expect(await value.backend.compute({ ...current, maxContextBytes: bytes })).toEqual(projection)
+  await expect(value.backend.compute({ ...current, maxContextBytes: bytes - 1 })).rejects.toThrow('maxContextBytes')
+  expect(prepare).not.toHaveBeenCalled()
+  expect(value.adapter.requests).toEqual([])
+  expect(await auditEvents(value)).toEqual([])
+  const limited = await harness({ maxCapturedInputBytes: captureBytes - 1 })
+  await expect(limited.backend.compute(current)).rejects.toThrow('maxCapturedInputBytes')
+  expect(limited.adapter.requests).toEqual([])
+  expect(await auditEvents(limited)).toEqual([])
 })

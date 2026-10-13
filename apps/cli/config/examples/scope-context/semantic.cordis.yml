@@ -13,6 +13,7 @@
     reasoningEffort: off
     maxConcurrentCalls: 2
     maxInputBytes: 131072
+    maxCapturedInputBytes: 1048576
     maxOutputTokens: 2048
     maxOutputBytes: 65536
     timeoutMs: 20000

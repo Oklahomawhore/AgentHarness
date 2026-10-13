@@ -266,7 +266,8 @@ export async function mountDataSemantic(ctx, config, modules) {
   })
   const route = config.route
   await ctx.plugin(modules.Semantic.default, { auditSessionId: config.sessionId, provider: route.provider, model: route.model,
-    temperature: 0, reasoningEffort: 'off', maxInputBytes: route.maxInputBytes, maxOutputTokens: route.maxOutputTokens,
+    temperature: 0, reasoningEffort: 'off', maxInputBytes: route.maxInputBytes,
+    maxCapturedInputBytes: route.maxInputBytes, maxOutputTokens: route.maxOutputTokens,
     maxOutputBytes: route.maxOutputBytes, timeoutMs: route.timeoutMs, maxConcurrentCalls: 1, maxCalls: route.maxCalls })
   return { stop: async () => {}, async invoke(input) {
     if (input.kind !== 'status' && input.kind !== 'finish') throw new Error('owner exposes only audit observation')

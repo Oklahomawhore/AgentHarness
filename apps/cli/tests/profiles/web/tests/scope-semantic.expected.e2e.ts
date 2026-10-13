@@ -155,7 +155,7 @@ it.skipIf(process.platform === 'win32')('enables semantic in shipped Web, surviv
     expect(owner.config).toMatchObject({ backend: { id: 'semantic' }, configured: {
       selection: { mode: 'semantic', provider: 'deepseek-official', model: 'deepseek-flash', maxCalls: 100 },
     }, semantic: { auditSessionId: 'scope-context-audit', provider: 'deepseek-official', model: 'deepseek-flash',
-      maxCalls: 100, maxConcurrentCalls: 2, maxInputBytes: 131072, maxOutputTokens: 2048,
+      maxCalls: 100, maxConcurrentCalls: 2, maxInputBytes: 131072, maxCapturedInputBytes: 1048576, maxOutputTokens: 2048,
       maxOutputBytes: 65536, timeoutMs: 20000 } })
     expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '3' }, configured: {
       selection: { mode: 'reported', provider: '', model: '', maxCalls: 100 },

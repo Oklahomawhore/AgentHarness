@@ -18,14 +18,15 @@ import { afterEach, expect, it } from 'vitest'
 import * as Configured from '../src/configured.ts'
 import Reported from '../src/reported.ts'
 import Semantic from '../src/semantic.ts'
-import { restoreSemanticInput } from '../src/semantic-input.ts'
+import { semanticSummaryInputSchema } from '../src/semantic-schema.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
 
 const roots: string[] = []
 const contexts = new Set<Context>()
 const config = {
   selection: { mode: 'reported', provider: '', model: '', maxCalls: 2 }, auditSessionId: 'configured-context-audit',
-  maxInputBytes: 32768, maxOutputTokens: 1024, maxOutputBytes: 16384, timeoutMs: 3000, maxConcurrentCalls: 2,
+  maxCapturedInputBytes: 1_048_576, maxInputBytes: 32768, maxOutputTokens: 1024,
+  maxOutputBytes: 16384, timeoutMs: 3000, maxConcurrentCalls: 2,
 } satisfies Configured.Config
 const semantic: Configured.Selection = { mode: 'semantic', provider: 'summary-fixture', model: 'summary-model', maxCalls: 2 }
 
@@ -46,7 +47,7 @@ class Adapter extends LlmAdapter {
     this.requests.push(options)
     const block = options.messages[0]?.content[0]
     if (block?.type !== 'text') throw new Error('expected a captured semantic input')
-    const input = restoreSemanticInput(block.text)
+    const input = semanticSummaryInputSchema.parse(JSON.parse(block.text) as unknown)
     const reply = { version: 1, decisions: input.sources.map(source => ({ sourceId: source.sourceId, relevant: true })),
       updates: input.sources.map(source => ({ text: 'Use the reported requirement.',
         sources: [{ sourceId: source.sourceId, quote: source.body }] })) }

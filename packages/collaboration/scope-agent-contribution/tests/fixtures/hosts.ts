@@ -115,6 +115,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly receive?: boolean
     readonly maxLeases?: number
     readonly maxObservationBytes?: number
+    readonly invitationLifetimeMs?: number
     readonly permissionDefaults?: NativeContributionConfig['permissionDefaults']
     readonly root?: string
     readonly peerId?: ScopePeerId
@@ -177,9 +178,10 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     { name: 'llm' }, { name: 'external' },
     { name: 'access', config: { maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: options.maxContextBytes ?? 12000,
       maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 5000,
-      maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
+      maxInvitationLifetimeMs: options.invitationLifetimeMs ?? 60000, maxConcurrentReads: 8,
       waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
-      maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 } },
+      maxContributionApplications: 16, maxApplicationRequestBytes: 16384,
+      maxApplicationLifetimeMs: options.invitationLifetimeMs ?? 60000 } },
     { name: 'sessions' }, { name: 'session-projection' }, { name: 'jsonl', config: { root: sessionsRoot, compression: 'none' } },
     { name: 'system' }, { name: 'tools', config: { mode } }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
     ...(role === 'source' || options.ownerLocal === true ? [

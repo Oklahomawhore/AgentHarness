@@ -7,6 +7,7 @@ import type { DevelopmentTaskContextPublication } from '@deepseek-ai/dsh-develop
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import type { SemanticDelivery } from '../src/semantic-display.ts'
+import { semanticSummaryInput } from '../src/semantic-summary-input.ts'
 import { semanticHistoryTableDelivery } from '../src/semantic-history-display.ts'
 import { semanticMandatoryTableDelivery } from '../src/semantic-mandatory-display.ts'
 import { prepareSemanticInput, projectSemanticReply, restoreSemanticInput, restoreSemanticProjection, semanticModelInput,
@@ -48,17 +49,17 @@ function command(publication: DevelopmentTaskContextPublication) {
   return { publication, observation, grant: publication.peerContribution.grant }
 }
 
-function native(extra: number, widenGrant = true) {
+function native(extra: number, widenGrant = true, maxSamples = 32) {
   const recorded = fixture()
   const file = z.object({ block: developmentTaskContextBlockSchema }).parse(JSON.parse(readFileSync(
     new URL('./fixtures/semantic-native-command-context.json', import.meta.url), 'utf8')) as unknown)
   const source = file.block.sources[0]!
   const originalCommand = source.context.findLast(item => item.peerToolObservation?.kind === 'command-observation')!
   const originalGrant = command(originalCommand).grant
-  // This independent scenario authorizes 32 samples from issuance; it never renews an exhausted live grant.
+  // Each independent scenario authorizes its sample limit from issuance; it never renews an exhausted live grant.
   const context = source.context.map((item): DevelopmentTaskContextPublication => {
     if (item.peerContribution === undefined || item.peerContribution.grant.grantId !== originalGrant.grantId || !widenGrant) return item
-    return { ...item, peerContribution: { ...item.peerContribution, grant: { ...item.peerContribution.grant, maxSamples: 32 } } }
+    return { ...item, peerContribution: { ...item.peerContribution, grant: { ...item.peerContribution.grant, maxSamples } } }
   })
   const { publication: template, observation, grant } = command(context.find(item => item.id === originalCommand.id)!)
   for (let index = 1; index <= extra; index++) {
@@ -111,7 +112,7 @@ it.each([{ extra: 0, previousBytes: 6539 }, { extra: 1, previousBytes: 6730 },
     const previous = projectSemanticReply(input, reply, 100_000, 5)
     expect(Buffer.byteLength(previous.text)).toBe(previousBytes)
     if (extra > 0) expect(() => projectSemanticReply(input, reply, contextBytes, 5)).toThrow('exceed maxContextBytes')
-    const current = projectSemanticReply(input, reply, contextBytes)
+    const current = projectSemanticReply(input, reply, contextBytes, 6)
     expect(current.selectedSources).toEqual(previous.selectedSources)
     expect(current.omittedSources).toEqual(previous.omittedSources)
     expect(current.activation).toEqual(previous.activation)
@@ -131,20 +132,20 @@ it.each([{ extra: 0, previousBytes: 6539 }, { extra: 1, previousBytes: 6730 },
     expect(command(latest).observation.sequence).toBe(4 + extra)
     expect(command(latest).observation.exitCode).toBe(extra % 2 === 1 ? 0 : 7)
     const bytes = Buffer.byteLength(current.text)
-    expect(projectSemanticReply(input, reply, bytes)).toEqual(current)
-    expect(() => projectSemanticReply(input, reply, bytes - 1)).toThrow('exceed maxContextBytes')
+    expect(projectSemanticReply(input, reply, bytes, 6)).toEqual(current)
+    expect(() => projectSemanticReply(input, reply, bytes - 1, 6)).toThrow('exceed maxContextBytes')
   },
 )
 
 it('grows only the history count digits when current evidence, quotes, and recipient stay unchanged', () => {
   const { input, reply } = fixture()
-  const original = projectSemanticReply(input, reply, 6552)
+  const original = projectSemanticReply(input, reply, 6552, 6)
   for (const extra of [1, 2, 10]) {
     const next = { ...input, omitted: [...input.omitted, ...Array.from({ length: extra }, (_, index) => ({
       source: { kind: 'publication' as const, taskId: input.task.id, revision: input.task.revision,
         publicationId: `additional-historical-command-${String(index)}` }, reason: 'superseded' as const,
     }))] }
-    const projected = projectSemanticReply(next, reply, 6552)
+    const projected = projectSemanticReply(next, reply, 6552, 6)
     expect(Buffer.byteLength(projected.text) - Buffer.byteLength(original.text)).toBe(extra === 10 ? 1 : 0)
     expect(projected.activation).toEqual(original.activation)
     expect(projected.omittedSources).toEqual(next.omitted.concat(original.omittedSources.slice(input.omitted.length)))
@@ -219,7 +220,7 @@ it('cold-restores v6 and rejects changed counts, count bases, and relabeled v5 t
     system: 'Summarize authorized reports.', purpose: 'context-summary', maxContextBytes: contextBytes,
     messages: [{ id: 'request', role: 'user', source: { kind: 'plugin', plugin: 'dsh-development-task-context/semantic' },
       content: [{ type: 'text', text: semanticModelInput(input) }] }] })
-  const projection = projectSemanticReply(input, reply, contextBytes)
+  const projection = projectSemanticReply(input, reply, contextBytes, 6)
   const result = semanticResultSchema.parse({ version: 6, key: request.key, requestSeq: 1, status: 'completed',
     rawOutput: [{ type: 'text', text: JSON.stringify(reply) }], finish: { kind: 'stop' }, projection,
     usage: null, elapsedMs: 1, error: null, rejectedChunk: null })
@@ -238,4 +239,20 @@ it('cold-restores v6 and rejects changed counts, count bases, and relabeled v5 t
     semanticResultSchema.parse({ ...result, projection: old }))).toThrow('cached projection disagrees')
   expect(() => restoreSemanticProjection({ ...request, maxContextBytes: Buffer.byteLength(projection.text) - 1 }, result))
     .toThrow('exceed maxContextBytes')
+})
+
+it('keeps actual C current evidence in a bounded model input after 300 derived command reports', () => {
+  const { input, reply, contextBytes } = native(300, true, 512)
+  const captured = semanticModelInput(input)
+  const wire = semanticSummaryInput(input)
+  expect(Buffer.byteLength(captured)).toBeGreaterThan(65_536)
+  expect(Buffer.byteLength(wire)).toBeLessThan(18_000)
+  expect(input.mandatory).toHaveLength(1)
+  expect(input.sources).toHaveLength(5)
+  expect(input.omitted).toHaveLength(302)
+  const projection = projectSemanticReply(input, reply, contextBytes)
+  expect(Buffer.byteLength(projection.text)).toBeLessThanOrEqual(6552)
+  expect(projection.text).toContain('CHECK_CURRENT_FAILED')
+  expect(projection.text).toContain('"exitCode":7')
+  expect(reply.updates[0]?.sources).toHaveLength(2)
 })

@@ -34,7 +34,8 @@ const selectionSchema: s<Selection> = s.object({
 /** Loader validation for the deployment limits and explicit initial selection. */
 export const Config: s<Config> = s.object({
   selection: selectionSchema.required(), auditSessionId: s.string().required(),
-  temperature: s.number(), reasoningEffort: s.string(), maxInputBytes: positive(), maxOutputTokens: positive(),
+  temperature: s.number(), reasoningEffort: s.string(),
+  maxCapturedInputBytes: positive(), maxInputBytes: positive(), maxOutputTokens: positive(),
   maxOutputBytes: positive(), timeoutMs: s.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).required(),
   maxConcurrentCalls: positive(),
 })

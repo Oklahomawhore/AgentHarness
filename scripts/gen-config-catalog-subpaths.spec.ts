@@ -31,7 +31,7 @@ it('catalogues the semantic provider route, audit identity, and execution limits
   expect(semantic?.kind).toBe('config')
   expect(semantic?.inject).toEqual(['llm', 'sessions', 'sessionPersistence'])
   expect(semantic?.schemaKeys).toEqual(expect.arrayContaining([
-    'auditSessionId', 'provider', 'model', 'maxInputBytes', 'maxOutputTokens',
+    'auditSessionId', 'provider', 'model', 'maxInputBytes', 'maxCapturedInputBytes', 'maxOutputTokens',
     'maxOutputBytes', 'timeoutMs', 'maxConcurrentCalls', 'maxCalls',
   ]))
 })
@@ -60,7 +60,7 @@ it('catalogues configured selection separately from the fixed semantic execution
   expect(configured?.kind).toBe('config')
   expect(configured?.inject).toEqual(['settings', 'llm', 'sessions', 'sessionPersistence'])
   expect(configured?.schemaKeys?.toSorted()).toEqual([
-    'selection', 'auditSessionId', 'temperature', 'reasoningEffort', 'maxInputBytes',
+    'selection', 'auditSessionId', 'temperature', 'reasoningEffort', 'maxInputBytes', 'maxCapturedInputBytes',
     'maxOutputTokens', 'maxOutputBytes', 'timeoutMs', 'maxConcurrentCalls',
   ].sort())
   expect(configured?.refs).toEqual([{

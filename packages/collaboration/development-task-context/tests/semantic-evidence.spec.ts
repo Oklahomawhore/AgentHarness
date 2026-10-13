@@ -174,7 +174,7 @@ it('retains legacy exact projection bytes through the explicit v1 algorithm', ()
   expect(legacy.text).toBe(projectSemanticReply(prepared, response, value.maxContextBytes, 3).text)
   const legacyDelivery = z.object({ coverage: z.record(z.string(), z.json()) }).loose().parse(semanticTextValue(legacy.text))
   expect(expandSemanticText(projection(value).text)).toEqual({ ...legacyDelivery,
-    coverage: { ...legacyDelivery.coverage, supersededSources: [] } })
+    coverage: { ...legacyDelivery.coverage, supersededSources: [], withdrawnSources: [] } })
   expect(legacy.selectedSources).toEqual(projection(value).selectedSources)
 })
 

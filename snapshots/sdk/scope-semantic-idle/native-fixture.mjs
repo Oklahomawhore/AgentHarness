@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { assertDeliveryCoverage, capturedSummaryInput } from '../semantic-audit-fixture.mjs'
 
 const require = createRequire(new URL('../../../packages/collaboration/development-task-context/package.json', import.meta.url))
 const load = async name => import(pathToFileURL(require.resolve(name)).href)
@@ -49,28 +50,7 @@ const summaries = [
 // Historical publication IDs stay in durable metadata; displayed counts identify only their exact Task revision.
 function verifyCoverage(projection) {
   const body = JSON.parse(projection.text.split('<shared-work-updates>\n')[1].split('\n</shared-work-updates>')[0])
-  const source = index => {
-    assert.ok(Number.isInteger(index) && index >= 0 && index < body.sourceTable.length)
-    const row = body.sourceTable[index]
-    if (row.kind === 'task') return { kind: row.kind, taskId: row.taskId, revision: row.revision }
-    assert.equal(row.kind, 'publication')
-    const task = source(row.taskSourceIndex)
-    assert.equal(task.kind, 'task')
-    return { ...task, kind: row.kind, publicationId: row.publicationId }
-  }
-  assert.deepEqual(body.coverage.selectedSources.map(source), projection.selectedSources)
-  assert.deepEqual(body.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
-    projection.omittedSources.filter(item => item.reason !== 'superseded' || item.source.kind !== 'publication'))
-  const groups = new Map()
-  for (const item of projection.omittedSources.filter(item => item.reason === 'superseded' && item.source.kind === 'publication')) {
-    const taskSourceIndex = body.sourceTable.findIndex(row => row.kind === 'task'
-      && row.taskId === item.source.taskId && row.revision === item.source.revision)
-    assert.ok(taskSourceIndex >= 0)
-    groups.set(taskSourceIndex, (groups.get(taskSourceIndex) ?? 0) + 1)
-    assert.ok(!body.sourceTable.some(row => row.kind === 'publication' && row.publicationId === item.source.publicationId))
-  }
-  assert.deepEqual(body.coverage.supersededSources,
-    [...groups].sort(([a], [b]) => a - b).map(([taskSourceIndex, count]) => ({ taskSourceIndex, count })))
+  assertDeliveryCoverage(body, projection)
 }
 
 class ControlledSummaryAdapter extends LlmAdapter {
@@ -86,6 +66,7 @@ class ControlledSummaryAdapter extends LlmAdapter {
     assert.deepEqual(requests.at(-1).data.messages, options.messages)
     assert.equal(requests.at(-1).data.system, options.system)
     assert.equal(requests.at(-1).data.call.maxTokens, options.maxTokens)
+    capturedSummaryInput(requests.at(-1).data, 65536)
     const input = JSON.parse(content(options.messages[0]))
     assert.equal(input.recipient.sessionLabel, 'Maintain the retry implementation')
     const decisions = []
@@ -204,12 +185,12 @@ export async function apply(ctx) {
       const results = audit.filter(event => event.type === 'context/semantic-result')
       assert.equal(auxiliaryRequests.length, 5)
       assert.equal(results.length, 5)
-      assert.ok(results.every(event => event.data.version === 6 && event.data.status === 'completed'))
+      assert.ok(results.every(event => event.data.version === 7 && event.data.status === 'completed'))
       for (const result of results) {
         const request = auxiliaryRequests.find(value => value.seq === result.data.requestSeq)
         assert.equal(result.data.key, request.data.key)
         verifyCoverage(result.data.projection)
-        const captured = JSON.parse(content(request.data.messages[0]))
+        const captured = capturedSummaryInput(request.data, 65536)
         assert.deepEqual(captured.coverage.omittedSources,
           result.data.projection.omittedSources.filter(item => item.reason !== 'recipient-irrelevant'))
       }

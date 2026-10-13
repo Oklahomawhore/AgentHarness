@@ -17,6 +17,8 @@ const tableSchema = z.object({
   coverage: z.object({ selectedSources: z.array(z.number().int().nonnegative()),
     omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() }).strict()),
     supersededSources: z.array(z.object({ taskSourceIndex: z.number().int().nonnegative(),
+      count: z.number().int().positive() }).strict()).optional(),
+    withdrawnSources: z.array(z.object({ taskSourceIndex: z.number().int().nonnegative(),
       count: z.number().int().positive() }).strict()).optional() }).strict(),
 }).strict()
 
@@ -34,9 +36,9 @@ export function semanticTextValue(text: string): unknown {
   return JSON.parse(raw) as unknown
 }
 
-/** Expand version-four through six tables without using the production display implementation.
+/** Expand version-four through seven tables without using the production display implementation.
  * @param text - Complete semantic table text.
- * @returns Expanded evidence; version-six history counts remain counts and never reconstruct omitted publication identities.
+ * @returns Expanded evidence; history and withdrawal counts remain counts and never reconstruct omitted publication identities.
  */
 export function expandSemanticText(text: string): unknown {
   const value = tableSchema.parse(semanticTextValue(text))
@@ -92,6 +94,11 @@ export function expandSemanticText(text: string): unknown {
       ...(value.coverage.supersededSources === undefined ? {} : { supersededSources: value.coverage.supersededSources.map((item) => {
         const task = source(item.taskSourceIndex)
         if (task.kind !== 'task') throw new Error('history count basis is not a Task')
+        return { source: task, count: item.count }
+      }) }),
+      ...(value.coverage.withdrawnSources === undefined ? {} : { withdrawnSources: value.coverage.withdrawnSources.map((item) => {
+        const task = source(item.taskSourceIndex)
+        if (task.kind !== 'task') throw new Error('withdrawal count basis is not a Task')
         return { source: task, count: item.count }
       }) }),
     } }

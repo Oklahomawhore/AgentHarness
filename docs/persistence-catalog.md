@@ -407,7 +407,7 @@ Source: [`packages/compaction/compaction/src/types.ts:34`](../packages/compactio
 'context/semantic-request': SemanticRequestRecord
 ```
 
-Source: [`packages/collaboration/development-task-context/src/semantic.ts:21`](../packages/collaboration/development-task-context/src/semantic.ts)
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:22`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="contextsemantic-result--log-only"></a>
 
@@ -418,7 +418,7 @@ Source: [`packages/collaboration/development-task-context/src/semantic.ts:21`](.
 'context/semantic-result': SemanticResultRecord
 ```
 
-Source: [`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:24`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 ### `deliverables/*`
 

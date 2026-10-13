@@ -20,7 +20,8 @@ const config = parseMixedStudyConfig({ ordinary: route, semantic: { ...route, ma
   contextBytes: 8000, maxArtifactBytes: 65536, wallTimeoutMs: 300000, cleanupTimeoutMs: 10000, operationTimeoutMs: 30000,
 } }, 'transport-calibration')
 const summaryConfig = { auditSessionId: 'mixed-artifact-summary', provider: 'mixed-summary', model: 'controlled-summary',
-  maxInputBytes: 64000, maxOutputTokens: 2048, maxOutputBytes: 16000, timeoutMs: 10000, maxConcurrentCalls: 2, maxCalls: 2 }
+  maxInputBytes: 64000, maxCapturedInputBytes: 1048576, maxOutputTokens: 2048, maxOutputBytes: 16000,
+  timeoutMs: 10000, maxConcurrentCalls: 2, maxCalls: 2 }
 const privateMarker = 'MIXED_PRIVATE_CHECK_IMPLEMENTATION'
 const checkSource = `// ${privateMarker}\nconst state=JSON.parse(require("node:fs").readFileSync("check-state.json","utf8"));\n`
   + 'process.stdout.write(state.output);process.exit(state.code);\n'
