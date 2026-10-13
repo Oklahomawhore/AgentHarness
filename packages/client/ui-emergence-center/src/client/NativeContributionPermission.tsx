@@ -41,11 +41,8 @@ export function NativeContributionPermission({ id, draft, disabled, fileContentD
       <label><input type="checkbox" checked={draft.write} onChange={(event) => { change({ ...draft, write: event.target.checked }) }} />{t('native.share.write')}</label>
       <label><input type="checkbox" checked={draft.edit} onChange={(event) => { change({ ...draft, edit: event.target.checked }) }} />{t('native.share.edit')}</label>
     </fieldset>
-    <div className={css.numbers}>
-      <label className={css.field} htmlFor={`${id}-hours`}>{t('contribution.hours')}<Input id={`${id}-hours`} type="number" min="1" required value={draft.hours} disabled={disabled} onChange={(event) => { change({ ...draft, hours: event.target.value }) }} /></label>
-      <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" required value={draft.samples} disabled={disabled} onChange={(event) => { change({ ...draft, samples: event.target.value }) }} /></label>
-      <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" required value={draft.bytes} disabled={disabled} onChange={(event) => { change({ ...draft, bytes: event.target.value }) }} /></label>
-    </div>
+    <NativeContributionLimits id={id} draft={draft} disabled={disabled} t={t}
+      change={(limits) => { change({ ...draft, ...limits }) }} />
     <label className={css.consent}><input type="checkbox" checked={draft.fileContent} disabled={disabled || fileContentDisabled || (!draft.write && !draft.edit)}
       onChange={(event) => { change({ ...draft, fileContent: event.target.checked }) }} />{t('native.fileContent.consent')}</label>
     <p className={css.hint}>{t('native.fileContent.hint')}</p>
@@ -54,4 +51,27 @@ export function NativeContributionPermission({ id, draft, disabled, fileContentD
     <label className={css.consent}><input type="checkbox" checked={draft.consent} disabled={disabled}
       onChange={(event) => { change({ ...draft, consent: event.target.checked }) }} />{t(consentKey)}</label>
   </>
+}
+
+/** Explicit duration, sample count and complete sample size for either source permission. */
+export type NativeContributionLimitsDraft = Pick<NativeContributionDraft, 'hours' | 'samples' | 'bytes'>
+
+/**
+ * Render shared capacity fields without selecting a source or consenting to disclosure.
+ * @param props - uncommitted limits, field identity, editing state and localized labels.
+ * @returns duration, sample count and byte-limit inputs.
+ */
+export function NativeContributionLimits({ id, draft, disabled, change, t }: PropsLocale<'emergenceCenter'> & {
+  id: string
+  draft: NativeContributionLimitsDraft
+  disabled: boolean
+  change: (value: NativeContributionLimitsDraft) => void
+}) {
+  return (
+    <div className={css.numbers}>
+      <label className={css.field} htmlFor={`${id}-hours`}>{t('contribution.hours')}<Input id={`${id}-hours`} type="number" min="1" required value={draft.hours} disabled={disabled} onChange={(event) => { change({ ...draft, hours: event.target.value }) }} /></label>
+      <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" required value={draft.samples} disabled={disabled} onChange={(event) => { change({ ...draft, samples: event.target.value }) }} /></label>
+      <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" required value={draft.bytes} disabled={disabled} onChange={(event) => { change({ ...draft, bytes: event.target.value }) }} /></label>
+    </div>
+  )
 }

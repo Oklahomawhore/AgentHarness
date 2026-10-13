@@ -33,3 +33,5 @@ Status: implemented
 重试需要运行中的来源 Host 和保留的 owner 地址。尚未进入耐久来源存储的内存完成记录不能跨进程崩溃保留；重启会结束原采集。同 Host 的 Task assignment 需要另行授权的[本地采集路径](2026-10-04-owner-local-scope-contributions.zh.md)；绑定本身不授予来源许可。整字段省略在字节限额下保留报告归属；工具报告不证明当前完整文件内容或模型理解。
 
 真实 Loader 场景覆盖普通与 PTC 文件工作、耐久来源坐标、owner 发布、接收方请求、撤回与本地存储故障恢复。Keyless 模型流证明请求组装和回放，不证明语义任务质量或相对单 Agent 的收益。
+
+另行授权的[完整答复来源](2026-10-14-completed-answer-contributions.zh.md)服务于没有文件工具的工作，不替代实际工具来源证明。

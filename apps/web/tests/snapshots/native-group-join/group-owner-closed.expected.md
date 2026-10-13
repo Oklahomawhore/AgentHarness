@@ -3,6 +3,10 @@
   - option "邀请多人加入同一目标" [selected]
   - option "邀请一个会话加入"
   - option "仅申请文件贡献"
+- text: 贡献来源
+- combobox "贡献来源":
+  - option "授权目录内的 Write/Edit" [selected]
+  - option "正常完成的最终答复"
 - text: 累计申请名额
 - spinbutton "累计申请名额": "2"
 - paragraph: 每个新申请都会占用一个名额；拒绝、取消或到期后也不返还。此数值还受 Host 的总申请容量限制。

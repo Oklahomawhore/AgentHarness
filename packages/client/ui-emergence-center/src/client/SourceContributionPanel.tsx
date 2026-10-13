@@ -29,7 +29,8 @@ function sameInvitation(left: ScopeContributionInvitation, right: ScopeContribut
         === JSON.stringify(b.source.version === 4 ? b.source.commands.map(item => [item.command, item.rootIndex]) : null)
       && a.source.tools.length === b.source.tools.length
       && a.source.tools.every(tool => b.source.kind === 'tool-observations' && b.source.tools.includes(tool))
-      : b.source.kind !== 'tool-observations' && a.source.method === b.source.method && a.source.path === b.source.path)
+      : a.source.kind === undefined && b.source.kind === undefined
+        && a.source.method === b.source.method && a.source.path === b.source.path)
     && a.expiresAt === b.expiresAt && a.maxSamples === b.maxSamples && a.maxSampleBytes === b.maxSampleBytes
 }
 
@@ -124,6 +125,8 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
       if (revision !== previewRevision.current) return
       if (result.kind === 'openapi-contribution-entry' || result.kind === 'contribution-entry'
         || result.kind === 'scope-join-entry' || result.kind === 'scope-group-entry') {
+        const selectedSource = result.kind === 'openapi-contribution-entry' ? 'openapi' : result.sourceKind
+        if (selectedSource === 'completed-turn-outcomes') { setInvalid(true); return }
         if ((result.kind === 'scope-join-entry' || result.kind === 'scope-group-entry') && capture === null) {
           const checked = await probeContributionEntry({ entry: result }).catch(() => ({ status: 'unavailable' as const }))
           if (revision !== previewRevision.current) return
@@ -131,7 +134,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
           if (checked.status !== 'ready') return
         }
         setApplicationEntry(result)
-        setSourceKind(result.kind === 'openapi-contribution-entry' ? 'openapi' : result.sourceKind)
+        setSourceKind(selectedSource)
       }
       else setInvalid(true)
     } catch { if (revision === previewRevision.current) setInvalid(true) }

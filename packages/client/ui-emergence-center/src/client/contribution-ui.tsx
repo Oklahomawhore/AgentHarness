@@ -75,7 +75,9 @@ export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceC
       </dd></>}
       {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}
       {source.fileContent === 'completed-native-file' && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
-      : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
+      : source.kind === 'completed-turn-outcomes' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('native.outcomes.source')}</dd>
+        <dt>{t('native.outcomes.permission')}</dt><dd>{t('native.outcomes.scope')}</dd></>
+        : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
   </>
 }
 

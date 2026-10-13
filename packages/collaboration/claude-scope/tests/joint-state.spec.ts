@@ -145,3 +145,20 @@ describe('persisted Claude joint consent', () => {
     } } }).success).toBe(false)
   })
 })
+
+it('rejects completed-turn permissions in detached Claude joint records without upgrading old consent', () => {
+  const waiting = waitingRecord()
+  const active = activeRecord()
+  const source = { kind: 'completed-turn-outcomes', version: 5, name: 'answers' }
+  const proposal = { ...waiting.proposal, source }
+  const entry = { ...waiting.entry, sourceKind: 'completed-turn-outcomes' }
+  expect(parseStored({ ...waiting, proposal }).success).toBe(false)
+  expect(parseStored({ ...waiting, entry }).success).toBe(false)
+  expect(parseStored({ ...waiting, proposal, entry }).success).toBe(false)
+  const contributionInvitation = { ...active.contributionInvitation, kind: 'turn-contribution',
+    grant: { ...active.contributionInvitation.grant, source } }
+  expect(parseStored({ ...active, contributionInvitation }).success).toBe(false)
+  expect(parseStored({ ...active, proposal, entry, contributionInvitation }).success).toBe(false)
+  expect(parseStored(waiting)).toEqual({ success: true, data: waiting })
+  expect(parseStored(active)).toEqual({ success: true, data: active })
+})

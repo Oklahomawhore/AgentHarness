@@ -128,10 +128,26 @@ export interface DevelopmentTaskCommandToolObservationSource {
   readonly initialization?: never
 }
 
+/** Explicit permission to share complete replies from subsequent user-channel native turns. */
+export interface DevelopmentTaskCompletedTurnObservationSource {
+  readonly kind: 'completed-turn-outcomes'
+  readonly version: 5
+  readonly name: string
+}
+
+/** A complete Agent report; its digest verifies text integrity, not owner approval or factual accuracy. */
+export interface DevelopmentTaskCompletedTurnObservationResult {
+  readonly kind: 'completed-turn-outcome'
+  readonly version: 5
+  readonly text: string
+  readonly sha256: string
+}
+
 /** Immutable source permission without local filesystem roots or session identifiers. */
 export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
+  | DevelopmentTaskCompletedTurnObservationSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -217,10 +233,18 @@ export type DevelopmentTaskPeerToolObservationResult =
   | DevelopmentTaskLocalToolObservationResult
   | DevelopmentTaskRecordedToolObservationResult
 
+/** Locally admitted samples retain distinct tool and completed-turn permissions. */
+export type DevelopmentTaskLocalContributionObservationResult =
+  | DevelopmentTaskLocalToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+
+/** Peer samples retain tool variants and independently permitted completed-turn reports. */
+export type DevelopmentTaskPeerContributionObservationResult =
+  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+
 /** Identity of one owner-local capture interval; it is never a transport peer identity. */
 export type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContributionId'>
 
-/** Explicit local tool permission tied to one actual Agent assignment interval. */
+/** Explicit local source permission tied to one actual Agent assignment interval. */
 export interface DevelopmentTaskLocalContributionGrant {
   readonly version: 1
   readonly taskId: DevelopmentTaskId
@@ -230,7 +254,7 @@ export interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
-    | DevelopmentTaskCommandToolObservationSource
+    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -268,7 +292,7 @@ export interface DevelopmentTaskLocalContributionRequest {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: DevelopmentTaskLocalToolObservationResult
+  readonly result: DevelopmentTaskLocalContributionObservationResult
 }
 
 /** Irreversible local capture withdrawal using its original permission. */
@@ -301,6 +325,12 @@ export interface DevelopmentTaskLocalContributionMetadata {
 
 /** Ordered local tool evidence; source Session execution remains the original execution authority. */
 export type DevelopmentTaskLocalToolObservation = DevelopmentTaskLocalToolObservationResult & {
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+}
+
+/** Owner-attributed complete local reply; independent turns remain separate reports. */
+export type DevelopmentTaskLocalTurnOutcome = DevelopmentTaskCompletedTurnObservationResult & {
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
 }
@@ -357,7 +387,7 @@ export interface DevelopmentTaskPeerContributionRequest {
   readonly grant: DevelopmentTaskPeerContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerToolObservationResult
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerContributionObservationResult
 }
 
 /** Source and owner can end a known grant; only the owner may revoke it. */
@@ -377,6 +407,16 @@ export type DevelopmentTaskPeerOpenApiObservation = Omit<DevelopmentTaskOpenApiO
 
 /** Owner-attributed ordered tool event, distinct from a replaceable OpenAPI artifact sample. */
 export type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly sequence: number
+  readonly observerPeerId: ScopePeerId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+}
+
+/** Complete peer reply with the original source identity and capture authority. */
+export type DevelopmentTaskPeerTurnOutcome = DevelopmentTaskCompletedTurnObservationResult & {
   readonly sourceName: string
   readonly grantId: DevelopmentTaskContributionGrantId
   readonly sequence: number
@@ -407,8 +447,10 @@ export type DevelopmentTaskContextPublication = {
     readonly peerContribution?: never
     readonly peerObservation?: never
     readonly peerToolObservation?: never
+    readonly peerTurnOutcome?: never
     readonly localContribution?: never
     readonly localToolObservation?: never
+    readonly localTurnOutcome?: never
   }
   | {
     readonly publishedBy?: never
@@ -418,8 +460,10 @@ export type DevelopmentTaskContextPublication = {
     readonly peerContribution: DevelopmentTaskPeerContributionMetadata
     readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation
     readonly peerToolObservation?: DevelopmentTaskPeerToolObservation
+    readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome
     readonly localContribution?: never
     readonly localToolObservation?: never
+    readonly localTurnOutcome?: never
   }
   | {
     readonly publishedBy: DevelopmentParticipantId
@@ -429,8 +473,10 @@ export type DevelopmentTaskContextPublication = {
     readonly peerContribution?: never
     readonly peerObservation?: never
     readonly peerToolObservation?: never
+    readonly peerTurnOutcome?: never
     readonly localContribution: DevelopmentTaskLocalContributionMetadata
     readonly localToolObservation?: DevelopmentTaskLocalToolObservation
+    readonly localTurnOutcome?: DevelopmentTaskLocalTurnOutcome
   }
 )
 

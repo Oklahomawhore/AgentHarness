@@ -330,9 +330,10 @@ export class IndependentContribution {
    */
   async activate(domain: ScopeDomain, request: ClaudeScopeActivateContributionRequest, signal: AbortSignal): Promise<ScopeSession> {
     this.assertExpected(domain, request.sessionKey, request.expectedCapture)
-    if (request.invitation.grant.source.kind === 'tool-observations'
-      && (request.invitation.grant.source.version === 3 || request.invitation.grant.source.version === 4)) {
-      throw new RemoteError('claude-scope/invitation-mismatch', 'Native completed-file and command contribution permissions are not supported by Claude Hooks',
+    if (request.invitation.grant.source.kind === 'completed-turn-outcomes'
+      || (request.invitation.grant.source.kind === 'tool-observations'
+        && (request.invitation.grant.source.version === 3 || request.invitation.grant.source.version === 4))) {
+      throw new RemoteError('claude-scope/invitation-mismatch', 'Native completed-file, command and completed-turn contribution permissions are not supported by Claude Hooks',
         { sessionKey: request.sessionKey })
     }
     const controller = this.controller(request.sessionKey)
@@ -457,7 +458,7 @@ export class IndependentContribution {
     }
     const report = lease.sample?.result
     if (report !== undefined && (('kind' in capture.source) !== ('kind' in report)
-      || ('kind' in report && (report.tool !== lease.toolName
+      || ('kind' in report && (report.kind !== 'tool-observation' || report.tool !== lease.toolName
         || report.reportedStatus !== (lease.terminal === 'PostToolUseFailure' ? 'failure' : 'success'))))) {
       throw new Error('claude-scope: stored sample does not match its source and tool completion')
     }

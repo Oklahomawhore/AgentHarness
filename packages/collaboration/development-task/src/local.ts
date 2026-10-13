@@ -4,6 +4,7 @@ import { commandResultValues, freezeCommandResult } from './command.ts'
 import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContributionRequest,
   DevelopmentTaskContextPublication, DevelopmentTaskContributionEndReason, DevelopmentTaskLocalToolObservation,
+  DevelopmentTaskLocalTurnOutcome,
 } from './types.ts'
 
 function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
@@ -28,11 +29,12 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
   return Object.freeze({ version: grant.version, taskId: grant.taskId, participantId: grant.participantId, bindingId: grant.bindingId,
     expectedBindingEpoch: Object.freeze({ nodeId: grant.expectedBindingEpoch.nodeId, seq: grant.expectedBindingEpoch.seq }),
     captureId: grant.captureId, captureGeneration: grant.captureGeneration,
-    source: Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
-      ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent }
-        : grant.source.version === 4 ? { version: 4 as const,
-          commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))),
-          ...(grant.source.fileContent === undefined ? {} : { fileContent: grant.source.fileContent }) } : {}) }),
+    source: grant.source.kind === 'completed-turn-outcomes' ? Object.freeze({ ...grant.source })
+      : Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
+        ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent }
+          : grant.source.version === 4 ? { version: 4 as const,
+            commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))),
+            ...(grant.source.fileContent === undefined ? {} : { fileContent: grant.source.fileContent }) } : {}) }),
     expiresAt: grant.expiresAt, maxSamples: grant.maxSamples, maxSampleBytes: grant.maxSampleBytes })
 }
 
@@ -43,6 +45,13 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
  */
 export function localContributionPayloadDigest(request: DevelopmentTaskLocalContributionRequest): string {
   const { grant, result } = request
+  if (result.kind === 'completed-turn-outcome') {
+    if (grant.source.kind !== 'completed-turn-outcomes') throw new Error('turn outcome requires completed-turn authorization')
+    return digest([localContributionId(grant), grant.version, grant.source.kind, grant.source.version, grant.source.name,
+      grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence,
+      result.kind, result.version, result.text, result.sha256])
+  }
+  if (grant.source.kind !== 'tool-observations') throw new Error('tool report requires tool authorization')
   if (result.kind === 'command-observation') {
     if (grant.source.version !== 4) throw new Error('command outcome requires command authorization')
     return digest([localContributionId(grant), grant.version, grant.source.kind, grant.source.name, grant.source.tools,
@@ -94,12 +103,19 @@ export function freezeLocalToolObservation(tool: DevelopmentTaskLocalToolObserva
 }
 
 /**
- * Render local tool evidence using Task-owned attribution.
+ * Render local source reports using Task-owned attribution.
  * @param request - validated local sample; no caller-written attribution is accepted.
  * @param at - original owner event time.
  * @returns a canonical publication preserving the reported event rather than asserting current file contents.
  */
 export function localPublication(request: DevelopmentTaskLocalContributionRequest, at: number): DevelopmentTaskContextPublication {
+  if (request.result.kind === 'completed-turn-outcome') {
+    const observation: DevelopmentTaskLocalTurnOutcome = Object.freeze({ kind: request.result.kind, version: request.result.version,
+      text: request.result.text, sha256: request.result.sha256, sourceId: request.sourceId, sequence: request.sequence })
+    return { id: localContributionPublicationId(request), publishedAt: at, publishedBy: request.grant.participantId,
+      localContribution: { version: 1, grant: request.grant }, localTurnOutcome: observation,
+      text: `Local Agent completed-turn report. This is Agent-reported text, not owner-approved facts.\n${JSON.stringify(observation)}` }
+  }
   const observation = freezeLocalToolObservation({ ...request.result, sourceId: request.sourceId, sequence: request.sequence })
   return { id: localContributionPublicationId(request), publishedAt: at, publishedBy: request.grant.participantId,
     localContribution: { version: 1, grant: request.grant }, localToolObservation: observation,
@@ -115,6 +131,11 @@ export function localPublication(request: DevelopmentTaskLocalContributionReques
  */
 export function localPublicationRequest(publication: DevelopmentTaskContextPublication): DevelopmentTaskLocalContributionRequest {
   const grant = publication.localContribution?.grant
+  const outcome = publication.localTurnOutcome
+  if (grant !== undefined && outcome !== undefined) {
+    return { grant, sourceId: outcome.sourceId, sequence: outcome.sequence,
+      result: { kind: outcome.kind, version: outcome.version, text: outcome.text, sha256: outcome.sha256 } }
+  }
   const tool = publication.localToolObservation
   if (grant === undefined || tool === undefined) throw new Error('local sample publication is required')
   if (tool.kind === 'command-observation') {

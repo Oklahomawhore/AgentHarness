@@ -2,7 +2,7 @@ import ScopeTransport, { ScopeTransportError } from '@deepseek-ai/dsh-scope-tran
 import type { ScopePeerId, ScopeTransportHandler, ScopeTransportTarget } from '@deepseek-ai/dsh-scope-transport/types'
 import ScopeAccessService from '@deepseek-ai/dsh-scope-access'
 import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -1426,7 +1426,7 @@ describe('independent Claude contribution permits', () => {
 
   it('returns typed local selection errors without changing retained permissions', async () => {
     const f = await contributionHosts()
-    if (f.invitation.grant.source.kind === 'tool-observations') throw new Error('API fixture requires an OpenAPI grant')
+    if (f.invitation.grant.source.kind !== undefined) throw new Error('API fixture requires an OpenAPI grant')
     await expect(f.source.scope.contributionDetail({ sessionKey: 'missing' as ClaudeScopeSessionKey }))
       .rejects.toMatchObject({ code: 'claude-scope/session-unavailable' })
     await expect(f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection,
@@ -1442,7 +1442,7 @@ describe('independent Claude contribution permits', () => {
 
   it('retains an inert path-free proposal and samples only an exact granted leased Write', async () => {
     const f = await contributionHosts()
-    if (f.invitation.grant.source.kind === 'tool-observations') throw new Error('API fixture requires an OpenAPI grant')
+    if (f.invitation.grant.source.kind !== undefined) throw new Error('API fixture requires an OpenAPI grant')
     expect(JSON.stringify(f.preparation.proposal)).not.toContain(f.source.directory)
     expect(await f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection,
       roots: [f.source.directory], source: f.file }))
@@ -2848,4 +2848,40 @@ it('refuses command permissions and outcomes in the file-only Claude contributio
       kind: 'command-observation', version: 4, tool: 'Bash', fields: commandSource.commands[0],
       state: 'unavailable', reason: 'completion-unavailable',
     } } }).success).toBe(false)
+})
+
+it('refuses completed-turn permissions, entries and durable samples without changing Claude file capture', async () => {
+  const f = await toolContributionHosts()
+  const turnSource = { kind: 'completed-turn-outcomes' as const, version: 5 as const, name: 'answers' }
+  const invitation = { ...f.invitation, kind: 'turn-contribution' as const, grant: { ...f.invitation.grant, source: turnSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: turnSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  const text = 'A complete native turn report.'
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-turn', toolName: 'Write',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'completed-turn-outcome', version: 5, text, sha256: createHash('sha256').update(text).digest('hex'),
+    } } }).success).toBe(false)
+  for (const kind of ['single', 'group'] as const) {
+    const joint = await jointApplication(kind)
+    if (joint.request.entry.kind !== 'scope-join-entry' && joint.request.entry.kind !== 'scope-group-entry') {
+      throw new Error('Native contribution fixture requires a joint entry')
+    }
+    const entry = { ...joint.request.entry, sourceKind: 'completed-turn-outcomes' as const }
+    const calls = vi.spyOn(joint.source.transport, 'request')
+    await expect(joint.source.scope.requestContribution({ ...joint.request, entry }))
+      .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    expect(calls).not.toHaveBeenCalled()
+    expect((await joint.detail()).capture).toBeNull()
+  }
+  expect((await f.source.scope.contributionDetail({ sessionKey: f.key })).capture).toEqual(detail.capture)
 })

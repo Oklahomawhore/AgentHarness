@@ -100,6 +100,8 @@ Web profile 在受支持的 Node Host 上挂载本适配器；浏览器 worker �
 
 Setup 路径和启动器参数是显式部署输入，不查找 PATH，也不通过包管理器启动。Web 组合使用当前 Node 可执行文件、CLI 参数、工作目录和 Harness home。Hook 超时必须长于 command 截止时间，且不能超过 60 秒。`maxSettingsBytes` 限制每份配置的读取和完整写入；setup 不能占用已发布或保留的应用 profile。
 
+不支持完整最终答复贡献入口及第 5 版授权。Claude 适配器在激活前以及恢复来源或联合记录时拒绝它们，不能将其解释为文件许可。该来源使用原生[贡献消费者](../scope-agent-contribution/README.zh.md)。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

@@ -1101,3 +1101,37 @@ describe('native reusable scope entry consent', () => {
     expect(f.actions.recoverNativeContributionRoute).not.toHaveBeenCalled()
   })
 })
+
+
+describe('remote completed final-answer permission', () => {
+  it('shares complete future answers through its own permission without filesystem or initialization authority', async () => {
+    const f = fixture()
+    const answerEntry = { ...applicationEntry, sourceKind: 'completed-turn-outcomes' as const }
+    vi.mocked(f.actions.previewNativeContribution).mockResolvedValue(answerEntry)
+    change(zh['native.invitation'], 'answer-entry')
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(applicationEntry.ownerPeerId)
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: zh['native.initialization.consent'] })).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['native.suggestion.use'] })).toBeNull()
+    expect(screen.getByText(zh['native.outcomes.scope'])).toBeTruthy()
+    change(zh['contribution.hours'], '1')
+    change(zh['contribution.maxSamples'], '2')
+    change(zh['contribution.maxBytes'], '4096')
+    const consent = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.outcomes.remoteConsent'] })
+    expect(consent().checked).toBe(false)
+    expect(submit().disabled).toBe(true)
+    fireEvent.click(consent())
+    change(zh['contribution.maxBytes'], '2048')
+    expect(consent().checked).toBe(false)
+    fireEvent.click(consent())
+    fireEvent.click(submit())
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]).toEqual({
+      agentId, expectedCapture: null, entry: answerEntry, sourceKind: 'completed-turn-outcomes',
+      limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 2, maxSampleBytes: 2048 },
+    })
+    change(zh['native.invitation'], 'changed-entry')
+    expect(screen.queryByRole('checkbox', { name: zh['native.outcomes.remoteConsent'] })).toBeNull()
+  })
+})

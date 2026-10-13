@@ -113,6 +113,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly semantic?: { readonly config: SemanticConfig; readonly adapter: LlmAdapter }
     readonly maxContextBytes?: number
     readonly receive?: boolean
+    readonly fileTools?: false
     readonly maxLeases?: number
     readonly maxObservationBytes?: number
     readonly invitationLifetimeMs?: number
@@ -185,9 +186,11 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     { name: 'sessions' }, { name: 'session-projection' }, { name: 'jsonl', config: { root: sessionsRoot, compression: 'none' } },
     { name: 'system' }, { name: 'tools', config: { mode } }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
     ...(role === 'source' || options.ownerLocal === true ? [
-      { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' }, { name: 'code' },
-      { name: 'subprocess' }, { name: 'shell-env', config: { dshHome: join(root, 'home') } },
-      { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
+      ...(options.fileTools === false ? [] : [
+        { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' }, { name: 'code' },
+        { name: 'subprocess' }, { name: 'shell-env', config: { dshHome: join(root, 'home') } },
+        { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
+      ]),
       { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25,
         ...(options.permissionDefaults === undefined ? {} : { permissionDefaults: options.permissionDefaults }) } },
     ] : []),
@@ -222,7 +225,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       ...(semanticAuditPersistence === undefined ? {} : { semanticAuditPersistence }),
       async createAgent(id) {
         const handle = await ctx.agents.create({ sessionId: SessionId(id), agentOptions: { provider: 'mock', model: 'mock' },
-          meta: { cwd: workspace } })
+          meta: options.fileTools === false ? {} : { cwd: workspace } })
         handles.set(id, handle)
         return handle.agent
       },

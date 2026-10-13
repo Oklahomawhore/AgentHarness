@@ -182,3 +182,45 @@ describe('current Session owner-local consent', () => {
     await act(async () => { held.resolve(undefined); await held.promise })
   })
 })
+
+
+describe('owner-local completed final-answer permission', () => {
+  it('uses separate consent with no file fields and sends only the selected source permission', async () => {
+    const f = fixture(assigned)
+    fillPermission()
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.local.consent'] }))
+    fireEvent.change(screen.getByLabelText(zh['contribution.sourceKind']), { target: { value: 'completed-turn-outcomes' } })
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['native.suggestion.use'] })).toBeNull()
+    expect(screen.getByText(zh['native.outcomes.scope'])).toBeTruthy()
+    const consent = (): HTMLInputElement => screen.getByRole('checkbox', { name: zh['native.outcomes.localConsent'] })
+    const enable = (): HTMLButtonElement => screen.getByRole('button', { name: zh['native.local.enable'] })
+    expect(consent().checked).toBe(false)
+    expect(enable().disabled).toBe(true)
+    fireEvent.click(consent())
+    fireEvent.change(screen.getByLabelText(zh['contribution.maxSamples']), { target: { value: '2' } })
+    expect(consent().checked).toBe(false)
+    fireEvent.click(consent())
+    fireEvent.click(enable())
+    await waitFor(() => { expect(f.actions.requestNativeLocalContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]?.[0]).toEqual({
+      agentId, expectedCapture: null, ...binding, sourceKind: 'completed-turn-outcomes',
+      limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 2, maxSampleBytes: 4096 },
+    })
+  })
+
+  it('invalidates answer consent on changed Task binding before synchronous submission', () => {
+    const f = fixture(assigned)
+    f.rerender(<><NativeLocalContributionPanel {...f.props} /></>)
+    fireEvent.change(screen.getByLabelText(zh['contribution.sourceKind']), { target: { value: 'completed-turn-outcomes' } })
+    for (const [label, value] of [[zh['contribution.hours'], '1'], [zh['contribution.maxSamples'], '2'], [zh['contribution.maxBytes'], '4096']] as const) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    }
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.outcomes.localConsent'] }))
+    f.rerender(<><NativeLocalContributionPanel {...f.props} entry={{ ...f.props.entry,
+      value: { ...assigned, assignment: { ...binding, expectedBindingEpoch: { ...binding.expectedBindingEpoch, seq: 5 } } } }} />
+    <SubmitBeforePassiveEffects /></>)
+    expect(f.actions.requestNativeLocalContribution).not.toHaveBeenCalled()
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.outcomes.localConsent'] }).checked).toBe(false)
+  })
+})

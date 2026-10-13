@@ -122,6 +122,8 @@ The Session records and flushes a route intent before Access changes its receive
 
 -----
 
+An owner-local completed-answer publication from the receiving Session does not schedule an automatic response to itself. Other admitted sources retain the existing local goal, finite allowance and coverage checks. Receiving an answer neither verifies its contents nor enlarges execution permission.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

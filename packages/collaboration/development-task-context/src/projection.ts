@@ -32,6 +32,16 @@ function modelPublication(publication: DevelopmentTaskContextPublication) {
     const { localToolObservation: _local, ...withoutMirror } = publication
     return withoutMirror
   }
+  const localOutcome = publication.localTurnOutcome
+  if (localOutcome !== undefined && publication.text.endsWith(`\n${JSON.stringify(localOutcome)}`)) {
+    const { localTurnOutcome: _outcome, ...withoutMirror } = publication
+    return withoutMirror
+  }
+  const peerOutcome = publication.peerTurnOutcome
+  if (peerOutcome !== undefined && publication.text.endsWith(`\n${JSON.stringify(peerOutcome)}`)) {
+    const { peerTurnOutcome: _outcome, ...withoutMirror } = publication
+    return withoutMirror
+  }
   const tool = publication.peerToolObservation
   if (tool === undefined || !publication.text.endsWith(`\n${JSON.stringify(tool)}`)) return publication
   // The complete observation remains byte-for-byte in text, including the report's trust warning.

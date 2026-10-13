@@ -13,8 +13,8 @@ export const unbound: ScopeAgentLocalContributionStatus = {
   initialization: { eligible: false, recordedSamples: 0, unconfirmedSamples: 0 },
 }
 export const assigned: ScopeAgentLocalContributionStatus = { ...unbound, eligibility: 'eligible', assignment: binding }
-export const localCapture: ScopeAgentLocalContributionCapture = {
-  selection: capture.selection, roots: ['/project'], tools: ['write'], state: 'active', collecting: true,
+export const localCapture: Extract<ScopeAgentLocalContributionCapture, { readonly sourceKind: 'tool-observations' }> = {
+  sourceKind: 'tool-observations', selection: capture.selection, roots: ['/project'], tools: ['write'], state: 'active', collecting: true,
   pendingSamples: 0, issue: null, collectionIssue: null,
   grant: { version: 1, ...binding, participantId: 'agent-participant' as Grant['participantId'],
     ...capture.selection, source: { kind: 'tool-observations', name: 'Native file work', tools: ['Write'] },

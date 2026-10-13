@@ -90,6 +90,8 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
           kind: 'command-evidence', publication })
         continue
       }
+      const outcome = publication.peerTurnOutcome ?? publication.localTurnOutcome
+      const { text: _outcomeText, ...outcomeMetadata } = outcome ?? { text: '' }
       const local = publication.localContribution?.grant
       const grant = publication.peerContribution?.grant
       sources.push({ sourceId: semanticDigest(source), source, body: publication.text,
@@ -102,6 +104,8 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
           ...(local === undefined ? {} : { localAuthorization: { taskId: local.taskId, participantId: local.participantId,
             bindingId: local.bindingId, expectedBindingEpoch: local.expectedBindingEpoch, captureId: local.captureId,
             captureGeneration: local.captureGeneration, source: local.source } }),
+          ...(outcome === undefined ? {} : { turnOutcome: { ...outcomeMetadata, source: grant?.source ?? local?.source,
+            meaning: 'Complete Agent-reported output; not owner-approved facts or independently verified evidence.' } }),
           ...(tool === undefined ? {} : { tool: tool.tool, reportedStatus: tool.reportedStatus,
             ...(tool.version === 2 ? { observationOrigin: { ...tool.origin,
               meaning: 'Previously recorded tool attempt; not re-executed or checked against the current file.' } } : {}),

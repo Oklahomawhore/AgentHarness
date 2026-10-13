@@ -16,6 +16,7 @@ import type { EmergenceCenterKey } from './locales.ts'
 import { NativeContributionRoute } from './NativeContributionRoute.tsx'
 import { NativeContributionInitialization } from './NativeContributionInitialization.tsx'
 import { emptyNativeCommands, nativeCommandSelectors } from './NativeCommandPermission.tsx'
+import { NativeTurnOutcomePermission } from './NativeTurnOutcomePermission.tsx'
 import { NativeContributionPermission } from './NativeContributionPermission.tsx'
 import { automaticPolicy, NativeAutomaticPermission, type NativeAutomaticDraft } from './NativeAutomaticPermission.tsx'
 import { NativePermissionSuggestion, type NativePermissionSuggestionActions } from './NativePermissionSuggestion.tsx'
@@ -80,7 +81,7 @@ function stopHint(state: ScopeAgentContributionReceiving['state']): EmergenceCen
 }
 
 /**
- * Confirm file permission and joint receiving, with optional finite automatic work for the current unbound Session.
+ * Confirm source permission and joint receiving, with optional finite automatic work for the current unbound Session.
  * @param props - current Session, authoritative management observation, and actions.
  * @returns source permission form and recoverable pending state.
  */
@@ -146,6 +147,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     setFileContent(false); setCommandDraft(emptyNativeCommands())
     if (entryText !== undefined && details.current !== null) details.current.open = true
   }, [entryText])
+  const turnOutcomes = preview?.sourceKind === 'completed-turn-outcomes'
   const localStatus = localEntry?.value
   const localCapture = localStatus?.capture
   const localAssignment = localStatus?.assignment
@@ -155,11 +157,11 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     localAssignment?.expectedBindingEpoch.nodeId, localAssignment?.expectedBindingEpoch.seq])
   const initializationReady = localEntry?.status === 'ready' && !localEntry.pending
   const initializationEligible = localStatus?.agentId === agentId && localStatus.initialization.eligible
-    && localCapture != null && localAssignment != null
+    && localCapture != null && localCapture.sourceKind === 'tool-observations' && localAssignment != null
   const initializationSource = initializationEligible ? JSON.stringify([localCapture.selection.captureId,
     localCapture.selection.captureGeneration, localAssignment.taskId, localAssignment.bindingId,
     localAssignment.expectedBindingEpoch.nodeId, localAssignment.expectedBindingEpoch.seq]) : null
-  const localPrefillEligible = localStatus?.agentId === agentId && localCapture != null && localAssignment != null
+  const localPrefillEligible = localStatus?.agentId === agentId && localCapture != null && localCapture.sourceKind === 'tool-observations' && localAssignment != null
     && localCapture.state !== 'ending' && localCapture.grant.expiresAt > Date.now()
   useEffect(() => {
     if (prefilled.current || permissionEdited.current || !initializationReady || !localPrefillEligible) return
@@ -218,9 +220,9 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const limitsValid = [hours, samples, bytes].every(value => value.trim() !== '' && Number.isSafeInteger(Number(value)) && Number(value) > 0)
     && Number.isSafeInteger(expiresAt)
   const canRequest = eligible && capture === null && continuation === undefined && consent && preview !== undefined
-    && (tools.length > 0 || commands !== undefined) && commands !== null
+    && (turnOutcomes || ((tools.length > 0 || commands !== undefined) && commands !== null && selectedRoots.length > 0))
     && (initializationConsent === null || (initializationConfirmed && initializationReady))
-    && selectedRoots.length > 0 && limitsValid && !previewing && (!joint || (readConfirmed
+    && limitsValid && !previewing && (!joint || (readConfirmed
       && (automaticConsent === null || (automaticConfirmed && policy !== undefined))))
   const verify = async (text: string): Promise<void> => {
     const revision = ++previewRevision.current
@@ -234,7 +236,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       return
     }
     if (revision !== previewRevision.current) return
-    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || result.sourceKind !== 'tool-observations') {
+    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || (result.sourceKind !== 'tool-observations' && result.sourceKind !== 'completed-turn-outcomes')) {
       setInvalid(true); setPreviewing(false); return
     }
     let checked: ScopeContributionEntryProbeResult
@@ -252,14 +254,14 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     actionPending.current = true
     try { await operation() } finally { actionPending.current = false }
   }
-  const stateKey: EmergenceCenterKey = capture == null ? 'native.share.none'
+  const stateKey: EmergenceCenterKey = capture == null ? turnOutcomes ? 'native.outcomes.none' : 'native.share.none'
     : capture.state === 'ending' ? 'contribution.ending'
-      : capture.state === 'active' ? capture.collecting ? capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
+      : capture.state === 'active' ? capture.collecting ? capture.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.active' : capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
         : capture.application === null ? 'contribution.prepared' : `contribution.application.${capture.application}`
   return <details ref={details} data-native-contribution className={css.sharing}>
     <summary>{t('native.share.title')}</summary>
     <div className={css.form}>
-      <p className={css.hint}>{t('native.share.hint')}</p>
+      <p className={css.hint}>{t(turnOutcomes || capture?.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.hint' : 'native.share.hint')}</p>
       {entry?.status === 'loading' && <p role="status" className={css.hint}>{t('contribution.loading')}</p>}
       {entry?.status === 'error' && <p role="alert" className={css.notice}>{t(issueKey(entry.error ?? 'unknown'))}</p>}
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
@@ -268,11 +270,14 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {entryText !== undefined && capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
         event.preventDefault()
         if (!canRequest) return
-        void perform(() => requestNativeContribution({ agentId, expectedCapture: null, entry: preview, roots: selectedRoots, tools,
-          limits: { expiresAt, maxSamples: Number(samples), maxSampleBytes: Number(bytes) },
+        const permission = turnOutcomes ? { sourceKind: 'completed-turn-outcomes' as const } : {
+          roots: selectedRoots, tools,
           ...(initializationConfirmed ? { initialization: initializationConsent.request } : {}),
           ...(commands == null ? {} : { commands }),
           ...(fileContent && tools.length > 0 ? { fileContent: 'completed-native-file' as const } : {}),
+        }
+        void perform(() => requestNativeContribution({ ...permission, agentId, expectedCapture: null, entry: preview,
+          limits: { expiresAt, maxSamples: Number(samples), maxSampleBytes: Number(bytes) },
           ...(joint && readConsent !== null ? { receive: { expectedReadStateSeq: readConsent.seq,
             ...(readConsent.localTask === null ? {} : { localTask: readConsent.localTask }),
             ...(automaticConfirmed && policy !== undefined ? { automatic: policy } : {}) } } : {}) }))
@@ -297,7 +302,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               }} />
             {t('native.join.readConsent')}</label>
           </>}
-          {!localPrefillEligible && <NativePermissionSuggestion agentId={agentId}
+          {!turnOutcomes && !localPrefillEligible && <NativePermissionSuggestion agentId={agentId}
             identity={JSON.stringify([entryText, localAssignment])} disabled={!eligible || !initializationReady}
             revision={JSON.stringify([roots, write, edit, hours, samples, bytes, consent, fileContent, commandDraft,
               readConsent, automaticConsent, automaticDraft, initializationConsent])}
@@ -308,7 +313,10 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               setConsent(false); setFileContent(false); setCommandDraft(emptyNativeCommands())
               setReadConsent(null); setAutomaticConsent(null); setInitializationConsent(null)
             }} />}
-          <NativeContributionPermission id={id}
+          {turnOutcomes ? <NativeTurnOutcomePermission id={id} draft={{ hours, samples, bytes, consent }}
+            disabled={!eligible} remote t={t} change={(draft) => {
+              setHours(draft.hours); setSamples(draft.samples); setBytes(draft.bytes); setConsent(draft.consent)
+            }} /> : <><NativeContributionPermission id={id}
             draft={{ roots, write, edit, hours, samples, bytes, consent, fileContent, commands: commandDraft }}
             disabled={!eligible} fileContentDisabled={initializationConfirmed}
             consentKey={commandDraft.enabled ? 'native.commands.remoteConsent' : 'native.share.consent'} t={t} change={(draft) => {
@@ -336,7 +344,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             <p className={css.hint}>{initializationEligible
               ? t('native.initialization.available', { count: localStatus.initialization.recordedSamples,
                 unconfirmed: localStatus.initialization.unconfirmedSamples }) : t('native.initialization.unavailable')}</p>
-          </div>
+          </div></>}
           {joint && <div data-native-join-automatic className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={automaticConfirmed} disabled={!eligible || !readConfirmed}
               onChange={(event) => {
@@ -363,26 +371,29 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             <dt>{t('contribution.group.capture')}</dt><dd>{capture.selection.captureId}</dd>
             <dt>{t('contribution.group.captureGeneration')}</dt><dd>{capture.selection.captureGeneration}</dd>
           </>}
-          <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
-          {capture.tools.length > 0 && <><dt>{t('native.fileContent.scope')}</dt>
-            <dd>{t(capture.proposal.source.kind === 'tool-observations'
+          {capture.sourceKind === 'completed-turn-outcomes' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('native.outcomes.source')}</dd></> : <>
+            <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
+            {capture.tools.length > 0 && <><dt>{t('native.fileContent.scope')}</dt>
+              <dd>{t(capture.proposal.source.kind === 'tool-observations'
               && capture.proposal.source.fileContent === 'completed-native-file'
-              ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd></>}
-          <dt>{t('native.share.tools')}</dt><dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
-          {capture.commands !== undefined && <><dt>{t('native.commands.scope')}</dt><dd>
-            <NativeCommandSummary commands={capture.commands} t={t} />
-          </dd></>}
+                ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd></>}
+            <dt>{t('native.share.tools')}</dt><dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
+            {capture.commands !== undefined && <><dt>{t('native.commands.scope')}</dt><dd>
+              <NativeCommandSummary commands={capture.commands} t={t} />
+            </dd></>}
+          </>}
           <dt>{t('contribution.expires')}</dt><dd>{new Date(capture.limits.expiresAt).toLocaleString()}</dd>
           <dt>{t('contribution.maxSamples')}</dt><dd>{capture.limits.maxSamples}</dd>
           <dt>{t('contribution.maxBytes')}</dt><dd>{capture.limits.maxSampleBytes}</dd>
         </dl>
-        {capture.commands !== undefined && <p className={css.hint}>{t('native.commands.stopHint')}</p>}
-        {capture.commands === undefined && <p className={css.hint}>{t('native.commands.renew')}</p>}
+        {capture.sourceKind === 'completed-turn-outcomes' && <p className={css.hint}>{t('native.outcomes.stopHint')}</p>}
+        {capture.sourceKind === 'tool-observations' && capture.commands !== undefined && <p className={css.hint}>{t('native.commands.stopHint')}</p>}
+        {capture.sourceKind === 'tool-observations' && capture.commands === undefined && <p className={css.hint}>{t('native.commands.renew')}</p>}
         {capture.receiving !== null && <JoinReceiving receiving={capture.receiving}
           intent={capture.receivingIntent ?? (capture.state === 'ending' ? undefined : 'adopt')} ready={ready} t={t}
           leave={() => { void perform(() => leaveNativeJoin({ agentId, expectedCapture: capture.selection })) }} />}
         {capture.invitation !== null && <details><summary>{t('native.share.approval')}</summary><ContributionGrantSummary grant={capture.invitation.grant} t={t} /></details>}
-        {capture.initialization !== undefined && <NativeContributionInitialization value={capture.initialization} t={t} />}
+        {capture.sourceKind === 'tool-observations' && capture.initialization !== undefined && <NativeContributionInitialization value={capture.initialization} t={t} />}
         <p className={css.hint}>{t('native.share.pending', { count: capture.pendingSamples })}</p>
         {capture.collectionIssue !== null && <p role="status" className={css.notice}>{t(`native.share.collection.${capture.collectionIssue}`)}</p>}
         {capture.issue !== null && <p className={css.notice}>{t(`native.share.issue.${capture.issue}`)}</p>}

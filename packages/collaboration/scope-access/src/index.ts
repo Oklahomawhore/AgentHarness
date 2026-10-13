@@ -919,7 +919,7 @@ export default class ScopeAccessService extends TypertRemoteService {
     const record = matches[0]
     if (record === undefined) return undefined
     const grant = record.grant
-    if ((!historical && record.decision !== 'approved') || grant === null || grant.source.kind !== 'tool-observations'
+    if ((!historical && record.decision !== 'approved') || grant === null || grant.source.kind === undefined
       || (record.entry.kind !== 'scope-join-entry' && record.entry.kind !== 'scope-group-entry')
       || grant.ownerPeerId !== invitation.ownerPeerId || grant.taskId !== invitation.taskId
       || grant.contributorPeerId !== invitation.recipientPeerId

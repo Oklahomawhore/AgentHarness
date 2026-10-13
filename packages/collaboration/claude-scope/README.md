@@ -101,6 +101,8 @@ All limits are required. `maxContextBytes` bounds complete UTF-8 text, including
 Setup paths and launcher arguments are explicit deployment inputs, with no PATH lookup or package-manager launch. The Web composition uses its current Node executable, CLI arguments, working directory, and Harness home. Hook timeout must exceed the command deadline and may not exceed 60 seconds. `maxSettingsBytes` bounds each configuration read and complete write; setup cannot take ownership of a shipped or reserved application profile.
 
 
+Completed-final-answer contribution entries and version-5 grants are unsupported. The Claude adapter rejects them before activation and when restoring source or joint records; they cannot be interpreted as file permission. Use the native [contribution consumer](../scope-agent-contribution/README.md) for that source.
+
 ## Understand the implementation
 
 <details>

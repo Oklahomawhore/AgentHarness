@@ -71,9 +71,11 @@ async function initializeHost(ctx, root, role, overrides) {
     await add('system', '@deepseek-ai/dsh-system-prompt')
     await add('tools', '@deepseek-ai/dsh-tools')
     await add('loop', '@deepseek-ai/dsh-agent-loop')
-    await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
-    await add('fs-policy', '@deepseek-ai/dsh-fs-observation-policy', '*')
-    await add('tool-fs', '@deepseek-ai/dsh-tool-fs', '*')
+    if (overrides.fileTools !== false) {
+      await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
+      await add('fs-policy', '@deepseek-ai/dsh-fs-observation-policy', '*')
+      await add('tool-fs', '@deepseek-ai/dsh-tool-fs', '*')
+    }
     await add('contribution', '@deepseek-ai/dsh-scope-agent-contribution')
     modules.set('adapter', { name: 'controlled-native-source-model', inject: ['llm'], apply(inner) {
       inner.effect(() => inner.llm.registerAdapter(['native-fixture'], adapter))
@@ -81,7 +83,9 @@ async function initializeHost(ctx, root, role, overrides) {
     rows.push({ name: 'llm' }, { name: 'adapter' }, { name: 'sessions' }, { name: 'projections' },
       { name: 'persistence', config: { root: join(root, 'sessions'), compression: 'none' } },
       { name: 'system' }, { name: 'tools' }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
-      { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
+      ...overrides.fileTools === false ? [] : [
+        { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
+      ],
       { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25 } })
   }
   await ctx.plugin(Loader)

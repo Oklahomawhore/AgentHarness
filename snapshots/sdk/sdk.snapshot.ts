@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-turn-outcomes': {
+    expectedFinalResponse: 'Revoked completed answers no longer enter current context.',
+  },
   'scope-command-outcomes': {
     expectedFinalResponse: 'Stopped command sharing no longer supplies command outcomes.',
   },

@@ -246,7 +246,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         if (!hasLocal(binding) || binding.target.taskId !== task.id) continue
         this.armLocalExpiry(runtime, binding)
         if (entry.change.kind === 'context-published' && entry.change.publication.publishedBy === binding.target.participantId
-          && entry.change.publication.localToolObservation !== undefined
+          && (entry.change.publication.localToolObservation !== undefined || entry.change.publication.localTurnOutcome !== undefined)
           && entry.change.publication.localContribution.ended === undefined) continue
         if (entry.change.kind === 'local-contribution-opened' || entry.change.kind === 'peer-contribution-opened'
           || entry.change.kind === 'observed-interval-opened') continue

@@ -13,6 +13,7 @@ import type { ScopeContributionEntry } from '@deepseek-ai/dsh-scope-access/types
 import type {} from '@deepseek-ai/dsh-claude-scope'
 import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-access'
+import { expandReportedGrants } from '../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import { assertFixtureInventory, launchWebScaffold, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
 import { captureContributionPanel, contributionHook, openContributionView, type ContributionView } from './contribution-scope-support.ts'
@@ -61,7 +62,7 @@ function contextText(messages: readonly Message[]): string {
 function renderedPublications(text: string): { id: string; text: string }[] {
   const json = text.match(/<development-task-context>\n([\s\S]*?)\n<\/development-task-context>/)?.[1]
   if (json === undefined) throw new Error('Actual model context has no Task document')
-  const document: unknown = JSON.parse(json)
+  const document = expandReportedGrants(JSON.parse(json) as unknown, '5')
   if (document === null || typeof document !== 'object' || !('publications' in document) || !Array.isArray(document.publications)) {
     throw new Error('Actual model context has no publication array')
   }

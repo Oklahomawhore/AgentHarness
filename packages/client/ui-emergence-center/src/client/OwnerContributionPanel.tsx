@@ -60,7 +60,7 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
     try {
       const value = await previewContributionText(text)
       if (generation.current !== issued) return
-      if (value.kind === 'openapi-contribution-request' || value.kind === 'tool-contribution-request') setProposal(value.proposal)
+      if (value.kind === 'openapi-contribution-request' || value.kind === 'tool-contribution-request' || value.kind === 'turn-contribution-request') setProposal(value.proposal)
       else setInvalid(true)
     } catch { if (generation.current === issued) setInvalid(true) }
     finally { if (generation.current === issued) setPreviewing(false) }

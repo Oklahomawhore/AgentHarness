@@ -173,7 +173,9 @@ it('includes persisted completions without a local receipt and verifies every ex
   await held.entered
   expect(f.localRow().samples[0]?.receipt).toBeUndefined()
   const original = f.localRow().samples[0]
-  if (original === undefined || original.sample.result.kind !== 'tool-observation') throw new Error('Missing durable file report')
+  if (original === undefined || original.turnProof !== undefined || original.sample.result.kind !== 'tool-observation') {
+    throw new Error('Missing durable file report')
+  }
   expect(recordedProof(f.agent.session, original)).toBeDefined()
   expect(recordedProof(f.agent.session, { ...original, sample: { ...original.sample,
     result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
@@ -414,15 +416,18 @@ it('rejects unchanged-digest Edit field substitutions and preserves failure obse
   }), toolCallResponse('failed-edit', 'edit', { file_path: 'EDIT_BASE.txt', old_string: 'MISSING', new_string: 'NOT_APPLIED' })])
   await expect.poll(() => f.localRow().samples.length).toBe(3)
   const original = f.localRow().samples[1]
-  if (original === undefined || original.sample.result.tool !== 'Edit') throw new Error('Missing successful recorded edit')
+  if (original === undefined || original.turnProof !== undefined || original.sample.result.kind !== 'tool-observation'
+    || original.sample.result.tool !== 'Edit') throw new Error('Missing successful recorded edit')
   for (const change of [{ oldString: 'FORGED_OLD' }, { newString: 'FORGED_NEW' }, { replaceAll: false }]) {
     expect(recordedProof(f.agent.session, { ...original, sample: { ...original.sample,
       result: { ...original.sample.result, fields: { ...original.sample.result.fields, ...change } } } })).toBeUndefined()
   }
   const failed = f.localRow().samples[2]
-  if (failed === undefined) throw new Error('Missing recorded failed attempt')
+  if (failed === undefined || failed.turnProof !== undefined) throw new Error('Missing recorded failed tool attempt')
   const failedResult = failed.sample.result
-  if (failedResult.tool !== 'Edit' || failedResult.reportedStatus !== 'failure') throw new Error('Expected the recorded failed Edit')
+  if (failedResult.kind !== 'tool-observation' || failedResult.tool !== 'Edit' || failedResult.reportedStatus !== 'failure') {
+    throw new Error('Expected the recorded failed Edit')
+  }
   const { receipt: _receipt, ...unconfirmedFailure } = failed
   expect(recordedProof(f.agent.session, unconfirmedFailure)).toBeDefined()
   expect(recordedProof(f.agent.session, { ...unconfirmedFailure, sample: { ...failed.sample,
@@ -441,7 +446,7 @@ it('accounts for complete historical proof and wire bytes when multibyte content
   const f = await fixture({ maxObservationBytes: budget })
   await f.write('BUDGETED', '界'.repeat(150))
   await expect.poll(() => f.localRow().samples.length).toBe(1)
-  expect(f.localRow().samples[0]?.sample.result.fields).toHaveProperty('content', '界'.repeat(150))
+  expect(f.localRow().samples[0]?.sample.result).toHaveProperty('fields.content', '界'.repeat(150))
   const remote = await f.begin()
   await remote.approve()
   await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(1)

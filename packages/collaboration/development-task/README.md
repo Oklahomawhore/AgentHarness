@@ -16,7 +16,7 @@ English | [中文](README.zh.md)
 - [Observed context admission](#observed-context-admission)
 - [Remote observation authority](#remote-observation-authority)
 - [Independent peer contributions](#independent-peer-contributions)
-- [Owner-local tool contributions](#owner-local-tool-contributions)
+- [Owner-local contributions](#owner-local-tool-contributions)
 - [Remote API](#remote-api)
 - [Configuration](#configuration)
 - [Model Experience](#model-experience)
@@ -65,7 +65,7 @@ Termination keeps historical publications and frozen inherited snapshots. Consum
 
 ## Independent peer contributions
 
-An authenticated Host facade calls `openPeerContribution` for one local Root Task, contributor PeerId, capture generation, and exact source permission: an OpenAPI operation or explicit file/command observation permission. The grant bounds lifetime, sample count, and complete sample bytes. It grants neither local collection nor Task reads, Room membership, or arbitrary publication. The source adapter separately authorizes capture; transport supplies the authenticated peer. Peer publications record `peerContribution` and either OpenAPI `peerObservation` or ordered `peerToolObservation`, without inventing a participant or Mesh node. Parsing a public capture proposal creates no authority.
+An authenticated Host facade calls `openPeerContribution` for one local Root Task, contributor PeerId, capture generation, and exact source permission: an OpenAPI operation, explicit file/command observation permission, or complete final-answer permission. The grant bounds lifetime, sample count, and complete sample bytes. It grants neither local collection nor Task reads, Room membership, or arbitrary publication. The source adapter separately authorizes capture; transport supplies the authenticated peer. Peer publications record `peerContribution` and OpenAPI `peerObservation`, ordered `peerToolObservation`, or `peerTurnOutcome`, without inventing a participant or Mesh node. Parsing a public capture proposal creates no authority.
 
 Approval, sample admission, and termination share the Task owner queue and event log. `admitPeerContribution` derives attribution and canonical report text; OpenAPI sources additionally receive a logical artifact identity. New samples must advance their sequence within that grant; duplicates do not consume quota. Exact sample and terminal retries return the original receipt even after termination or a lower new-admission byte limit; they do not perform a new expiry write. Altered content or authorization is rejected. Receipts include the original event kind, revision, source identity, and complete payload digest; they prove durable admission, not tool execution, file authenticity, model delivery, or truth.
 
@@ -77,15 +77,17 @@ Version-3 tool sources explicitly authorize `fileContent: completed-native-file`
 
 Version-4 tool sources explicitly authorize exact foreground commands and working-directory root indices, optionally alongside Write/Edit and completed-file permission. File tools may be empty; command selectors cannot. Command outcomes retain independent exit, signal, timeout and abort fields, whole stdout/stderr fields or explicit budget omissions, and provider truncation markers. Missing completion evidence or final tool failure is unavailable, never an inferred success. These reports record one execution, not verification of current code. Admission matches the exact selector and source version; old file and historical permissions cannot authorize them. Command receipts, inherited blocks and withdrawals retain the same complete evidence and interval identity.
 
+`completed-turn-outcomes` version 5 authorizes complete final-answer reports with a matching SHA-256 digest. Local and peer admission retain `localTurnOutcome` or `peerTurnOutcome`, the original contribution authority and monotonic sample sequence. The whole result participates in receipt identity and immutable block verification. These are attributed Agent reports, not owner-approved facts; identical retries remain idempotent and ending the original permission withdraws its current reports.
+
 `endPeerContribution` permits source withdrawal or owner revocation. It records one terminal event, derives withdrawal evidence and a notice, and rejects later activation or new samples. Even an empty grant reserves that event inside `maxEventsPerTask`; an end arriving before approval leaves a permanent tombstone. Historical samples and inherited snapshots remain intact. `expirePeerContributions` serializes due expirations for locally owned Tasks of any origin; the facade also reconciles expiry during startup. Sample-byte limits apply to new admission; restore preserves historical bytes and rejects capacity settings that prevent retiring a live grant.
 
 Host consumers call `currentContextView` before and after delayed projection. It commits due local expirations before capturing context, and rejects a Mesh replica containing active direct peer or owner-local capture evidence because that replica cannot prove current owner authorization. Local Fork and Merge Tasks, replicas without active direct peer or owner-local capture evidence, and frozen inherited history remain readable. A new terminal notice invalidates the captured projection; an ordinary newer sample can wait until the next request. `contextView`, the Remote `context` method, and `peerContributions` expose stored history or state without this current-authority check.
 
 <a id="owner-local-tool-contributions"></a>
 
-## Owner-local tool contributions
+## Owner-local contributions
 
-Host-only `openLocalContribution`, `admitLocalContribution`, `localContributionStatus`, and `endLocalContribution` authorize the Task owner's own Agent without self-peer transport. One local Root Task, participant, binding epoch, capture generation, and explicit file/command selectors identify the permission. Lifetime, sample count, and complete sample bytes are finite. The source consumer separately owns file-root consent and collection; Task admission checks the original assignment and requires the same current local Agent binding for new samples.
+Host-only `openLocalContribution`, `admitLocalContribution`, `localContributionStatus`, and `endLocalContribution` authorize the Task owner's own Agent without self-peer transport. One local Root Task, participant, binding epoch, capture generation, and explicit tool or final-answer selection identify the permission. Lifetime, sample count, and complete sample bytes are finite. The source consumer separately owns source consent and collection; Task admission checks the original assignment and requires the same current local Agent binding for new samples.
 
 Each capture reserves one terminal event. Status and current-context reads commit expiry or stale-binding termination before returning; clear and checkout retire captures before changing the binding. Explicit ending remains possible after the Agent leaves or its binding changes. Ending before opening leaves a closed generation. Exact admitted retries return their original receipts after termination, while changed permissions or new samples cannot reopen it. Persistence failure prevents reporting the affected authority transition as complete.
 

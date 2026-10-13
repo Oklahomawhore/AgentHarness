@@ -43,7 +43,7 @@ function grant(peer = 'peer-a', generation = 'generation-a'): DevelopmentTaskPee
 }
 
 function sample(id: string, sequence: number, field: string, authorization = grant()): PeerSample {
-  if (authorization.source.kind === 'tool-observations') throw new Error('OpenAPI fixture requires an OpenAPI grant')
+  if (authorization.source.kind !== undefined) throw new Error('OpenAPI fixture requires an OpenAPI grant')
   const peerObservation: ValidPeerObservation = {
     kind: 'openapi-artifact', version: 1, artifactId: 'orders-api' as DevelopmentTaskPeerOpenApiObservation['artifactId'],
     sourceName: authorization.source.name, grantId: authorization.grantId, sequence,

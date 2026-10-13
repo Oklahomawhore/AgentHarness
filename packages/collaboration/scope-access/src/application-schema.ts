@@ -60,7 +60,7 @@ function validateApplication(record: Omit<ApplicationFields, 'readInvitation'> &
       || readInvitation.expiresAt !== grant.expiresAt))) {
     context.addIssue({ code: 'custom', message: 'Joint application must retain its separately approved read grant' })
   }
-  if (proposal !== null && (entry.sourceKind === 'tool-observations') !== (proposal.source.kind === 'tool-observations')) {
+  if (proposal !== null && (entry.sourceKind ?? 'openapi') !== (proposal.source.kind ?? 'openapi')) {
     context.addIssue({ code: 'custom', message: 'Application source differs from the entry permission' })
   }
   if (grant !== null && proposal !== null && limits !== null
@@ -114,7 +114,7 @@ export const contributionApplicationResultSchema: z.ZodType<ScopeContributionApp
   const read = result.readInvitation
   const grant = result.invitation.grant
   if ((read === undefined) !== (result.readState === undefined)
-    || (read !== undefined && (grant.source.kind !== 'tool-observations' || read.ownerPeerId !== grant.ownerPeerId
+    || (read !== undefined && (grant.source.kind === undefined || read.ownerPeerId !== grant.ownerPeerId
       || read.recipientPeerId !== grant.contributorPeerId || read.taskId !== grant.taskId || read.expiresAt !== grant.expiresAt))) {
     context.addIssue({ code: 'custom', message: 'Joint read permission differs from the original application' })
   }
@@ -130,7 +130,7 @@ const common = z.object({ version: z.literal(1), requestId: z.uuid(), entry: sin
 export const applicationRequestSchema = z.discriminatedUnion('op', [
   common.extend({ op: z.literal('apply'), limits: contributionLimitsSchema }),
   common.extend({ op: z.literal('status') }), common.extend({ op: z.literal('cancel') }),
-]).refine(value => (value.entry.sourceKind === 'tool-observations') === (value.proposal.source.kind === 'tool-observations'))
+]).refine(value => (value.entry.sourceKind ?? 'openapi') === (value.proposal.source.kind ?? 'openapi'))
 /** Responses are tied to the exact submitted operation and request identity. */
 export const applicationResponseSchema = z.object({ version: z.literal(1), requestId: z.uuid(),
   op: z.enum(['apply', 'status', 'cancel']), result: contributionApplicationResultSchema }).strict()
@@ -141,7 +141,7 @@ const groupCommon = z.object({ version: z.literal(2), requestId: z.uuid(), entry
 export const groupApplicationRequestSchema = z.discriminatedUnion('op', [
   groupCommon.extend({ op: z.literal('apply'), limits: contributionLimitsSchema }),
   groupCommon.extend({ op: z.literal('status') }), groupCommon.extend({ op: z.literal('cancel') }),
-]).refine(value => value.proposal.source.kind === 'tool-observations')
+]).refine(value => value.proposal.source.kind === value.entry.sourceKind)
 /** Group replies preserve the independently correlated applicant operation. */
 export const groupApplicationResponseSchema = applicationResponseSchema.extend({ version: z.literal(2) })
 

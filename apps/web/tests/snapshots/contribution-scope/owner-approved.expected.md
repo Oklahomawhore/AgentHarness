@@ -14,6 +14,10 @@
     - option "邀请多人加入同一目标"
     - option "邀请一个会话加入" [selected]
     - option "仅申请文件贡献"
+  - text: 贡献来源
+  - combobox "贡献来源":
+    - option "授权目录内的 Write/Edit" [selected]
+    - option "正常完成的最终答复"
   - text: 申请入口有效期（小时）
   - spinbutton "申请入口有效期（小时）"
   - paragraph: 此入口只供一个现有会话申请加入。对方一次确认读取和文件范围，你再一次批准两项权限；入口本身不授予权限。

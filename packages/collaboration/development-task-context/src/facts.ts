@@ -11,7 +11,7 @@ import type {
   DevelopmentTaskParentRef,
 } from '@deepseek-ai/dsh-development-task/types'
 import DevelopmentTaskContextBackend from './backend.ts'
-import { isTerminalPublication, publicationInterval, publicationObservation } from './publication.ts'
+import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation } from './publication.ts'
 import type {
   DevelopmentTaskContextEvidenceId,
   DevelopmentTaskContextInput,
@@ -215,7 +215,7 @@ function activationWithdrawal({ publication }: WithdrawalNotice) {
   }
 }
 
-/** Reduces independent observation chains and selects whole artifact groups within the complete byte budget. */
+/** Projects OpenAPI artifacts; unsupported current completed replies block recipient-evidence delivery. */
 export default class FactsDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
   static Config = Config
   readonly identity: { readonly id: string; readonly revision: string }
@@ -240,24 +240,30 @@ export default class FactsDevelopmentTaskContextBackend extends DevelopmentTaskC
     const excluded: DevelopmentTaskContextOmission[] = []
     const notices: WithdrawalNotice[] = []
     const selectedNotices = new Set<WithdrawalNotice>()
-    const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef): Candidate[] => {
+    const collect = (context: readonly DevelopmentTaskContextPublication[], basis: DevelopmentTaskParentRef) => {
       const candidates: Candidate[] = []
+      let unsupportedOutcome = false
       const ended = new Set(context.filter(isTerminalPublication).map(publicationInterval))
       for (const publication of context) {
         const source: DevelopmentTaskContextSourceRef = { kind: 'publication', ...basis, publicationId: publication.id }
         const typed = publicationObservation(publication)
         if (isTerminalPublication(publication)) notices.push({ source, publication })
-        else if (typed === undefined) excluded.push({ source,
-          reason: publicationInterval(publication) !== undefined && ended.has(publicationInterval(publication)) ? 'withdrawn' : 'unsupported',
-        })
+        else if (typed === undefined) {
+          const outcome = publication.peerTurnOutcome ?? publication.localTurnOutcome
+          const reason = publicationInterval(publication) !== undefined && ended.has(publicationInterval(publication)) ? 'withdrawn'
+            : outcome !== undefined && isSelfPublished(publication, input.recipient) ? 'self-published' : 'unsupported'
+          excluded.push({ source, reason })
+          if (outcome !== undefined && reason === 'unsupported') unsupportedOutcome = true
+        }
         else candidates.push({ source, ...typed })
       }
-      return candidates
+      return { candidates, unsupportedOutcome }
     }
-    const current = groupCandidates(collect(task.context, { taskId: task.id, revision: task.revision }))
+    const collected = collect(task.context, { taskId: task.id, revision: task.revision })
+    const current = groupCandidates(collected.candidates)
     const historical = ordered(inherited?.sources ?? [], source => JSON.stringify(source.parent)).flatMap((source) => {
       taskSources.push({ kind: 'task', ...source.parent })
-      return groupCandidates(collect(source.context, source.parent), source.parent)
+      return groupCandidates(collect(source.context, source.parent).candidates, source.parent)
     })
     const groups = [...current, ...historical]
     const included = new Set<Group>()
@@ -304,7 +310,8 @@ export default class FactsDevelopmentTaskContextBackend extends DevelopmentTaskC
       if (Buffer.byteLength(render(), 'utf8') > input.maxContextBytes) included.delete(group)
     }
     const currentNotices = notices.filter(notice => notice.source.taskId === task.id && notice.source.revision === task.revision)
-    const coverage = current.some(group => !included.has(group)) || currentNotices.some(notice => !selectedNotices.has(notice))
+    const coverage = collected.unsupportedOutcome || current.some(group => !included.has(group))
+      || currentNotices.some(notice => !selectedNotices.has(notice))
       ? 'blocked-current' : 'complete'
     const digest = createHash('sha256').update(JSON.stringify({
       version: 1, provider: this.identity,

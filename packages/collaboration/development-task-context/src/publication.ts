@@ -105,6 +105,7 @@ export function isSelfPublished(publication: DevelopmentTaskContextPublication,
   if (isTerminalPublication(publication)) return false
   if (publication.publishedBy === recipient.participantId) return true
   const grant = publication.peerContribution?.grant
-  return publication.peerToolObservation !== undefined && grant !== undefined && recipient.peerCapture !== undefined
+  return (publication.peerToolObservation !== undefined || publication.peerTurnOutcome !== undefined)
+    && grant !== undefined && recipient.peerCapture !== undefined
     && peerContributionInterval(grant) === peerContributionInterval(recipient.peerCapture)
 }

@@ -317,7 +317,7 @@ it.each(['local', 'peer'] as const)('shares the actual first Edit result only wi
   expect((await stored(f)).samples[0]?.sample.result).toMatchObject({ version: 3, completedFile: included(changed(1)) })
   if (role === 'local') {
     const persisted = nativeLocalContributionDomain.tables.sessions.valueSchema.parse(await stored(f)).samples[0]
-    if (persisted === undefined) throw new Error('Completed local sample missing')
+    if (persisted === undefined || persisted.turnProof !== undefined) throw new Error('Completed local tool sample missing')
     expect(recordedProof(f.agent.session, persisted)).toBeUndefined()
   }
   expect(JSON.stringify(f.reports())).not.toContain('UNSELECTED_FILE_CONTENT')

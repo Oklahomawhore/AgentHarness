@@ -419,7 +419,7 @@ describe('owner joint application decisions', () => {
     render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)
     fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
     expect(screen.getByLabelText<HTMLSelectElement>(zh['contribution.join.purpose']).value).toBe('join')
-    expect(screen.queryByLabelText(zh['contribution.sourceKind'])).toBeNull()
+    expect(screen.getByLabelText<HTMLSelectElement>(zh['contribution.sourceKind']).value).toBe('tool-observations')
     expect(screen.getByText(zh['contribution.join.entryHint'])).toBeTruthy()
     paste(zh['contribution.application.entryHours'], '1')
     fireEvent.click(screen.getByRole('button', { name: zh['contribution.join.create'] }))
@@ -506,7 +506,7 @@ describe('owner reusable collaboration entries', () => {
     const expiresAt = vi.mocked(actions.createGroupEntry).mock.calls[0]?.[0].expiresAt
     expect(expiresAt).toBeTypeOf('number')
     expect(actions.createGroupEntry).toHaveBeenCalledExactlyOnceWith({ taskId: TASK,
-      ownerAddress: invitation.ownerAddress, expiresAt, maxMembers: 2 })
+      ownerAddress: invitation.ownerAddress, sourceKind: 'tool-observations', expiresAt, maxMembers: 2 })
     expect(actions.createContributionEntry).not.toHaveBeenCalled()
   })
 
@@ -613,5 +613,69 @@ describe('owner reusable collaboration entries', () => {
     expect(actions.rejectContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, {
       entryId: groupEntry.entryId, applicationId: members[1]!.applicationId, expectedProposal: members[1]!.proposal,
     })
+  })
+})
+
+
+describe('completed-answer source compatibility', () => {
+  it.each(['contribution-entry', 'scope-join-entry', 'scope-group-entry'] as const)(
+    'rejects a %s answer entry in the Claude file-only capture surface', async (kind) => {
+      const turnEntry: ScopeContributionEntry = { ...applicationEntry, kind, sourceKind: 'completed-turn-outcomes',
+        ...(kind === 'scope-group-entry' ? { maxMembers: 2 } : {}) } as ScopeContributionEntry
+      const actions = sourceActions({ previewContributionText: vi.fn(async () => turnEntry) })
+      render(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false,
+        value: { session, capture: null } }} {...actions} t={t} />)
+      paste(zh['contribution.application.paste'], 'answer-entry')
+      fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
+      await screen.findByText(zh['contribution.error.text'])
+      expect(actions.probeContributionEntry).not.toHaveBeenCalled()
+      expect(actions.requestContribution).not.toHaveBeenCalled()
+      expect(screen.getByLabelText<HTMLSelectElement>(zh['contribution.sourceKind']).value).toBe('tool-observations')
+    },
+  )
+})
+
+
+describe('owner completed-answer entry selection', () => {
+  it.each(['join', 'group', 'contribution'] as const)('retains the explicit source for %s participation', (participation) => {
+    const actions = ownerActions()
+    render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)
+    fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+    paste(zh['contribution.join.purpose'], participation)
+    paste(zh['contribution.sourceKind'], 'completed-turn-outcomes')
+    paste(zh['contribution.application.entryHours'], '1')
+    if (participation === 'group') paste(zh['contribution.group.capacity'], '2')
+    expect(screen.getByText(zh['native.outcomes.entryHint'])).toBeTruthy()
+    expect(screen.queryByText(zh['contribution.join.entryHint'])).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh[participation === 'group' ? 'contribution.group.create'
+      : participation === 'join' ? 'contribution.join.create' : 'contribution.application.create'] }))
+    const sent = participation === 'group' ? vi.mocked(actions.createGroupEntry).mock.calls[0]?.[0]
+      : vi.mocked(actions.createContributionEntry).mock.calls[0]?.[0]
+    expect(sent).toEqual({ taskId: TASK, sourceKind: 'completed-turn-outcomes', ownerAddress: invitation.ownerAddress,
+      expiresAt: expect.any(Number) as unknown, ...(participation === 'group' ? { maxMembers: 2 }
+        : participation === 'join' ? { participation: 'join' } : {}) })
+  })
+})
+
+
+it('previews the exact final-answer source before manual owner approval', async () => {
+  const answerProposal: ScopeContributionProposal = { ...proposal,
+    source: { kind: 'completed-turn-outcomes', version: 5, name: 'Final answers' } }
+  const actions = ownerActions({ previewContributionText: vi.fn(async (): Promise<ScopeContributionTransfer> => ({
+    version: 1, kind: 'turn-contribution-request', proposal: answerProposal,
+  })) })
+  render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)
+  fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+  paste(zh['contribution.pasteProposal'], 'answer-proposal')
+  fireEvent.click(screen.getByRole('button', { name: zh['contribution.verifyProposal'] }))
+  await screen.findByLabelText(zh['contribution.hours'])
+  expect(screen.getByText(zh['native.outcomes.scope'])).toBeTruthy()
+  expect(actions.approveContribution).not.toHaveBeenCalled()
+  paste(zh['contribution.hours'], '1'); paste(zh['contribution.maxSamples'], '2'); paste(zh['contribution.maxBytes'], '4096')
+  fireEvent.click(screen.getByRole('button', { name: zh['contribution.approve'] }))
+  await waitFor(() => { expect(actions.approveContribution).toHaveBeenCalledOnce() })
+  expect(vi.mocked(actions.approveContribution).mock.calls[0]?.[0]).toEqual({
+    taskId: TASK, ownerAddress: invitation.ownerAddress, proposal: answerProposal,
+    expiresAt: expect.any(Number) as unknown, maxSamples: 2, maxSampleBytes: 4096,
   })
 })

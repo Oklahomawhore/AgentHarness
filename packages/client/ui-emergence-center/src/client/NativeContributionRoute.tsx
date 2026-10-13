@@ -43,7 +43,7 @@ export function NativeContributionRoute({ agentId, current, ready, preview, reco
       const value = await preview(text)
       if (at !== revision.current) return
       if ((value.kind === 'contribution-entry' || value.kind === 'scope-join-entry' || value.kind === 'scope-group-entry')
-        && value.sourceKind === 'tool-observations' && sameEntry(current.entry, value)
+        && (value.sourceKind === 'tool-observations' || value.sourceKind === 'completed-turn-outcomes') && sameEntry(current.entry, value)
         && (value.ownerAddress !== current.entry.ownerAddress || receive !== undefined)) setChecked(value)
       else setInvalid(true)
     } catch { if (at === revision.current) setInvalid(true) }

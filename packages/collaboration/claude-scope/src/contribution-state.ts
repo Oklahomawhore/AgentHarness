@@ -41,7 +41,8 @@ export interface ScopeContributionLease {
 }
 
 const opaque = z.string().min(1).max(256)
-const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'tool-observations' || (value.source.version !== 3 && value.source.version !== 4))
+const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes'
+  && (value.source.kind !== 'tool-observations' || (value.source.version !== 3 && value.source.version !== 4)))
 
 /** Strict additive record; missing records in older adapter data grant no contribution permission. */
 const contributionRecord = z.object({
@@ -52,8 +53,8 @@ const contributionRecord = z.object({
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   application: z.object({ entry: contributionEntrySchema, limits: contributionLimitsSchema,
     state: z.enum(['applying', 'waiting', 'cancelling', 'rejected', 'expired']) }).strict().optional(),
-  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'tool-observations'
-    || (value.grant.source.version !== 3 && value.grant.source.version !== 4)).optional(),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes'
+    && (value.grant.source.kind !== 'tool-observations' || (value.grant.source.version !== 3 && value.grant.source.version !== 4))).optional(),
   endReceipt: peerContributionReceiptSchema.optional(),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((value, context) => {
@@ -92,5 +93,6 @@ export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.obje
   authorizedInputDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   completionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   terminal: z.enum(['PostToolUse', 'PostToolUseFailure']).optional(),
-  sample: peerContributionSampleSchema.refine(value => !('kind' in value.result) || (value.result.version !== 3 && value.result.version !== 4)).optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
+  sample: peerContributionSampleSchema.refine(value => !('kind' in value.result)
+    || (value.result.kind === 'tool-observation' && (value.result.version === 1 || value.result.version === 2))).optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
 }).strict()

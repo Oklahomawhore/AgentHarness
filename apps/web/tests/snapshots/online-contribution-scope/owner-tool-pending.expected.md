@@ -6,6 +6,7 @@
 - text: 贡献来源
 - combobox "贡献来源":
   - option "授权目录内的 Write/Edit" [selected]
+  - option "正常完成的最终答复"
   - option "单个 OpenAPI 操作"
 - text: 申请入口有效期（小时）
 - spinbutton "申请入口有效期（小时）": "1"

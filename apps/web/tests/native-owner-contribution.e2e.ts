@@ -451,7 +451,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('web e2e: owne
     await panel(remotePage)
     if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
     await sharing.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
-    await sharing.getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await sharing.getByText('尚未允许分享本会话的工作', { exact: true }).waitFor()
     await expect.poll(async () => {
       const value = await b.ctx.scopeAgentContributions.status({ agentId: bId })
       return { capture: value.capture, continuation: value.receivingContinuation }
@@ -759,7 +759,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     await panel(sourcePage)
     if (await sharing.getAttribute('open') === null) await sharing.locator(':scope > summary').click()
     await sharing.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
-    await sharing.getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await sharing.getByText('尚未允许分享本会话的工作', { exact: true }).waitFor()
     await expect.poll(async () => (await b.ctx.scopeAgentContributions.status({ agentId: bId })).capture).toBeNull()
     const localAfter = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
     expect(localAfter.assignment).toEqual(localBefore.assignment)
@@ -799,7 +799,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent local and pe
     }
     await panel(sourcePage)
     await local.getByRole('button', { name: '停止分享并撤回', exact: true }).click()
-    await local.getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await local.getByText('尚未允许分享本会话的工作', { exact: true }).waitFor()
     const localStopped = await b.ctx.scopeAgentContributions.localStatus({ agentId: bId })
     expect(localStopped.capture).toBeNull()
     expect(localStopped.assignment).toEqual(localBefore.assignment)
@@ -1060,7 +1060,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: joint scope retains exis
 
     await panel(ownerPage)
     await ownerPage.locator(LOCAL).getByRole('button', { name: '停止分享并撤回', exact: true }).click()
-    await ownerPage.locator(LOCAL).getByText('尚未允许分享文件工作', { exact: true }).waitFor()
+    await ownerPage.locator(LOCAL).getByText('尚未允许分享本会话的工作', { exact: true }).waitFor()
     await prompt(b, sourcePage, 'LOCAL_JOIN_WITHDRAWN_READ')
     const withdrawn = sourceRequests[9]
     if (withdrawn === undefined) throw new Error('Withdrawal request is missing')

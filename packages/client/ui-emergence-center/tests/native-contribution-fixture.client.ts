@@ -10,8 +10,8 @@ export const applicationEntry = {
   ownerPeerId: 'owner-peer' as ScopeContributionEntry['ownerPeerId'],
   ownerAddress: '/ip4/127.0.0.1/tcp/1/p2p/owner-peer', expiresAt: 2100000000000,
 } satisfies ScopeContributionEntry
-export const capture: ScopeAgentContributionCapture & { readonly entry: typeof applicationEntry } = {
-  routeRevision: 0,
+export const capture: Extract<ScopeAgentContributionCapture, { readonly sourceKind: 'tool-observations' }> & { readonly entry: typeof applicationEntry } = {
+  sourceKind: 'tool-observations', routeRevision: 0,
   selection: {
     captureId: 'capture-a' as ScopeAgentContributionCapture['selection']['captureId'],
     captureGeneration: 'generation-a' as ScopeAgentContributionCapture['selection']['captureGeneration'],

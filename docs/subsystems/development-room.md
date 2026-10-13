@@ -535,8 +535,10 @@ type DevelopmentTaskContextPublication = {
     readonly peerContribution?: never
     readonly peerObservation?: never
     readonly peerToolObservation?: never
+    readonly peerTurnOutcome?: never
     readonly localContribution?: never
     readonly localToolObservation?: never
+    readonly localTurnOutcome?: never
   }
   | {
     readonly publishedBy?: never
@@ -546,8 +548,10 @@ type DevelopmentTaskContextPublication = {
     readonly peerContribution: DevelopmentTaskPeerContributionMetadata
     readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation
     readonly peerToolObservation?: DevelopmentTaskPeerToolObservation
+    readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome
     readonly localContribution?: never
     readonly localToolObservation?: never
+    readonly localTurnOutcome?: never
   }
   | {
     readonly publishedBy: DevelopmentParticipantId
@@ -557,8 +561,10 @@ type DevelopmentTaskContextPublication = {
     readonly peerContribution?: never
     readonly peerObservation?: never
     readonly peerToolObservation?: never
+    readonly peerTurnOutcome?: never
     readonly localContribution: DevelopmentTaskLocalContributionMetadata
     readonly localToolObservation?: DevelopmentTaskLocalToolObservation
+    readonly localTurnOutcome?: DevelopmentTaskLocalTurnOutcome
   }
 )
 ```
@@ -1201,29 +1207,9 @@ interface ScopeAgentContributionPermissionDraft {
 ```
 
 ```ts type-equiv
-/** Explicit permission to collect this Session's allowed tools and activate an equal or narrower owner approval. */
-interface ScopeAgentContributionRequest {
-  readonly agentId: SessionId
-  readonly expectedCapture: ScopeAgentContributionSelection | null
-  readonly entry: ScopeContributionEntry
-  readonly roots: string[]
-  readonly tools: ('write' | 'edit')[]
-  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
-  readonly commands?: readonly DevelopmentTaskCommandSelector[]
-  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
-  readonly fileContent?: 'completed-native-file'
-  readonly limits: ScopeContributionLimits
-  /** Explicit historical export from this Session’s exact existing local capture; current join roots, tools, and limits also apply. */
-  readonly initialization?: ScopeAgentContributionInitializationRequest
-  /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
-  readonly receive?: {
-    readonly expectedReadStateSeq: SessionSeqCursor
-    /** Exact existing local assignment retained by this additional scope permission. */
-    readonly localTask?: ScopeAgentLocalTaskTarget
-    /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
-    readonly automatic?: ScopeAgentAutomaticPolicy
-  }
-}
+/** One explicitly selected source for a peer contribution application. */
+type ScopeAgentContributionRequest = ScopeAgentContributionRequestBase & (ScopeAgentTurnContributionPermission
+  | (ScopeAgentToolContributionPermission & { readonly initialization?: ScopeAgentContributionInitializationRequest }))
 ```
 
 ```ts type-equiv
@@ -1250,31 +1236,8 @@ interface ScopeAgentContributionStopRequest {
 ```
 
 ```ts type-equiv
-/** Durable source consent and pending work; contains no captured tool content. */
-interface ScopeAgentContributionCapture {
-  readonly routeRevision: number
-  readonly selection: ScopeAgentContributionSelection
-  readonly proposal: ScopeContributionProposal
-  readonly roots: readonly string[]
-  readonly tools: readonly ('write' | 'edit')[]
-  readonly commands?: readonly DevelopmentTaskCommandSelector[]
-  readonly entry: ScopeContributionEntry
-  readonly limits: ScopeContributionLimits
-  readonly invitation: ScopeContributionInvitation | null
-  readonly receiving: ScopeAgentContributionReceiving | null
-  readonly receivingIntent?: 'adopt' | 'cancel-pending' | 'leave'
-  readonly state: 'prepared' | 'active' | 'ending'
-  /** True only while this live Agent instance has current local collection permission. */
-  readonly collecting: boolean
-  readonly application: 'applying' | 'waiting' | 'cancelling' | 'rejected' | 'expired' | null
-  readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
-  /** Separately approved recorded-tool initialization and receipt-derived delivery progress. */
-  readonly initialization?: ScopeAgentContributionInitialization
-  /** Source-local collection or persistence problem; independent of the owner's response. */
-  readonly collectionIssue: 'retention-limit' | 'sample-limit' | 'attribution-budget'
-    | 'durability-unavailable' | 'durability-failed' | null
-  readonly pendingSamples: number
-}
+/** Durable peer permission with the explicitly selected source. */
+type ScopeAgentContributionCapture = ScopeAgentContributionCaptureBase & ScopeAgentContributionSourcePermission
 ```
 
 ```ts type-equiv
@@ -1859,6 +1822,7 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
+  | DevelopmentTaskCompletedTurnObservationSource
 ```
 
 ```ts type-equiv
@@ -1922,7 +1886,7 @@ interface DevelopmentTaskPeerContributionRequest {
   readonly grant: DevelopmentTaskPeerContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerToolObservationResult
+  readonly result: Exclude<DevelopmentTaskOpenApiObservationResult, { readonly state: 'revoked' }> | DevelopmentTaskPeerContributionObservationResult
 }
 ```
 
@@ -2298,7 +2262,7 @@ type ScopeContributionProposal = Pick<DevelopmentTaskPeerContributionGrant,
 ```ts type-equiv
 /** Versioned text representations that an authenticated local UI can preview before granting permission. */
 type ScopeContributionTransfer =
-  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request'; readonly proposal: ScopeContributionProposal }
+  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request'; readonly proposal: ScopeContributionProposal }
   | ScopeContributionInvitation
   | ScopeContributionEntry
 ```
@@ -2365,7 +2329,7 @@ type ScopeContributionManagementErrorCode =
 /** Separate write invitation; a read invitation cannot be promoted into contribution authority. */
 interface ScopeContributionInvitation {
   readonly version: 1
-  readonly kind: 'openapi-contribution' | 'tool-contribution'
+  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution'
   readonly ownerAddress: string
   readonly grant: DevelopmentTaskPeerContributionGrant
 }
@@ -2431,8 +2395,8 @@ type ScopeSingleContributionEntry = {
   readonly expiresAt: number
 } & (
   | { readonly kind: 'openapi-contribution-entry'; readonly sourceKind?: never }
-  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' }
-  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' }
+  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' }
+  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' }
 )
 ```
 
@@ -2441,7 +2405,7 @@ type ScopeSingleContributionEntry = {
 interface ScopeGroupEntry {
   readonly version: 2
   readonly kind: 'scope-group-entry'
-  readonly sourceKind: 'tool-observations'
+  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes'
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
   readonly ownerPeerId: ScopePeerId
@@ -2460,6 +2424,8 @@ type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
 ```ts type-equiv
 /** Explicitly create a reusable entry for one owned Root Task. */
 interface ScopeGroupEntryRequest {
+  /** Omission resolves to tool observations; completed-turn sharing must be selected explicitly. */
+  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2610,7 +2576,7 @@ interface ScopeContributionApplication {
 interface ScopeContributionEntryRequest {
   /** Join offers separately approved passive Root Task reading; omission requests contribution only. */
   readonly participation?: 'join' | 'contribution'
-  readonly sourceKind: 'openapi' | 'tool-observations'
+  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2881,7 +2847,7 @@ type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContribut
 ```
 
 ```ts type-equiv
-/** Explicit local tool permission tied to one actual Agent assignment interval. */
+/** Explicit local source permission tied to one actual Agent assignment interval. */
 interface DevelopmentTaskLocalContributionGrant {
   readonly version: 1
   readonly taskId: DevelopmentTaskId
@@ -2891,7 +2857,7 @@ interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
-    | DevelopmentTaskCommandToolObservationSource
+    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -2935,7 +2901,7 @@ interface DevelopmentTaskLocalContributionRequest {
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly sourceId: DevelopmentTaskObservedSourceId
   readonly sequence: number
-  readonly result: DevelopmentTaskLocalToolObservationResult
+  readonly result: DevelopmentTaskLocalContributionObservationResult
 }
 ```
 
@@ -2990,34 +2956,14 @@ type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionG
 ```
 
 ```ts type-equiv
-/** Explicit native file and command sharing permission for the selected Agent's current owner-local Root Task. */
-interface ScopeAgentLocalContributionRequest extends ScopeAgentLocalContributionBinding {
-  readonly agentId: SessionId
-  readonly expectedCapture: ScopeAgentContributionSelection | null
-  readonly roots: string[]
-  readonly tools: ('write' | 'edit')[]
-  /** Exact foreground commands and directory ordinals whose execution results may be shared; absent grants no command sharing. */
-  readonly commands?: readonly DevelopmentTaskCommandSelector[]
-  /** Explicitly share complete text produced by permitted native tools, including unchanged file contents; absent shares inputs only. */
-  readonly fileContent?: 'completed-native-file'
-  readonly limits: ScopeContributionLimits
-}
+/** One explicitly selected source for the existing owner-local Task assignment. */
+type ScopeAgentLocalContributionRequest = ScopeAgentLocalContributionRequestBase
+  & (ScopeAgentToolContributionPermission | ScopeAgentTurnContributionPermission)
 ```
 
 ```ts type-equiv
-/** Durable local Task permission, independent of receiving context or authorizing idle work. */
-interface ScopeAgentLocalContributionCapture {
-  readonly selection: ScopeAgentContributionSelection
-  readonly grant: DevelopmentTaskLocalContributionGrant
-  readonly roots: readonly string[]
-  readonly tools: readonly ('write' | 'edit')[]
-  readonly commands?: readonly DevelopmentTaskCommandSelector[]
-  readonly state: 'opening' | 'active' | 'ending'
-  readonly collecting: boolean
-  readonly pendingSamples: number
-  readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
-  readonly collectionIssue: ScopeAgentContributionCapture['collectionIssue']
-}
+/** Durable owner-local permission with the explicitly selected source. */
+type ScopeAgentLocalContributionCapture = ScopeAgentLocalContributionCaptureBase & ScopeAgentContributionSourcePermission
 ```
 
 ```ts type-equiv
@@ -3594,8 +3540,8 @@ acceptObservedRemote( request: DevelopmentTaskAdmitRemoteObservedContextRequest,
 acceptObservedIntervalEnd( request: DevelopmentTaskEndObservedIntervalRequest, sourceNodeId: DevelopmentNodeId, ): Promise<DevelopmentTaskObservedReceipt>
 
 /**
- * Open explicitly authorized tool collection for one current owner-local Agent assignment.
- * @param grant - exact capture, binding epoch, tools, and finite limits retained by the source adapter.
+ * Open explicitly authorized contribution collection for one current owner-local Agent assignment.
+ * @param grant - exact capture, binding epoch, source permission, and finite limits retained by the source adapter.
  * @returns original durable local authority; ended captures cannot reopen.
  */
 openLocalContribution(grant: DevelopmentTaskLocalContributionGrant): Promise<DevelopmentTaskLocalContribution>
@@ -4144,10 +4090,10 @@ Actual native execution observations become durable original reports, then the e
 @Remote('permissionDraft') async permissionDraft(request: { readonly agentId: SessionId }): Promise<ScopeAgentContributionPermissionDraft | null>
 
 /**
- * Persist one Session's explicit file and command sharing permission and request automatic activation
+ * Persist one Session's explicitly selected source permission and request automatic activation
  * of an equal or narrower owner approval.
- * @param request - exact capture expectation, owner entry, file and command selections, limits,
- * and optional recorded-local-tool export consent.
+ * @param request - exact capture expectation, owner entry, source permission and limits;
+ * tool sources may separately permit recorded-local-tool export.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>
@@ -4189,8 +4135,8 @@ Actual native execution observations become durable original reports, then the e
 @Remote('localStatus') async localStatus(request: { readonly agentId: SessionId }): Promise<ScopeAgentLocalContributionStatus>
 
 /**
- * Authorize native file and foreground command reports for the selected Agent's current owner-local Root Task.
- * @param request - exact assignment and capture expectations, local roots, file tools, commands, and finite limits.
+ * Authorize the selected tool or completed-answer source for the Agent's current owner-local Root Task.
+ * @param request - exact assignment and capture expectations, source permission, and finite limits.
  * @returns durable opening intent; collection starts only after Task commits the same permission.
  */
 @Remote('requestLocal') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>
@@ -4583,3 +4529,159 @@ Types: [SessionId](core.md)
 
 Source: [`packages/collaboration/scope-agent-contribution/src/types.ts`](../../packages/collaboration/scope-agent-contribution/src/types.ts)
 <!-- END GENERATED cordis-surface -->
+
+## Completed final-answer source types
+
+```ts type-equiv
+/** Explicit permission to share complete replies from subsequent user-channel native turns. */
+interface DevelopmentTaskCompletedTurnObservationSource {
+  readonly kind: 'completed-turn-outcomes'
+  readonly version: 5
+  readonly name: string
+}
+```
+
+```ts type-equiv
+/** A complete Agent report; its digest verifies text integrity, not owner approval or factual accuracy. */
+interface DevelopmentTaskCompletedTurnObservationResult {
+  readonly kind: 'completed-turn-outcome'
+  readonly version: 5
+  readonly text: string
+  readonly sha256: string
+}
+```
+
+```ts type-equiv
+/** Locally admitted samples retain distinct tool and completed-turn permissions. */
+type DevelopmentTaskLocalContributionObservationResult =
+  | DevelopmentTaskLocalToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+```
+
+```ts type-equiv
+/** Peer samples retain tool variants and independently permitted completed-turn reports. */
+type DevelopmentTaskPeerContributionObservationResult =
+  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+```
+
+```ts type-equiv
+/** Owner-attributed complete local reply; independent turns remain separate reports. */
+type DevelopmentTaskLocalTurnOutcome = DevelopmentTaskCompletedTurnObservationResult & {
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly sequence: number
+}
+```
+
+```ts type-equiv
+/** Complete peer reply with the original source identity and capture authority. */
+type DevelopmentTaskPeerTurnOutcome = DevelopmentTaskCompletedTurnObservationResult & {
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly sequence: number
+  readonly observerPeerId: ScopePeerId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+}
+```
+
+```ts type-equiv
+/** Common peer application and optional receiving consent, independent of the chosen source. */
+interface ScopeAgentContributionRequestBase {
+  readonly agentId: SessionId
+  readonly expectedCapture: ScopeAgentContributionSelection | null
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  /** Explicit receiving consent for a single-use joint or reusable group entry; automatic work requires its own finite local policy. */
+  readonly receive?: {
+    readonly expectedReadStateSeq: SessionSeqCursor
+    /** Exact existing local assignment retained by this additional scope permission. */
+    readonly localTask?: ScopeAgentLocalTaskTarget
+    /** Absent preserves passive receiving; this policy is never sent to the Task owner. */
+    readonly automatic?: ScopeAgentAutomaticPolicy
+  }
+}
+```
+
+```ts type-equiv
+/** Existing owner-local Root Task assignment and finite source permission. */
+interface ScopeAgentLocalContributionRequestBase extends ScopeAgentLocalContributionBinding {
+  readonly agentId: SessionId
+  readonly expectedCapture: ScopeAgentContributionSelection | null
+  readonly limits: ScopeContributionLimits
+}
+```
+
+```ts type-equiv
+/** Durable local Task permission, independent of receiving context or authorizing idle work. */
+interface ScopeAgentLocalContributionCaptureBase {
+  readonly selection: ScopeAgentContributionSelection
+  readonly grant: DevelopmentTaskLocalContributionGrant
+  readonly state: 'opening' | 'active' | 'ending'
+  readonly collecting: boolean
+  readonly pendingSamples: number
+  readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
+  readonly collectionIssue: ScopeAgentContributionCapture['collectionIssue']
+}
+```
+
+```ts type-equiv
+/** Durable source consent and pending work; contains no captured report content. */
+interface ScopeAgentContributionCaptureBase {
+  readonly routeRevision: number
+  readonly selection: ScopeAgentContributionSelection
+  readonly proposal: ScopeContributionProposal
+  readonly entry: ScopeContributionEntry
+  readonly limits: ScopeContributionLimits
+  readonly invitation: ScopeContributionInvitation | null
+  readonly receiving: ScopeAgentContributionReceiving | null
+  readonly receivingIntent?: 'adopt' | 'cancel-pending' | 'leave'
+  readonly state: 'prepared' | 'active' | 'ending'
+  /** True only while this live Agent instance has current local collection permission. */
+  readonly collecting: boolean
+  readonly application: 'applying' | 'waiting' | 'cancelling' | 'rejected' | 'expired' | null
+  readonly issue: 'owner-unavailable' | 'capacity' | 'rejected' | null
+  /** Separately approved recorded-tool initialization and receipt-derived delivery progress. */
+  readonly initialization?: ScopeAgentContributionInitialization
+  /** Source-local collection or persistence problem; independent of the owner's response. */
+  readonly collectionIssue: 'retention-limit' | 'sample-limit' | 'attribution-budget'
+    | 'durability-unavailable' | 'durability-failed' | null
+  readonly pendingSamples: number
+}
+```
+
+```ts type-equiv
+/** Explicit native file and command selection; omitted sourceKind preserves existing tool requests. */
+interface ScopeAgentToolContributionPermission {
+  readonly sourceKind?: 'tool-observations'
+  readonly roots: string[]
+  readonly tools: ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
+  readonly fileContent?: 'completed-native-file'
+}
+```
+
+```ts type-equiv
+/** Share only new, completed user-origin final answers; no file or history permission is implied. */
+interface ScopeAgentTurnContributionPermission {
+  readonly sourceKind: 'completed-turn-outcomes'
+  readonly roots?: never
+  readonly tools?: never
+  readonly commands?: never
+  readonly fileContent?: never
+  readonly initialization?: never
+}
+```
+
+```ts type-equiv
+/** Actual source permission, never empty file fields standing in for answer-sharing consent. */
+type ScopeAgentContributionSourcePermission = {
+  readonly sourceKind: 'tool-observations'
+  readonly roots: readonly string[]
+  readonly tools: readonly ('write' | 'edit')[]
+  readonly commands?: readonly DevelopmentTaskCommandSelector[]
+} | {
+  readonly sourceKind: 'completed-turn-outcomes'
+  readonly roots?: never
+  readonly tools?: never
+  readonly commands?: never
+}
+```

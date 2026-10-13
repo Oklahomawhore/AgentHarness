@@ -11,7 +11,8 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { DomainError } from '@deepseek-ai/dsh-storage-domain'
 import { invitationSchema } from './invitation-schema.ts'
 import { plannedContributionGrant, type ContributionAccess } from './contribution.ts'
-import { contributionInvitationSchema, contributionEntrySchema, groupEntrySchema, contributionLimitsSchema, contributionProposalSchema,
+import { contributionInvitationSchema, contributionKind, contributionEntrySchema, groupEntrySchema,
+  contributionLimitsSchema, contributionProposalSchema,
   validateContributionReceipt } from './contribution-schema.ts'
 import { applicationRequestSchema, applicationResponseSchema, groupApplicationRequestSchema, groupApplicationResponseSchema,
   groupReservedBytes, type ApplicationRecord, type ManagedApplicationRecord, type GroupRecord } from './application-schema.ts'
@@ -42,15 +43,15 @@ interface Owner {
   readonly track: <T>(operation: Promise<T>) => Promise<T>
 }
 const createSchema = z.object({ participation: z.enum(['join', 'contribution']).optional(),
-  sourceKind: z.enum(['openapi', 'tool-observations']), taskId: z.string().min(1).max(256), ownerAddress: z.string().min(1).max(2048),
+  sourceKind: z.enum(['openapi', 'tool-observations', 'completed-turn-outcomes']), taskId: z.string().min(1).max(256), ownerAddress: z.string().min(1).max(2048),
   expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()
-  .refine(value => value.participation !== 'join' || value.sourceKind === 'tool-observations')
+  .refine(value => value.participation !== 'join' || value.sourceKind !== 'openapi')
 const selectionSchema = z.object({ entryId: z.uuid(), applicationId: z.uuid().optional(),
   expectedProposal: contributionProposalSchema.nullable() }).strict()
 const approvalSchema = selectionSchema.extend({ expectedProposal: contributionProposalSchema, limits: contributionLimitsSchema,
   read: z.object({ responsibility: z.string().trim().min(1).max(1024) }).strict().optional(),
   ownerAddress: z.string().min(1).max(2048) })
-const groupCreateSchema = z.object({ taskId: createSchema.shape.taskId, ownerAddress: createSchema.shape.ownerAddress,
+const groupCreateSchema = z.object({ sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes']).optional(), taskId: createSchema.shape.taskId, ownerAddress: createSchema.shape.ownerAddress,
   expiresAt: createSchema.shape.expiresAt, maxMembers: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()
 const groupSelectionSchema = z.object({ entryId: z.uuid() }).strict()
 const recoverSchema = z.object({ entryId: z.uuid(), ownerAddress: z.string().min(1).max(2048) }).strict()
@@ -197,14 +198,15 @@ export class ContributionApplications {
    */
   createGroup(input: ScopeGroupEntryRequest): Promise<ScopeGroupEntryResult> {
     return this.manage(() => this.enqueue(async () => {
-      const parsed = groupCreateSchema.parse(input)
+      const selected = groupCreateSchema.parse(input)
+      const parsed = { ...selected, sourceKind: selected.sourceKind ?? 'tool-observations' }
       const ownerPeerId = await this.address(parsed.ownerAddress)
       const task = this.ctx.developmentTasks.get({ taskId: input.taskId })
       if (task.origin.kind !== 'root' || task.ownerNodeId !== this.ctx.developmentRooms.list().nodeId
         || parsed.expiresAt <= Date.now() || parsed.expiresAt - Date.now() > this.owner.config.maxApplicationLifetimeMs
         || parsed.maxMembers > this.owner.config.maxContributionApplications) throw this.failure('scope-contribution/invalid-permission')
       const entry = groupEntrySchema.parse({ ...parsed, ownerPeerId, entryId: randomUUID(), version: 2,
-        kind: 'scope-group-entry', sourceKind: 'tool-observations' })
+        kind: 'scope-group-entry' })
       this.encoded(entry)
       await this.saveGroup({ version: 1, entry, closed: false, members: [] })
       return { entry, text: JSON.stringify(entry) }
@@ -407,7 +409,7 @@ export class ContributionApplications {
       return { status: record.decision }
     }
     const invitation = contributionInvitationSchema.parse({ version: 1,
-      kind: retained.grant.source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution',
+      kind: contributionKind(retained.grant.source),
       ownerAddress: address, grant: retained.grant })
     return retained.state === 'active' ? { status: 'approved', invitation, receipt: retained.openReceipt, ...readFields }
       : { status: 'ended', invitation, reason: retained.reason, receipt: retained.endReceipt, ...readFields }
@@ -485,7 +487,7 @@ export class ContributionApplications {
         if (grant.expiresAt <= Date.now() || grant.expiresAt - Date.now() > this.owner.config.maxInvitationLifetimeMs
           || grant.maxSampleBytes > this.owner.config.maxContributionRequestBytes) throw this.failure('scope-contribution/invalid-permission')
         const invitation = contributionInvitationSchema.parse({ version: 1,
-          kind: grant.source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution',
+          kind: contributionKind(grant.source),
           ownerAddress: input.ownerAddress, grant })
         const receipt = { taskId: grant.taskId, ownerPeerId: grant.ownerPeerId, contributorPeerId: grant.contributorPeerId,
           grantId: grant.grantId, generation: grant.generation, captureId: grant.captureId, captureGeneration: grant.captureGeneration,

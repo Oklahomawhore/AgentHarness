@@ -818,7 +818,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/development-task/src/index.ts:144`](../packages/collaboration/development-task/src/index.ts)
+来源： [`packages/collaboration/development-task/src/index.ts:147`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
@@ -2423,7 +2423,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-scope-agent-contribution`
 
-需要： `agents` · `sessions` · `storageDomain` · `scopeAccess` · `fs`
+需要： `agents` · `sessions` · `storageDomain` · `scopeAccess`
 
 ```ts config-catalog
 /** Bounded durable source inventory, complete report bytes, and peer retry cadence. */
@@ -2448,7 +2448,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-agent-contribution/src/index.ts:56`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+来源： [`packages/collaboration/scope-agent-contribution/src/index.ts:58`](../packages/collaboration/scope-agent-contribution/src/index.ts)
 
 <a id="deepseek-aidsh-scope-transportlibp2p"></a>
 

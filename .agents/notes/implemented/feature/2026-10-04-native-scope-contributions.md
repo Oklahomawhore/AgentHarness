@@ -33,3 +33,5 @@ The [shared contribution controller](../../../../packages/collaboration/scope-ac
 A running source Host and the retained owner address are required for retry. In-memory completions that have not reached durable source storage do not survive a process crash; restart ends the previous capture. Same-Host Task assignment requires the separately authorized [local capture path](2026-10-04-owner-local-scope-contributions.md); assignment alone grants no source permission. Whole-field omissions preserve report attribution under a byte limit; a tool report does not establish complete current file contents or model understanding.
 
 Real Loader scenarios exercise native and PTC file work, durable source coordinates, owner publication, recipient requests, withdrawal, and local storage failure recovery. Keyless model streams establish request assembly and replay, not semantic task quality or a benefit over a single Agent.
+
+The separately authorized [completed-answer source](2026-10-14-completed-answer-contributions.md) serves work without file tools; it does not replace actual-tool provenance.

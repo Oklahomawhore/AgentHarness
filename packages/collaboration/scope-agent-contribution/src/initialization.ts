@@ -6,16 +6,16 @@ import type { SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { DevelopmentTaskRecordedToolObservationResult, DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
 import { recordedToolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
 import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationRequest } from './types.ts'
-import type { NativeSample } from './state.ts'
-import type { LocalSample } from './local-state.ts'
+import type { NativeToolSample } from './state.ts'
+import type { LocalToolSample } from './local-state.ts'
 import { nativeDigest } from './identity.ts'
 
 /** Immutable source coordinates, kept locally without copying the source transcript or original filesystem roots. */
 export interface InitializationProof {
   readonly sourceSampleId: string
   readonly sourceSequence: number
-  readonly callSeq: NativeSample['callSeq']
-  readonly resultSeq: NativeSample['resultSeq']
+  readonly callSeq: NativeToolSample['callSeq']
+  readonly resultSeq: NativeToolSample['resultSeq']
   readonly callId: string
   readonly rootCallId: string
   readonly argumentDigest: string
@@ -112,7 +112,7 @@ export function initializationPlanDigest(request: ScopeAgentContributionInitiali
  * @param sample - A persisted local observation.
  * @returns Stable proof when start and settlement exactly match the recorded observation.
  */
-export function recordedProof(session: Session, sample: LocalSample): InitializationProof | undefined {
+export function recordedProof(session: Session, sample: LocalToolSample): InitializationProof | undefined {
   if (sample.sample.result.version !== 1) return undefined
   const call = session.eventAt(sample.callSeq)
   const result = session.eventAt(sample.resultSeq)

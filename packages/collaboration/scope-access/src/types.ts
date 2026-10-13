@@ -143,7 +143,7 @@ export type ScopeAccessIdentity = ScopeTransportIdentity
 /** Separate write invitation; a read invitation cannot be promoted into contribution authority. */
 export interface ScopeContributionInvitation {
   readonly version: 1
-  readonly kind: 'openapi-contribution' | 'tool-contribution'
+  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution'
   readonly ownerAddress: string
   readonly grant: DevelopmentTaskPeerContributionGrant
 }
@@ -182,7 +182,7 @@ export type ScopeContributionProposal = Pick<DevelopmentTaskPeerContributionGran
 
 /** Versioned text representations that an authenticated local UI can preview before granting permission. */
 export type ScopeContributionTransfer =
-  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request'; readonly proposal: ScopeContributionProposal }
+  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request'; readonly proposal: ScopeContributionProposal }
   | ScopeContributionInvitation
   | ScopeContributionEntry
 
@@ -257,15 +257,15 @@ export type ScopeSingleContributionEntry = {
   readonly expiresAt: number
 } & (
   | { readonly kind: 'openapi-contribution-entry'; readonly sourceKind?: never }
-  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' }
-  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' }
+  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' }
+  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' }
 )
 
 /** Reusable application entrance; each source receives independently approved grants. */
 export interface ScopeGroupEntry {
   readonly version: 2
   readonly kind: 'scope-group-entry'
-  readonly sourceKind: 'tool-observations'
+  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes'
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
   readonly ownerPeerId: ScopePeerId
@@ -283,6 +283,8 @@ export type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
 
 /** Explicitly create a reusable entry for one owned Root Task. */
 export interface ScopeGroupEntryRequest {
+  /** Omission resolves to tool observations; completed-turn sharing must be selected explicitly. */
+  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -396,7 +398,7 @@ export interface ScopeContributionApplication {
 export interface ScopeContributionEntryRequest {
   /** Join offers separately approved passive Root Task reading; omission requests contribution only. */
   readonly participation?: 'join' | 'contribution'
-  readonly sourceKind: 'openapi' | 'tool-observations'
+  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { DevelopmentTaskCommandSelector } from '@deepseek-ai/dsh-development-task/types'
 import { commandSelectorSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage-domain'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import {
   localContributionGrantSchema, localContributionSampleSchema, localContributionRequestSchema,
   localContributionAdmissionReceiptSchema, localContributionId, localContributionPayloadDigest, localContributionPublicationId,
@@ -13,10 +13,12 @@ import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionRequest,
   DevelopmentTaskLocalContributionReceipt, DevelopmentTaskLocalContributionAdmissionReceipt,
 } from '@deepseek-ai/dsh-development-task/types'
-import { nativeDigest, type NativeSample } from './state.ts'
+import { nativeDigest, type NativeToolSample, type NativeTurnSample } from './state.ts'
+import { turnOutcomeId, turnOutcomeProofSchema } from './turn-outcome.ts'
 
 /** Source-side intent; Task events remain the only local contribution authority. */
 export interface LocalCapture {
+  readonly turnAfterSeq?: SessionSeqCursor | undefined
   readonly grant: DevelopmentTaskLocalContributionGrant
   readonly roots: readonly string[]
   readonly rootUrls: readonly string[]
@@ -28,13 +30,23 @@ export interface LocalCapture {
 }
 
 /** The shared collector's durable execution coordinates with a local Task sample and receipt. */
-export interface LocalSample extends Omit<NativeSample, 'sample' | 'receipt'> {
+export interface LocalToolSample extends Omit<NativeToolSample, 'sample' | 'receipt'> {
   readonly sample: Omit<DevelopmentTaskLocalContributionRequest, 'grant'>
   readonly receipt?: DevelopmentTaskLocalContributionAdmissionReceipt | undefined
 }
 
+/** Completed-turn proof paired with local Task admission, without tool coordinates. */
+export interface LocalTurnSample extends Omit<NativeTurnSample, 'sample' | 'receipt'> {
+  readonly sample: Omit<DevelopmentTaskLocalContributionRequest, 'grant'>
+  readonly receipt?: DevelopmentTaskLocalContributionAdmissionReceipt | undefined
+}
+
+/** Each local sample carries the proof appropriate to its selected source. */
+export type LocalSample = LocalToolSample | LocalTurnSample
+
 /** One source Session's atomic local sequence allocation and immutable outbox. */
 export interface LocalSourceRecord {
+  readonly version?: 2
   readonly agentId: SessionId
   readonly revision: number
   readonly capture: LocalCapture | null
@@ -68,49 +80,84 @@ export function validateLocalReceipt(grant: DevelopmentTaskLocalContributionGran
 }
 
 const captureSchema: z.ZodType<LocalCapture> = z.object({
-  grant: localContributionGrantSchema, roots: z.array(z.string().min(1)).min(1),
-  rootUrls: z.array(z.string().startsWith('file:')).min(1), tools: z.array(z.enum(['write', 'edit'])).max(2),
+  grant: localContributionGrantSchema, roots: z.array(z.string().min(1)),
+  rootUrls: z.array(z.string().startsWith('file:')), tools: z.array(z.enum(['write', 'edit'])).max(2),
+  turnAfterSeq: z.number().int().min(-1).transform(value => value as SessionSeqCursor).optional(),
   commands: z.array(commandSelectorSchema).min(1).optional(),
   state: z.enum(['opening', 'active', 'ending']), sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((capture, ctx) => {
+  const source = capture.grant.source
+  const turn = source.kind === 'completed-turn-outcomes'
+  const permissionMatches = turn
+    ? capture.roots.length === 0 && capture.tools.length === 0 && capture.commands === undefined && capture.turnAfterSeq !== undefined
+    : capture.roots.length > 0 && capture.turnAfterSeq === undefined
+      && isDeepStrictEqual(capture.commands, source.version === 4 ? source.commands : undefined)
+      && isDeepStrictEqual(source.tools, capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'))
   if (capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
-    || new Set(capture.tools).size !== capture.tools.length || capture.grant.source.name !== 'session-work'
-    || !isDeepStrictEqual(capture.commands, capture.grant.source.version === 4 ? capture.grant.source.commands : undefined)
+    || new Set(capture.tools).size !== capture.tools.length || source.name !== (turn ? 'session-outcomes' : 'session-work')
+    || !permissionMatches
     || capture.commands?.some(command => command.rootIndex >= capture.roots.length) === true
-    || !isDeepStrictEqual(capture.grant.source.tools, capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'))
     || capture.sequence > capture.grant.maxSamples) {
     ctx.addIssue({ code: 'custom', message: 'native local contribution differs from the retained permission' })
   }
 })
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
-const sampleSchema: z.ZodType<LocalSample> = z.object({
+const toolSampleSchema: z.ZodType<LocalToolSample> = z.object({
   id: digest,
-  callSeq: z.number().int().positive().transform(value => value as NativeSample['callSeq']),
-  resultSeq: z.number().int().positive().transform(value => value as NativeSample['resultSeq']),
+  callSeq: z.number().int().positive().transform(value => value as NativeToolSample['callSeq']),
+  resultSeq: z.number().int().positive().transform(value => value as NativeToolSample['resultSeq']),
   callId: z.string().min(1), rootCallId: z.string().min(1), argumentDigest: digest, completionDigest: digest,
   captureId: z.string().min(1).transform(value => value as LocalCapture['grant']['captureId']),
   captureGeneration: z.string().min(1).transform(value => value as LocalCapture['grant']['captureGeneration']),
   sample: localContributionSampleSchema,
   receipt: localContributionAdmissionReceiptSchema.optional(),
 }).strict()
-const recordSchema: z.ZodType<LocalSourceRecord> = z.object({
+const turnSampleSchema: z.ZodType<LocalTurnSample> = z.strictObject({
+  id: digest, turnProof: turnOutcomeProofSchema,
+  captureId: z.string().min(1).transform(value => value as LocalCapture['grant']['captureId']),
+  captureGeneration: z.string().min(1).transform(value => value as LocalCapture['grant']['captureGeneration']),
+  sample: localContributionSampleSchema, receipt: localContributionAdmissionReceiptSchema.optional(),
+})
+const recordFields = {
   agentId: z.string().min(1).transform(value => value as SessionId),
   revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  capture: captureSchema.nullable(), samples: z.array(sampleSchema),
-}).strict().superRefine((record, ctx) => {
+  capture: captureSchema.nullable(), samples: z.array(z.union([toolSampleSchema, turnSampleSchema])),
+}
+const recordSchema: z.ZodType<LocalSourceRecord> = z.union([
+  z.strictObject(recordFields).refine(record => record.capture?.turnAfterSeq === undefined
+    && record.capture?.grant.source.kind !== 'completed-turn-outcomes'
+    && record.samples.every(sample => sample.turnProof === undefined && sample.sample.result.version !== 5),
+  'historical local rows cannot acquire completed turns'),
+  z.strictObject({ ...recordFields, version: z.literal(2) }),
+]).superRefine((record, ctx) => {
   const capture = record.capture
   const seen = new Set<number>()
   try {
     if (capture === null && record.samples.length !== 0) throw new Error('local samples have no capture')
     for (const item of record.samples) {
       if (capture === null) throw new Error('local sample has no capture')
+      if (item.turnProof !== undefined) {
+        const id = turnOutcomeId('local', record.agentId, capture.grant, item.turnProof)
+        if (capture.grant.source.kind !== 'completed-turn-outcomes' || capture.turnAfterSeq === undefined
+          || item.turnProof.activationSeq < capture.turnAfterSeq || item.id !== id
+          || item.captureId !== capture.grant.captureId || item.captureGeneration !== capture.grant.captureGeneration
+          || item.sample.sourceId !== nativeDigest([id, item.sample.sequence]) || item.sample.sequence > capture.sequence
+          || seen.has(item.sample.sequence) || item.sample.result.kind !== 'completed-turn-outcome'
+          || item.sample.result.sha256 !== item.turnProof.textDigest) throw new Error('local turn sample has different source coordinates')
+        localContributionRequestSchema.parse({ grant: capture.grant, ...item.sample })
+        seen.add(item.sample.sequence)
+        if (item.receipt !== undefined) validateLocalReceipt(capture.grant, item.receipt, item.sample)
+        continue
+      }
       const id = nativeDigest(['native-local-tool', record.agentId, capture.grant.captureId, capture.grant.captureGeneration,
         item.callSeq, item.resultSeq])
-      if (item.id !== id || item.captureId !== capture.grant.captureId || item.captureGeneration !== capture.grant.captureGeneration
+      if (capture.grant.source.kind === 'completed-turn-outcomes' || item.sample.result.kind === 'completed-turn-outcome'
+        || item.id !== id || item.captureId !== capture.grant.captureId || item.captureGeneration !== capture.grant.captureGeneration
         || item.callSeq >= item.resultSeq || item.sample.sourceId !== nativeDigest([id, item.sample.sequence])
         || item.sample.sequence > capture.sequence || seen.has(item.sample.sequence)
-        || (item.sample.result.kind === 'tool-observation' && !capture.grant.source.tools.includes(item.sample.result.tool))) throw new Error('local sample has different execution coordinates')
+        || (item.sample.result.kind === 'tool-observation'
+          && !capture.grant.source.tools.includes(item.sample.result.tool))) throw new Error('local sample has different execution coordinates')
       localContributionRequestSchema.parse({ grant: capture.grant, ...item.sample })
       seen.add(item.sample.sequence)
       if (item.receipt !== undefined) validateLocalReceipt(capture.grant, item.receipt, item.sample)

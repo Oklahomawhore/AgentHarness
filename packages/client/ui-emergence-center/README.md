@@ -70,6 +70,8 @@ Native recovery controls update the displayed original capture or read binding. 
 
 Capacity omissions also appear on the collapsed collaboration entry for the current ready binding, including when a local Task remains selected. Opening that indication shows the context provider, responsibility and recorded counts. Loading, unavailable, departed and nonmatching records hide it. Zero capacity omissions do not establish complete knowledge. The context provider manages summarization; receiver settings cannot change a remote provider. See the [recorded-capacity decision](../../../.agents/notes/implemented/feature/2026-10-07-scope-recorded-capacity-status.md).
 
+Native local contribution forms and owner-issued single, joint and group entries offer “Completed final answers” as an explicit source choice. Its permission form shows expiry, sample limits and independent answer-disclosure consent; it has no directory, file tool, command or history-initialization fields. Source, limits, Task binding or entry changes require renewed consent. Owners see the exact answer source before approval. Active status and Stop apply to the displayed capture, and an existing capture cannot silently change sources. The [native contribution reference](../../collaboration/scope-agent-contribution/README.md) owns eligibility and disclosure details.
+
 <a id="model-experience"></a>
 
 ## Model Experience

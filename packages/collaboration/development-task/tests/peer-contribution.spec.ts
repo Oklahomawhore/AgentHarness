@@ -87,7 +87,7 @@ it('rejects other senders, altered grants, reused source content and nonadvancin
   await tasks.openPeerContribution(grant)
   const input = sample(grant)
   await expect(tasks.admitPeerContribution(input, 'third-peer' as ScopePeerId)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
-  if (grant.source.kind === 'tool-observations') throw new Error('expected OpenAPI fixture source')
+  if (grant.source.kind !== undefined) throw new Error('expected OpenAPI fixture source')
   await expect(tasks.admitPeerContribution({ ...input, grant: { ...grant, source: { ...grant.source, path: '/private' } } }, source))
     .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   const first = await tasks.admitPeerContribution(input, source)

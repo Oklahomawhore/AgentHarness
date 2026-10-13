@@ -3616,6 +3616,71 @@
       "doc": "docs/subsystems/shell.md",
       "symbol": "ToolBashCompletion",
       "source": "packages/shell/tool-bash/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedTurnObservationSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskCompletedTurnObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskLocalContributionObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskPeerContributionObservationResult",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskLocalTurnOutcome",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskPeerTurnOutcome",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionRequestBase",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentLocalContributionRequestBase",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentLocalContributionCaptureBase",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionCaptureBase",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentToolContributionPermission",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentTurnContributionPermission",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentContributionSourcePermission",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     }
   ]
 }
