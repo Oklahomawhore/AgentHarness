@@ -12,6 +12,7 @@ import { peerContributionPublicationId } from '../../packages/collaboration/deve
 import { contextSourceSchema } from '../../packages/collaboration/scope-agent-context/src/state.ts'
 import { joinReadEventSchema, joinReadHistory } from '../../packages/collaboration/scope-agent-context/src/join-read.ts'
 import { snapshotMessage, withdrawalMessage } from '../../packages/collaboration/scope-agent-context/src/messages.ts'
+import { expandReportedGrants } from './reported-grant-evidence.mjs'
 import { nativeDigest } from '../../packages/collaboration/scope-agent-contribution/src/identity.ts'
 import { ExportReader, exportLimits, exportLimitsSchema, exportRoots, type ExportLimits } from './two-device-verify-files.ts'
 import { evidenceCheck as check, evidenceEqual as equal, verifyEndpoint,
@@ -48,33 +49,34 @@ function text(value: ReturnType<typeof message>): string {
     'managed message must contain one exact text block')
   return value.content[0].text
 }
-function payload(value: ReturnType<typeof message>) {
+const reportedBackend = z.strictObject({ id: z.literal('reported-files'), revision: z.enum(['3', '4']) })
+function payload(value: ReturnType<typeof message>, backend: unknown) {
+  const { revision } = reportedBackend.parse(backend)
   const body = text(value)
   const start = '<development-task-context>\n'
   const end = '\n</development-task-context>'
   const first = body.indexOf(start)
   check(first >= 0 && body.indexOf(start, first + start.length) === -1 && body.endsWith(end), 'missing exact reported Task body')
-  return payloadSchema.parse(JSON.parse(body.slice(first + start.length, -end.length)) as unknown)
+  return payloadSchema.parse(expandReportedGrants(JSON.parse(body.slice(first + start.length, -end.length)) as unknown, revision))
 }
 function local(value: DeviceRequest) {
   const entry = message(value, 'development-task-context')
   const source = localTaskContextSourceSchema.parse(entry.source)
   check(source.form === 'snapshot' && source.version !== 1, 'missing attributable local Task snapshot')
-  const data = payload(entry)
   const fields = source.version === 3 ? source.projection : { taskId: source.taskId, taskRevision: source.revision,
     taskBindingId: source.bindingId, bindingEpoch: source.bindingEpoch, maxContextBytes: source.maxContextBytes,
     selectedSources: source.selectedSources, omittedSources: source.omittedSources, backend: source.backend }
+  const data = payload(entry, fields.backend)
   equal([data.task.id, data.task.revision], [fields.taskId, fields.taskRevision], 'local Task body attribution differs')
   check(Buffer.byteLength(text(entry)) <= fields.maxContextBytes, 'local Task message exceeds allowance')
   if (source.version === 3) equal(text(entry), source.projection.text, 'local projection text differs from actual message')
-  equal(fields.backend, { id: 'reported-files', revision: '3' }, 'unsupported calibration context backend')
   return { entry, source, data, fields }
 }
 function shared(value: DeviceRequest) {
   const entry = message(value, 'scope-agent-context')
   const source = contextSourceSchema.parse(entry.source)
   check(source.form === 'snapshot' && source.version === 2, 'missing capture-bound scope snapshot')
-  const data = payload(entry)
+  const data = payload(entry, source.projection.backend)
   equal([data.task.id, data.task.revision], [source.projection.taskId, source.projection.taskRevision], 'scope Task body attribution differs')
   return { entry, source, data }
 }
@@ -132,6 +134,7 @@ function verifyPair(a: VerifiedEndpoint, b: VerifiedEndpoint) {
   for (const endpoint of [a, b]) for (const current of endpoint.requests.filter(item => item.turn > 1)) {
     const currentLocal = local(current)
     const initial = endpoint === a ? aLocal : bLocal
+    equal(currentLocal.fields.backend, initial.fields.backend, 'local context backend changed during controlled work')
     if (currentLocal.source.version === 3) equal(currentLocal.source.projection.participantId,
       developmentAgentParticipantId(endpoint.session.id), 'original local Task participant changed')
     equal([currentLocal.fields.taskId, currentLocal.fields.taskBindingId, currentLocal.fields.bindingEpoch],
@@ -155,6 +158,7 @@ function verifyPair(a: VerifiedEndpoint, b: VerifiedEndpoint) {
   equal(history.bindingId, plan.retainedLocal.bindingId, 'leave did not retain the original local binding')
   const aToB = shared(request(b, 2))
   const projection = aToB.source.projection
+  equal(projection.backend, aLocal.fields.backend, 'shared context backend differs from its source owner')
   equal(projection.taskId, aLocal.fields.taskId, 'received scope is not the source local Task')
   equal([aToB.source.bindingId, aToB.source.subscriptionId], [plan.bindingId, plan.subscription.id], 'scope message belongs to another join')
   equal([projection.taskId, projection.ownerPeerId, projection.recipientPeerId,
@@ -191,7 +195,7 @@ function verifyPair(a: VerifiedEndpoint, b: VerifiedEndpoint) {
     const currentProjection = scope.source.projection
     equal([scope.source.bindingId, scope.source.subscriptionId], [plan.bindingId, plan.subscription.id], 'scope message belongs to another join')
     equal(currentProjection.peerCapture, projection.peerCapture, 'scope original capture changed during controlled sharing')
-    equal(currentProjection.backend, { id: 'reported-files', revision: '3' }, 'unsupported calibration context backend')
+    equal(currentProjection.backend, projection.backend, 'scope context backend changed during controlled sharing')
     equal(currentProjection.activation, { kind: 'exact' }, 'controlled scope activation differs')
     equal(scope.entry.content, snapshotMessage(binding, currentProjection, 8000).content, 'actual scope text differs from current projection')
     check(current.contextBytes <= 8000, 'combined managed context exceeds 8000 bytes')

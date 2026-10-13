@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { createMixedStudy, gradeMixedArtifacts, mixedStudyConditions, parseMixedVerification } from './mixed-study.ts'
 import { parsePolicy, sealDataArtifact } from './data-artifacts.ts'
 import { createMixedHttpResponder, mixedHttpTexts, openMixedHttpFixture } from './mixed-http-fixture.ts'
+import { expandReportedGrants } from './reported-grant-evidence.mjs'
 import { runNativeMixed } from './native-mixed-run.ts'
 import { prepareDataStudy, runDataPhase } from './data-cli.ts'
 
@@ -128,7 +129,7 @@ async function checkSession(output: string, phase: string, role: string) {
 }
 async function checkSource(output: string) {
   const source = z.object({ commands: z.array(z.object({ state: z.literal('completed'), exitCode: z.number(),
-    signal: z.null(), aborted: z.literal(false), timedOut: z.literal(false) }).loose()), reports: z.array(z.unknown()) })
+    signal: z.null(), aborted: z.literal(false), timedOut: z.literal(false) }).loose()), reports: z.array(z.unknown()), task: z.unknown() })
     .parse(await readJson(join(output, 'source-admission.json')))
   expect(source.commands.map(command => command.exitCode)).toEqual([0, 7])
   expect(source.reports).toHaveLength(8)
@@ -151,10 +152,35 @@ function checkSharedEvidence(texts: readonly string[], command: unknown) {
     .parse(commands[0]?.publication)
   expect(publication.localToolObservation ?? publication.peerToolObservation).toEqual(command)
 }
+function checkReportedEvidence(texts: readonly string[], task: unknown) {
+  const object = z.record(z.string(), z.unknown())
+  const admitted = z.object({ id: z.string(), revision: z.number(), context: z.array(object) }).parse(task)
+  const frames = texts.filter(text => text.includes('<development-task-context>')).map((text) => {
+    const raw = z.string().parse(text.split('<development-task-context>\n')[1]?.split('\n</development-task-context>')[0])
+    return z.looseObject({ task: z.object({ id: z.string() }), publications: z.array(object), grantReferences: z.unknown().optional() })
+      .parse(JSON.parse(raw) as unknown)
+  }).filter(body => body.task.id === admitted.id)
+  expect(frames).toHaveLength(1)
+  const frame = frames[0]
+  if (frame === undefined) throw new Error('Actual shared reported frame absent')
+  expect(frame.grantReferences).toBeDefined()
+  const expanded = z.object({ publications: z.array(object) }).parse(expandReportedGrants(frame, '4'))
+  expect(expanded.publications.map(publication => publication.id)).toEqual([0, 2, 3].map(index => admitted.context[index]?.id))
+  for (const publication of expanded.publications) {
+    const original = admitted.context.find(item => item.id === publication.id)
+    if (original === undefined) throw new Error('Actual reported publication lacks original admission')
+    const { peerToolObservation, ...literal } = original
+    expect(publication).toEqual({ source: { kind: 'publication', taskId: admitted.id,
+      revision: admitted.revision, publicationId: original.id }, ...literal })
+    const text = z.string().parse(publication.text)
+    expect(JSON.parse(text.slice(text.indexOf('\n') + 1))).toEqual(peerToolObservation)
+  }
+}
 async function checkRun(value: unknown, output: string) {
   const result = runSchema.parse(value)
   const condition = result.condition
   const semantic = condition === 'semantic'
+  const shared = condition !== 'N'
   expect(result.failed, result.error ?? '').toBe(false)
   expect(result.cleanup).toEqual({ started: 5, closed: 5, forced: 0 })
   expect(result.realModelDispatches).toBe(0)
@@ -208,21 +234,22 @@ async function checkRun(value: unknown, output: string) {
       expect(item.managedBytes).toBeLessThanOrEqual(8000)
     }
     expect(evidence.slice(0, 2).map(item => item.sharedBytes)).toEqual([0, 0])
-    expect(evidence.slice(2).map(item => item.visibleVerification)).toEqual(semantic ? [7, 7] : [null, null])
+    expect(evidence.slice(2).map(item => item.visibleVerification)).toEqual(shared ? [7, 7] : [null, null])
     if (semantic) for (const item of evidence.slice(2)) checkSharedEvidence(item.actualManagedText, source.commands[1])
+    if (condition === 'reported') for (const item of evidence.slice(2)) checkReportedEvidence(item.actualManagedText, source.task)
     const verification = result.artifacts.verification[role]
     if (verification === null) throw new Error('verification artifact absent')
-    expect(parseMixedVerification(verification)).toEqual(semantic
+    expect(parseMixedVerification(verification)).toEqual(shared
       ? { version: 1, status: 'failed', exitCode: 7 } : { version: 1, status: 'unavailable', exitCode: null })
   }
   const policy = result.artifacts.policy
   if (policy === null) throw new Error('policy artifact absent')
-  expect(parsePolicy(policy).maxRetries).toBe(semantic ? 1 : 3)
-  expect(result.artifacts.visibleVerification).toEqual(semantic ? { B: 7, C: 7 } : { B: null, C: null })
-  expect(result.grade).toMatchObject({ pairStatus: semantic ? 'passed' : 'failed',
-    data: { policy: { status: semantic ? 'passed' : 'failed' }, tests: { status: semantic ? 'passed' : 'failed' } },
+  expect(parsePolicy(policy).maxRetries).toBe(shared ? 1 : 3)
+  expect(result.artifacts.visibleVerification).toEqual(shared ? { B: 7, C: 7 } : { B: null, C: null })
+  expect(result.grade).toMatchObject({ pairStatus: shared ? 'passed' : 'failed',
+    data: { policy: { status: shared ? 'passed' : 'failed' }, tests: { status: shared ? 'passed' : 'failed' } },
     verification: { B: { status: 'passed' }, C: { status: 'passed' } },
-    currentEvidenceAvailable: { B: semantic, C: semantic } })
+    currentEvidenceAvailable: { B: shared, C: shared } })
 }
 
 async function checkPartial(output: string, artifacts: unknown, expectedRequests = { B: 3, C: 2 }) {
@@ -305,6 +332,11 @@ it.skipIf(!enabled)('completes mixed work for all three conditions through froze
     expect(http.calls.slice(16).map(call => call.kind)).toEqual([
       'B-initial', 'B-initial', 'C-initial', 'C-initial', 'semantic', 'B-mixed', 'B-mixed', 'semantic', 'C-mixed', 'C-mixed',
     ])
+    const reportedSource = z.object({ task: z.unknown() })
+      .parse(await readJson(join(directory, 'execute', 'reported', 'source-admission.json')))
+    for (const call of http.calls.slice(8, 16).filter(call => call.kind.endsWith('-mixed'))) {
+      checkReportedEvidence(mixedHttpTexts(call.body), reportedSource.task)
+    }
     const output = join(directory, 'execute', 'semantic')
     const source = z.object({ commands: z.array(z.unknown()) }).parse(await readJson(join(output, 'source-admission.json')))
     for (const call of http.calls.slice(16).filter(call => call.kind.endsWith('-mixed'))) {

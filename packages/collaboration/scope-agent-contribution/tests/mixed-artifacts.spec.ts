@@ -279,7 +279,11 @@ async function calibrate(condition: MixedStudyCondition, test: TestContext) {
     verification: { B: b.verification, C: c.verification }, visibleVerification, oracle })
   expect(grades.verification.B.status).toBe('passed')
   expect(grades.verification.C.status).toBe('passed')
-  if (condition === 'semantic') expect(grades.pairStatus).toBe('passed')
+  if (condition !== 'N') {
+    expect(visibleVerification).toEqual({ B: 7, C: 7 })
+    expect(grades).toMatchObject({ pairStatus: 'passed', currentEvidenceAvailable: { B: true, C: true },
+      data: { policy: { status: 'passed' }, tests: { status: 'passed' } } })
+  }
   if (condition === 'N') {
     expect(visibleVerification).toEqual({ B: null, C: null })
     expect(grades.currentEvidenceAvailable).toEqual({ B: false, C: false })

@@ -1,5 +1,6 @@
 /** A shipped SDK receiver records reported-file content and every original dependency from real native tools. */
 import assert from 'node:assert/strict'
+import { expandReportedGrants } from '../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -19,8 +20,11 @@ export const name = 'scope-reported-file-snapshot'
 export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'developmentTasks', 'llm', 'sessions', 'sessionPersistence']
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const shared = messages => messages.filter(message => message.source.kind === 'scope-agent-context')
-const parsed = text => JSON.parse(text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0])
+const parsed = text => expandReportedGrants(
+  JSON.parse(text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0]), '4')
 const initial = 'export const current = "REPORTED_INITIAL";\nexport const retained = "unchanged";\n'
+const companionInitial = 'export const companion = "REPORTED_COMPANION_INITIAL";\n'
+const companionFinal = 'export const companion = "REPORTED_COMPANION_FINAL";\n'
 const final = 'export const current = "REPORTED_FINAL";\nexport const retained = "unchanged";\n'
 const reply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
   { type: 'block-end', index: 0, block: { type: 'text', text } }, { type: 'finish', reason: { kind: 'stop' } }]
@@ -88,7 +92,10 @@ export async function apply(ctx) {
     receiver = current
     turn = nextTurn
     if (turn === 1) {
-      await run([tool('reported-write', 'write', { file_path: 'state.ts', content: initial })])
+      await run([tool('reported-write', 'write', { file_path: 'state.ts', content: initial }),
+        tool('reported-companion-write', 'write', { file_path: 'companion.ts', content: companionInitial }),
+        tool('reported-companion-edit', 'edit', { file_path: 'companion.ts', old_string: 'REPORTED_COMPANION_INITIAL',
+          new_string: 'REPORTED_COMPANION_FINAL', replace_all: false })])
       assert.equal(await readFile(join(owner.workspace, 'state.ts'), 'utf8'), initial)
       const ownerAddress = (await owner.ctx.scopeAccess.identity()).addresses[0]
       const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id, ownerAddress,
@@ -101,6 +108,8 @@ export async function apply(ctx) {
         { file_path: 'state.ts', old_string: values[index], new_string: value, replace_all: false })))
       assert.equal(await readFile(join(owner.workspace, 'state.ts'), 'utf8'), final)
       assert.equal(await readFile(new URL('./source-workspace.expected/state.ts', import.meta.url), 'utf8'), final)
+      assert.equal(await readFile(join(owner.workspace, 'companion.ts'), 'utf8'), companionFinal)
+      assert.equal(await readFile(new URL('./source-workspace.expected/companion.ts', import.meta.url), 'utf8'), companionFinal)
     } else {
       assert.equal(turn, 3)
       await owner.ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: capture.selection })
@@ -114,7 +123,7 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     assert.equal(visible[0].source.form, 'snapshot')
     const projection = visible[0].source.projection
-    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '3' })
+    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '4' })
     const text = body(visible[0])
     assert.ok(Buffer.byteLength(text, 'utf8') <= 8000)
     const events = structuredClone(receiver.session.snapshotEvents())
@@ -133,13 +142,18 @@ export async function apply(ctx) {
     const expectedSources = reports().map(report => ({ kind: 'publication', taskId: task.id,
       revision: projection.taskRevision, publicationId: report.id }))
     if (turn === 1) {
-      assert.equal(payload.publications.length, 1)
+      assert.equal(payload.publications.length, 2)
       assert.equal(payload.publications[0].text, reports()[0].text)
-      assert.ok(!payload.publications.some(item => item.kind === 'reported-file'))
+      assert.equal(payload.publications[1].kind, 'reported-file')
+      assert.equal(payload.publications[1].content, companionFinal)
+      assert.deepEqual(payload.publications[1].authority, { kind: 'local', version: 1, grant: capture.grant })
       assert.deepEqual(projection.selectedSources.filter(item => item.kind === 'publication'), expectedSources)
     } else if (turn === 2) {
-      assert.equal(completions, 4)
-      assert.equal(payload.publications.length, 1)
+      assert.equal(completions, 6)
+      assert.equal(payload.publications.length, 2)
+      const encoded = JSON.parse(projection.text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0])
+      assert.deepEqual(encoded.grantReferences.grants, [{ kind: 'authority', value: capture.grant }])
+      assert.deepEqual(encoded.grantReferences.entries, [{ publicationIndex: 0, grantIndex: 0 }, { publicationIndex: 1, grantIndex: 0 }])
       const file = payload.publications[0]
       assert.equal(file.kind, 'reported-file')
       assert.equal(file.version, 1)
@@ -150,11 +164,22 @@ export async function apply(ctx) {
       assert.ok(file.warning.includes('not a verified current file snapshot'))
       assert.deepEqual(projection.selectedSources.filter(item => item.kind === 'publication'), expectedSources)
       assert.deepEqual(projection.omittedSources, [])
-      const evidence = expectedSources.map((source, index) => ({ source,
+      const fileIndexes = [0, 3, 4, 5]
+      const evidence = fileIndexes.map(index => ({ source: expectedSources[index],
         sequence: reports()[index].localToolObservation.sequence, sourceId: reports()[index].localToolObservation.sourceId }))
       assert.deepEqual(file.dependencies, { count: 4,
         digest: createHash('sha256').update(JSON.stringify(evidence)).digest('hex'),
-        first: { source: expectedSources[0], sequence: 1 }, last: { source: expectedSources[3], sequence: 4 } })
+        first: { source: expectedSources[0], sequence: 1 }, last: { source: expectedSources[5], sequence: 6 } })
+      const companion = payload.publications[1]
+      assert.equal(companion.kind, 'reported-file')
+      assert.equal(companion.content, companionFinal)
+      assert.deepEqual(companion.file, { rootIndex: 0, path: 'companion.ts' })
+      assert.deepEqual(companion.authority, file.authority)
+      const companionEvidence = [1, 2].map(index => ({ source: expectedSources[index],
+        sequence: reports()[index].localToolObservation.sequence, sourceId: reports()[index].localToolObservation.sourceId }))
+      assert.deepEqual(companion.dependencies, { count: 2,
+        digest: createHash('sha256').update(JSON.stringify(companionEvidence)).digest('hex'),
+        first: { source: expectedSources[1], sequence: 2 }, last: { source: expectedSources[2], sequence: 3 } })
       for (const old of ['REPORTED_INITIAL', 'REPORTED_FIRST', 'REPORTED_SECOND']) assert.ok(!text.includes(old))
     } else {
       assert.ok(!payload.publications.some(item => item.kind === 'reported-file'))
@@ -164,15 +189,15 @@ export async function apply(ctx) {
     }
     requests.push({ turn, bytes: Buffer.byteLength(text, 'utf8'), text, projection })
     if (turn === 3) {
-      assert.equal(ownerRequests.length, 6)
+      assert.equal(ownerRequests.length, 8)
       assert.equal(requests.length, 3)
       assert.deepEqual(agent.session.snapshotEvents().filter(event => event.type === 'tool/call').map(event => event.data.name),
-        ['write', 'edit', 'edit', 'edit'])
+        ['write', 'write', 'edit', 'edit', 'edit', 'edit'])
       assert.equal(receiver.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0)
       assert.equal(await readFile(join(owner.workspace, 'state.ts'), 'utf8'), final)
       await writeFile(join(process.cwd(), '.dsh/reported-file-audit.json'), JSON.stringify({ hostCount: 2, executingSessionCount: 2,
-        ownerRequestCount: ownerRequests.length, ownerToolNames: ['write', 'edit', 'edit', 'edit'], requests,
-        reports: reports(), finalContent: final, diskReconstructed: true }))
+        ownerRequestCount: ownerRequests.length, ownerToolNames: ['write', 'write', 'edit', 'edit', 'edit', 'edit'], requests,
+        reports: reports(), finalContent: final, companionContent: companionFinal, diskReconstructed: true }))
     }
     yield* next()
   })

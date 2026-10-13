@@ -10,6 +10,8 @@ import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { DevelopmentTaskId } from '@deepseek-ai/dsh-development-task/types'
 import { contextSourceSchema } from '../../packages/collaboration/scope-agent-context/src/state.ts'
+import { localContextProjectionDigest, localTaskContextSourceSchema }
+  from '../../packages/collaboration/development-task-context/src/local-schema.ts'
 import { projectionDigest } from '../../packages/collaboration/scope-access/src/schema.ts'
 import type { ScopeAccessCaptureProjection } from '../../packages/collaboration/scope-access/src/types.ts'
 import { nativeDigest } from '../../packages/collaboration/scope-agent-contribution/src/identity.ts'
@@ -483,4 +485,70 @@ it.each(['selected', 'body'] as const)('rejects a misplaced after-leave publicat
     row.data.source = source
   })
   await expect(verifyTwoDeviceEvidence(f)).rejects.toThrow('owner after-leave write lacks exact admitted source')
+})
+
+const grantLegend = 'grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]'
+  + '[grantReferences.grants[grantIndex].kind].grant from that grant row\'s value. All other fields are literal.'
+function indexedGrants(text: string): string {
+  const marker = '<development-task-context>\n'
+  const start = text.indexOf(marker) + marker.length
+  const end = text.lastIndexOf('\n</development-task-context>')
+  if (start < marker.length || end < start) throw new Error('reported frame missing')
+  const body = z.looseObject({ publications: z.array(objectSchema) }).parse(JSON.parse(text.slice(start, end)) as unknown)
+  const grants: { kind: string; value: unknown }[] = []
+  const entries: { publicationIndex: number; grantIndex: number }[] = []
+  for (const [publicationIndex, publication] of body.publications.entries()) {
+    for (const kind of ['peerContribution', 'localContribution', 'authority']) {
+      const result = objectSchema.safeParse(publication[kind])
+      if (!result.success || !Object.hasOwn(result.data, 'grant')) continue
+      const { grant, ...parent } = result.data
+      const grantIndex = grants.length
+      grants.push({ kind, value: grant })
+      entries.push({ publicationIndex, grantIndex })
+      publication[kind] = parent
+    }
+  }
+  if (entries.length > 0) body.grantReferences = { version: 1, legend: grantLegend, grants, entries }
+  return text.slice(0, start) + JSON.stringify(body).replaceAll('<', '\\u003c') + text.slice(end)
+}
+function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[]): void {
+  for (const row of rows) {
+    if (row.type !== 'user/message') continue
+    const source = objectSchema.parse(row.data.source)
+    if (source.kind === 'scope-agent-context' && source.form === 'snapshot') {
+      rewriteScopeProjection(rows, row.seq, prior => ({ ...prior, backend: { id: 'reported-files', revision: '4' },
+        text: indexedGrants(prior.text) }))
+    } else if (source.kind === 'development-task-context' && source.form === 'snapshot') {
+      const parsed = localTaskContextSourceSchema.parse(source)
+      if (parsed.form !== 'snapshot' || parsed.version === 1) throw new Error('attributed local context missing')
+      const content = z.array(z.looseObject({ text: z.string() })).parse(row.data.content)
+      if (content[0] === undefined) throw new Error('local context text missing')
+      content[0].text = indexedGrants(content[0].text)
+      if (parsed.version === 2) row.data.source = { ...parsed, backend: { id: 'reported-files', revision: '4' } }
+      else {
+        const projection = { ...parsed.projection, backend: { id: 'reported-files', revision: '4' }, text: content[0].text }
+        row.data.source = { ...parsed, projection: { ...projection, projectionId: localContextProjectionDigest(projection) } }
+      }
+      row.data.content = content
+    }
+  }
+}
+it('independently expands revision 4 grants while preserving the revision 3 recorded fixture', async () => {
+  const f = await fixture()
+  for (const directory of [f.aDirectory, f.bDirectory]) await reseal(directory, upgradeReportedEvidence)
+  const result = await verifyTwoDeviceEvidence(f)
+  expect(result).toMatchObject({ status: 'passed', controlledRequests: 13, physicalDevicesVerified: false })
+  expect(result.leave.ownerAfterAdmissionVerified).toBe(true)
+})
+it('refuses a backend revision change within the original sharing interval', async () => {
+  const f = await fixture(2)
+  await reseal(f.bDirectory, (rows) => {
+    const current = rows.filter(row => row.type === 'user/message').findLast((row) => {
+      const source = objectSchema.parse(row.data.source)
+      return source.kind === 'scope-agent-context' && source.form === 'snapshot'
+    })
+    if (current === undefined) throw new Error('last scope projection missing')
+    rewriteScopeProjection(rows, current.seq, prior => ({ ...prior, backend: { id: 'reported-files', revision: '4' } }))
+  })
+  await expect(verifyTwoDeviceEvidence(f)).rejects.toThrow('scope context backend changed during controlled sharing')
 })

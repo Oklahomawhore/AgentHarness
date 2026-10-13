@@ -7,6 +7,7 @@ import type { DevelopmentTaskCommandObservationResult, DevelopmentTaskCommandToo
   DevelopmentTaskLocalToolObservationResult, DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
+import { expandReportedGrants } from '../../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import TextBackend from '../src/text.ts'
 import ReportedBackend from '../src/reported.ts'
 import { prepareSemanticInput, projectSemanticReply, restoreSemanticInput, semanticModelInput } from '../src/semantic-input.ts'
@@ -97,7 +98,7 @@ function semantic(value: DevelopmentTaskContextInput) {
 function publications(projection: DevelopmentTaskContextProjection) {
   const raw = projection.text.split('<development-task-context>\n')[1]?.split('\n</development-task-context>')[0]
   if (raw === undefined) throw new Error('missing complete context frame')
-  return z.object({ publications: z.array(z.json()) }).parse(JSON.parse(raw) as unknown).publications
+  return z.object({ publications: z.array(z.json()) }).parse(expandReportedGrants(JSON.parse(raw) as unknown, '4')).publications
 }
 function write(content: string): DevelopmentTaskToolObservationResult {
   return { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],

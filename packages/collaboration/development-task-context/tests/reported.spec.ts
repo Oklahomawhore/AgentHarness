@@ -8,6 +8,7 @@ import { completedFileToolObservationResultSchema } from '@deepseek-ai/dsh-devel
 import { createHash } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
+import { expandReportedGrants } from '../../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import ReportedBackend from '../src/reported.ts'
 import TextBackend from '../src/text.ts'
 import { replayReportedFile } from '../src/report-replay.ts'
@@ -95,7 +96,7 @@ function input(context: readonly DevelopmentTaskContextPublication[], maxContext
 function payload(result: DevelopmentTaskContextProjection) {
   const text = result.text.split('<development-task-context>\n')[1]?.split('\n</development-task-context>')[0]
   if (text === undefined) throw new Error('missing context frame')
-  return z.object({ publications: z.array(z.json()), coverage: z.json() }).parse(JSON.parse(text) as unknown)
+  return z.object({ publications: z.array(z.json()), coverage: z.json() }).parse(expandReportedGrants(JSON.parse(text) as unknown, '4'))
 }
 const derivedSchema = z.object({ kind: z.literal('reported-file'), version: z.literal(1), warning: z.string(), content: z.string(),
   file: z.object({ rootIndex: z.number(), path: z.string() }),
@@ -139,7 +140,7 @@ it.each(['peer', 'local'] as const)('keeps a small %s file visible after forty s
   expect(derived(result)[0]?.warning).toContain('not a verified current file snapshot')
   expect(Buffer.byteLength(result.text, 'utf8')).toBeLessThanOrEqual(6000)
   expect(history).toEqual(before)
-  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '3' })
+  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '4' })
   expect(backend.text.identity).toEqual({ id: 'text', revision: '9' })
   const next = await backend.reported.compute(input([...history, report(mode, 42, edit('40', '41'))], 6000))
   expect(derived(next)[0]?.content).toBe('version=41;中文🙂')
@@ -403,4 +404,39 @@ it('omits only the exact recipient completed-file capture while preserving anoth
     recipient: { ...value.recipient, peerCapture: own.peerContribution.grant } })
   expect(completions(result).map(item => item.content)).toEqual(['OTHER_SESSION_COMPLETION'])
   expect(result.omittedSources.map(item => item.reason)).toEqual(['self-published'])
+})
+
+it('fits an atomic original group using complete grant references at the exact escaped UTF-8 limit', async () => {
+  const history = [report('peer', 1, write('old 中文🙂<$&>')), report('peer', 3, edit('old', 'new'))]
+  const backend = providers()
+  const full = await backend.reported.compute(input(history))
+  const original = await backend.text.compute(input(history))
+  expect(full.text).toContain('"grantReferences"')
+  expect(full.text).toContain('\\u003c$&>')
+  expect(derived(full)).toEqual([])
+  expect(payload(full)).toEqual(payload(original))
+  const bytes = Buffer.byteLength(full.text, 'utf8')
+  expect(bytes).toBeLessThan(Buffer.byteLength(original.text, 'utf8'))
+  expect((await backend.reported.compute(input(history, bytes))).text).toBe(full.text)
+  const short = await backend.reported.compute(input(history, bytes - 1))
+  expect(ids(short)).toEqual([])
+  expect(short.omittedSources.map(item => item.reason)).toEqual(['budget', 'budget'])
+  expect(short.text).not.toContain('old 中文')
+})
+
+it('allocates remaining publication space across authors while preserving captured output order', async () => {
+  const author = (id: string) => brandString<NonNullable<DevelopmentTaskContextPublication['publishedBy']>>(id)
+  const history = [
+    { id: 'a', publishedBy: author('one'), publishedAt: 2, text: 'older document' },
+    { id: 'b', publishedBy: author('two'), publishedAt: 1, text: 'other document' },
+    { id: 'c', publishedBy: author('one'), publishedAt: 3, text: 'newer document' },
+  ]
+  const backend = providers()
+  const full = await backend.reported.compute(input(history))
+  const first = payload(full).publications[0]
+  const budget = Buffer.byteLength(full.text, 'utf8') - Buffer.byteLength(JSON.stringify(first), 'utf8') - 1
+  const bounded = await backend.reported.compute(input(history, budget))
+  expect(ids(bounded)).toEqual(['b', 'c'])
+  expect(bounded.omittedSources).toMatchObject([{ source: { publicationId: 'a' }, reason: 'budget' }])
+  expect(ids(await backend.text.compute(input(history, budget)))).toEqual(['a', 'c'])
 })

@@ -1,6 +1,8 @@
 /** Shared atomic publication selection, recipient exclusions, and complete context budgeting. */
 
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
+import { encodeReportedGrants } from './reported-grants.ts'
+import { selectReportedGroups } from './reported-selection.ts'
 import { completedNativeFile, replayReportedFile } from './report-replay.ts'
 import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type {
@@ -44,6 +46,7 @@ interface PublicationCandidate {
   readonly superseded: boolean
   readonly toolChain: string | undefined
   readonly context: readonly DevelopmentTaskContextPublication[]
+  readonly sourceGroup: string
 }
 
 /**
@@ -75,6 +78,8 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
       const tool = toolHistory[index]
       return {
         source: { kind: 'publication', ...basis, publicationId: publication.id }, publication, context,
+        sourceGroup: JSON.stringify([snapshot, publicationInterval(publication)
+          ?? ['author', publication.publishedBy]]),
         withdrawn: !isTerminalPublication(publication)
           && publicationInterval(publication) !== undefined && ended.has(publicationInterval(publication)),
         superseded: tool?.superseded === true || (sample !== undefined && sample.sequence !== heads.get(sample.chain)),
@@ -98,12 +103,13 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
   }))
   const render = (): string => {
     const omitted = omissions()
+    const publications = candidates.filter(item => included.has(item) && !merged.has(item)).map(item => reconstructed.get(item) ?? ({
+      source: item.source, ...modelPublication(item.publication),
+    }))
     const payload = {
       task: { id: task.id, revision: task.revision, objective: task.objective, scope: task.scope, origin: task.origin },
       inherited: inherited?.sources.map(source => ({ parent: source.parent, objective: source.objective, scope: source.scope })),
-      publications: candidates.filter(item => included.has(item) && !merged.has(item)).map(item => reconstructed.get(item) ?? ({
-        source: item.source, ...modelPublication(item.publication),
-      })),
+      ...(mode === 'reported' ? encodeReportedGrants(publications) : { publications }),
       coverage: {
         budgetOmissions: omitted.filter(item => item.reason === 'budget').length,
         selfPublishedOmissions: omitted.filter(item => item.reason === 'self-published').length,
@@ -145,13 +151,23 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
       }
     }
   }
-  // Each retained file history is indivisible; terminal notices precede it and output keeps source order.
-  for (const group of groups.sort((left, right) =>
-    Number(right.terminal) - Number(left.terminal) || right.publishedAt - left.publishedAt)) {
+  const admit = (group: (typeof groups)[number]): boolean => {
     for (const candidate of group.candidates) included.add(candidate)
-    if (Buffer.byteLength(render(), 'utf8') > input.maxContextBytes) {
-      for (const candidate of group.candidates) included.delete(candidate)
-    }
+    if (Buffer.byteLength(render(), 'utf8') <= input.maxContextBytes) return true
+    for (const candidate of group.candidates) included.delete(candidate)
+    return false
+  }
+  if (mode === 'reported') {
+    selectReportedGroups(groups.map((group) => {
+      const first = group.candidates[0]
+      const observation = first.publication.peerToolObservation ?? first.publication.localToolObservation
+      return { value: group, source: first.sourceGroup, publishedAt: group.publishedAt,
+        kind: group.terminal ? 'terminal' as const : observation?.kind === 'command-observation' ? 'command' as const
+          : observation?.kind === 'tool-observation' ? 'file' as const : 'other' as const }
+    }), admit)
+  } else {
+    for (const group of groups.sort((left, right) =>
+      Number(right.terminal) - Number(left.terminal) || right.publishedAt - left.publishedAt)) admit(group)
   }
   return {
     activation: { kind: 'exact' },

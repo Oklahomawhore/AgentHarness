@@ -531,3 +531,39 @@ def test_profile_plugin_failure_reports_native_exit_status(monkeypatch: pytest.M
     assert f"returncode={returncode}" in message
     assert f"0x{returncode & 0xffffffff:08x}" in message
     assert "stdout='' stderr=''" in message
+
+
+def reported_grant_payload() -> dict[str, object]:
+    return {
+        "publications": [{"kind": "reported-file", "version": 1, "authority": {"kind": "local", "version": 1},
+                          "content": "actual file text"}],
+        "grantReferences": {
+            "version": 1,
+            "legend": ("grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]"
+                       "[grantReferences.grants[grantIndex].kind].grant from that grant row's value. All other fields are literal."),
+            "grants": [{"kind": "authority", "value": {"taskId": "original-task", "extra": ["literal"]}}],
+            "entries": [{"publicationIndex": 0, "grantIndex": 0}],
+        },
+    }
+
+
+def test_reported_grant_expands_complete_authority_without_changing_input() -> None:
+    body = reported_grant_payload()
+    before = json.dumps(body)
+    expanded = SMOKE["expand_reported_grants"](body, "4")
+    assert expanded == {"publications": [{"kind": "reported-file", "version": 1,
+                                         "authority": {"kind": "local", "version": 1,
+                                                       "grant": {"taskId": "original-task", "extra": ["literal"]}},
+                                         "content": "actual file text"}]}
+    assert json.dumps(body) == before
+
+
+@pytest.mark.parametrize("location", ["table", "publication", "parent"])
+def test_reported_grant_refuses_boolean_versions(location: str) -> None:
+    body = reported_grant_payload()
+    target = body["grantReferences"] if location == "table" else body["publications"][0]
+    if location == "parent":
+        target = target["authority"]
+    target["version"] = True
+    with pytest.raises(AssertionError, match="version|derived publication"):
+        SMOKE["expand_reported_grants"](body, "4")

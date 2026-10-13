@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import difflib
 import importlib
 import importlib.metadata
@@ -1115,7 +1116,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
     expected_name = {
         "scope-automatic-withdrawal": "scope-automatic-withdrawal-command-outcome-evidence-r2",
         "scope-capture-self-omission": "scope-capture-self-omission-command-outcome-evidence-r2",
-        "scope-completed-file": "scope-completed-file-command-outcome-evidence-r2",
+        "scope-completed-file": "scope-completed-file-reported-grant-table-r3",
         "scope-context-live": "scope-context-live-command-outcome-evidence-r2",
         "scope-dual-contribution": "scope-dual-contribution-command-outcome-evidence-r2",
         "scope-group-join": "scope-group-join-command-outcome-evidence-r3",
@@ -1126,7 +1127,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",
         "scope-prejoin-initialization": "scope-prejoin-initialization-command-outcome-evidence-r2",
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
-        "scope-reported-file": "scope-reported-file-command-outcome-evidence-r2",
+        "scope-reported-file": "scope-reported-file-reported-grant-table-r3",
         "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
         "scope-semantic-idle": "scope-semantic-idle-captured-input-r8",
         "task-context-semantic": "task-context-semantic-captured-input-r9",
@@ -1442,6 +1443,71 @@ def command_outcomes_snapshot_result(
             "exactSourceWithdrawal": True, "receiverDiskReconstruction": True, "noRecall": True}
 
 
+def expand_reported_grants(value: dict[str, object], revision: str) -> dict[str, object]:
+    """Independently restore only explicitly indexed full grants from actual reported message JSON."""
+    body = copy.deepcopy(value)
+    if revision not in {"3", "4"} or not isinstance(body.get("publications"), list):
+        raise AssertionError("unsupported reported payload")
+    if "grantReferences" not in body:
+        return body
+    if revision != "4":
+        raise AssertionError("legacy reported revision cannot contain grant references")
+    table = body["grantReferences"]
+    legend = ("grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]"
+              "[grantReferences.grants[grantIndex].kind].grant from that grant row's value. All other fields are literal.")
+    if not isinstance(table, dict) or set(table) != {"version", "legend", "grants", "entries"}:
+        raise AssertionError("grant reference fields differ")
+    if type(table["version"]) is not int or table["version"] != 1 or table["legend"] != legend:
+        raise AssertionError("grant reference version or legend differs")
+    grants, entries = table["grants"], table["entries"]
+    if not isinstance(grants, list) or not grants or not isinstance(entries, list) or not entries:
+        raise AssertionError("grant rows and entries must be nonempty")
+    for row in grants:
+        if not isinstance(row, dict) or set(row) != {"kind", "value"}:
+            raise AssertionError("grant row fields differ")
+        if row["kind"] not in {"localContribution", "peerContribution", "authority"} or not isinstance(row["value"], dict):
+            raise AssertionError("unsupported grant path or value")
+    publications, used = set(), set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"publicationIndex", "grantIndex"}:
+            raise AssertionError("grant entry fields differ")
+        index, grant_index = entry["publicationIndex"], entry["grantIndex"]
+        if type(index) is not int or not 0 <= index < len(body["publications"]):
+            raise AssertionError("publication index is out of range")
+        if type(grant_index) is not int or not 0 <= grant_index < len(grants):
+            raise AssertionError("grant index is out of range")
+        if index in publications:
+            raise AssertionError("duplicate publication grant entry")
+        publications.add(index)
+        used.add(grant_index)
+        row, publication = grants[grant_index], body["publications"][index]
+        if not isinstance(publication, dict) or not isinstance(publication.get(row["kind"]), dict):
+            raise AssertionError("indexed grant parent is absent")
+        parent = publication[row["kind"]]
+        if type(parent.get("version")) is not int or parent["version"] != 1:
+            raise AssertionError("unsupported indexed metadata version")
+        if "kind" in publication:
+            if (publication["kind"] not in {"reported-file", "completed-native-file"}
+                    or type(publication.get("version")) is not int or publication["version"] != 1
+                    or row["kind"] != "authority" or parent.get("kind") not in {"local", "peer"}):
+                raise AssertionError("unsupported indexed derived publication")
+        else:
+            source = publication.get("source")
+            if (not isinstance(source, dict) or source.get("kind") != "publication" or not isinstance(publication.get("id"), str)
+                    or source.get("publicationId") != publication["id"]):
+                raise AssertionError("indexed publication identity differs")
+            local, peer = "localContribution" in publication, "peerContribution" in publication
+            if local == peer or row["kind"] != ("localContribution" if local else "peerContribution"):
+                raise AssertionError("ambiguous indexed contribution")
+        if "grant" in parent:
+            raise AssertionError("indexed publication reintroduces a grant")
+        parent["grant"] = copy.deepcopy(row["value"])
+    if len(used) != len(grants):
+        raise AssertionError("unreferenced grant row")
+    del body["grantReferences"]
+    return body
+
+
 def completed_file_snapshot_result(
     records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
 ) -> dict[str, object]:
@@ -1486,14 +1552,15 @@ def completed_file_snapshot_result(
         projection = request["projection"]
         if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
             raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
-        if projection["backend"] != {"id": "reported-files", "revision": "3"}:
+        if projection["backend"] != {"id": "reported-files", "revision": "4"}:
             raise AssertionError("the request did not use the current reported-file provider")
         if "PRIVATE_UNTOUCHED" in request["text"]:
             raise AssertionError("an untouched private file entered the receiving context")
         refs = [{"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
                  "publicationId": report["id"]} for report in reports]
         selected = [item for item in projection["selectedSources"] if item["kind"] == "publication"]
-        payload = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        payload = expand_reported_grants(json.loads(
+            projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "4")
         if index == 2:
             if projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in refs]:
                 raise AssertionError("the exact completed-output capture interval was not withdrawn")
@@ -1537,10 +1604,10 @@ def reported_file_snapshot_result(
 ) -> dict[str, object]:
     """Check actual reported content, exact original dependencies, withdrawal, and the flushed receiver log."""
     requests = audit["requests"]
-    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 6:
-        raise AssertionError("reported-file evidence must use two executing Hosts and six source requests")
-    if len(turns) != 3 or len(requests) != 3 or audit["ownerToolNames"] != ["write", "edit", "edit", "edit"]:
-        raise AssertionError("one actual Write and three actual Edits must precede source withdrawal")
+    if audit["hostCount"] != 2 or audit["executingSessionCount"] != 2 or audit["ownerRequestCount"] != 8:
+        raise AssertionError("reported-file evidence must use two executing Hosts and eight source requests")
+    if len(turns) != 3 or len(requests) != 3 or audit["ownerToolNames"] != ["write", "write", "edit", "edit", "edit", "edit"]:
+        raise AssertionError("two actual Writes and four actual Edits must precede source withdrawal")
     if any(record.get("type") == "tool/call" for record in records):
         raise AssertionError("the receiver must not recall or reread the source file")
     logged = [record["data"]["source"]["projection"] for record in records
@@ -1552,19 +1619,20 @@ def reported_file_snapshot_result(
     for request in requests:
         if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
             raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
-        if request["projection"]["backend"] != {"id": "reported-files", "revision": "3"}:
+        if request["projection"]["backend"] != {"id": "reported-files", "revision": "4"}:
             raise AssertionError("the recorded requests did not use the selected reported-file provider")
     current = requests[1]["projection"]
-    payload = json.loads(current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
-    if len(payload["publications"]) != 1:
-        raise AssertionError("the complete supported report chain must produce one reported file")
+    payload = expand_reported_grants(json.loads(
+        current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "4")
+    if len(payload["publications"]) != 2:
+        raise AssertionError("the complete supported report chain must produce two reported files")
     file = payload["publications"][0]
     reports = audit["reports"]
     refs = [{"kind": "publication", "taskId": current["taskId"], "revision": current["taskRevision"],
              "publicationId": report["id"]} for report in reports]
     selected = [source for source in current["selectedSources"] if source["kind"] == "publication"]
-    if len(reports) != 4 or selected != refs or current["omittedSources"]:
-        raise AssertionError("all four original source records must remain selected without false supersession")
+    if len(reports) != 6 or selected != refs or current["omittedSources"]:
+        raise AssertionError("all six original source records must remain selected without false supersession")
     expected_content = 'export const current = "REPORTED_FINAL";\nexport const retained = "unchanged";\n'
     if file.get("kind") != "reported-file" or file.get("version") != 1 or file.get("content") != expected_content:
         raise AssertionError("the actual managed context does not contain the complete current reported text")
@@ -1574,11 +1642,31 @@ def reported_file_snapshot_result(
     if file["authority"] != authority or file.get("publishedBy") != reports[0].get("publishedBy"):
         raise AssertionError("the derived file lost its original source authority")
     dependencies = [{"source": ref, "sequence": report["localToolObservation"]["sequence"],
-                     "sourceId": report["localToolObservation"]["sourceId"]} for ref, report in zip(refs, reports)]
+                     "sourceId": report["localToolObservation"]["sourceId"]} for ref, report in [(refs[index], reports[index]) for index in [0, 3, 4, 5]]]
     digest = hashlib.sha256(json.dumps(dependencies, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     if file["dependencies"] != {"count": 4, "digest": digest, "first": {"source": refs[0], "sequence": 1},
-                                "last": {"source": refs[3], "sequence": 4}}:
+                                "last": {"source": refs[5], "sequence": 6}}:
         raise AssertionError("the recorded dependency proof differs from the exact ordered tool reports")
+    companion = payload["publications"][1]
+    companion_content = 'export const companion = "REPORTED_COMPANION_FINAL";\n'
+    if companion.get("kind") != "reported-file" or companion.get("version") != 1 or companion.get("authority") != authority:
+        raise AssertionError("the companion reconstruction lost the identical full capture grant")
+    if companion.get("content") != companion_content or audit["companionContent"] != companion_content:
+        raise AssertionError("the companion report differs from the actual completed file")
+    if companion.get("file") != {"rootIndex": 0, "path": "companion.ts"}:
+        raise AssertionError("companion file attribution differs")
+    companion_evidence = [{"source": refs[index], "sequence": reports[index]["localToolObservation"]["sequence"],
+                           "sourceId": reports[index]["localToolObservation"]["sourceId"]} for index in [1, 2]]
+    companion_digest = hashlib.sha256(json.dumps(companion_evidence, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    if companion["dependencies"] != {"count": 2, "digest": companion_digest, "first": {"source": refs[1], "sequence": 2},
+                                      "last": {"source": refs[2], "sequence": 3}}:
+        raise AssertionError("companion reconstruction lost its exact two original reports")
+    encoded = json.loads(current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+    table = encoded["grantReferences"]
+    if table["grants"] != [{"kind": "authority", "value": authority["grant"]}] or table["entries"] != [
+        {"publicationIndex": 0, "grantIndex": 0}, {"publicationIndex": 1, "grantIndex": 0}
+    ]:
+        raise AssertionError("the two derived files did not reuse the exact full grant in actual request text")
     for marker in ("REPORTED_INITIAL", "REPORTED_FIRST", "REPORTED_SECOND"):
         if marker in requests[1]["text"]:
             raise AssertionError("an obsolete value remains in current reported context")
@@ -1589,9 +1677,9 @@ def reported_file_snapshot_result(
     if "REPORTED_" in requests[2]["text"] or audit["diskReconstructed"] is not True:
         raise AssertionError("withdrawal or disk reconstruction failed")
     return {"turns": len(turns), "finalResponse": turns[-1].final_response, "hostCount": 2, "executingSessionCount": 2,
-            "requestCounts": {"owner": 6, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
+            "requestCounts": {"owner": 8, "receiver": 3}, "sourceTools": audit["ownerToolNames"],
             "contextBytes": [request["bytes"] for request in requests], "dependencyCount": 4,
-            "dependencyDigest": digest, "completeReportedFile": True, "exactSourceWithdrawal": True,
+            "dependencyDigest": digest, "companionDependencyCount": 2, "sharedGrantCount": 1, "completeReportedFile": True, "exactSourceWithdrawal": True,
             "receiverDiskReconstruction": True, "noRecall": True}
 
 
