@@ -61,7 +61,7 @@ export interface TestHost {
   readonly sessionsRoot: string
   readonly semanticAuditPersistence?: SessionPersistence
   readonly peerId: ScopePeerId
-  readonly script: StreamChunk[][]
+  readonly script: (StreamChunk[] | ((options: GenerateOptions) => StreamChunk[]))[]
   readonly adapter: MockAdapter
   readonly transport: LocalTestTransport
   readonly exitCodes: number[]
@@ -137,7 +137,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
   } })
   ctx.provide('appExit', (code) => { exitCodes.push(code) })
   const peerId = options.peerId ?? `${role}-${randomUUID()}` as ScopePeerId
-  const script: StreamChunk[][] = []
+  const script: (StreamChunk[] | ((options: GenerateOptions) => StreamChunk[]))[] = []
   const adapter = new MockAdapter(script)
   const handles = new Map<string, AgentHandle>()
   let transport: LocalTestTransport | undefined
@@ -253,7 +253,9 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
  * @param responses - model replies; the final text response is appended by this driver.
  * @returns after the observed turn completes successfully.
  */
-export async function run(host: TestHost, agent: Agent, responses: readonly StreamChunk[][] = []): Promise<void> {
+export async function run(host: TestHost, agent: Agent,
+  responses: readonly (StreamChunk[] | ((options: GenerateOptions) => StreamChunk[]))[] = [],
+): Promise<void> {
   host.script.push(...responses, textResponse('Native contribution fixture complete.'))
   agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the authorized work.' }] }))
   await agent.whenIdle()

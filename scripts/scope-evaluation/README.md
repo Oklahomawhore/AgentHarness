@@ -10,6 +10,8 @@ The separate [existing Session protocol](continuity-study/README.md) checks auto
 
 The separate [per-device Web calibration](two-device/README.md) uses independent shipped Web processes, ordinary file tools and read-only actual-request evidence.
 
+The separate [mixed-work protocol](mixed-study/README.md) compares actual inputs and independently graded artifacts under the same fixed budget.
+
 ## Table of Contents
 
 - [Offline verification](#offline-verification)

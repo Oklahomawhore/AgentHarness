@@ -10,6 +10,7 @@ import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { semanticCapturedInputSchema } from '@deepseek-ai/dsh-development-task-context/src/semantic-schema.ts'
 import { expect, it, onTestFinished, type TestContext } from 'vitest'
 import { z } from 'zod'
+import { mixedDocuments as documents } from '../../../../scripts/scope-evaluation/mixed-study.ts'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
@@ -22,39 +23,6 @@ const correctedPolicy = initialPolicy.replace('maxRetries: 3', 'maxRetries: 1')
 const checkSource = '// MIXED_PRIVATE_CHECK_IMPLEMENTATION\n'
   + 'const state=JSON.parse(require("node:fs").readFileSync("check-state.json","utf8"));\n'
   + 'process.stdout.write(state.output);process.exit(state.code);\n'
-const documents = [
-  [join('docs', 'assets.md'), '# Marketing asset maintenance\n\n', [
-    'The illustration library uses a stable export name so the campaign editor can replace a drawing without changing page layout.',
-    'Designers retain the editable original beside each exported image; the web build consumes only the reviewed export.',
-    'Every illustration lists its author and usage permission in the asset index. Missing attribution blocks publication of that asset.',
-    'A narrow-screen crop should retain the subject and remove decorative background elements before text is reduced.',
-    'Screenshots used in launch material are reviewed for private account names and replaced with the public demonstration account.',
-    'The weekly asset review checks transparent edges against both page themes and records the accepted export in the design changelog.',
-    'Historical illustrations remain available to the campaign team but are not copied into the active distribution directory.',
-    'New campaign variants should reuse the existing spacing and contrast checks before requesting a new page component.',
-  ]],
-  [join('docs', 'search.md'), '# Documentation search maintenance\n\n', [
-    'Documentation titles should describe the user task and remain understandable when displayed without their surrounding navigation.',
-    'The search index contains published guides and reference pages. Draft review notes stay outside the public search collection.',
-    'Editors check that short labels remain distinct after translations are applied; identical headings make search results ambiguous.',
-    'Each search example includes a common spelling and a domain-specific term so reviewers can compare the ranked result list.',
-    'Broken documentation links are corrected in the owning page rather than hidden by the search result renderer.',
-    'The release checklist includes one keyboard-only search journey and verifies that focus returns to the search field after closing.',
-    'Search metrics are aggregated by page category and never include private query text from individual employees.',
-    'The navigation owner records renamed pages before the next index build to preserve established public links.',
-  ]],
-  [join('docs', 'accessibility.md'), '# Documentation accessibility review\n\n', [
-    'Each screenshot receives descriptive alternative text that explains the visible action instead of repeating the adjacent heading.',
-    'Interactive examples must remain operable with a keyboard, with a visible focus indicator throughout the demonstrated sequence.',
-    'Tables have descriptive column labels and preserve their reading order on narrow screens without hiding relevant cell contents.',
-    'A warning uses plain text in addition to color so its meaning remains available in high contrast and monochrome displays.',
-    'Video demonstrations include captions for spoken instructions and a nearby text description of actions shown without narration.',
-    'Reviewers check navigation landmarks before publication and keep the page title unique within its documentation section.',
-    'Small visual differences are reviewed at normal zoom before changing spacing that other documentation pages depend upon.',
-    'A follow-up review records the tested screen size and browser so the publishing team can reproduce any remaining layout concern.',
-  ]],
-] as const
-
 const semanticConfig = {
   auditSessionId: 'mixed-workload-summary', provider: 'mixed-summary', model: 'controlled-summary',
   maxInputBytes: 64000, maxOutputTokens: 2048, maxOutputBytes: 16000, timeoutMs: 10000,
