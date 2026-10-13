@@ -1,4 +1,5 @@
 /** Recipient evidence compares exact summaries and their original evidence without current revision noise. */
+import { z } from 'zod'
 import { expect, it } from 'vitest'
 import { expandSemanticText, semanticTextValue } from './fixtures/semantic-display.ts'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant, DevelopmentTaskOpenApiObservation } from '@deepseek-ai/dsh-development-task/types'
@@ -171,7 +172,9 @@ it('retains legacy exact projection bytes through the explicit v1 algorithm', ()
   const legacy = projectSemanticReply(prepared, response, value.maxContextBytes, 1)
   expect(legacy.activation).toEqual({ kind: 'exact' })
   expect(legacy.text).toBe(projectSemanticReply(prepared, response, value.maxContextBytes, 3).text)
-  expect(expandSemanticText(projection(value).text)).toEqual(semanticTextValue(legacy.text))
+  const legacyDelivery = z.object({ coverage: z.record(z.string(), z.json()) }).loose().parse(semanticTextValue(legacy.text))
+  expect(expandSemanticText(projection(value).text)).toEqual({ ...legacyDelivery,
+    coverage: { ...legacyDelivery.coverage, supersededSources: [] } })
   expect(legacy.selectedSources).toEqual(projection(value).selectedSources)
 })
 

@@ -75,10 +75,11 @@ const deliveryTables = z.object({
     z.object({ kind: z.literal('publication'), taskSourceIndex: z.number().int().nonnegative(), publicationId: z.string() }),
   ])),
   coverage: z.object({ selectedSources: z.array(z.number().int().nonnegative()),
-    omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() })) }),
+    omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() })),
+    supersededSources: z.array(z.object({ taskSourceIndex: z.number().int().nonnegative(), count: z.number().int().positive() })) }),
 })
 
-/** Independently expand only the delivery reference table; whole provenance remains separately logged in the projection. */
+/** Expand current delivery references and historical Task counts; full omitted publication identities stay in projection metadata. */
 function decodedCoverage(text: string) {
   const payload = text.split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
   if (payload === undefined) throw new Error('Semantic delivery frame missing')
@@ -92,7 +93,13 @@ function decodedCoverage(text: string) {
     return { kind: source.kind, taskId: task.taskId, revision: task.revision, publicationId: source.publicationId }
   }
   return { selectedSources: body.coverage.selectedSources.map(sourceAt),
-    omittedSources: body.coverage.omittedSources.map(value => ({ source: sourceAt(value.sourceIndex), reason: value.reason })) }
+    omittedSources: body.coverage.omittedSources.map(value => ({ source: sourceAt(value.sourceIndex), reason: value.reason })),
+    supersededSources: body.coverage.supersededSources.map((value) => {
+      const source = sourceAt(value.taskSourceIndex)
+      if (source.kind !== 'task') throw new Error('History count does not reference a Task row')
+      return { source, count: value.count }
+    }),
+  }
 }
 
 async function mixedWorkload(backend: 'reported' | 'semantic', test: TestContext) {
@@ -223,8 +230,21 @@ async function mixedWorkload(backend: 'reported' | 'semantic', test: TestContext
       if (phase !== 'initial') expect(projection.text).not.toContain('CHECK_INITIAL_OK')
       expect(projection.text).not.toContain('MIXED_PRIVATE_CHECK_IMPLEMENTATION')
       if (backend === 'semantic') {
-        expect(decodedCoverage(projection.text)).toEqual({ selectedSources: projection.selectedSources,
-          omittedSources: projection.omittedSources })
+        const displayed = decodedCoverage(projection.text)
+        const history = new Map<string, { source: { kind: 'task'; taskId: string; revision: number }; count: number }>()
+        const omitted = projection.omittedSources.filter(({ source, reason }) => {
+          if (reason !== 'superseded' || source.kind !== 'publication') return true
+          const task = { kind: 'task' as const, taskId: source.taskId, revision: source.revision }
+          const key = JSON.stringify([source.taskId, source.revision])
+          const previous = history.get(key)
+          history.set(key, { source: task, count: (previous?.count ?? 0) + 1 })
+          return false
+        })
+        expect(displayed.selectedSources).toEqual(projection.selectedSources)
+        expect(displayed.omittedSources).toEqual(omitted)
+        const byTask = (a: { source: { taskId: string; revision: number } }, b: { source: { taskId: string; revision: number } }) =>
+          a.source.taskId.localeCompare(b.source.taskId) || a.source.revision - b.source.revision
+        expect(displayed.supersededSources.toSorted(byTask)).toEqual([...history.values()].toSorted(byTask))
         expect(projection.text).toContain(phase === 'initial' ? 'CHECK_INITIAL_OK' : 'CHECK_CURRENT_FAILED')
         expect(projection.text).toContain(phase === 'initial' ? 'maxRetries: 3' : 'maxRetries: 1')
         if (phase !== 'initial') {
@@ -343,7 +363,7 @@ async function mixedWorkload(backend: 'reported' | 'semantic', test: TestContext
     expect(summaryAdapter.calls).toHaveLength(6)
     expect(reserved).toHaveLength(summaryAdapter.calls.length)
     expect(results).toHaveLength(summaryAdapter.calls.length)
-    for (const result of results) expect(result.data).toMatchObject({ version: 4, status: 'completed' })
+    for (const result of results) expect(result.data).toMatchObject({ version: 6, status: 'completed' })
     expect(results.map(event => event.data.projection?.text).toSorted()).toEqual(actualSharedTexts.toSorted())
     for (const [index, request] of reserved.entries()) {
       const dispatched = summaryAdapter.calls[index]

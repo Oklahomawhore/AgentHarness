@@ -46,6 +46,33 @@ const summaries = [
   { marker: 'RETRY_LIMIT_3', text: 'The earlier successful Write reported RETRY_LIMIT_3.' },
 ]
 
+// Historical publication IDs stay in durable metadata; displayed counts identify only their exact Task revision.
+function verifyCoverage(projection) {
+  const body = JSON.parse(projection.text.split('<shared-work-updates>\n')[1].split('\n</shared-work-updates>')[0])
+  const source = index => {
+    assert.ok(Number.isInteger(index) && index >= 0 && index < body.sourceTable.length)
+    const row = body.sourceTable[index]
+    if (row.kind === 'task') return { kind: row.kind, taskId: row.taskId, revision: row.revision }
+    assert.equal(row.kind, 'publication')
+    const task = source(row.taskSourceIndex)
+    assert.equal(task.kind, 'task')
+    return { ...task, kind: row.kind, publicationId: row.publicationId }
+  }
+  assert.deepEqual(body.coverage.selectedSources.map(source), projection.selectedSources)
+  assert.deepEqual(body.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
+    projection.omittedSources.filter(item => item.reason !== 'superseded' || item.source.kind !== 'publication'))
+  const groups = new Map()
+  for (const item of projection.omittedSources.filter(item => item.reason === 'superseded' && item.source.kind === 'publication')) {
+    const taskSourceIndex = body.sourceTable.findIndex(row => row.kind === 'task'
+      && row.taskId === item.source.taskId && row.revision === item.source.revision)
+    assert.ok(taskSourceIndex >= 0)
+    groups.set(taskSourceIndex, (groups.get(taskSourceIndex) ?? 0) + 1)
+    assert.ok(!body.sourceTable.some(row => row.kind === 'publication' && row.publicationId === item.source.publicationId))
+  }
+  assert.deepEqual(body.coverage.supersededSources,
+    [...groups].sort(([a], [b]) => a - b).map(([taskSourceIndex, count]) => ({ taskSourceIndex, count })))
+}
+
 class ControlledSummaryAdapter extends LlmAdapter {
   constructor(readAudit) { super(); this.readAudit = readAudit; this.requests = [] }
   async * stream(options) {
@@ -177,10 +204,14 @@ export async function apply(ctx) {
       const results = audit.filter(event => event.type === 'context/semantic-result')
       assert.equal(auxiliaryRequests.length, 5)
       assert.equal(results.length, 5)
-      assert.ok(results.every(event => event.data.version === 5 && event.data.status === 'completed'))
+      assert.ok(results.every(event => event.data.version === 6 && event.data.status === 'completed'))
       for (const result of results) {
         const request = auxiliaryRequests.find(value => value.seq === result.data.requestSeq)
         assert.equal(result.data.key, request.data.key)
+        verifyCoverage(result.data.projection)
+        const captured = JSON.parse(content(request.data.messages[0]))
+        assert.deepEqual(captured.coverage.omittedSources,
+          result.data.projection.omittedSources.filter(item => item.reason !== 'recipient-irrelevant'))
       }
       await ctx.scopeAgentContext.leaveLocalTask({ agentId: agent.id, expectedBindingId: bindingId, ...target })
       assert.equal(ctx.developmentTasks.assignmentList().length, 0)
@@ -225,6 +256,7 @@ export async function apply(ctx) {
       assert.equal(baseline.data.step, 1)
       const projection = event.data.projection
       assert.equal(projection.activation.kind, 'recipient-evidence')
+      verifyCoverage(projection)
       assert.deepEqual(projection.activation, baseline.data.projection.activation)
       assert.notEqual(projection.projectionId, baseline.data.projection.projectionId)
       assert.ok(projection.taskRevision > baseline.data.projection.taskRevision)
@@ -271,6 +303,7 @@ export async function apply(ctx) {
       const projection = message.source.projection
       assert.equal(projection.backend.id, 'semantic')
       assert.equal(projection.activation.kind, 'recipient-evidence')
+      verifyCoverage(projection)
       assert.equal(projection.taskId, task.id)
       assert.equal(projection.text, text)
       const body = JSON.parse(text.split('<shared-work-updates>\n')[1].split('\n</shared-work-updates>')[0])

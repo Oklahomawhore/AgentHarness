@@ -15,7 +15,9 @@ const tableSchema = z.object({
     sourceIndex: z.number().int().nonnegative(), quote: z.string(),
   }).strict()) }).strict()),
   coverage: z.object({ selectedSources: z.array(z.number().int().nonnegative()),
-    omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() }).strict()) }).strict(),
+    omittedSources: z.array(z.object({ sourceIndex: z.number().int().nonnegative(), reason: z.string() }).strict()),
+    supersededSources: z.array(z.object({ taskSourceIndex: z.number().int().nonnegative(),
+      count: z.number().int().positive() }).strict()).optional() }).strict(),
 }).strict()
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -32,9 +34,9 @@ export function semanticTextValue(text: string): unknown {
   return JSON.parse(raw) as unknown
 }
 
-/** Expand version-four/five tables without using the production display implementation.
+/** Expand version-four through six tables without using the production display implementation.
  * @param text - Complete semantic table text.
- * @returns The complete expanded version-three JSON value, interpreting only explicitly marked mandatory entries.
+ * @returns Expanded evidence; version-six history counts remain counts and never reconstruct omitted publication identities.
  */
 export function expandSemanticText(text: string): unknown {
   const value = tableSchema.parse(semanticTextValue(text))
@@ -86,5 +88,11 @@ export function expandSemanticText(text: string): unknown {
     updates: value.updates.map(update => ({ text: update.text, sources: update.sources.map(citation => ({
       source: source(citation.sourceIndex), quote: citation.quote, attribution: originalAttribution(citation.sourceIndex),
     })) })), coverage: { selectedSources: value.coverage.selectedSources.map(source),
-      omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })) } }
+      omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
+      ...(value.coverage.supersededSources === undefined ? {} : { supersededSources: value.coverage.supersededSources.map((item) => {
+        const task = source(item.taskSourceIndex)
+        if (task.kind !== 'task') throw new Error('history count basis is not a Task')
+        return { source: task, count: item.count }
+      }) }),
+    } }
 }

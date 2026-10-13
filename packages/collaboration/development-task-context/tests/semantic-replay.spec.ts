@@ -25,7 +25,7 @@ function reply(input: SemanticInput) {
       sources: [{ sourceId: source.sourceId, quote: source.body }] })) }
 }
 
-function audit(input = fixture().input, version: 1 | 2 | 3 | 4 | 5 = 5) {
+function audit(input = fixture().input, version: 1 | 2 | 3 | 4 | 5 | 6 = 6) {
   const response = reply(input)
   const projection = projectSemanticReply(input, response, 20_000, version)
   const request = semanticRequestSchema.parse({

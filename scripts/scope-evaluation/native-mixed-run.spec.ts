@@ -315,7 +315,7 @@ it.skipIf(!enabled)('completes mixed work for all three conditions through froze
     const allowances = audit.requests.map(request => z.object({ maxContextBytes: z.number() }).parse(request.data).maxContextBytes)
     expect(allowances).toEqual([6681, 6552])
     for (const [index, event] of audit.results.entries()) {
-      const summary = z.object({ version: z.literal(5), status: z.literal('completed'), error: z.null(), requestSeq: z.number(),
+      const summary = z.object({ version: z.literal(6), status: z.literal('completed'), error: z.null(), requestSeq: z.number(),
         projection: z.object({ text: z.string() }), usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
         finish: z.object({ kind: z.literal('stop') }) }).parse(event.data)
       expect(summary.requestSeq).toBe(audit.requests[index]?.seq)
@@ -397,7 +397,7 @@ it.skipIf(!enabled)('records semantic capacity failure before dispatching a prep
     expect(audit.requests).toHaveLength(1)
     expect(audit.results).toHaveLength(1)
     expect(z.object({ maxContextBytes: z.number() }).parse(audit.requests[0]?.data).maxContextBytes).toBe(6681)
-    const summaryResult = z.object({ version: z.literal(5), status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
+    const summaryResult = z.object({ version: z.literal(6), status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
       error: z.literal('semantic output: relevant updates and mandatory evidence exceed maxContextBytes'),
       usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }), finish: z.object({ kind: z.literal('stop') }) })
       .parse(audit.results[0]?.data)

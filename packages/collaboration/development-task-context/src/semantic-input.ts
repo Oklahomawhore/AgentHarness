@@ -2,6 +2,7 @@
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { semanticTableDelivery } from './semantic-display.ts'
 import { semanticMandatoryTableDelivery } from './semantic-mandatory-display.ts'
+import { semanticHistoryTableDelivery } from './semantic-history-display.ts'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
 import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
 import type { DevelopmentTaskContextInput, DevelopmentTaskContextProjection, DevelopmentTaskContextOmission,
@@ -153,11 +154,11 @@ function evidenceMandatory(input: SemanticInput, value: unknown): unknown {
  * @param input - Exact captured evidence.
  * @param response - Untrusted model JSON.
  * @param maxContextBytes - Complete UTF-8 delivery budget.
- * @param resultVersion - Durable algorithm: one through three retain expanded text; four shares tables; five adds command references.
+ * @param resultVersion - Durable algorithm: v1–3 expand text, v4 shares tables, v5 references commands, v6 counts superseded publications.
  * @returns Exact projected context and its versioned scheduling evidence.
  */
 export function projectSemanticReply(
-  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 | 3 | 4 | 5 = 5,
+  input: SemanticInput, response: unknown, maxContextBytes: number, resultVersion: 1 | 2 | 3 | 4 | 5 | 6 = 6,
 ): DevelopmentTaskContextProjection {
   const reply: SemanticReply = semanticReplySchema.parse(response)
   const sources = new Map(input.sources.map(source => [source.sourceId, source]))
@@ -186,8 +187,9 @@ export function projectSemanticReply(
   const selected = [...input.selected, ...input.sources.filter(source => represented.has(source.sourceId)).map(source => source.source)]
   const delivery = { task: input.task, recipient: input.recipient, inherited: input.inherited,
     mandatory: input.mandatory, updates, coverage: { selectedSources: selected, omittedSources: omitted } }
-  const displayed = resultVersion === 5 ? semanticMandatoryTableDelivery(delivery)
-    : resultVersion === 4 ? semanticTableDelivery(delivery) : delivery
+  const displayed = resultVersion === 6 ? semanticHistoryTableDelivery(delivery)
+    : resultVersion === 5 ? semanticMandatoryTableDelivery(delivery)
+      : resultVersion === 4 ? semanticTableDelivery(delivery) : delivery
   const text = PREFIX + semanticJson(displayed).replaceAll('<', '\\u003c') + SUFFIX
   if (Buffer.byteLength(text, 'utf8') > maxContextBytes) throw new Error('semantic output: relevant updates and mandatory evidence exceed maxContextBytes')
   if (resultVersion === 1) return { activation: { kind: 'exact' }, text, selectedSources: selected, omittedSources: omitted }

@@ -43,7 +43,7 @@ pnpm exec vitest run scripts/scope-evaluation/mixed-study.spec.ts packages/colla
 
 [原生驱动](../native-mixed-run.ts)启动五个身份独立的命名 `dsh` profile：scope 所有者、策略与文档来源，以及两个接收 Agent。来源工具与 TCP/Noise 投递使用真实实现；普通及摘要请求使用生产 HTTP provider 适配器。两个接收者完成初始本地工作后，只有在全部来源回执完成时才在原 Session 中继续。离开保留原本地 Task，且不消耗模型调用。
 
-原生验收检查在固定的 8,000 字节完整受管额度内使用语义结果版本 5 的[无损来源与授权引用](../../../packages/collaboration/development-task-context/README.zh.md)。它要求两个 semantic 接收者都完成混合 HTTP 工作，并通过独立的策略、QA 与当前验证结果评分，同时保留两条策略引文和完整命令证据。N 与 reported 保留实际业务失败，并继续执行 semantic 条件。原 Session、本地 Task、历史和工具保持完整。
+原生验收检查在固定的 8,000 字节完整受管额度内使用语义后端的[当前证据与历史覆盖计数](../../../packages/collaboration/development-task-context/README.zh.md)。它要求两个 semantic 接收者都完成混合 HTTP 工作，并通过独立的策略、QA 与当前验证结果评分，同时保留两条策略引文和完整命令证据。N 与 reported 保留实际业务失败，并继续执行 semantic 条件。原 Session、本地 Task、历史和工具保持完整。
 
 公共包构建完成后，可运行本地 HTTP 校准：
 
