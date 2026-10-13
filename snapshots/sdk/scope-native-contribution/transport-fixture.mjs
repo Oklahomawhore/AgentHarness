@@ -20,7 +20,7 @@ export default class FixtureTransport extends ScopeTransport {
   register(protocol, handler) { this.handlers.set(protocol, handler); return () => { this.handlers.delete(protocol) } }
   async request(target, protocol, payload, signal) {
     signal.throwIfAborted()
-    if ((protocol === '/agentharness/scope-contribute/1' || protocol === '/agentharness/scope-contribute/5') && payload.op === 'sample') await this.beforeSample?.(payload)
+    if ((protocol === '/agentharness/scope-contribute/1' || protocol === '/agentharness/scope-contribute/4' || protocol === '/agentharness/scope-contribute/5') && payload.op === 'sample') await this.beforeSample?.(payload)
     signal.throwIfAborted()
     const handler = peers.get(target.peerId)?.handlers.get(protocol)
     if (!handler) throw new ScopeTransportError('scope-transport/unavailable')

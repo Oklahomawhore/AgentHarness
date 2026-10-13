@@ -138,6 +138,15 @@ interface PendingCommand extends PendingExecution {
   completion?: Extract<DevelopmentTaskCommandObservationResult, { state: 'completed' }>
 }
 type Pending = PendingFile | PendingCommand
+function toolLeaseId(runtime: Runtime, callSeq: SessionSeq, resultSeq: SessionSeq): string {
+  return nativeDigest([runtime.role === 'local' ? 'native-local-tool' : 'native-tool', runtime.agent.id,
+    runtime.selection.captureId, runtime.selection.captureGeneration, callSeq, resultSeq])
+}
+function completionLeaseId(completion: Completion): string {
+  if (completion.kind === 'tool') return toolLeaseId(completion.pending.runtime, completion.pending.callSeq, completion.event.seq)
+  const { runtime, outcome } = completion
+  return turnOutcomeId(runtime.role, runtime.agent.id, runtime.selection, outcome.proof)
+}
 /** Local and remote consent own separate cancellation, sampling, and reconciliation. */
 function captureOperations() {
   return {
@@ -846,6 +855,22 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       + [...this.local().table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
       + [...this.sources.remote.runtimes.values()].reduce((sum, runtime) => sum + (runtime.initializationPlan?.samples.length ?? 0), 0)
   }
+  private completionReservations(id: SessionId, role: CaptureRole): number {
+    const samples = role === 'local' ? this.local().table('sessions').get(id)?.samples
+      : this.domain?.table('sessions').get(id)?.samples
+    // A committed outbox item can still be queued until its worker observes the save's resolution.
+    const saved = new Set(samples?.map(item => item.id))
+    return [...this.sources[role].completed.get(id)?.values() ?? []]
+      .filter(completion => !saved.has(completionLeaseId(completion))).length
+  }
+  private reservations(id: SessionId, role: CaptureRole): number {
+    return (this.sources[role].pending.get(id)?.size ?? 0) + this.completionReservations(id, role)
+  }
+  private pendingReservations(): number {
+    return captureRoles.reduce((total, role) => total
+      + [...new Set([...this.sources[role].pending.keys(), ...this.sources[role].completed.keys()])]
+        .reduce((sum, id) => sum + this.reservations(id, role), 0), 0)
+  }
   private assignment(id: SessionId): ScopeAgentLocalContributionBinding | null {
     const tasks = this.ctx.get('developmentTasks')
     if (tasks === undefined) return null
@@ -907,7 +932,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         state: capture.state, collecting: this.collecting(id, capture) && !exhausted, issue: capture.issue ?? null,
         collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
         pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0)
-          + (this.sources[role].completed.get(id)?.size ?? 0) } }
+          + this.completionReservations(id, role) } }
   }
   private async saveLocal(id: SessionId, capture: LocalCapture | null, samples: readonly LocalSample[]): Promise<void> {
     const table = this.local().table('sessions')
@@ -1082,7 +1107,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           : { initialization: this.initializationView(capture.initialization, row?.samples ?? []) }),
         issue: capture.issue ?? null, collectionIssue: this.sources[role].collectionIssues.get(id) ?? (exhausted ? 'sample-limit' : null),
         pendingSamples: (row?.samples.filter(item => item.receipt === undefined).length ?? 0)
-          + (this.sources[role].completed.get(id)?.size ?? 0) } }
+          + this.completionReservations(id, role) } }
   }
   private notify(domain: NativeContributionDomain, id: SessionId): void {
     this.ctx.emit('scope-agent-contribution/changed', id, this.revision(domain, id))
@@ -1192,9 +1217,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         .filter(item => item.kind === 'tool'
           && !samples.some(sample => sample.callSeq === item.pending.callSeq && sample.resultSeq === item.event.seq)).length }
     const cutoff = { localSequence: local.sequence, sessionSeq: (localRuntime.agent.session.seq - 1) as SessionSeqCursor }
-    const pending = captureRoles.reduce((sum, role) => sum
-      + [...this.sources[role].pending.values(), ...this.sources[role].completed.values()]
-        .reduce((total, items) => total + items.size, 0), 0)
+    const pending = this.pendingReservations()
     const capacity = Math.max(0, Math.min(grant.maxSamples - capture.sequence,
       this.config.maxLeases - this.retainedSamples(domain) - pending))
     const selected: { sample: LocalToolSample; proof: InitializationProof; result: NonNullable<ReturnType<typeof recordedReport>> }[] = []
@@ -1643,10 +1666,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         && event.data.name === tool && isDeepStrictEqual(event.data.arguments, exec.arguments))
     if (call === undefined) return
     const retained = this.retainedSamples(domain)
-    const pending = captureRoles.reduce((total, selected) => total
-      + [...this.sources[selected].pending.values(), ...this.sources[selected].completed.values()]
-        .reduce((sum, items) => sum + items.size, 0), 0)
-    const selectedPending = (this.sources[role].pending.get(agent.id)?.size ?? 0) + (this.sources[role].completed.get(agent.id)?.size ?? 0)
+    const pending = this.pendingReservations()
+    const selectedPending = this.reservations(agent.id, role)
     if (retained + pending >= this.config.maxLeases || capture.sequence + selectedPending >= ('grant' in capture ? capture.grant.maxSamples : capture.invitation?.grant.maxSamples ?? 0)) {
       this.sources[role].collectionIssues.set(agent.id, retained + pending >= this.config.maxLeases ? 'retention-limit' : 'sample-limit')
       this.notify(domain, agent.id)
@@ -1746,10 +1767,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (outcome === undefined) return
     const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
     if (grant === undefined) return
-    const queued = this.sources[role].completed.get(session.id)?.size ?? 0
-    const allPending = captureRoles.reduce((total, selected) => total
-      + [...this.sources[selected].pending.values(), ...this.sources[selected].completed.values()]
-        .reduce((sum, values) => sum + values.size, 0), 0)
+    const queued = this.reservations(session.id, role)
+    const allPending = this.pendingReservations()
     const issue = capture.sequence + queued >= grant.maxSamples ? 'sample-limit'
       : this.retainedSamples(this.domain) + allPending >= this.config.maxLeases ? 'retention-limit' : undefined
     if (issue !== undefined) {
@@ -1782,7 +1801,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
       if (grant?.source.kind !== 'completed-turn-outcomes') return false
       const identity = selection(capture)
-      const leaseId = turnOutcomeId(role, id, identity, outcome.proof)
+      const leaseId = completionLeaseId(completion)
       const samples = role === 'local' ? local?.samples : remote?.samples
       if (samples?.some(item => item.id === leaseId)) return true
       const sequence = capture.sequence + 1
@@ -1821,8 +1840,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (capture == null || this.sources[role].runtimes.get(id) !== runtime || !this.collecting(id, capture)) return false
       this.requireCaptureCompatible(id, capture)
       const identity = selection(capture)
-      const leaseId = nativeDigest([runtime.role === 'local' ? 'native-local-tool' : 'native-tool', id,
-        identity.captureId, identity.captureGeneration, pending.callSeq, event.seq])
+      const leaseId = toolLeaseId(runtime, pending.callSeq, event.seq)
       const samples = runtime.role === 'local' ? localRow?.samples : remoteRow?.samples
       if (samples?.some(item => item.id === leaseId)) return true
       const sequence = capture.sequence + 1

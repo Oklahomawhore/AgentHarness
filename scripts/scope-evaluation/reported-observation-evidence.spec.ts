@@ -86,10 +86,10 @@ function fixture(version = 1, indexedGrant = false, failed = false) {
 }
 
 it.each([1, 2, 3, 4])('restores complete version %i report text in original JSON order with inline or indexed grant', (version) => {
-  for (const indexedGrant of [false, true]) {
+  for (const revision of ['5', '6'] as const) for (const indexedGrant of [false, true]) {
     const { body, expected } = fixture(version, indexedGrant)
     const before = structuredClone(body)
-    const decoded = expandReportedGrants(JSON.parse(JSON.stringify(body)) as unknown, '5')
+    const decoded = expandReportedGrants(JSON.parse(JSON.stringify(body)) as unknown, revision)
     expect(decoded).toEqual(expected)
     expect(body).toEqual(before)
     const actualText = object(array(object(decoded).publications)[0]).text
@@ -98,15 +98,15 @@ it.each([1, 2, 3, 4])('restores complete version %i report text in original JSON
 })
 it.each([1, 2, 3, 4])('restores version %i failed Edit or unavailable command without inventing content', (version) => {
   const { body, expected } = fixture(version, true, true)
-  expect(expandReportedGrants(body, '5')).toEqual(expected)
+  for (const revision of ['5', '6'] as const) expect(expandReportedGrants(body, revision)).toEqual(expected)
 })
 it.each(['3', '4'] as const)('refuses observation references under legacy revision %s', (revision) => {
   expect(() => expandReportedGrants(fixture().body, revision)).toThrow('legacy reported revision cannot contain observation references')
 })
-it('leaves literal unknown reports and nested lookalikes untouched under revision 5', () => {
+it.each(['5', '6'] as const)('leaves literal unknown reports and nested lookalikes untouched under revision %s', (revision) => {
   const body = { publications: [{ text: 'unknown', peerContribution: { grant: { extension: 'kept' } },
     observationReferences: { version: 99 }, grantReferences: { version: 99 } }] }
-  expect(expandReportedGrants(body, '5')).toEqual(body)
+  expect(expandReportedGrants(body, revision)).toEqual(body)
 })
 
 const invalid: [string, (body: JsonRecord) => void, string][] = [
@@ -159,7 +159,7 @@ const invalid: [string, (body: JsonRecord) => void, string][] = [
 it.each(invalid)('rejects %s without recovering an attributed report', (_name, mutate, error) => {
   const { body } = fixture()
   mutate(body)
-  expect(() => expandReportedGrants(body, '5')).toThrow(error)
+  for (const revision of ['5', '6'] as const) expect(() => expandReportedGrants(body, revision)).toThrow(error)
 })
 it('refuses a command that names an unauthorized working root', () => {
   const { body } = fixture(4)
@@ -171,18 +171,19 @@ it('the independent Python decoder preserves exact text and rejects the same mal
   const cases: { body: JsonRecord; revision: string; expected?: unknown; error?: string }[] = []
   for (const version of [1, 2, 3, 4]) for (const indexed of [false, true]) {
     const { body, expected } = fixture(version, indexed)
-    cases.push({ body, revision: '5', expected })
+    for (const revision of ['5', '6'] as const) cases.push({ body, revision, expected })
   }
   for (const version of [1, 2, 3, 4]) {
     const { body, expected } = fixture(version, true, true)
-    cases.push({ body, revision: '5', expected })
+    for (const revision of ['5', '6'] as const) cases.push({ body, revision, expected })
   }
   for (const [_name, mutate, error] of invalid) {
     const { body } = fixture()
     mutate(body)
-    cases.push({ body, revision: '5', error })
+    for (const revision of ['5', '6'] as const) cases.push({ body, revision, error })
   }
   for (const revision of ['3', '4']) cases.push({ body: fixture().body, revision, error: 'legacy reported revision' })
+  cases.push({ body: fixture().body, revision: '7', error: 'unsupported reported revision' })
   const run = promisify(execFile)
   const pending = run(process.platform === 'win32' ? 'python' : 'python3',
     [fileURLToPath(new URL('./reported-observation-evidence.py', import.meta.url))],
@@ -191,4 +192,9 @@ it('the independent Python decoder preserves exact text and rejects the same mal
   const output = await pending
   expect(output.stderr).toBe('')
   expect(JSON.parse(output.stdout)).toEqual({ cases: cases.length, passed: cases.length })
+})
+
+it('refuses unknown future revisions before decoding current tables', () => {
+  // @ts-expect-error -- Recorded evidence may contain an unrecognized backend revision.
+  expect(() => expandReportedGrants(fixture().body, '7')).toThrow('unsupported reported revision')
 })

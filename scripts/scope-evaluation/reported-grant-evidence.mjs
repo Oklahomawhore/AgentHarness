@@ -180,11 +180,11 @@ function expandObservations(body) {
  * @returns A detached payload with complete grants and exact observation text; legacy payloads remain literal.
  */
 export function expandReportedGrants(value, revision) {
-  assert.ok(['3', '4', '5'].includes(revision), 'unsupported reported revision')
+  assert.ok(['3', '4', '5', '6'].includes(revision), 'unsupported reported revision')
   const body = object(structuredClone(value), 'reported payload')
   assert.ok(Array.isArray(body.publications), 'reported publications must be an array')
   if (Object.hasOwn(body, 'observationReferences')) {
-    assert.equal(revision, '5', 'legacy reported revision cannot contain observation references')
+    assert.ok(['5', '6'].includes(revision), 'legacy reported revision cannot contain observation references')
   }
   expandGrants(body, revision)
   expandObservations(body)

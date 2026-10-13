@@ -171,9 +171,11 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
     selectReportedGroups(groups.map((group) => {
       const first = group.candidates[0]
       const observation = first.publication.peerToolObservation ?? first.publication.localToolObservation
+      const answer = first.publication.peerTurnOutcome ?? first.publication.localTurnOutcome
       return { value: group, source: first.sourceGroup, publishedAt: group.publishedAt,
         kind: group.terminal ? 'terminal' as const : observation?.kind === 'command-observation' ? 'command' as const
-          : observation?.kind === 'tool-observation' ? 'file' as const : 'other' as const }
+          : answer !== undefined ? 'completed-answer' as const
+            : observation?.kind === 'tool-observation' ? 'file' as const : 'other' as const }
     }), admit)
   } else {
     for (const group of groups.sort((left, right) =>

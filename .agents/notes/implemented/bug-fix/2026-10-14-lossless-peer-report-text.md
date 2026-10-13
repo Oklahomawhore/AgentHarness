@@ -12,7 +12,7 @@ Repeated attribution and JSON string escaping can displace a complete file corre
 
 The [reported backend](../../../../packages/collaboration/development-task-context/README.md#behavior) uses an optional lossless observation table for canonical peer report text. Complete results and original warnings remain present; only attribution proven equal to the complete peer grant is reused. Expansion restores the original text, including JSON member order, without consulting another tool or service. Noncanonical and unknown publications remain literal. Complete escaped output must be smaller than both the original and grant-only alternatives.
 
-This representation leaves source allocation, atomic file groups, command reconstruction barriers, exact omission evidence and withdrawal unchanged. Revision 5 identifies new computations. Existing Session generations and recorded projections remain immutable.
+This representation leaves source allocation, atomic file groups, command reconstruction barriers, exact omission evidence and withdrawal unchanged. The backend identity separates new computations from recorded projections. Existing Session generations and recorded projections remain immutable.
 
 ## Alternatives considered
 

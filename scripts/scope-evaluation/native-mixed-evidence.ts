@@ -51,7 +51,7 @@ export function observeMixedRequest(messages: readonly unknown[]) {
         throw new Error('encoded reported context lacks its recorded backend identity')
       }
       const expanded = backend?.id === 'reported-files'
-        ? object.parse(expandReportedGrants(value, z.enum(['3', '4', '5']).parse(backend.revision))) : value
+        ? object.parse(expandReportedGrants(value, z.enum(['3', '4', '5', '6']).parse(backend.revision))) : value
       for (const publication of z.array(object).parse(expanded.publications)) {
         if (publication.kind === 'reported-file') continue
         const literal = z.string().parse(publication.text)

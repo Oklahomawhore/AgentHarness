@@ -152,7 +152,7 @@ function checkSharedEvidence(texts: readonly string[], command: unknown) {
     .parse(commands[0]?.publication)
   expect(publication.localToolObservation ?? publication.peerToolObservation).toEqual(command)
 }
-function checkReportedEvidence(texts: readonly string[], task: unknown, revision: '3' | '4' | '5') {
+function checkReportedEvidence(texts: readonly string[], task: unknown, revision: '3' | '4' | '5' | '6') {
   const object = z.record(z.string(), z.unknown())
   const admitted = z.object({ id: z.string(), revision: z.number(), context: z.array(object) }).parse(task)
   const frames = texts.filter(text => text.includes('<development-task-context>')).map((text) => {
@@ -241,7 +241,7 @@ async function checkRun(value: unknown, output: string) {
       const messages = z.array(z.object({ source: z.object({ kind: z.string() }).loose() }).loose())
         .parse(mixed.requests[index + 2]?.messages)
       const remote = messages.find(message => message.source.kind === 'scope-agent-context')
-      const projection = z.object({ backend: z.object({ id: z.literal('reported-files'), revision: z.literal('5') }) })
+      const projection = z.object({ backend: z.object({ id: z.literal('reported-files'), revision: z.literal('6') }) })
         .parse(remote?.source.projection)
       checkReportedEvidence(item.actualManagedText, source.task, projection.backend.revision)
     }

@@ -12,7 +12,7 @@ Status: implemented
 
 [报告后端](../../../../packages/collaboration/development-task-context/README.zh.md#behavior)为规范的同伴报告原文使用可选的无损观察表。完整结果与原有警示文字继续保留；只复用已证明与完整 peer grant 相等的归属信息。展开无需调用其他工具或服务，即可还原包括 JSON 成员顺序在内的原文。不规范或未知的 publication 保持字面内容。完整转义输出必须同时小于原始表示与仅 grant 引用的表示。
 
-这一表示保持来源分配、原子的文件组、命令对重建的阻断、精确省略证据和撤回规则不变。Revision 5 标识新计算。既有 Session 世代和已记录投影保持不可变。
+这一表示保持来源分配、原子的文件组、命令对重建的阻断、精确省略证据和撤回规则不变。后端身份将新计算与已记录投影区分开。既有 Session 世代和已记录投影保持不可变。
 
 ## Alternatives considered
 

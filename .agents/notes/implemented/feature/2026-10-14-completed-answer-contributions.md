@@ -14,6 +14,8 @@ The [native contribution consumer](../../../../packages/collaboration/scope-agen
 
 Only complete text blocks form the report. Reasoning, raw user inputs and tool records are not copied directly, but an answer can quote private material. The disclosure form states that consequence before consent. Byte overflow omits the whole answer. The Session checkpoint and immutable outbox precede peer submission; stop, expiry, runtime identity and local assignment are checked again after awaiting storage. Cold restoration terminates the original permission without replaying historical answers.
 
+The collector counts queued completions and saved samples by their original lease identity. A durable save can notify another finishing turn before the worker removes its completion. Counting both representations would discard an otherwise permitted answer at the sample or retention limit. Removing the completion before saving would instead lose retryable work on storage failure. Local and peer permissions keep separate leases, including when one actual turn contributes to both.
+
 The source has its own version-5 permission and wire protocol; it cannot be interpreted as file or command authority. Task admission records a report with its full text digest, original source and capture identity. A later answer does not establish that an earlier answer was corrected, so both remain independently attributable until withdrawal or an explicitly reported omission. The OpenAPI-only facts backend cannot certify complete answer coverage. [Human responsibility](../process/2026-10-05-collaboration-follows-human-responsibility.md) still determines collaboration membership and local execution consent.
 
 ## Alternatives considered

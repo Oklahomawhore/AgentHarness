@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-mixed-source': {
+    expectedFinalResponse: 'The completed answer is withdrawn; command reports remain.',
+  },
   'scope-turn-outcomes': {
     expectedFinalResponse: 'Revoked completed answers no longer enter current context.',
   },

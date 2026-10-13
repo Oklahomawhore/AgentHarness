@@ -23,7 +23,7 @@ it('restores full cross-authority grants and leaves opaque lookalikes literal wi
   ] })
   expect(input).toEqual(before)
 })
-it.each(['3', '4'] as const)('retains literal full grants when revision %s has no table', (revision) => {
+it.each(['3', '4', '5', '6'] as const)('retains literal full grants when revision %s has no table', (revision) => {
   const body = { publications: [{ peerContribution: { grant: { extra: 'literal' } }, grantIndex: 0 }] }
   expect(expandReportedGrants(body, revision)).toEqual(body)
 })

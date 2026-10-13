@@ -62,7 +62,7 @@ function contextText(messages: readonly Message[]): string {
 function renderedPublications(text: string): { id: string; text: string }[] {
   const json = text.match(/<development-task-context>\n([\s\S]*?)\n<\/development-task-context>/)?.[1]
   if (json === undefined) throw new Error('Actual model context has no Task document')
-  const document = expandReportedGrants(JSON.parse(json) as unknown, '5')
+  const document = expandReportedGrants(JSON.parse(json) as unknown, '6')
   if (document === null || typeof document !== 'object' || !('publications' in document) || !Array.isArray(document.publications)) {
     throw new Error('Actual model context has no publication array')
   }

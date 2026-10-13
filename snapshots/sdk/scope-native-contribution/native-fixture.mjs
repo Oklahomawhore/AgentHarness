@@ -138,9 +138,9 @@ export async function apply(ctx) {
     const visible = scopeMessages(messages)
     assert.equal(visible.length, 1)
     const projection = visible[0].source.projection
-    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '5' })
+    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '6' })
     const encoded = JSON.parse(projection.text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0])
-    const decoded = expandReportedGrants(encoded, '5')
+    const decoded = expandReportedGrants(encoded, '6')
     assert.ok(Buffer.byteLength(body(visible[0]), 'utf8') <= 8000)
     const reports = owner.ctx.developmentTasks.get({ taskId: task.id }).context
     for (const publication of decoded.publications) {

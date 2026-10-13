@@ -61,7 +61,7 @@ function body(value: DevelopmentTaskContextProjection) {
   const raw = value.text.match(/<development-task-context>\n([\s\S]+)\n<\/development-task-context>/)?.[1]
   if (raw === undefined) throw new Error('missing full Task frame')
   return z.object({ publications: z.array(z.object({ id: z.string(), text: z.string() }).loose()) })
-    .parse(expandReportedGrants(JSON.parse(raw) as unknown, '5'))
+    .parse(expandReportedGrants(JSON.parse(raw) as unknown, '6'))
 }
 function summary(value: DevelopmentTaskContextInput) {
   const prepared = prepareSemanticInput(value)

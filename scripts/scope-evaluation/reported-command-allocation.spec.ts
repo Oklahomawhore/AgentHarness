@@ -93,7 +93,7 @@ function fixture(): DevelopmentTaskContextInput['view']['task'] {
 const object = z.record(z.string(), z.unknown())
 function decoded(text: string) {
   const body = z.string().parse(text.split('<development-task-context>\n')[1]?.split('\n</development-task-context>')[0])
-  return z.object({ publications: z.array(object) }).parse(expandReportedGrants(JSON.parse(body) as unknown, '5'))
+  return z.object({ publications: z.array(object) }).parse(expandReportedGrants(JSON.parse(body) as unknown, '6'))
 }
 
 it.each(['B', 'C'] as const)('keeps the complete policy and both current commands for recipient %s', (role) => {
@@ -132,7 +132,7 @@ it.each(['B', 'C'] as const)('keeps the complete policy and both current command
     recipientPeerId: brandString<ScopeAccessCurrentProjection['recipientPeerId']>('12D3KooWRmy9Ce2DjuqXkb9jCyCbxMgzRMAdgGegZBUeov4v79kP'),
     grantId: brandString<ScopeAccessCurrentProjection['grantId']>('2e728b36-eba9-4c9a-ab6d-177e3bc58b67'),
     grantGeneration: brandString<ScopeAccessCurrentProjection['grantGeneration']>('9b4a25b2-5923-451a-85be-0fe6202564b6'),
-    expiresAt: 1791922144293, backend: { id: 'reported-files', revision: '5' }, maxContextBytes }
+    expiresAt: 1791922144293, backend: { id: 'reported-files', revision: '6' }, maxContextBytes }
   const remote: ScopeAccessCurrentProjection = { ...fields, projectionId: projectionDigest(fields) }
   expect(blocksCurrentCoverage(remote, false)).toBe(false)
   expect(blocksCurrentCoverage(remote, true)).toBe(true)

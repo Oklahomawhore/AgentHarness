@@ -40,6 +40,7 @@ export async function host(root, role, overrides = {}) {
 async function initializeHost(ctx, root, role, overrides) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
+  const identityRole = overrides.identityRole ?? role
   const workspace = join(root, 'workspace')
   await mkdir(workspace, { recursive: true })
   const adapter = new SourceAdapter()
@@ -57,10 +58,10 @@ async function initializeHost(ctx, root, role, overrides) {
   const rows = [
     { name: 'storage' }, { name: 'storage-json', config: { root: join(root, 'domains') } },
     { name: 'storage-domain', config: { backend: 'json' } },
-    { name: 'rooms', config: { nodeId: `snapshot-native-${role}`, presenceTtlMs: 60000, maxParticipants: 32, maxRooms: 32, maxTextBytes: 65536 } },
+    { name: 'rooms', config: { nodeId: `snapshot-native-${identityRole}`, presenceTtlMs: 60000, maxParticipants: 32, maxRooms: 32, maxTextBytes: 65536 } },
     { name: 'tasks', config: { maxTasks: 32, maxEventsPerTask: 128, maxMergeParents: 8, maxContextBlockBytes: 65536,
       maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000, ...overrides.task } },
-    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${role}-peer` } },
+    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${identityRole}-peer` } },
     { name: 'access', config: { ...accessConfig, ...overrides.access } },
   ]
   if (role === 'source') {

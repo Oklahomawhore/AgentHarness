@@ -130,3 +130,31 @@ it('propagates admission failure without attempting unrelated groups afterward',
   expect(calls).toEqual(['ac1'])
   expect(retained).toEqual([])
 })
+
+it('gives commands and independent completed answers the same source round before repeated current work', () => {
+  const a1 = group('ac1', 'a', 'command', 100)
+  const a2 = group('ac2', 'a', 'command', 99)
+  const b1 = group('ba1', 'b', 'completed-answer', 80)
+  const b2 = group('ba2', 'b', 'completed-answer', 79)
+  const c1 = group('cc1', 'c', 'command', 70)
+  const result = select([a1, a2, b1, b2, c1], allowance([a1, b1, c1]))
+  expect(result.ids).toEqual(['ac1', 'ba1', 'cc1'])
+})
+
+it('keeps answer recency independent of source type and retains a smaller answer after an oversized one', () => {
+  const oversized = group('bbg', 'b', 'completed-answer', 100, 4096)
+  const answer = group('ba1', 'b', 'completed-answer', 90)
+  const command = group('ac1', 'a', 'command', 80)
+  const nextCommand = group('ac2', 'a', 'command', 79)
+  const result = select([oversized, answer, command, nextCommand], allowance([answer, command]))
+  expect(result.ids).toEqual(['ba1', 'ac1'])
+  expect(result.attempts.get('bbg')).toBe(1)
+})
+
+it('reserves full withdrawal notices before completed answers and current commands', () => {
+  const terminal = group('end', 'closed', 'terminal', 1)
+  const answer = group('ba1', 'b', 'completed-answer', 100)
+  const command = group('ac1', 'a', 'command', 90)
+  const result = select([answer, command, terminal], allowance([terminal, answer]))
+  expect(result.ids).toEqual(['end', 'ba1'])
+})

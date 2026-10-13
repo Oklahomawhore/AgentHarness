@@ -4,4 +4,4 @@
  * @param revision - Recorded reported backend revision.
  * @returns Detached payload with complete grant objects; malformed tables throw.
  */
-export function expandReportedGrants(value: unknown, revision: '3' | '4' | '5'): unknown
+export function expandReportedGrants(value: unknown, revision: '3' | '4' | '5' | '6'): unknown

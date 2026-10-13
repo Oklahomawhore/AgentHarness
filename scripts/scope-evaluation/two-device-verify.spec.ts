@@ -493,7 +493,7 @@ const observationLegend = 'Expand grantReferences first if present. Indices are 
   + 'p=publications[publicationIndex], g=p.peerContribution.grant. Restore p.text as preambles[preambleIndex]+"\\n"'
   + '+JSON.stringify({...result,sourceName:g.source.name,grantId:g.grantId,sequence,observerPeerId:g.contributorPeerId,'
   + 'sourceId,capture:{id:g.captureId,generation:g.captureGeneration}}), in that field order. All other fields are literal.'
-function indexedGrants(text: string, revision: '4' | '5'): string {
+function indexedGrants(text: string, revision: '4' | '5' | '6'): string {
   const marker = '<development-task-context>\n'
   const start = text.indexOf(marker) + marker.length
   const end = text.lastIndexOf('\n</development-task-context>')
@@ -504,7 +504,7 @@ function indexedGrants(text: string, revision: '4' | '5'): string {
   const preambles: string[] = []
   const observations: Record<string, unknown>[] = []
   for (const [publicationIndex, publication] of body.publications.entries()) {
-    if (revision === '5' && publication.peerContribution !== undefined && typeof publication.text === 'string'
+    if (revision !== '4' && publication.peerContribution !== undefined && typeof publication.text === 'string'
       && publication.text.startsWith('Authenticated peer tool observation.')) {
       const split = publication.text.indexOf('\n')
       const warning = publication.text.slice(0, split)
@@ -531,7 +531,7 @@ function indexedGrants(text: string, revision: '4' | '5'): string {
   if (observations.length > 0) body.observationReferences = { version: 1, legend: observationLegend, preambles, entries: observations }
   return text.slice(0, start) + JSON.stringify(body).replaceAll('<', '\\u003c') + text.slice(end)
 }
-function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[], revision: '4' | '5'): void {
+function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[], revision: '4' | '5' | '6'): void {
   for (const row of rows) {
     if (row.type !== 'user/message') continue
     const source = objectSchema.parse(row.data.source)
@@ -553,13 +553,13 @@ function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[], revision: '4
     }
   }
 }
-it.each(['4', '5'] as const)('independently expands revision %s while preserving the revision 3 recorded fixture', async (revision) => {
+it.each(['4', '5', '6'] as const)('independently expands revision %s while preserving the revision 3 recorded fixture', async (revision) => {
   const f = await fixture()
   for (const directory of [f.aDirectory, f.bDirectory]) await reseal(directory, (rows) => { upgradeReportedEvidence(rows, revision) })
   const result = await verifyTwoDeviceEvidence(f)
   expect(result).toMatchObject({ status: 'passed', controlledRequests: 13, physicalDevicesVerified: false })
   expect(result.leave.ownerAfterAdmissionVerified).toBe(true)
-  if (revision === '5') expect(await readFile(join(f.aDirectory, 'evidence/requests.jsonl'), 'utf8'))
+  if (revision !== '4') expect(await readFile(join(f.aDirectory, 'evidence/requests.jsonl'), 'utf8'))
     .toContain('observationReferences')
 })
 it('refuses a backend revision change within the original sharing interval', async () => {

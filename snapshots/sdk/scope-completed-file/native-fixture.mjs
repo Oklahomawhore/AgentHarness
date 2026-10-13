@@ -22,7 +22,7 @@ export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'developmen
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const shared = messages => messages.filter(message => message.source.kind === 'scope-agent-context')
 const parsed = text => expandReportedGrants(
-  JSON.parse(text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0]), '5')
+  JSON.parse(text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0]), '6')
 const values = ['COMPLETED_INITIAL', 'COMPLETED_FIRST', 'COMPLETED_SECOND', 'COMPLETED_FINAL']
 const content = value => `export const current = "${value}";\nexport const retained = "PREEXISTING_UNCHANGED";\n`
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex')
@@ -127,7 +127,7 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     assert.equal(visible[0].source.form, 'snapshot')
     const projection = visible[0].source.projection
-    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '5' })
+    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '6' })
     const text = body(visible[0])
     assert.ok(Buffer.byteLength(text, 'utf8') <= 8000)
     const events = structuredClone(receiver.session.snapshotEvents())
