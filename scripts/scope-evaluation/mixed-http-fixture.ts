@@ -5,10 +5,11 @@ import { openDataHttpFixture, type DataHttpEnvelope, type DataHttpReply } from '
 import type { DataRoleProject } from './data-study.ts'
 import { mixedCalibrationEvidence, mixedCalibrationSummary, mixedPublicCases } from './mixed-calibration.ts'
 
-/** Optional failure occurs at the first mixed ordinary request, after both original Sessions have worked. */
+/** Explicit summary-capacity or ordinary-stream failure, after both original Sessions have worked. */
 export interface MixedHttpFault {
   readonly omitMixedUsage?: boolean
   readonly cancelMixed?: AbortController
+  readonly oversizedSummary?: boolean
 }
 
 /** Extract text only, excluding any non-content fields even when retained by an HTTP test double.
@@ -26,7 +27,7 @@ export function mixedHttpTexts(envelope: DataHttpEnvelope): string[] {
 
 /** Produce controlled ordinary and summary replies without receiving a condition, source program or parent oracle.
  * @param projects - Only the recipient-owned initial public projects.
- * @param fault - Explicit stream-accounting fault for the first mixed request.
+ * @param fault - Explicit summary-capacity or first mixed-request accounting fault.
  * @returns A responder whose next action follows the actual HTTP transcript.
  */
 export function createMixedHttpResponder(projects: Readonly<Record<'B' | 'C', DataRoleProject>>, fault: MixedHttpFault = {}) {
@@ -46,7 +47,8 @@ export function createMixedHttpResponder(projects: Readonly<Record<'B' | 'C', Da
         })
       // Native local Tasks consume more of the fixed allowance; retain both policy citations in one short update.
       const compact = { version: 1, decisions: summary.decisions,
-        updates: sources.length === 0 ? [] : [{ text: 'Apply the latest reported retry limit.', sources }] }
+        updates: sources.length === 0 ? [] : [{ text: 'Apply the latest reported retry limit.'
+          .repeat(fault.oversizedSummary === true ? 256 : 1), sources }] }
       return { kind: 'semantic', finish: 'stop', delta: { content: JSON.stringify(compact) } }
     }
     const roles = (['B', 'C'] as const).filter(role => texts.some(text => text.includes(projects[role].goal)))
@@ -87,7 +89,7 @@ export function createMixedHttpResponder(projects: Readonly<Record<'B' | 'C', Da
 }
 
 /** Open a private loopback fixture before constructing routes; configure only public projects before dispatch.
- * @param fault - Stream-accounting fault, never a condition-specific response.
+ * @param fault - Explicit failure injection, never a condition-specific response.
  * @returns Awaited endpoint ownership, request evidence and a public-project configuration operation.
  */
 export async function openMixedHttpFixture(fault: MixedHttpFault = {}) {

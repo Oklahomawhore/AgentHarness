@@ -17,7 +17,7 @@ This reference defines `payment-mixed-work-v1`: a separate calibration of no sha
 <a id="equal-work-opportunities"></a>
 ## Equal work opportunities
 
-Each receiver performs ordinary local work before shared updates, retaining its original Session, Task and public project files. The source uses actual Write, Bash and Edit operations; the same command first succeeds and later fails. Another owner writes and replaces unrelated documentation. Both receivers receive the same neutral work opportunity only after all mixed-work receipts settle. No intermediate request supplies the correction before the mixed input, and no history is removed.
+Each receiver performs ordinary local work before shared updates, retaining its original Session, Task and public project files. The Agents retain their owners' responsibilities; the scope controls shared context. The source uses actual Write, Bash and Edit operations; the same command first succeeds and later fails. Another owner writes and replaces unrelated documentation. Both receivers receive the same neutral work opportunity only after all mixed-work receipts settle. No intermediate request supplies the correction before the mixed input, and no history is removed.
 
 The [study definition](../mixed-study.ts) derives source policy, initial projects and hidden grading inputs from the same seeded field names. Every condition uses the same source trajectory, project inputs and complete context limit. The condition selects communication, not artifact contents. The older [single-wave study](../data-study/README.md) keeps E as original text; the [continuity study](../continuity-study/README.md) keeps its separate E/R protocol.
 
@@ -43,6 +43,8 @@ Set `DSH_MIXED_ARTIFACTS` to an existing private output directory to retain one 
 
 The [native driver](../native-mixed-run.ts) launches five named `dsh` profiles with independent identities: a scope owner, policy and documentation sources, and two receiving Agents. Source tools and TCP/Noise delivery are real; ordinary and summary requests use the production HTTP provider adapter. Both recipients complete initial local work, then continue in their original Sessions only after all source receipts settle. Leaving retains the original local Task and consumes no model call.
 
+The native acceptance check uses semantic result version 5's [lossless source and authorization references](../../../packages/collaboration/development-task-context/README.md) within the fixed 8,000-byte complete managed allowance. It requires both semantic recipients to complete mixed HTTP work and pass independent policy, QA and current-verification grading while retaining both policy quotes and complete command evidence. N and reported retain their actual business failures and continue to the semantic condition. Original Sessions, local Tasks, histories and tools remain intact.
+
 With built public packages available, run its local HTTP calibration:
 
 ```sh
@@ -56,7 +58,7 @@ For explicit execution, use the [ordinary study's route configuration and regist
 <a id="limits"></a>
 ## Limits
 
-The fixed native workload exceeds the first recipient's allowance even with a short controlled semantic reply. Native calibration records this capacity failure after N and reported; it does not complete semantic artifact grading. The separate Loader calibration uses different identity and local-context overhead.
+An explicit capacity-failure control supplies a legal oversized summary with the same source input, two policy citations and 8,000-byte limit. It checks the exact projection-budget error and a persisted request containing withdrawn context without an ordinary HTTP dispatch. Partial artifacts and the complete summary audit remain available, and cleanup must finish. The separate Loader calibration uses different identity and local-context overhead.
 
 The controlled summary identifies the registered policy reports deliberately. A passing summary-path artifact does not show that a real model can select those reports, interpret corrections, or produce useful work. The protocol records mechanism, artifact validity and current-evidence availability separately. Its unit checks reject stale policy and command results; the default reported backend retains its actual omissions rather than changing selection for this fixture.
 

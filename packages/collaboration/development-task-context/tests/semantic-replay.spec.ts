@@ -25,7 +25,7 @@ function reply(input: SemanticInput) {
       sources: [{ sourceId: source.sourceId, quote: source.body }] })) }
 }
 
-function audit(input = fixture().input, version: 1 | 2 | 3 | 4 = 4) {
+function audit(input = fixture().input, version: 1 | 2 | 3 | 4 | 5 = 5) {
   const response = reply(input)
   const projection = projectSemanticReply(input, response, 20_000, version)
   const request = semanticRequestSchema.parse({
@@ -189,7 +189,7 @@ it('round-trips a captured frozen-parent basis and its original publication with
   expect(projection.selectedSources).toContainEqual({ kind: 'task', ...parent })
 })
 
-it.each([1, 2, 3, 4] as const)('rebuilds recorded v%s evidence without applying a newer comparison algorithm', (version) => {
+it.each([1, 2, 3, 4, 5] as const)('rebuilds recorded v%s evidence without applying a newer comparison algorithm', (version) => {
   const { captured, source } = fixture()
   const input = restoreSemanticInput(semanticJson({ ...captured, coverage: { ...captured.coverage,
     omittedSources: [{ source: { ...source, publicationId: 'superseded-report' }, reason: 'superseded' }] } }))
@@ -198,4 +198,24 @@ it.each([1, 2, 3, 4] as const)('rebuilds recorded v%s evidence without applying 
   if (version === 1) return
   const changedVersion = semanticResultSchema.parse({ ...result, version: version === 2 ? 3 : 2 })
   expect(() => restoreSemanticProjection(request, changedVersion)).toThrow('cached projection disagrees with recorded output')
+})
+
+
+it.each([
+  { name: 'completed without a projection', status: 'completed', projection: null, error: null },
+  { name: 'completed with a failure', status: 'completed', error: 'failed' },
+  { name: 'failed with a projection', status: 'failed', error: 'failed' },
+  { name: 'failed without a failure', status: 'failed', projection: null, error: null },
+])('rejects a durable result $name before replay', (fields) => {
+  const { result } = audit()
+  const { name: _name, ...change } = fields
+  expect(() => semanticResultSchema.parse({ ...result, ...change })).toThrow('status disagrees')
+})
+
+it('rejects a completed result that omitted an oversized chunk, while preserving the failed audit record', () => {
+  const { result } = audit()
+  const rejectedChunk = { bytes: 1000, sha256: 'c'.repeat(64) }
+  expect(() => semanticResultSchema.parse({ ...result, rejectedChunk })).toThrow('completed semantic result cannot omit a chunk')
+  expect(semanticResultSchema.parse({ ...result, status: 'failed', error: 'output limit exceeded', projection: null, rejectedChunk }))
+    .toMatchObject({ status: 'failed', projection: null, rejectedChunk })
 })

@@ -1128,8 +1128,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
         "scope-reported-file": "scope-reported-file-command-outcome-evidence-r2",
         "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
-        "scope-semantic-idle": "scope-semantic-idle-source-tables-r5",
-        "task-context-semantic": "task-context-semantic-source-tables-r6",
+        "scope-semantic-idle": "scope-semantic-idle-mandatory-tables-r6",
+        "task-context-semantic": "task-context-semantic-mandatory-tables-r7",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name
     node = shutil.which("node")
@@ -2197,8 +2197,8 @@ def semantic_idle_snapshot_result(
         raise AssertionError("suppression can still spend an auxiliary call; empty or withdrawn-only evidence cannot")
     for request, result in zip(requests, results, strict=True):
         output = result["data"]
-        if output["version"] != 4 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
-            raise AssertionError("semantic audit must retain version 4 results for their exact requests")
+        if output["version"] != 5 or output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"]:
+            raise AssertionError("semantic audit must retain version 5 results for their exact requests")
         if output["status"] != "completed" or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("semantic audit must retain completed evidence")
     if any(result["data"]["projection"]["activation"] != results[0]["data"]["projection"]["activation"] for result in results[1:3]):
@@ -2212,7 +2212,7 @@ def semantic_idle_snapshot_result(
             "contextRevisions": revisions, "suppressedRevisions": suppressed_revisions, "spentBeforeSuppression": 1,
             "automaticRequests": len(dispatches), "automaticPulses": len(pulses), "humanRequests": len(users),
             "usedBudget": state["usedBudget"], "mode": state["mode"], "controlledSummaryCalls": len(requests),
-            "auditResultVersion": 4, "realModelCalls": 0, "withdrawnSources": 5,
+            "auditResultVersion": 5, "realModelCalls": 0, "withdrawnSources": 5,
             "wirePreservesExactEvidence": True}
 
 
@@ -2558,7 +2558,33 @@ def expand_semantic_delivery(value: dict[str, object]) -> dict[str, object]:
             result[key] = at(value["authorizationTable"], entry[key]["authorizationIndex"])
         return result
 
-    return {**value, "coverage": {
+    mandatory_references = value.get("mandatoryReferences", [])
+    if len(set(mandatory_references)) != len(mandatory_references):
+        raise AssertionError("mandatory references must identify distinct entries")
+    for index in mandatory_references:
+        at(value["mandatory"], index)
+    authorization_keys = {"ownerPeerId", "contributorPeerId", "grantId", "generation", "captureId", "captureGeneration"}
+    mandatory = []
+    for index, entry in enumerate(value["mandatory"]):
+        if index not in mandatory_references:
+            mandatory.append(entry)
+            continue
+        if entry["kind"] != "command-evidence" or "source" in entry:
+            raise AssertionError("referenced mandatory command must retain one exact source index")
+        grant = entry["publication"]["peerContribution"]["grant"]
+        original_source = source(entry["sourceIndex"])
+        if original_source["kind"] != "publication" or "id" in entry["publication"] or "taskId" in grant:
+            raise AssertionError("marked command identities must come only from the exact publication source")
+        authorization = at(value["authorizationTable"], grant["authorizationIndex"])
+        if set(authorization) != authorization_keys or authorization_keys & set(grant):
+            raise AssertionError("mandatory grant must reference all six original authorization fields exactly once")
+        fields = {key: item for key, item in grant.items() if key != "authorizationIndex"}
+        mandatory.append({**{key: item for key, item in entry.items() if key != "sourceIndex"},
+                          "source": original_source, "publication": {**entry["publication"], "id": original_source["publicationId"],
+                          "peerContribution": {**entry["publication"]["peerContribution"],
+                          "grant": {**fields, **authorization, "taskId": original_source["taskId"]}}}})
+
+    return {**value, "mandatory": mandatory, "coverage": {
         "selectedSources": [source(index) for index in value["coverage"]["selectedSources"]],
         "omittedSources": [{"source": source(item["sourceIndex"]), "reason": item["reason"]}
                            for item in value["coverage"]["omittedSources"]],
@@ -2578,7 +2604,7 @@ def semantic_snapshot_result(
     if len(contexts) != 4 or [event["data"] for event in wire_contexts] != [event["data"] for event in contexts]:
         raise AssertionError("Python wire events must preserve all four exact semantic context messages")
     revisions = [event["data"]["source"]["revision"] for event in contexts]
-    if revisions != [5, 6, 7, 8] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
+    if revisions != [6, 7, 8, 9] or any(event["data"]["source"]["backend"]["id"] != "semantic" for event in contexts):
         raise AssertionError("Python runtime must consume the real semantic backend at each owner revision")
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("semantic updates and withdrawal must replace the current native surface")
@@ -2587,6 +2613,22 @@ def semantic_snapshot_result(
     update_counts = [len(projection["updates"]) for projection in projections]
     if update_counts != [2, 2, 3, 0]:
         raise AssertionError("semantic updates must retain the current complete Write and later reports until source withdrawal")
+    if [projection.get("mandatoryReferences", []) for projection in projections] != [[0], [0], [0], []]:
+        raise AssertionError("current command evidence must reuse the source and authorization tables before withdrawal")
+    for projection in projections[:-1]:
+        if len(projection["mandatory"]) != 1 or projection["mandatory"][0]["kind"] != "command-evidence":
+            raise AssertionError("the admitted foreground command must remain deterministic mandatory evidence")
+        publication = projection["mandatory"][0]["publication"]
+        outcome = publication["peerToolObservation"]
+        if (outcome["kind"] != "command-observation" or outcome["version"] != 4 or outcome["state"] != "completed"
+                or outcome["fields"] != {"command": "pnpm verify", "rootIndex": 0} or outcome["exitCode"] != 7
+                or outcome["stdout"] != {"state": "included", "text": "FAILED_VERIFY: 检查 <checks>\n", "truncated": True}
+                or outcome["stderr"] != {"state": "omitted", "reason": "budget", "truncated": False}):
+            raise AssertionError("mandatory expansion must preserve the failed command and exact output coverage")
+        grant = publication["peerContribution"]["grant"]
+        if grant["source"] != {"kind": "tool-observations", "version": 4, "name": "session-work",
+                               "tools": ["Edit", "Write"], "commands": [{"command": "pnpm verify", "rootIndex": 0}]}:
+            raise AssertionError("expanded command grant must retain both original file and exact command selectors")
     if any("WRITE_ALPHA" in text for text in texts[1:]) or any("WRITE_CURRENT" not in text for text in texts[1:3]):
         raise AssertionError("a complete replacement must remove the superseded Write from current semantic text")
     for event, projection in zip(contexts, projections, strict=True):
@@ -2601,10 +2643,10 @@ def semantic_snapshot_result(
                 raise AssertionError("each semantic update must cite its selected original publication")
     if any("UNRELATED_ADMIN" in text for text in texts):
         raise AssertionError("the irrelevant source body leaked into an adopted semantic projection")
-    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "WRITE_CURRENT", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md")):
+    if any(marker in texts[-1] for marker in ("WRITE_ALPHA", "WRITE_CURRENT", "EDIT_BETA", "FAILURE_GAMMA", "src/retry.ts", "docs/coordination.md", "FAILED_VERIFY")):
         raise AssertionError("source withdrawal must exclude old semantic text and quotes")
-    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 4:
-        raise AssertionError("withdrawal must account for all four original tool observations")
+    if len([item for item in contexts[-1]["data"]["source"]["omittedSources"] if item["reason"] == "withdrawn"]) != 5:
+        raise AssertionError("withdrawal must account for all five original file and command observations")
     if len(projections[-1]["mandatory"]) != 1 or projections[-1]["mandatory"][0]["kind"] != "withdrawal":
         raise AssertionError("the controlled model cannot erase the deterministic withdrawal notice")
     requests = [event for event in audit if event.get("type") == "context/semantic-request"]
@@ -2612,16 +2654,19 @@ def semantic_snapshot_result(
     if len(requests) != 4 or len(results) != 4:
         raise AssertionError("each semantic computation must retain its actual request and completed result")
     audit_links = []
-    for request, result, context in zip(requests, results, contexts, strict=True):
+    for request, result, context, projection in zip(requests, results, contexts, projections, strict=True):
         output = result["data"]
         if output["requestSeq"] != request["seq"] or output["key"] != request["data"]["key"] or output["status"] != "completed":
             raise AssertionError("semantic audit result must identify its exact completed model request")
         if request["data"]["purpose"] != "context-summary" or request["data"]["call"]["provider"] != "semantic-snapshot":
             raise AssertionError("semantic runtime must use the dedicated controlled auxiliary route")
-        if output["version"] != 4 or output["projection"]["activation"]["kind"] != "recipient-evidence":
+        if output["version"] != 5 or output["projection"]["activation"]["kind"] != "recipient-evidence":
             raise AssertionError("current semantic audit must record versioned recipient evidence")
         if output["projection"]["text"] != context["data"]["content"][0]["text"]:
             raise AssertionError("actual native context must equal the durably completed semantic projection")
+        captured = json.loads(request["data"]["messages"][0]["content"][0]["text"])
+        if projection["mandatory"] != captured["mandatory"]:
+            raise AssertionError("independent expansion must preserve the complete original mandatory evidence")
         audit_links.append({"requestSeq": request["seq"], "status": output["status"],
                             "purpose": request["data"]["purpose"], "usage": output["usage"]})
     if any(str(event.get("type", "")).startswith("context/semantic-") for event in records):
@@ -2629,7 +2674,8 @@ def semantic_snapshot_result(
     return {
         "turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
         "contextRevisions": revisions, "backend": "semantic", "updateCounts": update_counts,
-        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 4,
+        "irrelevantOmissionCounts": [1, 1, 1, 1], "withdrawnSourceCount": 5,
+        "mandatoryReferenceCounts": [1, 1, 1, 0], "commandExitCodes": [7, 7, 7],
         "controlledSemanticRequests": len(requests), "realModelRequests": 0,
         "auditResults": audit_links, "wirePreservesExactContextMessages": True,
         "isolatedAuditMatchesNativeContext": True,

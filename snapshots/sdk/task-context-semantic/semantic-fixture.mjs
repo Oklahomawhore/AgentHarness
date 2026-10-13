@@ -27,8 +27,9 @@ const bindingId = 'binding-semantic-snapshot'
 const grant = {
   version: 1, taskId, grantId: 'grant-semantic-snapshot', generation: 'grant-generation-one',
   ownerPeerId, contributorPeerId, captureId: 'capture-semantic-snapshot', captureGeneration: 'capture-generation-one',
-  source: { kind: 'tool-observations', name: 'session-work', tools: ['Edit', 'Write'] },
-  expiresAt: now + 60000, maxSamples: 4, maxSampleBytes: 4096,
+  source: { kind: 'tool-observations', version: 4, name: 'session-work', tools: ['Edit', 'Write'],
+    commands: [{ command: 'pnpm verify', rootIndex: 0 }] },
+  expiresAt: now + 60000, maxSamples: 5, maxSampleBytes: 4096,
 }
 const reports = [
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
@@ -47,6 +48,11 @@ const summaries = [
   { marker: 'WRITE_CURRENT', text: 'The source reports replacing the implementation retry policy (WRITE_CURRENT).' },
   { marker: 'FAILURE_GAMMA', text: 'A later Write failed with permission denied (FAILURE_GAMMA); it does not confirm a file update.' },
 ]
+const command = { kind: 'command-observation', version: 4, tool: 'Bash',
+  fields: { command: 'pnpm verify', rootIndex: 0 }, state: 'completed', exitCode: 7,
+  signal: null, timedOut: false, aborted: false, timeoutMs: 1000,
+  stdout: { state: 'included', text: 'FAILED_VERIFY: 检查 <checks>\n', truncated: true },
+  stderr: { state: 'omitted', reason: 'budget', truncated: false } }
 const digest = value => createHash('sha256').update(value).digest('hex')
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const content = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
@@ -78,7 +84,30 @@ function expandDelivery(value) {
     }
     return result
   }
+  const mandatoryReferences = value.mandatoryReferences ?? []
+  assert.equal(new Set(mandatoryReferences).size, mandatoryReferences.length)
+  for (const index of mandatoryReferences) at(value.mandatory, index)
+  const authorizationKeys = ['ownerPeerId', 'contributorPeerId', 'grantId', 'generation', 'captureId', 'captureGeneration']
+  const mandatory = value.mandatory.map((entry, index) => {
+    if (!mandatoryReferences.includes(index)) return entry
+    assert.equal(entry.kind, 'command-evidence')
+    assert.equal(entry.source, undefined)
+    const grant = entry.publication.peerContribution.grant
+    assert.equal(Object.hasOwn(entry.publication, 'id'), false)
+    assert.equal(Object.hasOwn(grant, 'taskId'), false)
+    const authorization = at(value.authorizationTable, grant.authorizationIndex)
+    assert.deepEqual(Object.keys(authorization).sort(), [...authorizationKeys].sort())
+    for (const key of authorizationKeys) assert.equal(grant[key], undefined)
+    const { sourceIndex, ...rest } = entry
+    const originalSource = source(sourceIndex)
+    assert.equal(originalSource.kind, 'publication')
+    const { authorizationIndex: _authorizationIndex, ...fields } = grant
+    return { ...rest, source: originalSource, publication: { ...entry.publication, id: originalSource.publicationId,
+      peerContribution: { ...entry.publication.peerContribution,
+        grant: { ...fields, ...authorization, taskId: originalSource.taskId } } } }
+  })
   return { ...value,
+    mandatory,
     coverage: {
       selectedSources: value.coverage.selectedSources.map(source),
       omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
@@ -130,8 +159,9 @@ export async function apply(ctx) {
     return () => { Date.now = original }
   })
   const readAudit = async () => {
-    await using handle = await ctx.sessionPersistence.open(auditId, 'read')
-    return (await handle.read()).events
+    const handle = await ctx.sessionPersistence.open(auditId, 'read')
+    try { return (await handle.read()).events }
+    finally { await handle.close() }
   }
   const selection = ctx.settings.describe().find(descriptor => descriptor.ns === 'scope-context')
   assert.ok(selection, 'the shipped SDK composition must mount the configured backend')
@@ -159,6 +189,7 @@ export async function apply(ctx) {
   let observedTurn = 0
   let ordinaryRequests = 0
   const admitted = []
+  let admittedCommand
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
@@ -172,12 +203,20 @@ export async function apply(ctx) {
     if (turn < 4) {
       const indices = turn === 1 ? [0, 1] : [turn]
       for (const index of indices) {
-        const sequence = admitted.length + 1
+        const sequence = admitted.length + 1 + (admittedCommand === undefined ? 0 : 1)
         const request = { grant, sourceId: digest(`semantic-snapshot/${sequence}`), sequence, result: reports[index] }
         const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
         assert.equal(result.outcome, 'published')
         assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
         admitted.push(result.publication)
+      }
+      if (turn === 1) {
+        const sequence = 3
+        const request = { grant, sourceId: digest(`semantic-snapshot/${sequence}`), sequence, result: command }
+        const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
+        assert.equal(result.outcome, 'published')
+        assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
+        admittedCommand = result.publication
       }
     } else {
       const ended = await ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, ownerPeerId)
@@ -197,16 +236,27 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     const message = visible[0]
     assert.equal(message.source.backend.id, 'semantic')
-    assert.equal(message.source.revision, observedTurn + 4)
+    assert.equal(message.source.revision, observedTurn + 5)
     const json = content(message).split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
     assert.ok(json)
-    const projection = expandDelivery(JSON.parse(json))
+    const delivered = JSON.parse(json)
+    const projection = expandDelivery(delivered)
     assert.deepEqual(projection.coverage.omittedSources, message.source.omittedSources)
     assert.deepEqual(projection.coverage.selectedSources, message.source.selectedSources)
     assert.ok(message.source.omittedSources.some(item => item.reason === 'recipient-irrelevant'
       && item.source.publicationId === unrelated.id))
     assert.ok(!JSON.stringify(options.messages).includes('UNRELATED_ADMIN'))
     if (observedTurn < 4) {
+      assert.ok(admittedCommand)
+      assert.deepEqual(delivered.mandatoryReferences, [0])
+      assert.deepEqual(projection.mandatory, [{ kind: 'command-evidence', basis: 'current-task-as-reported',
+        source: { kind: 'publication', taskId, revision: message.source.revision, publicationId: admittedCommand.id },
+        publication: admittedCommand }])
+      assert.deepEqual(projection.mandatory[0].publication.peerContribution.grant, grant)
+      assert.deepEqual(projection.mandatory[0].publication.peerToolObservation,
+        { ...command, sourceId: digest('semantic-snapshot/3'), sequence: 3,
+          observerPeerId: contributorPeerId, grantId: grant.grantId, sourceName: grant.source.name,
+          capture: { id: grant.captureId, generation: grant.captureGeneration } })
       const indices = observedTurn === 1 ? [0, 1] : observedTurn === 2 ? [1, 2] : [1, 2, 3]
       assert.deepEqual(projection.updates.map(update => update.text), indices.map(index => summaries[index].text))
       for (const [position, update] of projection.updates.entries()) {
@@ -224,8 +274,9 @@ export async function apply(ctx) {
       assert.deepEqual(projection.updates, [])
       assert.equal(projection.mandatory.length, 1)
       assert.equal(projection.mandatory[0].kind, 'withdrawal')
-      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 4)
-      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'WRITE_CURRENT', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md']) {
+      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 5)
+      assert.equal(delivered.mandatoryReferences, undefined)
+      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'WRITE_CURRENT', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md', 'FAILED_VERIFY']) {
         assert.ok(!JSON.stringify(options.messages).includes(value), 'withdrawn reports must not remain in the actual request')
       }
     }
@@ -233,6 +284,7 @@ export async function apply(ctx) {
     const result = audit.filter(event => event.type === 'context/semantic-result').at(-1)
     const request = audit.find(event => event.type === 'context/semantic-request' && event.seq === result.data.requestSeq)
     assert.equal(result.data.status, 'completed')
+    assert.equal(result.data.version, 5)
     assert.equal(result.data.key, request.data.key)
     assert.equal(result.data.projection.text, content(message))
     assert.deepEqual(result.data.projection.selectedSources, message.source.selectedSources)

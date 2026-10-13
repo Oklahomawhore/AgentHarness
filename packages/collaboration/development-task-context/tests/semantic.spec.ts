@@ -1,8 +1,10 @@
 /** Real LLM and JSONL persistence exercise semantic summaries, durability and lifecycle ownership. */
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { LlmAdapter, ReasoningEffortId, type GenerateOptions, type StreamChunk, type LlmResolvedModelInfo, type FinishReason } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId, ToolCallId, type GenerateOptions, type StreamChunk,
+  type LlmResolvedModelInfo, type FinishReason } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -258,7 +260,7 @@ it('rebuilds cached output from the raw reply and refuses a valid-shaped unrelat
   const recordedResult = events.find(event => event.type === 'context/semantic-result')
   const request = semanticRequestSchema.parse(recordedRequest?.data)
   const result = semanticResultSchema.parse(recordedResult?.data)
-  if (result.version !== 4) throw new Error('new computations must persist result version four')
+  if (result.version !== 5) throw new Error('new computations must persist result version five')
   const projection = result.projection
   if (projection === null) throw new Error('missing completed projection')
   expect(restoreSemanticProjection(request, result)).toEqual(projection)
@@ -367,4 +369,124 @@ it('audits exact-capture omissions while delivering another Session on the same 
   expect(manual.text).toContain('ORIGINAL_CAPTURE report')
   expect(manual.text).toContain('OTHER_SESSION report')
   expect(reopened.adapter.requests).toHaveLength(1)
+})
+
+
+it.each(['auditSessionId', 'provider', 'model', 'reasoningEffort'] as const)(
+  'rejects a blank %s configuration before opening an audit', async (field) => {
+    await expect(harness({ [field]: '  ' })).rejects.toThrow('identity and route must be nonempty')
+  },
+)
+
+it('rejects oversized complete input before reserving or dispatching a model call', async () => {
+  const value = await harness({ maxInputBytes: 1 })
+  await expect(value.backend.compute(input())).rejects.toThrow('complete input exceeds maxInputBytes')
+  expect(value.adapter.requests).toEqual([])
+  expect(await auditEvents(value)).toEqual([])
+})
+
+it('projects an empty source set without preparing or reserving a model call', async () => {
+  const value = await harness()
+  const prepare = vi.spyOn(value.ctx.llm, 'prepareCall')
+  const projected = await value.backend.compute(input('frontend', []))
+  expect(projected.activation).toMatchObject({ kind: 'recipient-evidence', coverage: 'complete' })
+  expect(projected.selectedSources).toEqual([{ kind: 'task', taskId: 'orders', revision: 2 }])
+  expect(projected.omittedSources).toEqual([])
+  expect(prepare).not.toHaveBeenCalled()
+  expect(value.adapter.requests).toEqual([])
+  expect(await auditEvents(value)).toEqual([])
+})
+
+it('records explicit temperature and reasoning effort in the same prepared model request', async () => {
+  const value = await harness({ temperature: 0, reasoningEffort: 'high' })
+  value.adapter.defaultEffort = 'high'
+  await value.backend.compute(input())
+  expect(value.adapter.requests[0]).toMatchObject({ temperature: 0, reasoningEffort: 'high', maxTokens: 1000 })
+  const request = (await auditEvents(value)).find(event => event.type === 'context/semantic-request')
+  expect(request?.data.call).toMatchObject({ temperature: 0, reasoningEffort: 'high', maxTokens: 1000 })
+})
+
+it('refuses requests after disposal without reopening the audit or consuming a model call', async () => {
+  const value = await harness()
+  await value.fork.dispose()
+  await expect(value.backend.compute(input())).rejects.toThrow('semantic backend disposed')
+  expect(value.adapter.requests).toEqual([])
+  await expect(value.ctx.sessionPersistence.open(SessionId(config.auditSessionId), 'read'))
+    .rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+})
+
+it('enforces concurrent distinct-key limits while the reserved request remains finishable', async () => {
+  const value = await harness({ maxConcurrentCalls: 1 })
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  value.adapter.before = async () => { entered.resolve(undefined); await release.promise }
+  const running = value.backend.compute(input())
+  try {
+    await entered.promise
+    await expect(value.backend.compute(input('qa'))).rejects.toThrow('maxConcurrentCalls exhausted')
+    expect(value.adapter.requests).toHaveLength(1)
+  } finally { release.resolve(undefined); await running }
+  expect((await running).text).toContain('three retries')
+  expect(await value.backend.compute(input())).toEqual(await running)
+})
+
+it('records known model usage alongside a completed projection', async () => {
+  const value = await harness()
+  const usage = { inputTokens: 12, outputTokens: 5, totalTokens: 17 }
+  value.ctx.on('llm/stream', async function* (_options, next) {
+    yield { type: 'usage', usage }
+    yield* next()
+  })
+  await value.backend.compute(input())
+  const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
+  expect(result?.data).toMatchObject({ status: 'completed', usage })
+})
+
+it('records a middleware rejection without an Error value as a failed reserved attempt', async () => {
+  const value = await harness()
+  value.ctx.on('llm/stream', async function* (_options, next) {
+    yield* next()
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- exercise arbitrary middleware rejection normalization.
+    await Promise.reject({ reason: 'middleware failure' })
+  })
+  await expect(value.backend.compute(input())).rejects.toThrow('semantic model computation failed')
+  const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
+  expect(result?.data).toMatchObject({ status: 'failed', projection: null, error: 'semantic model computation failed' })
+  expect(value.adapter.requests).toHaveLength(1)
+})
+
+it('rejects a tool call in a summary stream and retains its original block in the failed audit', async () => {
+  const value = await harness()
+  value.ctx.on('llm/stream', async function* (_options, next) {
+    yield { type: 'block-start', index: 2, blockType: 'tool-call' }
+    yield { type: 'block-end', index: 2, block: { type: 'tool-call', id: ToolCallId('forbidden'), name: 'Read', arguments: '{}' } }
+    yield* next()
+  })
+  await expect(value.backend.compute(input())).rejects.toThrow('model output must not call tools')
+  const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
+  expect(result?.data).toMatchObject({ status: 'failed', projection: null })
+  expect(result?.data.rawOutput).toContainEqual({ type: 'tool-call', id: 'forbidden', name: 'Read', arguments: '{}' })
+})
+
+it('reports a non-Error caller cancellation and drains its last-reader job before disposing', async () => {
+  const value = await harness()
+  const entered = Promise.withResolvers<undefined>()
+  const controller = new AbortController()
+  value.adapter.before = async (options) => {
+    const signal = options.signal
+    if (signal === undefined) throw new Error('missing model cancellation')
+    const cancelled = Promise.withResolvers<undefined>()
+    signal.addEventListener('abort', () => { cancelled.resolve(undefined) }, { once: true })
+    entered.resolve(undefined)
+    await cancelled.promise
+    signal.throwIfAborted()
+  }
+  const running = value.backend.compute({ ...input(), signal: controller.signal })
+  const rejected = expect(running).rejects.toThrow('semantic context caller cancelled')
+  try { await entered.promise }
+  finally { controller.abort('caller requested stop') }
+  await rejected
+  await value.fork.dispose()
+  const result = (await auditEvents(value)).find(event => event.type === 'context/semantic-result')
+  expect(result?.data).toMatchObject({ status: 'failed', projection: null })
 })

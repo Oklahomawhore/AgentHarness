@@ -10,7 +10,7 @@ import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { createMixedStudy, gradeMixedArtifacts, mixedStudyConditions, parseMixedVerification } from './mixed-study.ts'
 import { parsePolicy, sealDataArtifact } from './data-artifacts.ts'
-import { createMixedHttpResponder, openMixedHttpFixture } from './mixed-http-fixture.ts'
+import { createMixedHttpResponder, mixedHttpTexts, openMixedHttpFixture } from './mixed-http-fixture.ts'
 import { runNativeMixed } from './native-mixed-run.ts'
 import { prepareDataStudy, runDataPhase } from './data-cli.ts'
 
@@ -75,6 +75,19 @@ it('keeps compact HTTP summary quotes in their actual source bodies without chan
   expect(citations.map(citation => citation.quote)).toEqual(['maxRetries: 3', 'maxRetries: 1'])
   for (const citation of citations) expect(sources.find(source => source.sourceId === citation.sourceId)?.body).toContain(citation.quote)
   expect(study.runtime.roles.B.initialFiles['public/payment-policy.json']).toContain('"maxRetries": 3')
+  const oversized = createMixedHttpResponder(study.runtime.roles, { oversizedSummary: true })({
+    model: 'controlled-http-replies', messages: [
+      { role: 'system', content: 'Summarize the supplied authorized work reports' },
+      { role: 'user', content: JSON.stringify({ sources }) },
+    ],
+  })
+  const oversizedText = z.string().parse(oversized.delta.content)
+  const oversizedBody = z.object({ decisions: z.unknown(),
+    updates: z.array(z.object({ text: z.string(), sources: z.unknown() })) }).parse(JSON.parse(oversizedText) as unknown)
+  expect(oversizedBody.decisions).toEqual(parsed.decisions)
+  expect(oversizedBody.updates.map(update => update.sources)).toEqual(parsed.updates.map(update => update.sources))
+  expect(Buffer.byteLength(oversizedBody.updates[0]?.text ?? '')).toBeGreaterThan(8000)
+  expect(Buffer.byteLength(oversizedText)).toBeLessThan(study.runtime.semantic.maxOutputBytes)
 })
 
 const sealed = z.object({ text: z.string(), bytes: z.number(), sha256: z.string() })
@@ -84,7 +97,8 @@ const runSchema = z.object({ condition: z.enum(mixedStudyConditions), failed: z.
   peers: z.array(z.string()), cleanup: z.object({ started: z.number(), closed: z.number(), forced: z.number() }),
   roles: z.object({ B: z.unknown(), C: z.unknown() }), grade: z.unknown(),
   artifacts: z.object({ policy: sealed.nullable(), cases: sealed.nullable(),
-    verification: z.object({ B: sealed.nullable(), C: sealed.nullable() }) }),
+    verification: z.object({ B: sealed.nullable(), C: sealed.nullable() }),
+    visibleVerification: z.object({ B: z.number().nullable(), C: z.number().nullable() }) }),
 })
 const sessionSchema = z.object({ agentId: z.string(), sessionId: z.string(), events: z.array(z.unknown()),
   requests: z.array(z.object({ messages: z.array(z.unknown()), tools: z.array(z.unknown()), eventCount: z.number() }).loose()),
@@ -121,17 +135,33 @@ async function checkSource(output: string) {
     expect(await readJson(join(output, `source-${role}-receipts.json`))).toMatchObject({ sourceTaskReplicas: 0 })
     await checkSession(output, 'source', role)
   }
+  return source
 }
-async function checkControlRun(value: unknown, output: string) {
+function checkSharedEvidence(texts: readonly string[], command: unknown) {
+  const frames = texts.filter(text => text.includes('<shared-work-updates>'))
+  expect(frames).toHaveLength(1)
+  const body = z.string().parse(frames[0]?.split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0])
+  const parsed = z.object({ updates: z.array(z.object({ sources: z.array(z.object({ quote: z.string() })) })),
+    mandatory: z.array(z.object({ kind: z.string() }).loose()) }).parse(JSON.parse(body) as unknown)
+  expect(parsed.updates.flatMap(update => update.sources.map(source => source.quote))).toEqual(['maxRetries: 3', 'maxRetries: 1'])
+  const commands = parsed.mandatory.filter(item => item.kind === 'command-evidence')
+  expect(commands).toHaveLength(1)
+  const publication = z.object({ localToolObservation: z.unknown().optional(), peerToolObservation: z.unknown().optional() })
+    .parse(commands[0]?.publication)
+  expect(publication.localToolObservation ?? publication.peerToolObservation).toEqual(command)
+}
+async function checkRun(value: unknown, output: string) {
   const result = runSchema.parse(value)
-  const condition = z.enum(['N', 'reported']).parse(result.condition)
+  const condition = result.condition
+  const semantic = condition === 'semantic'
   expect(result.failed, result.error ?? '').toBe(false)
   expect(result.cleanup).toEqual({ started: 5, closed: 5, forced: 0 })
   expect(result.realModelDispatches).toBe(0)
   expect(new Set(result.peers).size).toBe(5)
   expect(result.dispatchBlocked).toBe(false)
-  expect(result.counts).toEqual({ ordinary: 8, semantic: 0, sourceControlled: 16 })
-  await checkSource(output)
+  expect(result.counts).toEqual({ ordinary: 8, semantic: semantic ? 2 : 0, sourceControlled: 16 })
+  const source = await checkSource(output)
+  expect(await readJson(join(output, 'sealed-artifacts.json'))).toEqual(result.artifacts)
   for (const role of ['B', 'C'] as const) {
     expect(result.roles[role]).toMatchObject({ requests: 4, initialRequests: 2, mixedRequests: 2, identityPreserved: true })
     const initial = await checkSession(output, 'initial', role)
@@ -168,7 +198,8 @@ async function checkControlRun(value: unknown, output: string) {
       expect(phases.left.scopeState.mode).toBe('passive')
     }
     const evidence = z.array(z.object({ localBytes: z.number(), sharedBytes: z.number(), managedBytes: z.number(),
-      visibleVerification: z.number().nullable() })).parse(await readJson(join(output, `mixed-${role}-request-evidence.json`)))
+      visibleVerification: z.number().nullable(), actualManagedText: z.array(z.string()) }))
+      .parse(await readJson(join(output, `mixed-${role}-request-evidence.json`)))
     expect(evidence).toHaveLength(4)
     for (const item of evidence) {
       expect(item.localBytes).toBeGreaterThan(0)
@@ -176,16 +207,21 @@ async function checkControlRun(value: unknown, output: string) {
       expect(item.managedBytes).toBeLessThanOrEqual(8000)
     }
     expect(evidence.slice(0, 2).map(item => item.sharedBytes)).toEqual([0, 0])
-    expect(evidence.slice(2).map(item => item.visibleVerification)).toEqual([null, null])
+    expect(evidence.slice(2).map(item => item.visibleVerification)).toEqual(semantic ? [7, 7] : [null, null])
+    if (semantic) for (const item of evidence.slice(2)) checkSharedEvidence(item.actualManagedText, source.commands[1])
     const verification = result.artifacts.verification[role]
     if (verification === null) throw new Error('verification artifact absent')
-    expect(parseMixedVerification(verification)).toEqual({ version: 1, status: 'unavailable', exitCode: null })
+    expect(parseMixedVerification(verification)).toEqual(semantic
+      ? { version: 1, status: 'failed', exitCode: 7 } : { version: 1, status: 'unavailable', exitCode: null })
   }
   const policy = result.artifacts.policy
   if (policy === null) throw new Error('policy artifact absent')
-  expect(parsePolicy(policy).maxRetries).toBe(3)
-  expect(result.grade).toMatchObject({ pairStatus: 'failed', verification: { B: { status: 'passed' }, C: { status: 'passed' } },
-    currentEvidenceAvailable: { B: false, C: false } })
+  expect(parsePolicy(policy).maxRetries).toBe(semantic ? 1 : 3)
+  expect(result.artifacts.visibleVerification).toEqual(semantic ? { B: 7, C: 7 } : { B: null, C: null })
+  expect(result.grade).toMatchObject({ pairStatus: semantic ? 'passed' : 'failed',
+    data: { policy: { status: semantic ? 'passed' : 'failed' }, tests: { status: semantic ? 'passed' : 'failed' } },
+    verification: { B: { status: 'passed' }, C: { status: 'passed' } },
+    currentEvidenceAvailable: { B: semantic, C: semantic } })
 }
 
 async function checkPartial(output: string, artifacts: unknown, expectedRequests = { B: 3, C: 2 }) {
@@ -214,9 +250,30 @@ async function retainAndRemove(root: string) {
   } finally { await rm(root, { recursive: true, force: true }) }
 }
 
-// This characterizes the current capacity gap; product acceptance still requires successful shared evidence and artifacts.
+async function semanticAudit(output: string, phase: 'semantic' | 'partial') {
+  const audit = z.object({ events: z.array(z.object({ type: z.string(), seq: z.number(), data: z.unknown() }).loose()) })
+    .parse(await readJson(join(output, `${phase}-O-session.json`)))
+  const files = (await readdir(join(output, 'final-O-durable-sessions'), { recursive: true })).filter(file => file.endsWith('.jsonl'))
+  expect(files).toHaveLength(1)
+  const file = files[0]
+  if (file === undefined) throw new Error('final semantic audit file absent')
+  const bytes = await readFile(join(output, 'final-O-durable-sessions', file))
+  const stored = scanLog(bytes)
+  expect(stored.committedBytes).toBe(bytes.length)
+  expect(stored.events).toEqual(audit.events)
+  return { requests: audit.events.filter(event => event.type === 'context/semantic-request'),
+    results: audit.events.filter(event => event.type === 'context/semantic-result') }
+}
+async function checkSettledReservations(output: string, roles: readonly ('B' | 'C' | 'O')[]) {
+  const reservations = z.array(z.object({ role: z.enum(['B', 'C', 'O']), result: z.object({
+    operation: z.literal('model-settle'), usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
+    responseObserved: z.literal(true),
+  }) })).parse(await readJson(join(output, 'dispatch-ledger.json')))
+  expect(reservations.map(item => item.role)).toEqual(roles)
+}
+
 // The opt-in lane uses real POSIX Bash tools and five independently allocated named dsh Hosts per condition.
-it.skipIf(!enabled)('records semantic capacity failure after completing both control conditions through frozen CLI phases', async () => {
+it.skipIf(!enabled)('completes mixed work for all three conditions through frozen CLI phases', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-mixed-cli-spec-'))
   let http: Awaited<ReturnType<typeof openMixedHttpFixture>> | undefined
   try {
@@ -232,30 +289,69 @@ it.skipIf(!enabled)('records semantic capacity failure after completing both con
     await writeFile(join(root, 'http-observations.json'), JSON.stringify({ calls: http.calls, errors: http.errors }, null, 2) + '\n',
       { flag: 'wx', mode: 0o600 })
     expect(http.errors).toEqual([])
-    expect(result).toMatchObject({ failed: true, completedConditions: 3, skippedConditions: [] })
-    const runs = z.array(z.unknown()).parse(result['results'])
-    expect(runs).toHaveLength(3)
-    const controls = runs.slice(0, 2).map(run => runSchema.parse(run))
-    expect(controls.map(run => run.condition)).toEqual(['N', 'reported'])
-    for (const run of controls) await checkControlRun(run, join(directory, 'execute', run.condition))
+    expect(result).toMatchObject({ failed: false, completedConditions: 3, skippedConditions: [] })
+    const runs = z.array(runSchema).parse(result['results'])
+    expect(runs.map(run => run.condition)).toEqual(['N', 'reported', 'semantic'])
+    for (const run of runs) await checkRun(run, join(directory, 'execute', run.condition))
+    expect(http.calls).toHaveLength(26)
+    expect(runs.reduce((sum, run) => sum + run.counts.ordinary + run.counts.semantic, 0)).toBe(26)
+    const ordinary = http.calls.filter(call => call.kind !== 'semantic')
+    for (let start = 0; start < 24; start += 8) {
+      const group = ordinary.slice(start, start + 8)
+      expect(group.map(call => call.kind)).toEqual(['B-initial', 'B-initial', 'C-initial', 'C-initial', 'B-mixed', 'B-mixed', 'C-mixed', 'C-mixed'])
+      expect(group.slice(0, 4).every(call => !JSON.stringify(call.body.messages).includes('maxRetries: 1'))).toBe(true)
+    }
+    expect(http.calls.slice(16).map(call => call.kind)).toEqual([
+      'B-initial', 'B-initial', 'C-initial', 'C-initial', 'semantic', 'B-mixed', 'B-mixed', 'semantic', 'C-mixed', 'C-mixed',
+    ])
+    const output = join(directory, 'execute', 'semantic')
+    const source = z.object({ commands: z.array(z.unknown()) }).parse(await readJson(join(output, 'source-admission.json')))
+    for (const call of http.calls.slice(16).filter(call => call.kind.endsWith('-mixed'))) {
+      checkSharedEvidence(mixedHttpTexts(call.body), source.commands[1])
+    }
+    const audit = await semanticAudit(output, 'semantic')
+    expect(audit.requests).toHaveLength(2)
+    expect(audit.results).toHaveLength(2)
+    const allowances = audit.requests.map(request => z.object({ maxContextBytes: z.number() }).parse(request.data).maxContextBytes)
+    expect(allowances).toEqual([6681, 6552])
+    for (const [index, event] of audit.results.entries()) {
+      const summary = z.object({ version: z.literal(5), status: z.literal('completed'), error: z.null(), requestSeq: z.number(),
+        projection: z.object({ text: z.string() }), usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
+        finish: z.object({ kind: z.literal('stop') }) }).parse(event.data)
+      expect(summary.requestSeq).toBe(audit.requests[index]?.seq)
+      expect(Buffer.byteLength(summary.projection.text)).toBeLessThanOrEqual(z.number().parse(allowances[index]))
+      checkSharedEvidence([summary.projection.text], source.commands[1])
+    }
+    await checkSettledReservations(output, ['B', 'B', 'C', 'C', 'O', 'B', 'B', 'O', 'C', 'C'])
+    await expect(runDataPhase('execute', directory)).rejects.toThrow()
+    expect(http.calls).toHaveLength(26)
+  } finally {
+    try { await http?.close() } finally { await retainAndRemove(root) }
+  }
+}, 300000)
+
+it.skipIf(!enabled)('records semantic capacity failure before dispatching a prepared request when a legal summary is oversized', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'native-mixed-capacity-spec-'))
+  let http: Awaited<ReturnType<typeof openMixedHttpFixture>> | undefined
+  try {
+    http = await openMixedHttpFixture({ oversizedSummary: true })
+    const study = studyAt(http.endpoint)
+    http.configure(study.runtime.roles)
+    const output = join(root, 'run')
+    const result = await runNativeMixed({ repo, nodePath: process.execPath, output, condition: 'semantic', study: study.runtime,
+      execution: { kind: 'transport-calibration' },
+      grade: artifacts => gradeMixedArtifacts({ condition: 'semantic', ...artifacts, oracle: study.oracle }) })
+    await writeFile(join(root, 'http-observations.json'), JSON.stringify({ calls: http.calls, errors: http.errors }, null, 2) + '\n',
+      { flag: 'wx', mode: 0o600 })
+    expect(http.errors).toEqual([])
     const capacity = z.object({ condition: z.literal('semantic'), failed: z.literal(true), grade: z.null(),
       error: z.literal('ordinary turn did not complete'), dispatchBlocked: z.literal(false), realModelDispatches: z.literal(0),
       roles: z.strictObject({}),
       counts: z.object({ ordinary: z.literal(4), semantic: z.literal(1), sourceControlled: z.literal(16) }),
       artifacts: z.strictObject({ policy: sealed, cases: sealed, verification: z.object({ B: sealed, C: sealed }),
         visibleVerification: z.object({ B: z.null(), C: z.null() }) }),
-      cleanup: z.object({ started: z.literal(5), closed: z.literal(5), forced: z.literal(0) }) }).parse(runs[2])
-    expect(http.calls).toHaveLength(21)
-    expect(controls.reduce((sum, run) => sum + run.counts.ordinary + run.counts.semantic, 0)
-      + capacity.counts.ordinary + capacity.counts.semantic).toBe(21)
-    const ordinary = http.calls.filter(call => call.kind !== 'semantic')
-    for (let start = 0; start < 16; start += 8) {
-      const group = ordinary.slice(start, start + 8)
-      expect(group.map(call => call.kind)).toEqual(['B-initial', 'B-initial', 'C-initial', 'C-initial', 'B-mixed', 'B-mixed', 'C-mixed', 'C-mixed'])
-      expect(group.slice(0, 4).every(call => !JSON.stringify(call.body.messages).includes('maxRetries: 1'))).toBe(true)
-    }
-    expect(http.calls.slice(16).map(call => call.kind)).toEqual(['B-initial', 'B-initial', 'C-initial', 'C-initial', 'semantic'])
-    const output = join(directory, 'execute', 'semantic')
+      cleanup: z.object({ started: z.literal(5), closed: z.literal(5), forced: z.literal(0) }) }).parse(result)
+    expect(http.calls.map(call => call.kind)).toEqual(['B-initial', 'B-initial', 'C-initial', 'C-initial', 'semantic'])
     await checkSource(output)
     await checkPartial(output, capacity.artifacts, { B: 3, C: 2 })
     for (const role of ['B', 'C'] as const) {
@@ -297,38 +393,21 @@ it.skipIf(!enabled)('records semantic capacity failure after completing both con
     }
     expect(capacity.artifacts.policy.text).toBe(study.runtime.roles.B.initialFiles[study.runtime.roles.B.artifactPath])
     expect(capacity.artifacts.cases.text).toBe(study.runtime.roles.C.initialFiles[study.runtime.roles.C.artifactPath])
-    const audit = z.object({ events: z.array(z.object({ type: z.string(), seq: z.number(), data: z.unknown() }).loose()) })
-      .parse(await readJson(join(output, 'partial-O-session.json')))
-    const requests = audit.events.filter(event => event.type === 'context/semantic-request')
-    const results = audit.events.filter(event => event.type === 'context/semantic-result')
-    expect(requests).toHaveLength(1)
-    expect(results).toHaveLength(1)
-    expect(z.object({ maxContextBytes: z.number() }).parse(requests[0]?.data).maxContextBytes).toBe(6681)
-    const summaryResult = z.object({ status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
+    const audit = await semanticAudit(output, 'partial')
+    expect(audit.requests).toHaveLength(1)
+    expect(audit.results).toHaveLength(1)
+    expect(z.object({ maxContextBytes: z.number() }).parse(audit.requests[0]?.data).maxContextBytes).toBe(6681)
+    const summaryResult = z.object({ version: z.literal(5), status: z.literal('failed'), projection: z.null(), requestSeq: z.number(),
       error: z.literal('semantic output: relevant updates and mandatory evidence exceed maxContextBytes'),
       usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }), finish: z.object({ kind: z.literal('stop') }) })
-      .parse(results[0]?.data)
-    expect(summaryResult.requestSeq).toBe(requests[0]?.seq)
-    const auditFiles = (await readdir(join(output, 'final-O-durable-sessions'), { recursive: true }))
-      .filter(file => file.endsWith('.jsonl'))
-    expect(auditFiles).toHaveLength(1)
-    const auditFile = auditFiles[0]
-    if (auditFile === undefined) throw new Error('final semantic audit file absent')
-    const auditBytes = await readFile(join(output, 'final-O-durable-sessions', auditFile))
-    const storedAudit = scanLog(auditBytes)
-    expect(storedAudit.committedBytes).toBe(auditBytes.length)
-    expect(storedAudit.events).toEqual(audit.events)
-    const reservations = z.array(z.object({ role: z.enum(['B', 'C', 'O']), result: z.object({
-      operation: z.literal('model-settle'), usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
-      responseObserved: z.literal(true),
-    }) })).parse(await readJson(join(output, 'dispatch-ledger.json')))
-    expect(reservations.map(item => item.role)).toEqual(['B', 'B', 'C', 'C', 'O'])
-    await expect(runDataPhase('execute', directory)).rejects.toThrow()
-    expect(http.calls).toHaveLength(21)
+      .parse(audit.results[0]?.data)
+    expect(summaryResult.requestSeq).toBe(audit.requests[0]?.seq)
+    await checkSettledReservations(output, ['B', 'B', 'C', 'C', 'O'])
+    expect(http.calls).toHaveLength(5)
   } finally {
     try { await http?.close() } finally { await retainAndRemove(root) }
   }
-}, 300000)
+}, 120000)
 
 for (const fault of ['missing-mixed-usage', 'cancel-mixed'] as const) {
   it.skipIf(!enabled)(`blocks later dispatch after ${fault} in an already working Session`, async () => {

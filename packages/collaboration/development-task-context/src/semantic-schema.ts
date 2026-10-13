@@ -13,7 +13,7 @@ import type { DevelopmentTaskId, DevelopmentParticipantId } from '@deepseek-ai/d
 export function semanticJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return item
-    return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+    return Object.fromEntries(Object.entries(item).sort(([a], [b]) => Number(a > b) - Number(a < b)))
   })
 }
 
@@ -113,6 +113,7 @@ export const semanticResultSchema = z.discriminatedUnion('version', [
   z.object({ ...resultFields, version: z.literal(2), projection: evidenceProjection.nullable() }).strict(),
   z.object({ ...resultFields, version: z.literal(3), projection: evidenceProjection.nullable() }).strict(),
   z.object({ ...resultFields, version: z.literal(4), projection: evidenceProjection.nullable() }).strict(),
+  z.object({ ...resultFields, version: z.literal(5), projection: evidenceProjection.nullable() }).strict(),
 ]).superRefine((record, ctx) => {
   if (record.status === 'completed' ? record.projection === null || record.error !== null
     : record.projection !== null || record.error === null) {

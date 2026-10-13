@@ -18,7 +18,9 @@ Ordinary calibration responses consume actual request messages and public projec
 
 The named-profile driver owns independent scope, policy-source, documentation-source and two recipient processes. Ordinary HTTP-provider reservations are cumulative across initial and mixed work; leaving requires no model turn. Runtime or accounting failure stops later work, while an unsuccessful artifact grade remains a completed observation. Loopback SSE responses consume only actual HTTP message text and public projects, keeping the parent observer and artifact grader independent. This permits transport and lifecycle calibration without substituting scripted success for live inference.
 
-The native calibration also records failure when a short controlled summary and its required source and authorization records exceed the fixed allowance. Production identities and existing local Task text consume capacity that a smaller Loader fixture does not reproduce. A completed native driver therefore does not imply a completed semantic artifact comparison; widening the budget would change this protocol rather than repair that limitation.
+Semantic result version 5 reuses exact source and authorization identities in mandatory evidence. Native acceptance holds the complete managed allowance at 8,000 bytes, retains both policy quotes and full command observations, and requires both semantic recipients to complete HTTP work and pass independent policy, QA and current-verification grading. N and reported retain their actual business failures without stopping the comparison. The representation changes no owner responsibility, local Task, scope permission, tool or history.
+
+A separate legal oversized-summary control preserves capacity rejection: the first mixed request is persisted with withdrawn context but receives no ordinary HTTP dispatch. The check requires the exact projection-budget error, retained partial artifacts and summary audit, and completed Host cleanup. Controlled responses establish these delivery and failure checks; they do not establish live-model quality or collaboration benefit.
 
 ## Alternatives considered
 

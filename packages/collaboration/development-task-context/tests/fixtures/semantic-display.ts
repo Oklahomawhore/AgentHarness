@@ -5,6 +5,7 @@ const attribution = { attribution: z.json().optional() }
 const tableSchema = z.object({
   task: z.json(), recipient: z.json(), inherited: z.array(z.json()), mandatory: z.array(z.json()), sourceReferences: z.string(),
   authorizationTable: z.array(z.json()),
+  mandatoryReferences: z.array(z.number().int().nonnegative()).optional(),
   sourceTable: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('task'), taskId: z.string(), revision: z.number(), ...attribution }).strict(),
     z.object({ kind: z.literal('publication'), taskSourceIndex: z.number().int().nonnegative(), publicationId: z.string(),
@@ -31,9 +32,9 @@ export function semanticTextValue(text: string): unknown {
   return JSON.parse(raw) as unknown
 }
 
-/** Expand version-four tables without using the production display implementation.
- * @param text - Complete version-four semantic text.
- * @returns The expanded version-three JSON value, including unchanged opaque mandatory records.
+/** Expand version-four/five tables without using the production display implementation.
+ * @param text - Complete semantic table text.
+ * @returns The complete expanded version-three JSON value, interpreting only explicitly marked mandatory entries.
  */
 export function expandSemanticText(text: string): unknown {
   const value = tableSchema.parse(semanticTextValue(text))
@@ -58,7 +59,30 @@ export function expandSemanticText(text: string): unknown {
       return [key, z.json().parse(value.authorizationTable[authorizationIndex])]
     }))
   }
-  return { task: value.task, recipient: value.recipient, inherited: value.inherited, mandatory: value.mandatory,
+  const marked = new Set(value.mandatoryReferences ?? [])
+  if (marked.size !== (value.mandatoryReferences?.length ?? 0)
+    || [...marked].some(index => index >= value.mandatory.length)) throw new Error('invalid mandatory indexes')
+  const mandatory = value.mandatory.map((item, index) => {
+    if (!marked.has(index)) return item
+    const encoded = z.object({ sourceIndex: z.number().int().nonnegative(), kind: z.literal('command-evidence'),
+      publication: z.object({ peerContribution: z.object({ grant: z.record(z.string(), z.json()) }).loose() }).loose(),
+    }).loose().parse(item)
+    const { sourceIndex, ...remainder } = encoded
+    if (Object.hasOwn(remainder, 'source')) throw new Error('encoded command also contains a source')
+    const originalSource = source(sourceIndex)
+    if (originalSource.kind !== 'publication') throw new Error('command source is not a publication')
+    if (Object.hasOwn(encoded.publication, 'id')) throw new Error('encoded command also contains a publication identity')
+    const { authorizationIndex, ...grant } = encoded.publication.peerContribution.grant
+    if (Object.hasOwn(grant, 'taskId')) throw new Error('encoded grant also contains a Task identity')
+    const authorization = z.object({ ownerPeerId: z.string(), contributorPeerId: z.string(), grantId: z.string(),
+      generation: z.string(), captureId: z.string(), captureGeneration: z.string(),
+    }).strict().parse(value.authorizationTable[z.number().int().nonnegative().parse(authorizationIndex)])
+    if (Object.keys(authorization).some(key => Object.hasOwn(grant, key))) throw new Error('encoded grant also contains an identity field')
+    return { ...remainder, source: originalSource, publication: { ...encoded.publication, id: originalSource.publicationId,
+      peerContribution: { ...encoded.publication.peerContribution,
+        grant: { ...grant, ...authorization, taskId: originalSource.taskId } } } }
+  })
+  return { task: value.task, recipient: value.recipient, inherited: value.inherited, mandatory,
     updates: value.updates.map(update => ({ text: update.text, sources: update.sources.map(citation => ({
       source: source(citation.sourceIndex), quote: citation.quote, attribution: originalAttribution(citation.sourceIndex),
     })) })), coverage: { selectedSources: value.coverage.selectedSources.map(source),

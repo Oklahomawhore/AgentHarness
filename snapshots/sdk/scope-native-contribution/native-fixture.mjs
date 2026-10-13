@@ -67,11 +67,13 @@ export async function apply(ctx) {
   ctx.effect(() => () => reader.fiber.dispose())
   let sentSamples = 0
   source.ctx.scopeTransport.beforeSample = async () => {
-    await using handle = await reader.sessionPersistence.open(sourceAgent.id, 'read')
-    const records = (await handle.read()).events
-    assert.ok(records.filter(event => event.type === 'tool/result').length > sentSamples,
-      'the actual source tool result must be physically durable before sending its observation')
-    sentSamples++
+    const handle = await reader.sessionPersistence.open(sourceAgent.id, 'read')
+    try {
+      const records = (await handle.read()).events
+      assert.ok(records.filter(event => event.type === 'tool/result').length > sentSamples,
+        'the actual source tool result must be physically durable before sending its observation')
+      sentSamples++
+    } finally { await handle.close() }
   }
   const runSource = async responses => {
     source.adapter.script.push(...responses, textReply('Source work completed.'))

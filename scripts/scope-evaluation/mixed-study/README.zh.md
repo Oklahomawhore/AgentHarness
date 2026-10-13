@@ -17,7 +17,7 @@
 <a id="equal-work-opportunities"></a>
 ## 相同工作机会
 
-每个接收者在共享更新前先进行普通本地工作，保留原 Session、Task 与公开项目文件。来源通过实际 Write、Bash 和 Edit 操作工作；同一命令先成功，之后失败。另一所有者写入并替换无关文档。全部混合工作回执完成后，两个接收者才得到相同的中性工作机会。中间没有请求提前提供纠正，也不删除任何历史。
+每个接收者在共享更新前先进行普通本地工作，保留原 Session、Task 与公开项目文件。Agent 保留各自所有者的职责；scope 控制共享上下文。来源通过实际 Write、Bash 和 Edit 操作工作；同一命令先成功，之后失败。另一所有者写入并替换无关文档。全部混合工作回执完成后，两个接收者才得到相同的中性工作机会。中间没有请求提前提供纠正，也不删除任何历史。
 
 [实验定义](../mixed-study.ts)使用同一组由 seed 生成的字段名，派生来源策略、初始项目与隐藏评分输入。每个条件采用相同来源轨迹、项目输入和完整上下文上限。条件选择通信方式，不决定产物内容。旧[单轮实验](../data-study/README.zh.md)的 E 仍为原始文本；[连续性实验](../continuity-study/README.zh.md)保留其独立 E/R 协议。
 
@@ -43,6 +43,8 @@ pnpm exec vitest run scripts/scope-evaluation/mixed-study.spec.ts packages/colla
 
 [原生驱动](../native-mixed-run.ts)启动五个身份独立的命名 `dsh` profile：scope 所有者、策略与文档来源，以及两个接收 Agent。来源工具与 TCP/Noise 投递使用真实实现；普通及摘要请求使用生产 HTTP provider 适配器。两个接收者完成初始本地工作后，只有在全部来源回执完成时才在原 Session 中继续。离开保留原本地 Task，且不消耗模型调用。
 
+原生验收检查在固定的 8,000 字节完整受管额度内使用语义结果版本 5 的[无损来源与授权引用](../../../packages/collaboration/development-task-context/README.zh.md)。它要求两个 semantic 接收者都完成混合 HTTP 工作，并通过独立的策略、QA 与当前验证结果评分，同时保留两条策略引文和完整命令证据。N 与 reported 保留实际业务失败，并继续执行 semantic 条件。原 Session、本地 Task、历史和工具保持完整。
+
 公共包构建完成后，可运行本地 HTTP 校准：
 
 ```sh
@@ -56,7 +58,7 @@ DSH_NATIVE_DATA_EVALUATION=1 pnpm exec vitest run scripts/scope-evaluation/nativ
 <a id="limits"></a>
 ## 限制
 
-固定原生工作负载即使使用短受控摘要，仍超过首个接收者的可用额度。原生校准在 N 与 reported 后记录此容量失败，不完成 semantic 产物评分。独立 Loader 校准的身份和本地上下文开销不同。
+显式容量失败对照使用合法的超长摘要，保持相同来源输入、两条策略引文和 8,000 字节上限。它检查精确的投影预算错误，以及包含已撤回上下文、但没有普通 HTTP 派发的持久化请求。部分产物和完整摘要审计仍可读取，资源清理必须完成。独立 Loader 校准的身份和本地上下文开销不同。
 
 受控摘要有意识别注册的策略报告。摘要路径的产物通过，不代表真实模型能够选出这些报告、理解纠正或完成有用工作。协议分别记录机制、产物有效性及当前证据可用性。单测拒绝陈旧策略与命令结果；默认 reported 后端保留其实际省略，不为此夹具改变选择。
 

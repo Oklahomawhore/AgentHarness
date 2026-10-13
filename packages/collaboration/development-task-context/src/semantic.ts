@@ -78,7 +78,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     if ([config.auditSessionId, config.provider, config.model].some(value => value.trim() === '')
       || config.reasoningEffort?.trim() === '') throw new Error('semantic backend: identity and route must be nonempty')
     // Selection and evidence comparison changes invalidate outer caches without rewriting retained audit requests.
-    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 8, system: SYSTEM, config: this.config }) })
+    this.identity = Object.freeze({ id: 'semantic', revision: semanticDigest({ version: 9, system: SYSTEM, config: this.config }) })
     this.ready = SemanticAudit.open(ctx, this.config.auditSessionId)
     // compute and disposal observe the same initialization failure; construction must not leave an unhandled rejection.
     void this.ready.catch(() => undefined)
@@ -124,11 +124,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
     const message: SemanticRequestRecord['messages'][number] = { id: MessageId('semantic-input'), role: 'user',
       content: [{ type: 'text', text: framed }],
       source: { kind: 'plugin', plugin: 'dsh-development-task-context/semantic' } }
-    const maxTokens = prepared.config.maxTokens
-    if (maxTokens === undefined || maxTokens !== this.config.maxOutputTokens) {
-      throw new Error('semantic backend: prepared output-token ceiling differs from its explicit configuration')
-    }
-    const fields = { backend: this.identity, call: { ...prepared.config, maxTokens },
+    const fields = { backend: this.identity, call: { ...prepared.config, maxTokens: this.config.maxOutputTokens },
       system: SYSTEM, messages: [message], maxContextBytes: input.maxContextBytes }
     const key = semanticRequestKey(fields)
     const running = this.jobs.get(key)
@@ -138,35 +134,31 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
       throw new Error('semantic backend: unknown interrupted attempt is reserved; identical request is not automatically retried')
     }
     if (previous?.result?.status === 'completed') {
-      if (previous.result.projection === null) throw new Error('semantic audit: completed result has no projection')
       return semanticProjectionSchema.parse(restoreSemanticProjection(previous.request, previous.result))
     }
-    let job = this.jobs.get(key)
-    if (job === undefined) {
-      if (this.jobs.size >= this.config.maxConcurrentCalls) throw new Error('semantic backend: maxConcurrentCalls exhausted')
-      const controller = new AbortController()
-      const request = { version: 1 as const, ...fields, key, purpose: 'context-summary' as const,
-        messages: [{ ...message, id: MessageId(`semantic-${key}`) }] }
-      const work = this.run(audit, prepared, request, evidence, AbortSignal.any([controller.signal, this.lifetime.signal]))
-      job = { controller, work, readers: 0 }
-      this.jobs.set(key, job)
-      void work.finally(() => this.jobs.delete(key)).catch(() => undefined)
-    }
+    if (this.jobs.size >= this.config.maxConcurrentCalls) throw new Error('semantic backend: maxConcurrentCalls exhausted')
+    const controller = new AbortController()
+    const request = { version: 1 as const, ...fields, key, purpose: 'context-summary' as const,
+      messages: [{ ...message, id: MessageId(`semantic-${key}`) }] }
+    const work = this.run(audit, prepared, request, evidence, AbortSignal.any([controller.signal, this.lifetime.signal]))
+    const job = { controller, work, readers: 0 }
+    this.jobs.set(key, job)
+    void work.finally(() => this.jobs.delete(key)).catch(() => undefined)
     return await this.wait(job, timer.signal)
   }
 
   private async wait(job: Job, signal: AbortSignal): Promise<DevelopmentTaskContextProjection> {
     signal.throwIfAborted()
+    const cancelled = Promise.withResolvers<never>()
+    const cancel = () => {
+      cancelled.reject(signal.reason instanceof Error ? signal.reason : new Error('semantic context caller cancelled'))
+    }
     job.readers++
-    let cancel: (() => void) | undefined
     try {
-      return await Promise.race([job.work.then(value => semanticProjectionSchema.parse(value)), new Promise<never>((_resolve, reject) => {
-        cancel = () =>{  reject(signal.reason instanceof Error ? signal.reason : new Error('semantic context caller cancelled')) }
-        signal.addEventListener('abort', cancel, { once: true })
-        if (signal.aborted) cancel()
-      })])
+      signal.addEventListener('abort', cancel, { once: true })
+      return await Promise.race([job.work.then(value => semanticProjectionSchema.parse(value)), cancelled.promise])
     } finally {
-      if (cancel !== undefined) signal.removeEventListener('abort', cancel)
+      signal.removeEventListener('abort', cancel)
       job.readers--
       if (job.readers === 0) job.controller.abort(new Error('semantic context has no active readers'))
     }
@@ -207,7 +199,7 @@ export default class SemanticDevelopmentTaskContextBackend extends DevelopmentTa
       const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
       projection = projectSemanticReply(evidence, JSON.parse(text) as unknown, request.maxContextBytes)
     } catch (error) { failure = error }
-    const result = semanticResultSchema.parse({ version: 4, key: request.key, requestSeq: seq,
+    const result = semanticResultSchema.parse({ version: 5, key: request.key, requestSeq: seq,
       status: projection === null ? 'failed' : 'completed', rawOutput: assembler.blocks(), finish,
       usage: assembler.usage ?? null, elapsedMs: performance.now() - started,
       error: projection === null ? failure instanceof Error ? failure.message : 'semantic model computation failed' : null,
