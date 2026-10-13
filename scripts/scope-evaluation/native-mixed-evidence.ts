@@ -1,11 +1,13 @@
 /** Parent observations from actual native request content, independent of artifact-producing adapters. */
 import { z } from 'zod'
+import { expandReportedGrants } from './reported-grant-evidence.mjs'
 
 const object = z.record(z.string(), z.unknown())
 const command = z.object({ kind: z.literal('command-observation'), version: z.literal(4),
   fields: z.object({ command: z.literal('node verify.cjs'), rootIndex: z.literal(0) }),
   state: z.literal('completed'), exitCode: z.number().int().nullable(), signal: z.null(),
   timedOut: z.literal(false), aborted: z.literal(false) })
+const backendSchema = z.object({ id: z.string(), revision: z.string() })
 const messageSchema = z.object({ source: z.object({ kind: z.string() }).loose(),
   content: z.array(z.object({ type: z.string(), text: z.string().optional() }).loose()) }).loose()
 
@@ -42,7 +44,15 @@ export function observeMixedRequest(messages: readonly unknown[]) {
         observe(publication.localToolObservation ?? publication.peerToolObservation)
       }
     } else {
-      for (const publication of z.array(object).parse(value.publications)) {
+      const projection = message.source.projection === undefined ? undefined : object.parse(message.source.projection)
+      const recorded = projection?.backend ?? message.source.backend
+      const backend = recorded === undefined ? undefined : backendSchema.parse(recorded)
+      if (Object.hasOwn(value, 'observationReferences') && backend?.id !== 'reported-files') {
+        throw new Error('encoded reported context lacks its recorded backend identity')
+      }
+      const expanded = backend?.id === 'reported-files'
+        ? object.parse(expandReportedGrants(value, z.enum(['3', '4', '5']).parse(backend.revision))) : value
+      for (const publication of z.array(object).parse(expanded.publications)) {
         if (publication.kind === 'reported-file') continue
         const literal = z.string().parse(publication.text)
         const start = literal.indexOf('\n{')

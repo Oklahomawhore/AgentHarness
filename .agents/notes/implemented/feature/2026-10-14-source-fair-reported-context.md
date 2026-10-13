@@ -26,6 +26,6 @@ A command and file sharing a capture establish provenance association, not verif
 
 ## Consequences
 
-The default makes no summary calls and preserves complete grant values. Allocation cannot guarantee relevant evidence or equal bytes per source. Oversized terminal notices remain possible budget omissions. Activation remains exact, so changed selection can trigger another authorized response. Backend revision 4 distinguishes new computations; recorded earlier text and committed Session generations remain unchanged.
+The default makes no summary calls and preserves complete grant values. Allocation cannot guarantee relevant evidence or equal bytes per source. Oversized terminal notices remain possible budget omissions. Activation remains exact, so changed selection can trigger another authorized response. The [lossless peer-text representation](../bug-fix/2026-10-14-lossless-peer-report-text.md) owns the current backend revision; recorded earlier text and committed Session generations remain unchanged.
 
 Independent expansion, fixed-budget source rotation, exact byte limits, and recorded SDK requests verify representation and delivery. Controlled execution evidence does not establish model understanding or general collaboration benefit.

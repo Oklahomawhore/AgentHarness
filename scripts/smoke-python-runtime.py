@@ -1116,18 +1116,18 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
     expected_name = {
         "scope-automatic-withdrawal": "scope-automatic-withdrawal-command-outcome-evidence-r2",
         "scope-capture-self-omission": "scope-capture-self-omission-command-outcome-evidence-r2",
-        "scope-completed-file": "scope-completed-file-reported-grant-table-r3",
+        "scope-completed-file": "scope-completed-file-reported-observations-r4",
         "scope-context-live": "scope-context-live-command-outcome-evidence-r2",
         "scope-dual-contribution": "scope-dual-contribution-command-outcome-evidence-r2",
         "scope-group-join": "scope-group-join-command-outcome-evidence-r3",
         "scope-joint-automatic": "scope-joint-automatic-command-outcome-evidence-r2",
         "scope-local-joint": "scope-local-joint-command-outcome-evidence-r3",
-        "scope-native-contribution": "scope-native-contribution-command-outcome-evidence-r2",
+        "scope-native-contribution": "scope-native-contribution-reported-observations-r3",
         "scope-owner-idle": "scope-owner-idle-command-outcome-evidence-r2",
         "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",
         "scope-prejoin-initialization": "scope-prejoin-initialization-command-outcome-evidence-r2",
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
-        "scope-reported-file": "scope-reported-file-reported-grant-table-r3",
+        "scope-reported-file": "scope-reported-file-reported-observations-r4",
         "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
         "scope-semantic-idle": "scope-semantic-idle-captured-input-r8",
         "task-context-semantic": "task-context-semantic-captured-input-r9",
@@ -1335,7 +1335,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         elif scenario == "scope-owner-participation":
             result = owner_participation_snapshot_result(records, turns)
         elif scenario == "scope-native-contribution":
-            result = native_contribution_snapshot_result(records, turns)
+            result = native_contribution_snapshot_result(records, turns, json.loads((home / "native-contribution-audit.json").read_text()))
         else:
             result = native_scope_snapshot_result(records, first, last, observed)
             if scenario == "scope-route-recovery":
@@ -1444,13 +1444,22 @@ def command_outcomes_snapshot_result(
 
 
 def expand_reported_grants(value: dict[str, object], revision: str) -> dict[str, object]:
-    """Independently restore only explicitly indexed full grants from actual reported message JSON."""
+    """Independently restore indexed grants and canonical observation text from actual reported JSON."""
     body = copy.deepcopy(value)
-    if revision not in {"3", "4"} or not isinstance(body.get("publications"), list):
+    if revision not in {"3", "4", "5"} or not isinstance(body, dict) or not isinstance(body.get("publications"), list):
         raise AssertionError("unsupported reported payload")
+    if "observationReferences" in body and revision != "5":
+        raise AssertionError("legacy reported revision cannot contain observation references")
+    expand_reported_grant_table(body, revision)
+    expand_reported_observation_table(body)
+    return body
+
+
+def expand_reported_grant_table(body: dict[str, object], revision: str) -> None:
+    """Expand the original version-one grant table without changing legacy interpretation."""
     if "grantReferences" not in body:
-        return body
-    if revision != "4":
+        return
+    if revision == "3":
         raise AssertionError("legacy reported revision cannot contain grant references")
     table = body["grantReferences"]
     legend = ("grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]"
@@ -1505,7 +1514,226 @@ def expand_reported_grants(value: dict[str, object], revision: str) -> dict[str,
     if len(used) != len(grants):
         raise AssertionError("unreferenced grant row")
     del body["grantReferences"]
-    return body
+
+
+def reported_fields(value: object, required: list[str], optional: list[str], label: str) -> None:
+    """Require the explicit fields of an indexed report without normalizing their order."""
+    if not isinstance(value, dict) or not set(required) <= set(value) or not set(value) <= set(required + optional):
+        raise AssertionError(f"{label} fields differ")
+
+
+def reported_integer(value: object, minimum: int = 0) -> bool:
+    """Exclude booleans and numbers outside JavaScript's exact integer range."""
+    return type(value) is int and minimum <= value <= 9007199254740991
+
+
+def reported_digest(value: object) -> bool:
+    """Recognize an exact lowercase source digest."""
+    return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
+
+
+def reported_length(value: str) -> int:
+    """Count UTF-16 code units as the publication and grant schemas do."""
+    return len(value.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def reported_permission_source(value: object) -> dict[str, object]:
+    """Validate the exact tool-source variants before interpreting indexed report attribution."""
+    if not isinstance(value, dict):
+        raise AssertionError("observation grant source must be an object")
+    version = value.get("version", 1)
+    if "version" in value and (type(version) is not int or version not in (2, 3, 4)):
+        raise AssertionError("invalid observation grant source version")
+    required = ["kind", "name", "tools"] + ([] if version == 1 else ["version"])
+    required += ["initialization"] if version == 2 else ["fileContent"] if version == 3 else ["commands"] if version == 4 else []
+    reported_fields(value, required, ["fileContent"] if version == 4 else [], "observation grant source")
+    if (value["kind"] != "tool-observations" or not isinstance(value["name"], str)
+            or not value["name"].strip() or reported_length(value["name"]) > 256):
+        raise AssertionError("invalid observation grant source")
+    tools = value["tools"]
+    if (not isinstance(tools, list) or not (0 if version == 4 else 1) <= len(tools) <= 2
+            or any(tool not in ("Write", "Edit") for tool in tools) or len(set(tools)) != len(tools)):
+        raise AssertionError("invalid observation grant tools")
+    if version == 2 and value["initialization"] != "recorded-local-tools":
+        raise AssertionError("invalid observation grant initialization")
+    if "fileContent" in value and (value["fileContent"] != "completed-native-file" or not tools):
+        raise AssertionError("invalid observation grant file content")
+    if version == 4:
+        commands = value["commands"]
+        if not isinstance(commands, list) or not commands:
+            raise AssertionError("invalid observation grant commands")
+        selectors = set()
+        for command in commands:
+            reported_fields(command, ["command", "rootIndex"], [], "observation grant command")
+            if (not isinstance(command["command"], str) or not command["command"].strip() or "\0" in command["command"]
+                    or not reported_integer(command["rootIndex"])):
+                raise AssertionError("invalid observation grant command")
+            selectors.add((command["command"], command["rootIndex"]))
+        if len(selectors) != len(commands):
+            raise AssertionError("duplicate observation grant command")
+    return value
+
+
+def reported_result_warning(result: object, source: dict[str, object]) -> str:
+    """Check report fields and the matching grant selector independently of the production codec."""
+    tool_warning = ("Authenticated peer tool observation. This is a reported event, not a current file snapshot. "
+                    "The Task owner has not independently verified the tool execution or file contents.")
+    if not isinstance(result, dict):
+        raise AssertionError("observation result must be an object")
+    if result.get("kind") == "command-observation":
+        completed = result.get("state") == "completed"
+        reported_fields(result, ["kind", "version", "tool", "fields", "state"] +
+                        (["exitCode", "signal", "timedOut", "aborted", "timeoutMs", "stdout", "stderr"] if completed else ["reason"]),
+                        [], "command result")
+        selector = result["fields"]
+        reported_fields(selector, ["command", "rootIndex"], [], "command selector")
+        if (type(result["version"]) is not int or result["version"] != 4 or result["tool"] != "Bash"
+                or not reported_integer(selector["rootIndex"]) or not isinstance(selector["command"], str)
+                or not selector["command"].strip() or "\0" in selector["command"]):
+            raise AssertionError("invalid command result")
+        if (type(source.get("version")) is not int or source["version"] != 4 or not isinstance(source.get("commands"), list)
+                or not any(isinstance(item, dict) and item.get("command") == selector["command"]
+                           and type(item.get("rootIndex")) is int and item["rootIndex"] == selector["rootIndex"] for item in source["commands"])):
+            raise AssertionError("command grant differs")
+        if completed:
+            if (result["exitCode"] is not None and not reported_integer(result["exitCode"], -9007199254740991)
+                    or result["signal"] is not None and (not isinstance(result["signal"], str) or not result["signal"])
+                    or type(result["timedOut"]) is not bool or type(result["aborted"]) is not bool
+                    or not reported_integer(result["timeoutMs"], 1)):
+                raise AssertionError("invalid command completion")
+            for output in (result["stdout"], result["stderr"]):
+                if not isinstance(output, dict):
+                    raise AssertionError("command output must be an object")
+                included = output.get("state") == "included"
+                reported_fields(output, ["state", "text" if included else "reason", "truncated"], [], "command output")
+                if type(output["truncated"]) is not bool or (not isinstance(output["text"], str) if included
+                        else output["state"] != "omitted" or output["reason"] != "budget"):
+                    raise AssertionError("invalid command output")
+        elif result["state"] != "unavailable" or result["reason"] not in ("tool-failed", "completion-unavailable"):
+            raise AssertionError("invalid unavailable command")
+        return ("Authenticated peer foreground command outcome. This records one execution, not verification of current code. "
+                "The Task owner has not independently verified this execution.")
+    version = result.get("version")
+    reported_fields(result, ["kind", "version", "reportedStatus", "omissions", "tool", "fields"] +
+                    (["origin"] if version == 2 else ["completedFile"] if version == 3 else []), [], "tool result")
+    if (result["kind"] != "tool-observation" or type(version) is not int or version not in {1, 2, 3}
+            or result["tool"] not in ("Write", "Edit") or result["reportedStatus"] not in ("success", "failure")):
+        raise AssertionError("invalid tool result")
+    source_version = source.get("version", 1)
+    permitted = (version == (3 if "fileContent" in source else 1) if source_version == 4 else
+                 version == 3 if source_version == 3 else version == 1 or source_version == 2 and version == 2)
+    if (type(source_version) is not int or source_version not in {1, 2, 3, 4} or not isinstance(source.get("tools"), list)
+            or result["tool"] not in source["tools"] or not permitted):
+        raise AssertionError("tool grant differs")
+    body_fields = ["content"] if result["tool"] == "Write" else ["oldString", "newString"]
+    fields = result["fields"]
+    reported_fields(fields, ["rootIndex", "path"] + (["replaceAll"] if result["tool"] == "Edit" else []),
+                    body_fields + ["error"], "tool fields")
+    if (not reported_integer(fields["rootIndex"]) or not isinstance(fields["path"], str) or reported_length(fields["path"]) > 2048
+            or re.search(r"[\\:\x00-\x1f\x7f]", fields["path"]) or any(part in {"", ".", ".."} for part in fields["path"].split("/"))
+            or result["tool"] == "Edit" and type(fields["replaceAll"]) is not bool):
+        raise AssertionError("invalid tool fields")
+    if any(key in fields and not isinstance(fields[key], str) for key in body_fields + ["error"]):
+        raise AssertionError("invalid tool field text")
+    omissions = result["omissions"]
+    if (not isinstance(omissions, list) or any(not isinstance(item, str) for item in omissions)
+            or len(set(omissions)) != len(omissions) or any((key in fields) == (key in omissions) for key in body_fields)
+            or any(key not in body_fields + ["error"] or key in fields for key in omissions)
+            or ("error" in fields or "error" in omissions if result["reportedStatus"] == "success" else any(key in fields for key in body_fields))):
+        raise AssertionError("invalid tool omissions")
+    if version == 2:
+        origin = result["origin"]
+        reported_fields(origin, ["kind", "planDigest", "executionDigest"], [], "recorded origin")
+        if origin["kind"] != "recorded-local-tools" or not reported_digest(origin["planDigest"]) or not reported_digest(origin["executionDigest"]):
+            raise AssertionError("invalid recorded origin")
+    if version == 3:
+        file = result["completedFile"]
+        if not isinstance(file, dict):
+            raise AssertionError("completed file must be an object")
+        included = file.get("state") == "included"
+        reported_fields(file, ["state"] + (["content", "sha256"] if included else ["reason"]), [], "completed file")
+        if included:
+            content = file["content"]
+            if (not isinstance(content, str) or "\r" in content or re.search(r"[\ud800-\udfff]", content)
+                    or hashlib.sha256(content.encode("utf-8")).hexdigest() != file["sha256"]):
+                raise AssertionError("invalid completed file")
+        elif file["state"] != "omitted" or file["reason"] not in ("tool-failed", "budget", "unavailable"):
+            raise AssertionError("invalid completed file")
+        if (not (not included and file["reason"] == "tool-failed") if result["reportedStatus"] == "failure"
+                else not included and file["reason"] == "tool-failed"):
+            raise AssertionError("completed file status differs")
+    return (("Previously recorded tool attempt shared with this scope. It was not re-executed or checked against the current file. "
+             "Only selected completed records are shared; omitted or unfinished work is not included. ") if version == 2 else "") + tool_warning
+
+
+def expand_reported_observation_table(body: dict[str, object]) -> None:
+    """Restore exact ordered observation JSON using only explicitly indexed publications and their own peer grants."""
+    if "observationReferences" not in body:
+        return
+    table = body["observationReferences"]
+    reported_fields(table, ["version", "legend", "preambles", "entries"], [], "observation references")
+    legend = ('Expand grantReferences first if present. Indices are zero-based. For each entry let '
+              'p=publications[publicationIndex], g=p.peerContribution.grant. Restore p.text as preambles[preambleIndex]+"\\n"'
+              '+JSON.stringify({...result,sourceName:g.source.name,grantId:g.grantId,sequence,observerPeerId:g.contributorPeerId,'
+              'sourceId,capture:{id:g.captureId,generation:g.captureGeneration}}), in that field order. All other fields are literal.')
+    if type(table["version"]) is not int or table["version"] != 1:
+        raise AssertionError("unsupported observation reference version")
+    if table["legend"] != legend:
+        raise AssertionError("observation reference legend differs")
+    preambles, entries = table["preambles"], table["entries"]
+    if (not isinstance(preambles, list) or not preambles or any(not isinstance(value, str) for value in preambles)
+            or len(set(preambles)) != len(preambles)):
+        raise AssertionError("invalid observation preambles")
+    if not isinstance(entries, list) or not entries:
+        raise AssertionError("observation entries must be nonempty")
+    used, publications = set(), set()
+    for entry in entries:
+        reported_fields(entry, ["publicationIndex", "preambleIndex", "result", "sequence", "sourceId"], [], "observation entry")
+        index, preamble = entry["publicationIndex"], entry["preambleIndex"]
+        if not reported_integer(index) or index >= len(body["publications"]):
+            raise AssertionError("observation publication index out of range")
+        if not reported_integer(preamble) or preamble >= len(preambles):
+            raise AssertionError("observation preamble index out of range")
+        if index in publications:
+            raise AssertionError("duplicate observation publication entry")
+        publications.add(index)
+        used.add(preamble)
+        publication = body["publications"][index]
+        if isinstance(publication, dict) and "text" in publication:
+            raise AssertionError("observation publication reintroduces text")
+        reported_fields(publication, ["source", "id", "publishedAt", "peerContribution"], [], "observation publication")
+        source, parent = publication["source"], publication["peerContribution"]
+        reported_fields(source, ["kind", "taskId", "revision", "publicationId"], [], "observation publication source")
+        if (source["kind"] != "publication" or not isinstance(publication["id"], str) or source["publicationId"] != publication["id"]
+                or not reported_integer(source["revision"], 1) or not reported_integer(publication["publishedAt"])):
+            raise AssertionError("observation publication identity differs")
+        reported_fields(parent, ["version", "grant"], [], "observation peer contribution")
+        if type(parent["version"]) is not int or parent["version"] != 1:
+            raise AssertionError("unsupported observation metadata version")
+        grant = parent["grant"]
+        identities = ["taskId", "grantId", "generation", "ownerPeerId", "contributorPeerId", "captureId", "captureGeneration"]
+        reported_fields(grant, ["version", *identities, "source", "expiresAt", "maxSamples", "maxSampleBytes"], [], "observation peer grant")
+        if type(grant["version"]) is not int or grant["version"] != 1 or grant["taskId"] != source["taskId"]:
+            raise AssertionError("observation grant Task differs")
+        if any(not isinstance(grant[key], str) or not grant[key].strip() or reported_length(grant[key]) > 256 for key in identities):
+            raise AssertionError("invalid observation grant identity")
+        if any(not reported_integer(grant[key], 1) for key in ["expiresAt", "maxSamples", "maxSampleBytes"]):
+            raise AssertionError("invalid observation grant limits")
+        permission = reported_permission_source(grant["source"])
+        if not reported_integer(entry["sequence"], 1) or entry["sequence"] >= 9007199254740991 or not reported_digest(entry["sourceId"]):
+            raise AssertionError("invalid observation sample identity")
+        if preambles[preamble] != reported_result_warning(entry["result"], permission):
+            raise AssertionError("observation preamble differs from result")
+        observation = {**entry["result"], "sourceName": permission["name"], "grantId": grant["grantId"], "sequence": entry["sequence"],
+                       "observerPeerId": grant["contributorPeerId"], "sourceId": entry["sourceId"],
+                       "capture": {"id": grant["captureId"], "generation": grant["captureGeneration"]}}
+        raw = json.dumps(observation, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        # JSON.stringify escapes lone UTF-16 surrogates while retaining other Unicode characters.
+        raw = re.sub(r"[\ud800-\udfff]", lambda match: "\\u" + format(ord(match.group()), "04x"), raw)
+        publication["text"] = preambles[preamble] + "\n" + raw
+    if len(used) != len(preambles):
+        raise AssertionError("unreferenced observation preamble")
+    del body["observationReferences"]
 
 
 def completed_file_snapshot_result(
@@ -1552,7 +1780,7 @@ def completed_file_snapshot_result(
         projection = request["projection"]
         if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
             raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
-        if projection["backend"] != {"id": "reported-files", "revision": "4"}:
+        if projection["backend"] != {"id": "reported-files", "revision": "5"}:
             raise AssertionError("the request did not use the current reported-file provider")
         if "PRIVATE_UNTOUCHED" in request["text"]:
             raise AssertionError("an untouched private file entered the receiving context")
@@ -1560,7 +1788,7 @@ def completed_file_snapshot_result(
                  "publicationId": report["id"]} for report in reports]
         selected = [item for item in projection["selectedSources"] if item["kind"] == "publication"]
         payload = expand_reported_grants(json.loads(
-            projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "4")
+            projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "5")
         if index == 2:
             if projection["omittedSources"] != [{"source": ref, "reason": "withdrawn"} for ref in refs]:
                 raise AssertionError("the exact completed-output capture interval was not withdrawn")
@@ -1619,11 +1847,11 @@ def reported_file_snapshot_result(
     for request in requests:
         if request["bytes"] != len(request["text"].encode("utf-8")) or request["bytes"] > 8000:
             raise AssertionError("the complete shared frame exceeded the unchanged receiver allowance")
-        if request["projection"]["backend"] != {"id": "reported-files", "revision": "4"}:
+        if request["projection"]["backend"] != {"id": "reported-files", "revision": "5"}:
             raise AssertionError("the recorded requests did not use the selected reported-file provider")
     current = requests[1]["projection"]
     payload = expand_reported_grants(json.loads(
-        current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "4")
+        current["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0]), "5")
     if len(payload["publications"]) != 2:
         raise AssertionError("the complete supported report chain must produce two reported files")
     file = payload["publications"][0]
@@ -2538,7 +2766,9 @@ def owner_participation_snapshot_result(records: list[dict[str, object]], turns:
             "withdrawnSources": len(withdrawn), "wirePreservesExactContextMessages": True}
 
 
-def native_contribution_snapshot_result(records: list[dict[str, object]], turns: list[RunResult]) -> dict[str, object]:
+def native_contribution_snapshot_result(
+    records: list[dict[str, object]], turns: list[RunResult], audit: dict[str, object],
+) -> dict[str, object]:
     """Check the actual Python protocol preserves source-driven native replacement and withdrawal."""
     joins = [event for event in records if event.get("type") == "scope-agent-context/join-read"]
     wire_joins = [event for turn in turns for event in turn.events
@@ -2558,13 +2788,47 @@ def native_contribution_snapshot_result(records: list[dict[str, object]], turns:
     projections = [event["data"]["source"]["projection"] for event in contexts]
     if [projection["taskRevision"] for projection in projections] != [5, 7, 8]:
         raise AssertionError("native source reports and withdrawal must identify the owner commit revision")
-    if any(projection["backend"] != {"id": "text", "revision": "9"} for projection in projections):
-        raise AssertionError("native contribution must use the production text provider")
+    if any(projection["backend"] != {"id": "reported-files", "revision": "5"} for projection in projections):
+        raise AssertionError("native contribution must use the current reported provider")
     if contexts[0]["surfaceOp"] != "append" or any(event["surfaceOp"].get("op") != "replace" for event in contexts[1:]):
         raise AssertionError("native updates must replace current context while preserving historical events")
     texts = [event["data"]["content"][0]["text"] for event in contexts]
-    if not all(marker in texts[0] for marker in ("NATIVE_ALPHA", "NATIVE_BETA", "NATIVE_CORRECTED", "snapshot-native-source-peer")):
+    if not all(marker in texts[0] for marker in ("NATIVE_BETA", "NATIVE_CORRECTED", "snapshot-native-source-peer")):
         raise AssertionError("the Python recipient lost an original source report or attribution")
+    if "NATIVE_ALPHA" in texts[0]:
+        raise AssertionError("the reconstructed first file retained its replaced body")
+    requests = audit["requests"]
+    if (len(requests) != 3 or audit["sourceToolCount"] != 5 or audit["sentSamples"] != 5
+            or not isinstance(audit["sourceSessionId"], str) or not audit["sourceSessionId"]):
+        raise AssertionError("native report audit must record five source tool executions and three receiving requests")
+    for index, request in enumerate(requests):
+        projection = projections[index]
+        if request["projection"] != projection:
+            raise AssertionError("native report audit projection differs from the durable receiving context")
+        visible = [message for message in request["messages"] if message.get("source", {}).get("kind") == "scope-agent-context"]
+        if visible != [contexts[index]["data"]] or len(texts[index].encode("utf-8")) > 8000:
+            raise AssertionError("native reported actual messages or fixed byte allowance differ")
+        encoded = json.loads(projection["text"].split("<development-task-context>\n")[1].split("\n</development-task-context>")[0])
+        decoded = expand_reported_grants(encoded, "5")
+        if encoded != request["encoded"] or decoded != request["decoded"]:
+            raise AssertionError("native report independent expansion differs from captured material")
+        for publication in decoded["publications"]:
+            if "kind" in publication:
+                continue
+            originals = [report for report in request["reports"] if report["id"] == publication["id"]]
+            if (len(originals) != 1 or publication["text"] != originals[0]["text"]
+                    or publication["peerContribution"] != originals[0]["peerContribution"]):
+                raise AssertionError("native report expansion lost canonical Task text or full grant")
+        if index == 0 and not any(item.get("kind") == "reported-file" for item in decoded["publications"]):
+            raise AssertionError("initial native edits did not reconstruct the current reported file")
+        if index == 1:
+            if len(encoded.get("observationReferences", {}).get("entries", [])) != 3:
+                raise AssertionError("native originals and failed Edit must exercise three observation references")
+            if [item["id"] for item in decoded["publications"]] != [request["reports"][i]["id"] for i in (1, 3, 4)]:
+                raise AssertionError("native reported replacement selected different canonical publications")
+        if index == 2 and ("observationReferences" in encoded or not all(
+                item.get("peerContribution", {}).get("ended") for item in decoded["publications"])):
+            raise AssertionError("withdrawal must retain terminal grants without current observation references")
     if not all(marker in texts[1] for marker in ("NATIVE_REPLACEMENT", "NATIVE_BETA", "snapshot-native-source-peer")):
         raise AssertionError("the Python recipient lost the replacement or unchanged file report")
     if any(marker in texts[1] for marker in ("NATIVE_ALPHA", "NATIVE_CORRECTED")):
@@ -2590,6 +2854,8 @@ def native_contribution_snapshot_result(records: list[dict[str, object]], turns:
     return {"turns": [{"text": turn.final_response, "finishReason": turn.finish_reason} for turn in turns],
             "contextRevisions": [5, 7, 8], "selectedSourceCounts": [len(item["selectedSources"]) for item in projections],
             "supersededSources": len(superseded), "withdrawnSources": len(withdrawn),
+            "reportedBackend": {"id": "reported-files", "revision": "5"}, "observationReferenceCounts": [
+                len(request["encoded"].get("observationReferences", {}).get("entries", [])) for request in requests],
             "recipientRecallCalls": 0, "joinReadPhases": ["planned", "adopted"],
             "wirePreservesExactContextMessages": True, "wirePreservesJoinRead": True}
 

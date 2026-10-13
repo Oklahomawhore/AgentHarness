@@ -157,7 +157,7 @@ it.skipIf(process.platform === 'win32')('enables semantic in shipped Web, surviv
     }, semantic: { auditSessionId: 'scope-context-audit', provider: 'deepseek-official', model: 'deepseek-flash',
       maxCalls: 100, maxConcurrentCalls: 2, maxInputBytes: 131072, maxCapturedInputBytes: 1048576, maxOutputTokens: 2048,
       maxOutputBytes: 65536, timeoutMs: 20000 } })
-    expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '4' }, configured: {
+    expect(receiver.config).toMatchObject({ backend: { id: 'reported-files', revision: '5' }, configured: {
       selection: { mode: 'reported', provider: '', model: '', maxCalls: 100 },
     }, semantic: null })
     const ownerIdentity = identitySchema.parse(await owner.invoke({ kind: 'identity' }))

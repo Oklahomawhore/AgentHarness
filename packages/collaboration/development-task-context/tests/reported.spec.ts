@@ -96,7 +96,7 @@ function input(context: readonly DevelopmentTaskContextPublication[], maxContext
 function payload(result: DevelopmentTaskContextProjection) {
   const text = result.text.split('<development-task-context>\n')[1]?.split('\n</development-task-context>')[0]
   if (text === undefined) throw new Error('missing context frame')
-  return z.object({ publications: z.array(z.json()), coverage: z.json() }).parse(expandReportedGrants(JSON.parse(text) as unknown, '4'))
+  return z.object({ publications: z.array(z.json()), coverage: z.json() }).parse(expandReportedGrants(JSON.parse(text) as unknown, '5'))
 }
 const derivedSchema = z.object({ kind: z.literal('reported-file'), version: z.literal(1), warning: z.string(), content: z.string(),
   file: z.object({ rootIndex: z.number(), path: z.string() }),
@@ -140,7 +140,7 @@ it.each(['peer', 'local'] as const)('keeps a small %s file visible after forty s
   expect(derived(result)[0]?.warning).toContain('not a verified current file snapshot')
   expect(Buffer.byteLength(result.text, 'utf8')).toBeLessThanOrEqual(6000)
   expect(history).toEqual(before)
-  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '4' })
+  expect(backend.reported.identity).toEqual({ id: 'reported-files', revision: '5' })
   expect(backend.text.identity).toEqual({ id: 'text', revision: '9' })
   const next = await backend.reported.compute(input([...history, report(mode, 42, edit('40', '41'))], 6000))
   expect(derived(next)[0]?.content).toBe('version=41;中文🙂')

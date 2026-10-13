@@ -10,4 +10,4 @@ header:
 replay:
   override: true
 writer: separate
-writerRevision: 3
+writerRevision: 4

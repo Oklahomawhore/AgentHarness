@@ -50,7 +50,7 @@ async function initializeHost(ctx, root, role, overrides) {
   await add('storage-domain', '@deepseek-ai/dsh-storage-domain', '*')
   await add('rooms', '@deepseek-ai/dsh-development-room')
   await add('tasks', '@deepseek-ai/dsh-development-task')
-  await add('text', '@deepseek-ai/dsh-development-task-context/text')
+  await add('text', overrides.backend ?? '@deepseek-ai/dsh-development-task-context/text')
   await add('access', '@deepseek-ai/dsh-scope-access')
   await add('llm', '@deepseek-ai/dsh-llm')
   modules.set('transport', FixtureTransport)

@@ -102,7 +102,9 @@ Web 部署默认交付报告，调用上限为100次。审计保存在 `dshHomeP
 
 报告选择先尝试终结通知，再跨来源轮流尝试当前命令。每个已有命令被选中的来源先获得一次文件组选择机会，然后其余组跨来源轮转。一次选择会跳过超大组，直到一组放入预算或队列耗尽。组按新鲜度排序，时间相同则按采集顺序处理。来源区分冻结快照和精确授权区间；无授权区间的 publication 按作者分组。输出保留采集顺序。这种分配不推断语义相关性，也不证明命令验证了同来源文件；终结通知仍可能超出预算。
 
-重复的完整 grant 仅在完整转义后 UTF-8 表示更小时使用 version-1 `grantReferences`。其中 `entries` 通过从零开始的 `publicationIndex` 和 `grantIndex` 指向 grant 行；行的 `kind` 标识 `localContribution`、`peerContribution` 或 `authority`，`value` 用于还原该字段的完整 `grant`。消息内的说明定义这一展开方式。其他字段、publication 身份及报告原文保持不变。后端身份 `reported-files` revision `4` 区分这一表示与选择规则；已存的早期投影保留确切原文。[决策记录](../../../.agents/notes/implemented/feature/2026-10-14-source-fair-reported-context.zh.md)说明分配方式的取舍。
+重复的完整 grant 仅在完整转义后 UTF-8 表示更小时使用 version-1 `grantReferences`。其中 `entries` 通过从零开始的 `publicationIndex` 和 `grantIndex` 指向 grant 行；行的 `kind` 标识 `localContribution`、`peerContribution` 或 `authority`，`value` 用于还原该字段的完整 `grant`。
+
+规范的同伴报告原文还可使用 version-1 `observationReferences`。每项保留顺序不变的完整结果、序号和来源 ID，引用原有警示文字，并且只复用与该 publication 的 peer grant 精确相等的归属字段。消息内的说明在 grant 展开后逐字节还原原文。未知或不规范的 publication 保持字面内容。后端比较原始、仅 grant 引用及组合表示的完整转义 JSON（包括说明），只选择严格更小的表示。`reported-files` revision `5` 标识这一编码；已存的早期投影保留确切原文。[分配策略](../../../.agents/notes/implemented/feature/2026-10-14-source-fair-reported-context.zh.md)与[原文无损表示](../../../.agents/notes/implemented/bug-fix/2026-10-14-lossless-peer-report-text.zh.md)分别说明两项决策。
 
 重建记录明确标识其内容来自报告，并非已核实的当前磁盘状态。模型文本包含授权、文件标识、依赖数量、有序依赖摘要及首尾引用。投影保留每条已选 publication 的引用，包括恢复到早先值的操作。冻结父快照保持独立。完整包裹文本和重建内容必须一起放入预算，否则省略整个组，不退回旧基底。后端不读文件、不导出私有工具执行结果，也不调用模型。精确覆盖信息与已存报告仍随历史增长。`/semantic` 保持其自身的原始报告输入与摘要限制。
 

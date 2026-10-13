@@ -152,7 +152,7 @@ function checkSharedEvidence(texts: readonly string[], command: unknown) {
     .parse(commands[0]?.publication)
   expect(publication.localToolObservation ?? publication.peerToolObservation).toEqual(command)
 }
-function checkReportedEvidence(texts: readonly string[], task: unknown) {
+function checkReportedEvidence(texts: readonly string[], task: unknown, revision: '3' | '4' | '5') {
   const object = z.record(z.string(), z.unknown())
   const admitted = z.object({ id: z.string(), revision: z.number(), context: z.array(object) }).parse(task)
   const frames = texts.filter(text => text.includes('<development-task-context>')).map((text) => {
@@ -164,7 +164,8 @@ function checkReportedEvidence(texts: readonly string[], task: unknown) {
   const frame = frames[0]
   if (frame === undefined) throw new Error('Actual shared reported frame absent')
   expect(frame.grantReferences).toBeDefined()
-  const expanded = z.object({ publications: z.array(object) }).parse(expandReportedGrants(frame, '4'))
+  expect(frame.observationReferences).toBeDefined()
+  const expanded = z.object({ publications: z.array(object) }).parse(expandReportedGrants(frame, revision))
   expect(expanded.publications.map(publication => publication.id)).toEqual([0, 2, 3].map(index => admitted.context[index]?.id))
   for (const publication of expanded.publications) {
     const original = admitted.context.find(item => item.id === publication.id)
@@ -236,7 +237,14 @@ async function checkRun(value: unknown, output: string) {
     expect(evidence.slice(0, 2).map(item => item.sharedBytes)).toEqual([0, 0])
     expect(evidence.slice(2).map(item => item.visibleVerification)).toEqual(shared ? [7, 7] : [null, null])
     if (semantic) for (const item of evidence.slice(2)) checkSharedEvidence(item.actualManagedText, source.commands[1])
-    if (condition === 'reported') for (const item of evidence.slice(2)) checkReportedEvidence(item.actualManagedText, source.task)
+    if (condition === 'reported') for (const [index, item] of evidence.slice(2).entries()) {
+      const messages = z.array(z.object({ source: z.object({ kind: z.string() }).loose() }).loose())
+        .parse(mixed.requests[index + 2]?.messages)
+      const remote = messages.find(message => message.source.kind === 'scope-agent-context')
+      const projection = z.object({ backend: z.object({ id: z.literal('reported-files'), revision: z.literal('5') }) })
+        .parse(remote?.source.projection)
+      checkReportedEvidence(item.actualManagedText, source.task, projection.backend.revision)
+    }
     const verification = result.artifacts.verification[role]
     if (verification === null) throw new Error('verification artifact absent')
     expect(parseMixedVerification(verification)).toEqual(shared
@@ -335,7 +343,7 @@ it.skipIf(!enabled)('completes mixed work for all three conditions through froze
     const reportedSource = z.object({ task: z.unknown() })
       .parse(await readJson(join(directory, 'execute', 'reported', 'source-admission.json')))
     for (const call of http.calls.slice(8, 16).filter(call => call.kind.endsWith('-mixed'))) {
-      checkReportedEvidence(mixedHttpTexts(call.body), reportedSource.task)
+      checkReportedEvidence(mixedHttpTexts(call.body), reportedSource.task, '5')
     }
     const output = join(directory, 'execute', 'semantic')
     const source = z.object({ commands: z.array(z.unknown()) }).parse(await readJson(join(output, 'source-admission.json')))

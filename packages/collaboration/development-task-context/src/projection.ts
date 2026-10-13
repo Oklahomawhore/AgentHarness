@@ -1,7 +1,7 @@
 /** Shared atomic publication selection, recipient exclusions, and complete context budgeting. */
 
 import type { DevelopmentTaskContextPublication, DevelopmentTaskParentRef } from '@deepseek-ai/dsh-development-task/types'
-import { encodeReportedGrants } from './reported-grants.ts'
+import { encodeReportedObservations } from './reported-observations.ts'
 import { selectReportedGroups } from './reported-selection.ts'
 import { completedNativeFile, replayReportedFile } from './report-replay.ts'
 import { isSelfPublished, isTerminalPublication, publicationInterval, publicationObservation, publicationToolHistory } from './publication.ts'
@@ -109,7 +109,7 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
     const payload = {
       task: { id: task.id, revision: task.revision, objective: task.objective, scope: task.scope, origin: task.origin },
       inherited: inherited?.sources.map(source => ({ parent: source.parent, objective: source.objective, scope: source.scope })),
-      ...(mode === 'reported' ? encodeReportedGrants(publications) : { publications }),
+      ...(mode === 'reported' ? encodeReportedObservations(publications) : { publications }),
       coverage: {
         budgetOmissions: omitted.filter(item => item.reason === 'budget').length,
         selfPublishedOmissions: omitted.filter(item => item.reason === 'self-published').length,

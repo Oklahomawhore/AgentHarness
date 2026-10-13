@@ -1,5 +1,6 @@
 /** Pure controlled calibration data derived from public policy and admitted message text, never parent grading references. */
 import { z } from 'zod'
+import { expandReportedGrants } from './reported-grant-evidence.mjs'
 import type { PaymentInput, PaymentPolicy, PaymentTrace } from './data-artifacts.ts'
 
 const record = z.record(z.string(), z.unknown())
@@ -39,7 +40,9 @@ export function mixedCalibrationEvidence(texts: readonly string[]) {
         observe(publication.localToolObservation ?? publication.peerToolObservation)
       }
     } else {
-      const body = z.object({ publications: z.array(record) }).parse(frame(text, 'development-task-context'))
+      const raw = record.parse(frame(text, 'development-task-context'))
+      const revision = Object.hasOwn(raw, 'observationReferences') ? '5' : '4'
+      const body = z.object({ publications: z.array(record) }).parse(expandReportedGrants(raw, revision))
       for (const publication of body.publications) {
         if (publication.kind === 'reported-file') {
           const file = z.object({ path: z.string() }).parse(publication.file)

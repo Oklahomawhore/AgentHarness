@@ -1,6 +1,8 @@
 /** Source tools and durable evidence feed an independent owner, then actual receiver requests through the SDK profile. */
 import assert from 'node:assert/strict'
-import { mkdir, readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { expandReportedGrants } from '../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout } from 'node:timers/promises'
@@ -17,7 +19,7 @@ const { default: JsonlPersistence } = await load('@deepseek-ai/dsh-session-persi
 /** Loader fixture identity. */
 export const name = 'scope-native-contribution-snapshot'
 /** Receiver services supplied by the real SDK composition. */
-export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'scopeTransport', 'developmentTasks', 'llm']
+export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'scopeTransport', 'developmentTasks', 'llm', 'sessions', 'sessionPersistence']
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const scopeMessages = messages => messages.filter(message => message.source.kind === 'scope-agent-context')
 const textReply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
@@ -37,7 +39,7 @@ async function until(label, predicate) {
 /** Drive real native mutation and observe receiver requests; no Hook or publication is fabricated. */
 export async function apply(ctx) {
   const directory = join(process.cwd(), '.dsh', 'native-fixture')
-  const owner = await host(join(directory, 'owner'), 'owner')
+  const owner = await host(join(directory, 'owner'), 'owner', { backend: '@deepseek-ai/dsh-development-task-context/reported' })
   ctx.effect(() => owner.close)
   const source = await host(join(directory, 'source'), 'source')
   ctx.effect(() => source.close)
@@ -85,6 +87,7 @@ export async function apply(ctx) {
   let receiver
   let observedTurn = 0
   let requests = 0
+  const requestEvidence = []
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     receiver = agent
     assert.equal(turn, observedTurn + 1)
@@ -126,20 +129,51 @@ export async function apply(ctx) {
     observedTurn = turn
     return await next()
   }, { prepend: true })
-  ctx.on('llm/stream', (options, next) => {
+  ctx.on('llm/stream', async function* (options, next) {
     requests++
     assert.equal(requests, observedTurn)
-    const visible = scopeMessages(options.messages)
+    const messages = structuredClone(options.messages)
+    const events = structuredClone(receiver.session.snapshotEvents())
+    const header = structuredClone(receiver.session.header)
+    const visible = scopeMessages(messages)
     assert.equal(visible.length, 1)
     const projection = visible[0].source.projection
-    assert.equal(projection.backend.id, 'text')
-    assert.equal(projection.backend.revision, '9')
+    assert.deepEqual(projection.backend, { id: 'reported-files', revision: '5' })
+    const encoded = JSON.parse(projection.text.split('<development-task-context>\n')[1].split('\n</development-task-context>')[0])
+    const decoded = expandReportedGrants(encoded, '5')
+    assert.ok(Buffer.byteLength(body(visible[0]), 'utf8') <= 8000)
+    const reports = owner.ctx.developmentTasks.get({ taskId: task.id }).context
+    for (const publication of decoded.publications) {
+      if (publication.kind !== undefined) continue
+      const original = reports.find(report => report.id === publication.id)
+      assert.ok(original)
+      const { peerToolObservation: _mirror, ...literal } = original
+      assert.deepEqual(publication, { source: { kind: 'publication', taskId: task.id, revision: projection.taskRevision,
+        publicationId: original.id }, ...literal })
+    }
+    if (requests === 2) {
+      assert.ok(encoded.observationReferences)
+      assert.equal(encoded.observationReferences.entries.length, 3)
+      assert.deepEqual(decoded.publications.map(publication => publication.id), [reports[1].id, reports[3].id, reports[4].id])
+    }
+    requestEvidence.push(structuredClone({ projection, encoded, decoded, reports, messages }))
     assert.equal(projection.taskRevision, requests === 1 ? 5 : requests + 5)
     const text = options.messages.map(body).join('\n')
     if (requests < 3) {
       assert.ok(text.includes('NATIVE_BETA'))
       if (requests === 1) {
-        for (const marker of ['NATIVE_ALPHA', 'NATIVE_CORRECTED']) assert.ok(text.includes(marker))
+        assert.ok(text.includes('NATIVE_CORRECTED'))
+        assert.ok(!text.includes('NATIVE_ALPHA'))
+        const file = decoded.publications.find(publication => publication.kind === 'reported-file')
+        assert.ok(file)
+        assert.deepEqual(file.file, { rootIndex: 0, path: 'src/client.ts' })
+        assert.equal(file.content, 'export const mode = "NATIVE_CORRECTED";\n')
+        assert.deepEqual(file.authority, { kind: 'peer', version: 1, grant: active.invitation.grant })
+        const dependencies = [reports[0], reports[2]].map(report => ({ source: { kind: 'publication', taskId: task.id,
+          revision: projection.taskRevision, publicationId: report.id }, sequence: report.peerToolObservation.sequence,
+          sourceId: report.peerToolObservation.sourceId }))
+        assert.deepEqual(file.dependencies, { count: 2, digest: createHash('sha256').update(JSON.stringify(dependencies)).digest('hex'),
+          first: { source: dependencies[0].source, sequence: 1 }, last: { source: dependencies[1].source, sequence: 3 } })
       } else {
         assert.ok(text.includes('NATIVE_REPLACEMENT'))
         for (const marker of ['NATIVE_ALPHA', 'NATIVE_CORRECTED']) assert.ok(!text.includes(marker))
@@ -157,13 +191,23 @@ export async function apply(ctx) {
     assert.deepEqual(ctx.developmentTasks.list({ limit: 32 }), [])
     assert.deepEqual(source.ctx.developmentTasks.list({ limit: 32 }), [])
     assert.equal(receiver.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0, 'recipient does not recall or fetch the reports with a tool')
-    const events = JSON.parse(JSON.stringify(receiver.session.snapshotEvents()))
-    const replay = Session.create(receiver.id, events, receiver.session.header)
-    assert.deepEqual(scopeMessages(replay.deriveMessages()), visible)
+    const replay = Session.create(receiver.id, structuredClone(events), header)
+    assert.deepEqual(replay.deriveMessages(), messages)
+    assert.equal(await ctx.sessions.flush(receiver.session), true)
+    const persisted = await ctx.sessionPersistence.open(receiver.id, 'read')
+    try {
+      const stored = await persisted.read()
+      assert.equal(persisted.id, receiver.id)
+      assert.deepEqual(persisted.header, { ...header, delegationDepth: header.delegationDepth ?? 0 })
+      assert.deepEqual(stored.events, events)
+      assert.deepEqual(Session.create(persisted.id, structuredClone(stored.events), persisted.header).deriveMessages(), messages)
+    } finally { await persisted.close() }
     const original = events.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context')
-    for (const marker of ['NATIVE_ALPHA', 'NATIVE_BETA', 'NATIVE_CORRECTED']) {
+    for (const marker of ['NATIVE_BETA', 'NATIVE_CORRECTED']) {
       assert.ok(body(original.data).includes(marker), 'replacement and withdrawal retain the original Session evidence')
     }
-    return next()
+    if (requests === 3) await writeFile(join(process.cwd(), '.dsh/native-contribution-audit.json'),
+      JSON.stringify({ requests: requestEvidence, sourceToolCount: sourceAgent.session.snapshotEvents().filter(event => event.type === 'tool/call').length, sentSamples, sourceSessionId: sourceAgent.id }))
+    yield* next()
   })
 }

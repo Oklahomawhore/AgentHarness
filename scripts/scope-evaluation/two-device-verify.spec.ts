@@ -489,7 +489,11 @@ it.each(['selected', 'body'] as const)('rejects a misplaced after-leave publicat
 
 const grantLegend = 'grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]'
   + '[grantReferences.grants[grantIndex].kind].grant from that grant row\'s value. All other fields are literal.'
-function indexedGrants(text: string): string {
+const observationLegend = 'Expand grantReferences first if present. Indices are zero-based. For each entry let '
+  + 'p=publications[publicationIndex], g=p.peerContribution.grant. Restore p.text as preambles[preambleIndex]+"\\n"'
+  + '+JSON.stringify({...result,sourceName:g.source.name,grantId:g.grantId,sequence,observerPeerId:g.contributorPeerId,'
+  + 'sourceId,capture:{id:g.captureId,generation:g.captureGeneration}}), in that field order. All other fields are literal.'
+function indexedGrants(text: string, revision: '4' | '5'): string {
   const marker = '<development-task-context>\n'
   const start = text.indexOf(marker) + marker.length
   const end = text.lastIndexOf('\n</development-task-context>')
@@ -497,7 +501,22 @@ function indexedGrants(text: string): string {
   const body = z.looseObject({ publications: z.array(objectSchema) }).parse(JSON.parse(text.slice(start, end)) as unknown)
   const grants: { kind: string; value: unknown }[] = []
   const entries: { publicationIndex: number; grantIndex: number }[] = []
+  const preambles: string[] = []
+  const observations: Record<string, unknown>[] = []
   for (const [publicationIndex, publication] of body.publications.entries()) {
+    if (revision === '5' && publication.peerContribution !== undefined && typeof publication.text === 'string'
+      && publication.text.startsWith('Authenticated peer tool observation.')) {
+      const split = publication.text.indexOf('\n')
+      const warning = publication.text.slice(0, split)
+      const value = objectSchema.parse(JSON.parse(publication.text.slice(split + 1)) as unknown)
+      if (value.kind === 'tool-observation') {
+        const { sourceName: _name, grantId: _grant, observerPeerId: _peer, capture: _capture, sequence, sourceId, ...result } = value
+        let preambleIndex = preambles.indexOf(warning)
+        if (preambleIndex === -1) { preambleIndex = preambles.length; preambles.push(warning) }
+        observations.push({ publicationIndex, preambleIndex, result, sequence, sourceId })
+        delete publication.text
+      }
+    }
     for (const kind of ['peerContribution', 'localContribution', 'authority']) {
       const result = objectSchema.safeParse(publication[kind])
       if (!result.success || !Object.hasOwn(result.data, 'grant')) continue
@@ -509,36 +528,39 @@ function indexedGrants(text: string): string {
     }
   }
   if (entries.length > 0) body.grantReferences = { version: 1, legend: grantLegend, grants, entries }
+  if (observations.length > 0) body.observationReferences = { version: 1, legend: observationLegend, preambles, entries: observations }
   return text.slice(0, start) + JSON.stringify(body).replaceAll('<', '\\u003c') + text.slice(end)
 }
-function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[]): void {
+function upgradeReportedEvidence(rows: z.infer<typeof rowSchema>[], revision: '4' | '5'): void {
   for (const row of rows) {
     if (row.type !== 'user/message') continue
     const source = objectSchema.parse(row.data.source)
     if (source.kind === 'scope-agent-context' && source.form === 'snapshot') {
-      rewriteScopeProjection(rows, row.seq, prior => ({ ...prior, backend: { id: 'reported-files', revision: '4' },
-        text: indexedGrants(prior.text) }))
+      rewriteScopeProjection(rows, row.seq, prior => ({ ...prior, backend: { id: 'reported-files', revision },
+        text: indexedGrants(prior.text, revision) }))
     } else if (source.kind === 'development-task-context' && source.form === 'snapshot') {
       const parsed = localTaskContextSourceSchema.parse(source)
       if (parsed.form !== 'snapshot' || parsed.version === 1) throw new Error('attributed local context missing')
       const content = z.array(z.looseObject({ text: z.string() })).parse(row.data.content)
       if (content[0] === undefined) throw new Error('local context text missing')
-      content[0].text = indexedGrants(content[0].text)
-      if (parsed.version === 2) row.data.source = { ...parsed, backend: { id: 'reported-files', revision: '4' } }
+      content[0].text = indexedGrants(content[0].text, revision)
+      if (parsed.version === 2) row.data.source = { ...parsed, backend: { id: 'reported-files', revision } }
       else {
-        const projection = { ...parsed.projection, backend: { id: 'reported-files', revision: '4' }, text: content[0].text }
+        const projection = { ...parsed.projection, backend: { id: 'reported-files', revision }, text: content[0].text }
         row.data.source = { ...parsed, projection: { ...projection, projectionId: localContextProjectionDigest(projection) } }
       }
       row.data.content = content
     }
   }
 }
-it('independently expands revision 4 grants while preserving the revision 3 recorded fixture', async () => {
+it.each(['4', '5'] as const)('independently expands revision %s while preserving the revision 3 recorded fixture', async (revision) => {
   const f = await fixture()
-  for (const directory of [f.aDirectory, f.bDirectory]) await reseal(directory, upgradeReportedEvidence)
+  for (const directory of [f.aDirectory, f.bDirectory]) await reseal(directory, (rows) => { upgradeReportedEvidence(rows, revision) })
   const result = await verifyTwoDeviceEvidence(f)
   expect(result).toMatchObject({ status: 'passed', controlledRequests: 13, physicalDevicesVerified: false })
   expect(result.leave.ownerAfterAdmissionVerified).toBe(true)
+  if (revision === '5') expect(await readFile(join(f.aDirectory, 'evidence/requests.jsonl'), 'utf8'))
+    .toContain('observationReferences')
 })
 it('refuses a backend revision change within the original sharing interval', async () => {
   const f = await fixture(2)

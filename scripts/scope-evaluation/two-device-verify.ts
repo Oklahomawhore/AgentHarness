@@ -49,7 +49,7 @@ function text(value: ReturnType<typeof message>): string {
     'managed message must contain one exact text block')
   return value.content[0].text
 }
-const reportedBackend = z.strictObject({ id: z.literal('reported-files'), revision: z.enum(['3', '4']) })
+const reportedBackend = z.strictObject({ id: z.literal('reported-files'), revision: z.enum(['3', '4', '5']) })
 function payload(value: ReturnType<typeof message>, backend: unknown) {
   const { revision } = reportedBackend.parse(backend)
   const body = text(value)
