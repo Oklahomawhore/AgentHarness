@@ -63,7 +63,9 @@ async function run(condition: 'N' | 'E' | 'R', omitUsage = false, smallInput = f
   const root = await mkdtemp(join(tmpdir(), 'native-data-spec-'))
   const cancellation = cancelStream ? new AbortController() : undefined
   const http = await calibration(omitUsage, cancellation)
-  const route = { provider: 'deepseek-official' as const, model: 'deepseek-flash', endpoint: http.endpoint,
+  const route = { provider: 'deepseek-official' as const,
+    endpointSource: { kind: 'openai-compatible-gateway' as const, name: 'local-http-calibration' }, network: { kind: 'direct' as const },
+    model: 'deepseek-flash', endpoint: http.endpoint,
     apiKeyEnv: 'DSH_DATA_CALIBRATION_KEY', credentialsPath: null, maxCalls: 4, maxInputBytes: smallInput ? 1024 : 262144,
     maxOutputTokens: 2048, maxOutputBytes: 65536, timeoutMs: 15000 }
   const study = createDataStudy(20261004, { ordinary: route, semantic: { ...route, maxCalls: 2 },
@@ -127,7 +129,9 @@ for (const smallInput of [false, true]) {
     const root = await mkdtemp(join(tmpdir(), 'native-data-driver-spec-'))
     const http = await calibration(false)
     try {
-      const route = { provider: 'deepseek-official' as const, model: 'deepseek-flash', endpoint: http.endpoint,
+      const route = { provider: 'deepseek-official' as const,
+        endpointSource: { kind: 'openai-compatible-gateway' as const, name: 'local-http-calibration' }, network: { kind: 'direct' as const },
+        model: 'deepseek-flash', endpoint: http.endpoint,
         apiKeyEnv: 'DSH_DATA_CALIBRATION_KEY', credentialsPath: null, maxCalls: 4, maxInputBytes: smallInput ? 1024 : 262144,
         maxOutputTokens: 2048, maxOutputBytes: 65536, timeoutMs: 15000 }
       const config = { ordinary: route, semantic: { ...route, maxCalls: 2 }, limits: {

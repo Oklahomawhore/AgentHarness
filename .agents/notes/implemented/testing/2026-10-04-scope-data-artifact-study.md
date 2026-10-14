@@ -18,6 +18,8 @@ Finite reservations precede model dispatch. Missing usage stops subsequent dispa
 
 The separate [continuity protocol](../../../../scripts/scope-evaluation/continuity-study/README.md) preserves one receiving Session and one automatic allowance through initial support, correction and contribution termination. A public ready/blocked decision separates current permission to use a policy from retained historical work. Its embedded ready policy must match the sealed policy; withdrawal blocks new use without deleting old artifacts. Source and pre-step barriers fix phase ordering while production admission owns each actual request.
 
+Live registrations identify an official service or a named HTTPS gateway separately from the production adapter. This permits explicitly authorized compatible accounts without replacing pre-dispatch reservations, usage checks, or native Session execution. Network mode is explicit as well: inherited proxies cannot silently alter a direct run, and selected proxy references are validated before launching Hosts. The frozen manifest records the selected route; a gateway declaration cannot attest its upstream model.
+
 ## Alternatives considered
 
 **Remove the JavaScript registry restriction.** Container isolation does not authenticate candidate reports. The existing [controlled oracle decision](2026-10-03-scope-artifact-oracle.md) remains applicable to executable programs.

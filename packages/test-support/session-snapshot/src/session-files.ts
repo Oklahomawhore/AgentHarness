@@ -50,11 +50,15 @@ export function sessionFixtureName(index: number, version: number): string {
  * Name the native-writer oracle for a retained historical replay role.
  * This expected output never participates in replay generation selection.
  * @param index - Parent `0` or a positive child/ordinal slot.
- * @returns The expected-output JSONL basename.
+ * @param revision - Explicit expectation revision of at least 2; absent selects the original oracle.
+ * @returns The exact expected-output basename; no latest-revision discovery or fallback is performed.
  */
-export function writerSnapshotName(index: number): string {
+export function writerSnapshotName(index: number, revision?: number): string {
   nonNegativeSafeInteger(index, 'writer snapshot index')
-  return `writer${index === 0 ? '' : `.${index}`}.expected.jsonl`
+  if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 2)) {
+    throw new Error('writer snapshot revision must be a safe integer of at least 2')
+  }
+  return `writer${index === 0 ? '' : `.${index}`}${revision === undefined ? '' : `.r${revision}`}.expected.jsonl`
 }
 
 /**

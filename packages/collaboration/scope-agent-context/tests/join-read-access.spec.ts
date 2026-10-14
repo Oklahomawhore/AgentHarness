@@ -13,6 +13,7 @@ import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, host, peer } from '../../scope-access/tests/helpers.ts'
 import ScopeAgentContext from '../src/index.ts'
+import { originalCaptureSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import { joinReadHistory } from '../src/join-read.ts'
 import type { ScopeAgentJoinReadId } from '../src/types.ts'
 
@@ -49,7 +50,7 @@ async function mountReceiver(receiver: Awaited<ReturnType<typeof host>>, directo
   const path = join(directory, 'cordis.yml')
   await writeFile(path, JSON.stringify([
     { id: 'persistence', name: 'cordis:fixture-jsonl', config: { root: join(directory, 'sessions'), compression: 'none' } },
-    { id: 'consumer', name: 'cordis:fixture-consumer', config: { maxContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } },
+    { id: 'consumer', name: 'cordis:fixture-consumer', config: { maxContextBytes: 8000, maxLocalContextBytes: 4000, coalesceMs: 1, retryDelayMs: 1000 } },
   ]))
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
   await ctx.loader.await()
@@ -628,3 +629,15 @@ it.each(['enabled', 'paused', 'changed-policy'] as const)(
     } finally { remove() }
   },
 )
+
+it('does not upgrade an original unassociated adoption when retried with a capture identity', async () => {
+  const { b, request } = await fixture()
+  expect(await b.ctx.scopeAgentContext.adoptJoinRead(request)).toEqual({ status: 'adopted' })
+  const subscriptions = (await b.access.list()).subscriptions
+  expect(subscriptions).toHaveLength(1)
+  expect(subscriptions[0]?.version).toBeUndefined()
+  await expect(b.ctx.scopeAgentContext.adoptJoinRead({ ...request,
+    originalCapture: originalCaptureSchema.parse({ captureId: randomUUID(), captureGeneration: randomUUID() }) }))
+    .rejects.toThrow('retry changes original inputs')
+  expect((await b.access.list()).subscriptions).toEqual(subscriptions)
+})

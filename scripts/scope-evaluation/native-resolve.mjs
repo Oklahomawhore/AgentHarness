@@ -34,6 +34,12 @@ export function resolveNativeModules(repo) {
     Native: ['scope', '@deepseek-ai/dsh-scope-agent-context'],
     DeepSeek: ['sdk', '@deepseek-ai/dsh-llm-deepseek'],
     Semantic: ['scope', '@deepseek-ai/dsh-development-task-context/semantic'],
+    Reported: ['scope', '@deepseek-ai/dsh-development-task-context/reported'],
+    TaskContext: ['capture', '@deepseek-ai/dsh-development-task-context'],
+    Presence: ['capture', '@deepseek-ai/dsh-development-room-agent-presence'],
+    Subprocess: ['capture', '@deepseek-ai/dsh-subprocess-local'],
+    ShellEnv: ['capture', '@deepseek-ai/dsh-shell-env'], Bash: ['capture', '@deepseek-ai/dsh-bash-local'],
+    ToolBash: ['capture', '@deepseek-ai/dsh-tool-bash'],
     FsLocal: ['capture', '@deepseek-ai/dsh-fs-local'], FsPolicy: ['capture', '@deepseek-ai/dsh-fs-observation-policy'],
     ToolFs: ['capture', '@deepseek-ai/dsh-tool-fs'], Contribution: ['capture', '@deepseek-ai/dsh-scope-agent-contribution'],
   }

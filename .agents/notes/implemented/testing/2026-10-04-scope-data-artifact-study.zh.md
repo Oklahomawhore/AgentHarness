@@ -18,6 +18,8 @@ Status: implemented
 
 独立的[连续协议](../../../../scripts/scope-evaluation/continuity-study/README.zh.md) 在初始支持、更正及贡献终结期间保留一个接收 Session 和一个自动额度。公开的 ready/blocked 决策把当前使用策略的许可与保留的历史工作分开。ready 内嵌策略必须与封存策略一致；撤回阻止新使用，不删除旧产物。来源屏障和 pre-step 屏障固定阶段顺序，每个实际请求仍由生产准入负责。
 
+真实调用注册将官方服务或具名 HTTPS 网关与生产适配器分别标识，以支持明确授权的兼容账户，同时保留委派前预留、用量检查与原生 Session 执行。网络模式同样显式选择：继承的代理不能静默改变直连执行，选定的代理引用在启动 Host 前验证。冻结的 manifest 记录所选路由；网关声明不能证明其上游模型身份。
+
 ## 考虑的替代方案
 
 **移除 JavaScript 注册限制。** 容器隔离不能认证候选程序的汇报来源。既有[受控 oracle 决策](2026-10-03-scope-artifact-oracle.zh.md) 仍适用于可执行程序。

@@ -1,0 +1,472 @@
+{
+  "provenance": "Complete admitted publications from iteration 65 five named Hosts, the same Task as semantic-peer-command-c-captured.json; controlled HTTP, no external inference.",
+  "admissionSha256": "6f454b3ff9dff7253b8b43f7cd23f2623ca7b16ab02348a63890aaca9ac2f758",
+  "block": {
+    "id": "captured-native-command-context",
+    "createdAt": 1791907240613,
+    "sources": [
+      {
+        "parent": {
+          "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+          "revision": 11
+        },
+        "objective": "Maintain payment client policy and independent QA cases.",
+        "scope": "Authorized policy, verification and documentation work.",
+        "context": [
+          {
+            "id": "context-peer-observation-0593ef5a13a262cb750c7602dac3c9b47a822e81fb48566bcff9119eb44d6b40",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Write\",\"fields\":{\"rootIndex\":0,\"path\":\"policy.md\",\"content\":\"# Payment client policy\\n\\nRequired body fields: order_b36ded0c, account_b36ded0c.\\nmaxRetries: 3\\nRetry only NETWORK_TIMEOUT. Never retry PAYMENT_DECLINED or unknown external errors. Preserve the complete original body on each attempt.\\n\"},\"sourceName\":\"session-work\",\"grantId\":\"6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1\",\"sequence\":1,\"observerPeerId\":\"12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax\",\"sourceId\":\"e66de72aa668f155467e1bfe035517afc685419a453d8a5a7083cdd8fcd145be\",\"capture\":{\"id\":\"4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d\",\"generation\":\"057c7b40-7dfe-4632-a2c2-f9fc24e73d0e\"}}",
+            "publishedAt": 1791907240283,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+                "generation": "c0ed6245b8a54efc432430b70256c38589df07658aec37852f06008763320375",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+                "captureId": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "captureGeneration": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write",
+                    "Edit"
+                  ],
+                  "version": 4,
+                  "commands": [
+                    {
+                      "command": "node verify.cjs",
+                      "rootIndex": 0
+                    }
+                  ]
+                },
+                "expiresAt": 1791907330127,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Write",
+              "fields": {
+                "rootIndex": 0,
+                "path": "policy.md",
+                "content": "# Payment client policy\n\nRequired body fields: order_b36ded0c, account_b36ded0c.\nmaxRetries: 3\nRetry only NETWORK_TIMEOUT. Never retry PAYMENT_DECLINED or unknown external errors. Preserve the complete original body on each attempt.\n"
+              },
+              "sourceName": "session-work",
+              "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+              "sequence": 1,
+              "observerPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+              "sourceId": "e66de72aa668f155467e1bfe035517afc685419a453d8a5a7083cdd8fcd145be",
+              "capture": {
+                "id": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "generation": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-5d13d592137f1d4e7a9ea5c3ece000a2dcb51f7eb3469c4bed2136ef28ee2ee3",
+            "text": "Authenticated peer foreground command outcome. This records one execution, not verification of current code. The Task owner has not independently verified this execution.\n{\"kind\":\"command-observation\",\"version\":4,\"tool\":\"Bash\",\"fields\":{\"command\":\"node verify.cjs\",\"rootIndex\":0},\"state\":\"completed\",\"exitCode\":0,\"signal\":null,\"timedOut\":false,\"aborted\":false,\"timeoutMs\":20000,\"stdout\":{\"state\":\"included\",\"text\":\"CHECK_INITIAL_OK\\n\",\"truncated\":false},\"stderr\":{\"state\":\"included\",\"text\":\"\",\"truncated\":false},\"sourceName\":\"session-work\",\"grantId\":\"6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1\",\"sequence\":2,\"observerPeerId\":\"12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax\",\"sourceId\":\"09e32bee31fa0458e26ef0d602caa56108860397b49b520ec2e1bb763e0104bf\",\"capture\":{\"id\":\"4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d\",\"generation\":\"057c7b40-7dfe-4632-a2c2-f9fc24e73d0e\"}}",
+            "publishedAt": 1791907240304,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+                "generation": "c0ed6245b8a54efc432430b70256c38589df07658aec37852f06008763320375",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+                "captureId": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "captureGeneration": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write",
+                    "Edit"
+                  ],
+                  "version": 4,
+                  "commands": [
+                    {
+                      "command": "node verify.cjs",
+                      "rootIndex": 0
+                    }
+                  ]
+                },
+                "expiresAt": 1791907330127,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "command-observation",
+              "version": 4,
+              "tool": "Bash",
+              "fields": {
+                "command": "node verify.cjs",
+                "rootIndex": 0
+              },
+              "state": "completed",
+              "exitCode": 0,
+              "signal": null,
+              "timedOut": false,
+              "aborted": false,
+              "timeoutMs": 20000,
+              "stdout": {
+                "state": "included",
+                "text": "CHECK_INITIAL_OK\n",
+                "truncated": false
+              },
+              "stderr": {
+                "state": "included",
+                "text": "",
+                "truncated": false
+              },
+              "sourceName": "session-work",
+              "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+              "sequence": 2,
+              "observerPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+              "sourceId": "09e32bee31fa0458e26ef0d602caa56108860397b49b520ec2e1bb763e0104bf",
+              "capture": {
+                "id": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "generation": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-8e5bd0b0ca99a3ab2d5c577305a2f85de5a6604d1db8a4262a5f2d69b3cccfc1",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Edit\",\"fields\":{\"rootIndex\":0,\"path\":\"policy.md\",\"oldString\":\"maxRetries: 3\",\"newString\":\"maxRetries: 1\",\"replaceAll\":false},\"sourceName\":\"session-work\",\"grantId\":\"6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1\",\"sequence\":3,\"observerPeerId\":\"12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax\",\"sourceId\":\"7f49fd09dc86967ccbc38e5485298c445fbcedf0c9afddbed461328e183cb7f9\",\"capture\":{\"id\":\"4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d\",\"generation\":\"057c7b40-7dfe-4632-a2c2-f9fc24e73d0e\"}}",
+            "publishedAt": 1791907240346,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+                "generation": "c0ed6245b8a54efc432430b70256c38589df07658aec37852f06008763320375",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+                "captureId": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "captureGeneration": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write",
+                    "Edit"
+                  ],
+                  "version": 4,
+                  "commands": [
+                    {
+                      "command": "node verify.cjs",
+                      "rootIndex": 0
+                    }
+                  ]
+                },
+                "expiresAt": 1791907330127,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Edit",
+              "fields": {
+                "rootIndex": 0,
+                "path": "policy.md",
+                "oldString": "maxRetries: 3",
+                "newString": "maxRetries: 1",
+                "replaceAll": false
+              },
+              "sourceName": "session-work",
+              "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+              "sequence": 3,
+              "observerPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+              "sourceId": "7f49fd09dc86967ccbc38e5485298c445fbcedf0c9afddbed461328e183cb7f9",
+              "capture": {
+                "id": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "generation": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-50e02d7dae199f6220fbc438c9c31b8f4d2017f28b7fda21115e658e36f6a9b2",
+            "text": "Authenticated peer foreground command outcome. This records one execution, not verification of current code. The Task owner has not independently verified this execution.\n{\"kind\":\"command-observation\",\"version\":4,\"tool\":\"Bash\",\"fields\":{\"command\":\"node verify.cjs\",\"rootIndex\":0},\"state\":\"completed\",\"exitCode\":7,\"signal\":null,\"timedOut\":false,\"aborted\":false,\"timeoutMs\":20000,\"stdout\":{\"state\":\"included\",\"text\":\"CHECK_CURRENT_FAILED\\n\",\"truncated\":false},\"stderr\":{\"state\":\"included\",\"text\":\"\",\"truncated\":false},\"sourceName\":\"session-work\",\"grantId\":\"6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1\",\"sequence\":4,\"observerPeerId\":\"12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax\",\"sourceId\":\"db5ea830b98898b17cfc050e7845f3a3491227a693ea6c06e04c614435c02bd5\",\"capture\":{\"id\":\"4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d\",\"generation\":\"057c7b40-7dfe-4632-a2c2-f9fc24e73d0e\"}}",
+            "publishedAt": 1791907240354,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+                "generation": "c0ed6245b8a54efc432430b70256c38589df07658aec37852f06008763320375",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+                "captureId": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "captureGeneration": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write",
+                    "Edit"
+                  ],
+                  "version": 4,
+                  "commands": [
+                    {
+                      "command": "node verify.cjs",
+                      "rootIndex": 0
+                    }
+                  ]
+                },
+                "expiresAt": 1791907330127,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "command-observation",
+              "version": 4,
+              "tool": "Bash",
+              "fields": {
+                "command": "node verify.cjs",
+                "rootIndex": 0
+              },
+              "state": "completed",
+              "exitCode": 7,
+              "signal": null,
+              "timedOut": false,
+              "aborted": false,
+              "timeoutMs": 20000,
+              "stdout": {
+                "state": "included",
+                "text": "CHECK_CURRENT_FAILED\n",
+                "truncated": false
+              },
+              "stderr": {
+                "state": "included",
+                "text": "",
+                "truncated": false
+              },
+              "sourceName": "session-work",
+              "grantId": "6095912ae6fc02ca42a82c6d3aa7d758ae436f58ae68036d343926faab528fc1",
+              "sequence": 4,
+              "observerPeerId": "12D3KooWMbtD5xGHz55XEUxc4K2kawKZJ8ZKex7Wk3wALQoay8Ax",
+              "sourceId": "db5ea830b98898b17cfc050e7845f3a3491227a693ea6c06e04c614435c02bd5",
+              "capture": {
+                "id": "4d6c6ef6-3bb2-4d3f-8cc4-7cdb966a3f9d",
+                "generation": "057c7b40-7dfe-4632-a2c2-f9fc24e73d0e"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-661a7e704a4e5e32969db77b5217dc05be656f747a27bb72b3dbeab029669874",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Write\",\"fields\":{\"rootIndex\":0,\"path\":\"docs/assets.md\",\"content\":\"# Marketing asset maintenance\\n\\nThe illustration library uses a stable export name so the campaign editor can replace a drawing without changing page layout.\\n\\nDesigners retain the editable original beside each exported image; the web build consumes only the reviewed export.\\n\\nEvery illustration lists its author and usage permission in the asset index. Missing attribution blocks publication of that asset.\\n\\nA narrow-screen crop should retain the subject and remove decorative background elements before text is reduced.\\n\\nScreenshots used in launch material are reviewed for private account names and replaced with the public demonstration account.\\n\\nThe weekly asset review checks transparent edges against both page themes and records the accepted export in the design changelog.\\n\\nHistorical illustrations remain available to the campaign team but are not copied into the active distribution directory.\\n\\nNew campaign variants should reuse the existing spacing and contrast checks before requesting a new page component.\\n\"},\"sourceName\":\"session-work\",\"grantId\":\"abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076\",\"sequence\":1,\"observerPeerId\":\"12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv\",\"sourceId\":\"97de5566d93d6a8e5cf9d487f856d2f9279bf0ff0984e0a1c0686b521407b106\",\"capture\":{\"id\":\"f00d3530-54be-4b0f-b8e9-a344599fe68e\",\"generation\":\"2ba69897-44df-46e9-ac59-f8560c1f14a4\"}}",
+            "publishedAt": 1791907240538,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+                "generation": "5af5d6bd3ebf28793ff2c59c91a16f5f8fd37e0ed8aa894a27ff4a911246a8a5",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+                "captureId": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "captureGeneration": "2ba69897-44df-46e9-ac59-f8560c1f14a4",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write"
+                  ]
+                },
+                "expiresAt": 1791907330369,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Write",
+              "fields": {
+                "rootIndex": 0,
+                "path": "docs/assets.md",
+                "content": "# Marketing asset maintenance\n\nThe illustration library uses a stable export name so the campaign editor can replace a drawing without changing page layout.\n\nDesigners retain the editable original beside each exported image; the web build consumes only the reviewed export.\n\nEvery illustration lists its author and usage permission in the asset index. Missing attribution blocks publication of that asset.\n\nA narrow-screen crop should retain the subject and remove decorative background elements before text is reduced.\n\nScreenshots used in launch material are reviewed for private account names and replaced with the public demonstration account.\n\nThe weekly asset review checks transparent edges against both page themes and records the accepted export in the design changelog.\n\nHistorical illustrations remain available to the campaign team but are not copied into the active distribution directory.\n\nNew campaign variants should reuse the existing spacing and contrast checks before requesting a new page component.\n"
+              },
+              "sourceName": "session-work",
+              "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+              "sequence": 1,
+              "observerPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+              "sourceId": "97de5566d93d6a8e5cf9d487f856d2f9279bf0ff0984e0a1c0686b521407b106",
+              "capture": {
+                "id": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "generation": "2ba69897-44df-46e9-ac59-f8560c1f14a4"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-18f1852545defe0d727012b5ff76f3adf18a5b855d2a4031574376a2087fe635",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Write\",\"fields\":{\"rootIndex\":0,\"path\":\"docs/search.md\",\"content\":\"# Documentation search maintenance\\n\\nDocumentation titles should describe the user task and remain understandable when displayed without their surrounding navigation.\\n\\nThe search index contains published guides and reference pages. Draft review notes stay outside the public search collection.\\n\\nEditors check that short labels remain distinct after translations are applied; identical headings make search results ambiguous.\\n\\nEach search example includes a common spelling and a domain-specific term so reviewers can compare the ranked result list.\\n\\nBroken documentation links are corrected in the owning page rather than hidden by the search result renderer.\\n\\nThe release checklist includes one keyboard-only search journey and verifies that focus returns to the search field after closing.\\n\\nSearch metrics are aggregated by page category and never include private query text from individual employees.\\n\\nThe navigation owner records renamed pages before the next index build to preserve established public links.\\n\"},\"sourceName\":\"session-work\",\"grantId\":\"abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076\",\"sequence\":2,\"observerPeerId\":\"12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv\",\"sourceId\":\"94963412f0fb10c71802e41e479dfb0a827a78459a4df7b645ccbbb8e4685787\",\"capture\":{\"id\":\"f00d3530-54be-4b0f-b8e9-a344599fe68e\",\"generation\":\"2ba69897-44df-46e9-ac59-f8560c1f14a4\"}}",
+            "publishedAt": 1791907240543,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+                "generation": "5af5d6bd3ebf28793ff2c59c91a16f5f8fd37e0ed8aa894a27ff4a911246a8a5",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+                "captureId": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "captureGeneration": "2ba69897-44df-46e9-ac59-f8560c1f14a4",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write"
+                  ]
+                },
+                "expiresAt": 1791907330369,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Write",
+              "fields": {
+                "rootIndex": 0,
+                "path": "docs/search.md",
+                "content": "# Documentation search maintenance\n\nDocumentation titles should describe the user task and remain understandable when displayed without their surrounding navigation.\n\nThe search index contains published guides and reference pages. Draft review notes stay outside the public search collection.\n\nEditors check that short labels remain distinct after translations are applied; identical headings make search results ambiguous.\n\nEach search example includes a common spelling and a domain-specific term so reviewers can compare the ranked result list.\n\nBroken documentation links are corrected in the owning page rather than hidden by the search result renderer.\n\nThe release checklist includes one keyboard-only search journey and verifies that focus returns to the search field after closing.\n\nSearch metrics are aggregated by page category and never include private query text from individual employees.\n\nThe navigation owner records renamed pages before the next index build to preserve established public links.\n"
+              },
+              "sourceName": "session-work",
+              "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+              "sequence": 2,
+              "observerPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+              "sourceId": "94963412f0fb10c71802e41e479dfb0a827a78459a4df7b645ccbbb8e4685787",
+              "capture": {
+                "id": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "generation": "2ba69897-44df-46e9-ac59-f8560c1f14a4"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-c1331ade1f336e667213e1554946d86be74a894a8c510d95b3c9ffcf4c7afd0e",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Write\",\"fields\":{\"rootIndex\":0,\"path\":\"docs/accessibility.md\",\"content\":\"# Documentation accessibility review\\n\\nEach screenshot receives descriptive alternative text that explains the visible action instead of repeating the adjacent heading.\\n\\nInteractive examples must remain operable with a keyboard, with a visible focus indicator throughout the demonstrated sequence.\\n\\nTables have descriptive column labels and preserve their reading order on narrow screens without hiding relevant cell contents.\\n\\nA warning uses plain text in addition to color so its meaning remains available in high contrast and monochrome displays.\\n\\nVideo demonstrations include captions for spoken instructions and a nearby text description of actions shown without narration.\\n\\nReviewers check navigation landmarks before publication and keep the page title unique within its documentation section.\\n\\nSmall visual differences are reviewed at normal zoom before changing spacing that other documentation pages depend upon.\\n\\nA follow-up review records the tested screen size and browser so the publishing team can reproduce any remaining layout concern.\\n\"},\"sourceName\":\"session-work\",\"grantId\":\"abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076\",\"sequence\":3,\"observerPeerId\":\"12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv\",\"sourceId\":\"87872a3e1598cf677a17f4512ad459772585b42d62210f549f21bdbaeca99f30\",\"capture\":{\"id\":\"f00d3530-54be-4b0f-b8e9-a344599fe68e\",\"generation\":\"2ba69897-44df-46e9-ac59-f8560c1f14a4\"}}",
+            "publishedAt": 1791907240555,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+                "generation": "5af5d6bd3ebf28793ff2c59c91a16f5f8fd37e0ed8aa894a27ff4a911246a8a5",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+                "captureId": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "captureGeneration": "2ba69897-44df-46e9-ac59-f8560c1f14a4",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write"
+                  ]
+                },
+                "expiresAt": 1791907330369,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Write",
+              "fields": {
+                "rootIndex": 0,
+                "path": "docs/accessibility.md",
+                "content": "# Documentation accessibility review\n\nEach screenshot receives descriptive alternative text that explains the visible action instead of repeating the adjacent heading.\n\nInteractive examples must remain operable with a keyboard, with a visible focus indicator throughout the demonstrated sequence.\n\nTables have descriptive column labels and preserve their reading order on narrow screens without hiding relevant cell contents.\n\nA warning uses plain text in addition to color so its meaning remains available in high contrast and monochrome displays.\n\nVideo demonstrations include captions for spoken instructions and a nearby text description of actions shown without narration.\n\nReviewers check navigation landmarks before publication and keep the page title unique within its documentation section.\n\nSmall visual differences are reviewed at normal zoom before changing spacing that other documentation pages depend upon.\n\nA follow-up review records the tested screen size and browser so the publishing team can reproduce any remaining layout concern.\n"
+              },
+              "sourceName": "session-work",
+              "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+              "sequence": 3,
+              "observerPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+              "sourceId": "87872a3e1598cf677a17f4512ad459772585b42d62210f549f21bdbaeca99f30",
+              "capture": {
+                "id": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "generation": "2ba69897-44df-46e9-ac59-f8560c1f14a4"
+              }
+            }
+          },
+          {
+            "id": "context-peer-observation-e1ad0fcd8e2e3814937346891bf2db6325bc9faee78c2783e82708c53b0032ab",
+            "text": "Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n{\"kind\":\"tool-observation\",\"version\":1,\"reportedStatus\":\"success\",\"omissions\":[],\"tool\":\"Write\",\"fields\":{\"rootIndex\":0,\"path\":\"docs/assets.md\",\"content\":\"# Marketing asset maintenance\\n\\nThe illustration library uses a stable export name so the campaign editor can replace a drawing without changing page layout.\\n\\nDesigners retain the editable original beside each exported image; the web build consumes only the reviewed export.\\n\\nEvery illustration lists its author and usage permission in the asset index. Missing attribution blocks publication of that asset.\\n\\nA narrow-screen crop should retain the subject and remove decorative background elements before text is reduced.\\n\\nScreenshots used in launch material are reviewed for private account names and replaced with the public demonstration account.\\n\\nThe monthly asset review checks transparent edges against both page themes and records the accepted export in the design changelog.\\n\\nHistorical illustrations remain available to the campaign team but are not copied into the active distribution directory.\\n\\nNew campaign variants should reuse the existing spacing and contrast checks before requesting a new page component.\\n\"},\"sourceName\":\"session-work\",\"grantId\":\"abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076\",\"sequence\":4,\"observerPeerId\":\"12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv\",\"sourceId\":\"404def638a2a368315c3e7ee1a7fd22418fe099fa622ad9d627ec6430da70fb6\",\"capture\":{\"id\":\"f00d3530-54be-4b0f-b8e9-a344599fe68e\",\"generation\":\"2ba69897-44df-46e9-ac59-f8560c1f14a4\"}}",
+            "publishedAt": 1791907240612,
+            "peerContribution": {
+              "version": 1,
+              "grant": {
+                "version": 1,
+                "taskId": "task-9377bd2d-0d5d-49fe-b350-247ee1e0d1eb",
+                "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+                "generation": "5af5d6bd3ebf28793ff2c59c91a16f5f8fd37e0ed8aa894a27ff4a911246a8a5",
+                "ownerPeerId": "12D3KooWRwmbZurVfP3p8PC18zQy38Aw9V4Tn6ATL8zZosr3qyBM",
+                "contributorPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+                "captureId": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "captureGeneration": "2ba69897-44df-46e9-ac59-f8560c1f14a4",
+                "source": {
+                  "kind": "tool-observations",
+                  "name": "session-work",
+                  "tools": [
+                    "Write"
+                  ]
+                },
+                "expiresAt": 1791907330369,
+                "maxSamples": 4,
+                "maxSampleBytes": 16384
+              }
+            },
+            "peerToolObservation": {
+              "kind": "tool-observation",
+              "version": 1,
+              "reportedStatus": "success",
+              "omissions": [],
+              "tool": "Write",
+              "fields": {
+                "rootIndex": 0,
+                "path": "docs/assets.md",
+                "content": "# Marketing asset maintenance\n\nThe illustration library uses a stable export name so the campaign editor can replace a drawing without changing page layout.\n\nDesigners retain the editable original beside each exported image; the web build consumes only the reviewed export.\n\nEvery illustration lists its author and usage permission in the asset index. Missing attribution blocks publication of that asset.\n\nA narrow-screen crop should retain the subject and remove decorative background elements before text is reduced.\n\nScreenshots used in launch material are reviewed for private account names and replaced with the public demonstration account.\n\nThe monthly asset review checks transparent edges against both page themes and records the accepted export in the design changelog.\n\nHistorical illustrations remain available to the campaign team but are not copied into the active distribution directory.\n\nNew campaign variants should reuse the existing spacing and contrast checks before requesting a new page component.\n"
+              },
+              "sourceName": "session-work",
+              "grantId": "abdfaadb51ad7a080379254142abd27ed6a74f525610ea2fd9a88556ebf70076",
+              "sequence": 4,
+              "observerPeerId": "12D3KooWKxUkK4Rv5hCiDdmLbaKKoL3LL5neB8tJeESHd3iaf9Fv",
+              "sourceId": "404def638a2a368315c3e7ee1a7fd22418fe099fa622ad9d627ec6430da70fb6",
+              "capture": {
+                "id": "f00d3530-54be-4b0f-b8e9-a344599fe68e",
+                "generation": "2ba69897-44df-46e9-ac59-f8560c1f14a4"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

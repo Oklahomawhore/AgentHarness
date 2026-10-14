@@ -76,7 +76,7 @@ dsh --profile web --no-open --port 8080
 
 每个浏览器会话都从随发行版交付的 preset（默认 `standard`）组合自己的 agent（智能体），而不是共享一套进程级工具集。你可以更改默认 preset，或在 `$DSH_HOME/.agent-presets` 下添加自己的 preset。
 
-在 macOS 和 Linux 上，组合包还会挂载 [Claude scope 适配器](../../collaboration/claude-scope/README.zh.md)。安装 Hook 和加入 Task 仍须显式操作；仅启动 Web 不会授予对 Claude 会话或其文件的访问权限。共享上下文后端默认仍为 `/text`。Claude 适配器在 Windows 上禁用，因为其私有连接描述文件需要尚不支持的操作系统锁；Web 的其他部分仍可启动。
+在 macOS 和 Linux 上，组合包还会挂载 [Claude scope 适配器](../../collaboration/claude-scope/README.zh.md)。安装 Hook 和加入 Task 仍须显式操作；仅启动 Web 不会授予对 Claude 会话或其文件的访问权限。共享上下文后端默认使用 [`/reported`](../../collaboration/development-task-context/README.zh.md#behavior)，可依据完整且获授权的实时 Write/Edit 报告重建文件文本，无须调用模型。Claude 适配器在 Windows 上禁用，因为其私有连接描述文件需要尚不支持的操作系统锁；Web 的其他部分仍可启动。
 
 -----
 

@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-scope-agent-contribution",
-  "description": "Explicit native Agent file-tool contribution with durable source provenance and independent owner permission",
+  "description": "Explicit native Agent file and command contribution with durable source provenance and independent owner permission",
   "version": "0.1.5-rc.2",
   "publishConfig": {
     "access": "public"
@@ -62,7 +62,9 @@
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
-    "@deepseek-ai/dsh-scope-transport": "workspace:^"
+    "@deepseek-ai/dsh-scope-transport": "workspace:^",
+    "@deepseek-ai/dsh-shell": "workspace:^",
+    "@deepseek-ai/dsh-tool-bash": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -99,6 +101,7 @@
     "@deepseek-ai/dsh-subprocess-local": "workspace:^",
     "@deepseek-ai/dsh-tool-bash": "workspace:^",
     "@deepseek-ai/dsh-development-task-storage-domain": "workspace:^",
-    "@deepseek-ai/dsh-development-room-storage-domain": "workspace:^"
+    "@deepseek-ai/dsh-development-room-storage-domain": "workspace:^",
+    "@deepseek-ai/dsh-shell": "workspace:^"
   }
 }

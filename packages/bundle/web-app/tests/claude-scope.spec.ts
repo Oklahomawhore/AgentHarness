@@ -11,8 +11,8 @@ if (row === undefined) throw new Error('Web composition must provide the Claude 
 
 it.each(['darwin', 'linux', 'win32'])('gates the descriptor adapter on the %s platform', (platform) => {
   expect(interpolate({ process: { platform } }, row.disabled)).toBe(platform === 'win32')
-  expect(rows.find(entry => entry.id === 'development-task-context-text')?.name)
-    .toBe('@deepseek-ai/dsh-development-task-context/text')
+  expect(rows.find(entry => entry.id === 'development-task-context-backend')?.name)
+    .toBe('@deepseek-ai/dsh-development-task-context/reported')
   expect(rows.some(entry => entry.name === '@deepseek-ai/dsh-development-task-context/facts')).toBe(false)
 })
 

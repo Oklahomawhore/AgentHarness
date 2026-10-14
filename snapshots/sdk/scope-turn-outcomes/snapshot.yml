@@ -1,0 +1,11 @@
+version: 1
+scenario: scope-turn-outcomes
+profile: sdk
+composition: sdk-scope-turn-outcomes
+recording: authored
+header:
+  class: scope-turn-outcomes
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true

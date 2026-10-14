@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-本地 Client 组合提供独立 scope 身份、只读邀请、Claude 接收选择及[原生 Session 的绑定、暂停和恢复](../../collaboration/scope-agent-context/README.zh.md)。[Scope 访问](../../collaboration/scope-access/README.zh.md)负责 peer 授权；这些经过认证的本地管理方法不充当 peer 协议。 它也暴露在线贡献申请与显式原生文件工作授权。申请、来源会话和原生贡献变化会刷新打开的管理界面，无需浏览器轮询；原生状态仍只是本地观察，不证明内容已送达或模型已采用。
+本地 Client 组合提供独立 scope 身份、只读邀请、Claude 接收选择及[原生 Session 的绑定、暂停和恢复](../../collaboration/scope-agent-context/README.zh.md)。[Scope 访问](../../collaboration/scope-access/README.zh.md)负责 peer 授权；这些经过认证的本地管理方法不充当 peer 协议。 它也暴露在线贡献申请、显式原生文件工作授权，以及 Claude 精确联合退出和地址恢复。申请、来源会话和原生贡献变化会刷新打开的管理界面，无需浏览器轮询；原生状态仍只是本地观察，不证明内容已送达或模型已采用。
 
 [`@deepseek-ai/dsh-api-session-controller`](../session-controller/README.zh.md) 拥有 Agent 与 Session 身份策略，包括供其他 namespace 使用的 Typert lookup resolver。本包只选择并挂载生成的 Session contribution，不复制激活策略。
 

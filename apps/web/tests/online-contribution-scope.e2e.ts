@@ -13,6 +13,7 @@ import type { ScopeContributionEntry } from '@deepseek-ai/dsh-scope-access/types
 import type {} from '@deepseek-ai/dsh-claude-scope'
 import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-access'
+import { expandReportedGrants } from '../../../scripts/scope-evaluation/reported-grant-evidence.mjs'
 import { assertFixtureInventory, launchWebScaffold, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
 import { captureContributionPanel, contributionHook, openContributionView, type ContributionView } from './contribution-scope-support.ts'
@@ -61,7 +62,7 @@ function contextText(messages: readonly Message[]): string {
 function renderedPublications(text: string): { id: string; text: string }[] {
   const json = text.match(/<development-task-context>\n([\s\S]*?)\n<\/development-task-context>/)?.[1]
   if (json === undefined) throw new Error('Actual model context has no Task document')
-  const document: unknown = JSON.parse(json)
+  const document = expandReportedGrants(JSON.parse(json) as unknown, '6')
   if (document === null || typeof document !== 'object' || !('publications' in document) || !Array.isArray(document.publications)) {
     throw new Error('Actual model context has no publication array')
   }
@@ -240,7 +241,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: online contribution appr
     const readText = await access.getByRole('textbox', { name: '将此邀请交给接收人', exact: true }).inputValue()
     await receiver.page.getByRole('button', { name: '协作', exact: true }).click()
     const native = receiver.page.locator('[data-native-scope-panel]')
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(readText)
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(readText)
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => {
       const status = await receiver.scaffold.ctx.scopeAgentContext.status({ agentId: sessionId })
@@ -399,7 +400,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: online contribution appr
     await expect.poll(() => readField.inputValue()).toContain(toolTask.id)
     await toolReceiver.page.getByRole('button', { name: '协作', exact: true }).click()
     const native = toolReceiver.page.locator('[data-native-scope-panel]')
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(await readField.inputValue())
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(await readField.inputValue())
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => {
       const status = await toolReceiver.scaffold.ctx.scopeAgentContext.status({ agentId: receiverSession })

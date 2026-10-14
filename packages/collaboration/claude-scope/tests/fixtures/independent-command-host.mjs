@@ -66,7 +66,7 @@ export async function apply(ctx, config) {
   })
   await ctx.plugin(ScopeAccess, {
     maxGrants: 32, maxSubscriptions: 32, maxProjections: 128, maxContextBytes: 6000,
-    maxResponseBytes: 16384, requestTimeoutMs: 65000, maxInvitationLifetimeMs: 900000, maxConcurrentReads: 8,
+    maxResponseBytes: 16384, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 65000, maxInvitationLifetimeMs: 900000, maxConcurrentReads: 8,
     // The test's HTTP deadline expires before this timer: only a change can satisfy its wait.
     waitTimeoutMs: 60000, maxConcurrentWaits: 2,
     maxConcurrentContributions: 2, maxContributionRequestBytes: 16384, maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000,

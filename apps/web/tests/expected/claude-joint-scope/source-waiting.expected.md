@@ -1,0 +1,34 @@
+- region "自动贡献工作变化":
+  - heading "自动贡献工作变化" [level=3]
+  - button "重新读取贡献"
+  - paragraph: 为这个会话授权采集目录。所有者批准后，目录内正常 Write/Edit 的变化会自动贡献；无需逐个指定文件。也可选择单个 OpenAPI 操作。
+  - status: 等待所有者批准；批准后自动启用
+  - region "此次协作的共享上下文":
+    - heading "此次协作的共享上下文" [level=3]
+    - status: 等待所有者批准读取与文件贡献。
+    - paragraph: 上下文会在下一次支持的 Hook 中准备。不会唤醒 Claude 或启动模型；连接状态不代表模型已接收或理解。
+    - button "退出此次协作"
+    - paragraph: 停止这次文件贡献与其创建的读取，保留原 Claude 会话及后来独立建立的读取。
+    - group: 更新所有者连接地址
+  - term: 来源名称
+  - definition: session-work
+  - term: 贡献来源
+  - definition: 授权目录内的 Write/Edit
+  - term: 允许采集的工具
+  - definition: Edit, Write
+  - term: 允许采集的目录
+  - definition: {{cwd}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeer}}
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 授权到期时间
+  - definition: {{permissionExpires}}
+  - term: 最多样本数
+  - definition: "8"
+  - term: 每份样本字节上限
+  - definition: "8192"
+  - paragraph: Host 会在后台取回批准结果。可以关闭此页面；停止 Host 时会暂缓，重新启动后继续。
+  - paragraph: 启用后，此会话会自动贡献已授权的工作变化。贡献记录来自此会话，不代表结果已被独立验证。接收共享上下文需要另行授权。
+  - paragraph: 停止分享也会取消尚未采用的读取。
+  - button "停止贡献"

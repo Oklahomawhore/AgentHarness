@@ -87,7 +87,7 @@ kind: "package-reference"
 
 工具就是执行器；策略是事件门禁。工具不注入策略服务，也不检查任何缓存——每次变更都通过 `ctx.waterfall` 向单一意图槽位请求防护，每个操作只在成功后发出 `fs/observed`。读取恰好执行一次提供方 `stat`（类型与大小路由加观察到的版本）；变更一次也不执行，因为防护来自意图槽位，提供方在锁内重新检查。
 
-`write` 与 `edit` 执行器在 provider 修改文件之前发出已通过准入检查的尝试。[文件工具观察类型](../../../docs/subsystems/filesystem.zh.md#file-tool-observation) 将实际 provider 和目标与注册表执行关联；Consumer 仍需等待最终日志结果，并取得各自的来源共享许可。事件不包含原文件正文。
+`write` 与 `edit` 执行器在 provider 修改文件之前发出已通过准入检查的尝试。[文件工具观察类型](../../../docs/subsystems/filesystem.zh.md#file-tool-observation) 将实际 provider 和目标与注册表执行关联；Consumer 仍需等待最终日志结果，并取得各自的来源共享许可。事件不包含原文件正文。provider 操作成功后还会发出 `tool-fs/mutation-completed`，携带相同的 mutation 身份及该操作产生的完整 LF 规范化文本，包括未修改部分。共享此文本需要独立的完整内容许可及成功的持久工具结果；后续取消或失败会阻止发布。该事件不重新读取文件，也不证明送达时的文件状态。
 
 ### 源码地图
 

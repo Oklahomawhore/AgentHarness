@@ -1,0 +1,96 @@
+- dialog "当前会话协作":
+  - heading "当前会话协作" [level=2]
+  - button "关闭协作设置":
+    - img
+  - group "目标在哪里":
+    - text: 目标在哪里
+    - radio "本机创建的目标"
+    - text: 本机创建的目标
+    - radio "他人分享的目标" [checked]
+    - text: 他人分享的目标
+  - paragraph: 本地与他人目标各有一份文件分享许可。请在对应目标中查看或停止；停止其中一份不会停止另一份。
+  - status: 自动协作已暂停
+  - paragraph: 自动启动额度已用完。增加有限额度后才能恢复。
+  - paragraph: 累计已用 3 / 3 次 · 每轮最多 2 步
+  - paragraph: 保留的本地目标：维护客户端重试实现
+  - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
+  - term: 共享 Task
+  - definition: {{sharedTaskId}}
+  - term: 来源设备
+  - definition: {{peer0}}
+  - term: 邀请中的职责
+  - definition: 维护客户端重试实现
+  - paragraph: 本地目标：维护我负责的客户端重试实现，响应已核实的协作事实。
+  - paragraph: 退出共享范围后保持暂停的本地自动目标：维护我负责的客户端重试实现，响应已核实的协作事实。
+  - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - region "已记录共享上下文":
+    - heading "已记录共享上下文" [level=3]
+    - paragraph: 共享内容 2732 字节 · 纳入 2 条来源记录。
+    - paragraph: 因容量限制未纳入 0 条来源记录。
+    - group: 其他未纳入原因
+    - paragraph: 字节数包含共享上下文的说明文字，不含本地目标、聊天历史或工具定义。
+    - paragraph: 这是保存在当前会话中的记录，不代表模型请求已发送、模型已理解或读取权限当前仍有效。
+  - button "离开共享上下文"
+  - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 更新所有者连接地址
+  - text: 粘贴协作入口
+  - textbox "粘贴协作入口": "{\"version\":2,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{sharedTaskId}}\",\"ownerPeerId\":\"{{peer0}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-group-entry\",\"sourceKind\":\"tool-observations\",\"maxMembers\":2}"
+  - group "本机执行许可":
+    - text: 本机执行许可
+    - radio "允许自动协作" [checked]
+    - text: 允许自动协作
+  - paragraph: 自动启动会调用模型并可能执行工具。预留后取消也计入次数；此额度不是费用、token 或 API 重试上限。
+  - group:
+    - text: 本地协作目标
+    - textbox "本地协作目标": 维护我负责的客户端重试实现，响应已核实的协作事实。
+    - text: 允许新增的自动启动次数
+    - spinbutton "允许新增的自动启动次数": "2"
+    - text: 每轮最多步数
+    - spinbutton "每轮最多步数": "2"
+    - text: 最短间隔（秒）
+    - spinbutton "最短间隔（秒）": "0"
+    - paragraph: 允许此会话为“维护我负责的客户端重试实现，响应已核实的协作事实。”再自动启动最多 2 次。
+  - button "确认启用自动协作"
+  - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
+  - group:
+    - text: 分享本会话的工作
+    - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
+    - status: 正在采集已授权的文件工作
+    - term: 目标 Task
+    - definition: {{sharedTaskId}}
+    - term: 任务所有者设备
+    - definition: {{peer0}}
+    - term: 来源采集标识
+    - definition: {{member1Capture}}
+    - term: 采集代际
+    - definition: {{member1CaptureGeneration}}
+    - term: 允许采集的目录
+    - definition: {{cwd}}/group-1/project
+    - term: 文件内容范围
+    - definition: 原始工具参数及完成状态
+    - term: 允许分享的文件操作
+    - definition: 写入文件（write）
+    - term: 授权到期时间
+    - definition: {{expiresLocal}}
+    - term: 最多样本数
+    - definition: "8"
+    - term: 每份样本字节上限
+    - definition: "8192"
+    - paragraph: 既有文件许可不包含命令结果。要加入命令许可，请结束这份分享；联合加入须先退出此次协作，再重新申请。
+    - status: 此次加入的读取已连接
+    - paragraph: 此次申请未附自动许可；可在读取面板另行启用。
+    - paragraph: 协作职责：维护客户端重试实现
+    - button "退出此次协作"
+    - paragraph: 结束此次文件分享和本次加入创建的读取连接，不影响后来另行建立的读取。
+    - group: 已批准的权限
+    - paragraph: 等待提交的观察：0
+    - button "停止分享并撤回"
+    - paragraph: 仅停止分享会保留已连接的读取及其已授自动许可；可在上方暂停自动工作或离开。停止分享和此次读取请使用“退出此次协作”。
+    - group: 更新所有者连接地址
+    - button "重新读取分享状态"
+  - region "当前目标的自动协作记录":
+    - heading "当前目标的自动协作记录" [level=3]
+    - paragraph: 最近完成自动响应：第 6 轮，共享版本 6。
+    - paragraph: 该响应同时采用本地目标版本 4。
+  - button "重新读取状态"
+  - button "查看来源"

@@ -137,7 +137,8 @@
     "@deepseek-ai/schemastery": "workspace:^",
     "commander": "^15.0.0",
     "open": "^11.0.0",
-    "@deepseek-ai/dsh-scope-agent-contribution": "workspace:^"
+    "@deepseek-ai/dsh-scope-agent-contribution": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

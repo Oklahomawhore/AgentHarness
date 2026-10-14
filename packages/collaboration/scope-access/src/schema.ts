@@ -5,7 +5,11 @@ import type { DevelopmentTaskId } from '@deepseek-ai/dsh-development-task/types'
 import type { DevelopmentTaskContextActivation, DevelopmentTaskContextEvidenceId } from '@deepseek-ai/dsh-development-task-context/types'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
-import type { ScopeGeneration, ScopeGrantId, ScopeAccessProjection, ScopeAccessLegacyProjection, ScopeAccessCurrentProjection, ScopeProjectionId } from './types.ts'
+import { peerCaptureSchema } from './subscription-schema.ts'
+import type {
+  ScopeGeneration, ScopeGrantId, ScopeAccessProjection, ScopeAccessLegacyProjection,
+  ScopeAccessCurrentProjection, ScopeAccessCaptureProjection, ScopeProjectionId,
+} from './types.ts'
 
 const peer = z.string().min(1).max(256).transform(value => value as ScopePeerId)
 const task = z.string().min(1).max(256).transform(value => value as DevelopmentTaskId)
@@ -14,6 +18,7 @@ const generation = z.uuid().transform(value => value as ScopeGeneration)
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 
 export { invitationSchema, sameReadGrant } from './invitation-schema.ts'
+export { originalCaptureSchema, subscriptionSchema, legacySubscriptionSchema, captureSubscriptionSchema } from './subscription-schema.ts'
 
 const source = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), taskId: task, revision: integer.positive() }).strict(),
@@ -44,9 +49,12 @@ const projectionContent = {
 export const projectionSchema: z.ZodType<ScopeAccessProjection> = z.union([
   z.object(projectionContent).strict(),
   z.object({ ...projectionContent, version: z.literal(2), activation: activationSchema }).strict(),
+  z.object({ ...projectionContent, version: z.literal(3), activation: activationSchema, peerCapture: peerCaptureSchema }).strict(),
 ]).superRefine((value, ctx) => {
   const sources = [...value.selectedSources, ...value.omittedSources.map(item => item.source)]
-  if (sources.some(item => item.taskId !== value.taskId || item.revision !== value.taskRevision)
+  if (('version' in value && value.version === 3 && (value.peerCapture.taskId !== value.taskId
+    || value.peerCapture.ownerPeerId !== value.ownerPeerId || value.peerCapture.contributorPeerId !== value.recipientPeerId))
+    || sources.some(item => item.taskId !== value.taskId || item.revision !== value.taskRevision)
     || new Set(sources.map(item => JSON.stringify(item))).size !== sources.length
     || Buffer.byteLength(value.text, 'utf8') > value.maxContextBytes
     || projectionDigest(value) !== value.projectionId) {
@@ -59,7 +67,10 @@ export const projectionSchema: z.ZodType<ScopeAccessProjection> = z.union([
  * @param projection - fields emitted in the public projection representation.
  * @returns SHA-256 digest of the ordered, complete projection fields.
  */
-export function projectionDigest(projection: Omit<ScopeAccessLegacyProjection, 'projectionId'> | Omit<ScopeAccessCurrentProjection, 'projectionId'>): ScopeProjectionId {
+export function projectionDigest(
+  projection: Omit<ScopeAccessLegacyProjection, 'projectionId'> | Omit<ScopeAccessCurrentProjection, 'projectionId'>
+    | Omit<ScopeAccessCaptureProjection, 'projectionId'>,
+): ScopeProjectionId {
   const sourceIdentity = (item: ScopeAccessProjection['selectedSources'][number]) =>
     [item.kind, item.taskId, item.revision, item.kind === 'publication' ? item.publicationId : null]
   const fields: unknown[] = [
@@ -68,10 +79,15 @@ export function projectionDigest(projection: Omit<ScopeAccessLegacyProjection, '
     projection.maxContextBytes, projection.text, projection.selectedSources.map(sourceIdentity),
     projection.omittedSources.map(item => [sourceIdentity(item.source), item.reason]),
   ]
-  if (projection.version === 2) {
+  if (projection.version === 2 || projection.version === 3) {
     const activation = projection.activation
-    fields.push(['scope-access-projection', 2, activation.kind === 'exact'
+    fields.push(['scope-access-projection', projection.version, activation.kind === 'exact'
       ? ['exact'] : ['recipient-evidence', activation.version, activation.digest, activation.coverage]])
+  }
+  if (projection.version === 3) {
+    const capture = projection.peerCapture
+    fields.push(['peer-capture', capture.ownerPeerId, capture.contributorPeerId, capture.taskId, capture.grantId,
+      capture.generation, capture.captureId, capture.captureGeneration])
   }
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex') as ScopeProjectionId
 }
@@ -79,5 +95,5 @@ export function projectionDigest(projection: Omit<ScopeAccessLegacyProjection, '
 export { contributionInvitationSchema, contributionStatusSchema, contributionSubmitSchema, contributionEndSchema,
   validateContributionReceipt, contributionProposalSchema, decodeContributionText, encodeContributionProposal, encodeContributionInvitation } from './contribution-schema.ts'
 
-export { contributionEntrySchema, contributionLimitsSchema } from './contribution-schema.ts'
+export { contributionEntrySchema, singleContributionEntrySchema, groupEntrySchema, contributionLimitsSchema } from './contribution-schema.ts'
 export { contributionApplicationResultSchema } from './application-schema.ts'

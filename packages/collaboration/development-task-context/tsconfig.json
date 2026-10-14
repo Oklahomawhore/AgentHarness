@@ -58,6 +58,9 @@
     },
     {
       "path": "../../util/values"
+    },
+    {
+      "path": "../../settings/settings"
     }
   ]
 }

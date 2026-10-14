@@ -4,6 +4,10 @@
 .trigger:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
 .trigger svg { flex: none; }
 .triggerState { max-width: 110px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.capacity { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--dsw-alias-label-primary); }
+.capacityFull { max-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.capacityShort { display: none; white-space: nowrap; }
+.capacityDescription { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .panel { position: fixed; z-index: 100; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; width: 440px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 18px; overflow: auto; border: 0; border-radius: 18px; background: var(--dsw-specific-menu); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent); font-size: 13px; line-height: 19px; --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2); --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2); }
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .heading h2 { margin: 0; font-size: 16px; line-height: 22px; }
@@ -36,3 +40,19 @@
 .sharing > summary:focus-visible, .consent input:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
 .consent { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 18px; }
 .consent input { flex: none; margin: 3px 0 0; accent-color: var(--dsw-alias-label-primary); }
+.activity { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 18px; }
+.activity h3, .activity p { margin: 0; overflow-wrap: anywhere; }
+.activity h3 { font-size: 12px; font-weight: 600; }
+.recorded { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; background: var(--dsw-alias-interactive-bg-hover); }
+.recorded h3, .recorded p { margin: 0; overflow-wrap: anywhere; }
+.recorded h3 { font-size: 13px; line-height: 19px; }
+.recorded summary { cursor: pointer; }
+.recorded summary:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.recordedReason { display: contents; }
+
+@media (max-width: 440px) {
+  .capacityTrigger { gap: 2px; padding-inline: 3px; }
+  .capacityTrigger .triggerCaption { display: none; }
+  .capacityFull { display: none; }
+  .capacityShort { display: inline; }
+}

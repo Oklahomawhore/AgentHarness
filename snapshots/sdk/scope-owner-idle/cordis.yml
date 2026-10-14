@@ -40,6 +40,7 @@
         maxProjections: 64
         maxContextBytes: 12000
         maxResponseBytes: 32768
+        maxDecodedResponseBytes: 2097152
         requestTimeoutMs: 5000
         maxInvitationLifetimeMs: 60000
         maxConcurrentReads: 8
@@ -65,6 +66,7 @@
       name: '@deepseek-ai/dsh-scope-agent-context'
       config:
         maxContextBytes: 12000
+        maxLocalContextBytes: 6000
         coalesceMs: 10
         retryDelayMs: 1000
     - id: native-contribution-assertions

@@ -1,0 +1,15 @@
+version: 1
+scenario: scope-capture-self-omission
+profile: sdk
+composition: sdk-scope-capture-self-omission
+recording: authored
+header:
+  class: scope-capture-self-omission
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+workspace:
+  final: true
+writer: separate
+writerRevision: 2

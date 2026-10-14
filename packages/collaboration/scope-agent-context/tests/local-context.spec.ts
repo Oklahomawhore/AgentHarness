@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import { localContributionGrantSchema, localContributionRequestSchema } from '@d
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import * as TaskContext from '@deepseek-ai/dsh-development-task-context'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
+import FactsBackend from '@deepseek-ai/dsh-development-task-context/facts'
 import { createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
@@ -46,7 +47,7 @@ class UnusedAccess extends Service {
   constructor(ctx: Context) { super(ctx, 'scopeAccess') }
   async list() { return { subscriptions: [], grants: [] } }
   async join(): Promise<never> { throw new Error('local mode attempted a peer join') }
-  async retrieve(): Promise<never> { throw new Error('local mode attempted a peer read') }
+  async retrieveWithinBudget(): Promise<never> { throw new Error('local mode attempted a peer read') }
   async waitForChange(): Promise<never> { throw new Error('local mode attempted a peer watch') }
 }
 
@@ -71,7 +72,7 @@ class Recorder extends LlmAdapter {
   }
 }
 
-async function fixture(options: { injector?: boolean; seed?: readonly SessionEvent[]; maxContextBytes?: number } = {}) {
+async function fixture(options: { injector?: boolean; seed?: readonly SessionEvent[]; maxContextBytes?: number; facts?: boolean } = {}) {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -81,7 +82,7 @@ async function fixture(options: { injector?: boolean; seed?: readonly SessionEve
   const modules = new Map<string, unknown>([
     ['fixture:scope-access', UnusedAccess], ['@deepseek-ai/dsh-development-room', DevelopmentRooms],
     ['@deepseek-ai/dsh-development-task', DevelopmentTasks], ['@deepseek-ai/dsh-development-task-context/text', TextBackend],
-    ['@deepseek-ai/dsh-development-task-context', TaskContext], ['@deepseek-ai/dsh-scope-agent-context', ScopeAgentContext],
+    ['@deepseek-ai/dsh-development-task-context/facts', FactsBackend], ['@deepseek-ai/dsh-development-task-context', TaskContext], ['@deepseek-ai/dsh-scope-agent-context', ScopeAgentContext],
   ])
   ctx.loader.internal = { version: 'v2', async import(specifier: string) {
     if (!modules.has(specifier)) throw new Error(`unexpected fixture plugin ${specifier}`)
@@ -89,9 +90,14 @@ async function fixture(options: { injector?: boolean; seed?: readonly SessionEve
   } } as unknown as NonNullable<typeof ctx.loader.internal>
   const directory = await mkdtemp(join(tmpdir(), 'scope-local-context-'))
   directories.push(directory)
-  const originalYaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
+  const fixtureYaml = await readFile(new URL('./fixtures/local-cordis.yml', import.meta.url), 'utf8')
+  const originalYaml = options.facts === true
+    ? fixtureYaml.replace("- name: '@deepseek-ai/dsh-development-task-context/text'",
+      "- name: '@deepseek-ai/dsh-development-task-context/facts'\n  config:\n    routes: []\n    unmatchedFields: [operationId]")
+    : fixtureYaml
   const yaml = options.maxContextBytes === undefined ? originalYaml
     : originalYaml.replace('maxContextBytes: 8000', `maxContextBytes: ${options.maxContextBytes}`)
+      .replace('maxLocalContextBytes: 4000', `maxLocalContextBytes: ${Math.floor(options.maxContextBytes / 2)}`)
   const path = join(directory, 'cordis.yml')
   await writeFile(path, options.injector === false ? yaml.replace('disabled: false', 'disabled: true') : yaml)
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
@@ -149,10 +155,31 @@ it('keeps local passive reads in one injector, then logs actual automatic comple
   expect(agent.session.eventAt(request.data.contextSeq)).toMatchObject({ type: 'user/message', data: { source: { version: 3, projection: request.data.projection } } })
   const completed = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
   expect(completed?.requestSeq).toBe(request.seq)
+  expect((await status(ctx, agent.id)).activity).toMatchObject({ request: null,
+    completed: { requestSeq: request.seq, taskRevision: request.data.projection.taskRevision, turn: 2 },
+    evaluation: { decision: 'activate', taskRevision: request.data.projection.taskRevision } })
   expect(agent.session.eventAt(completed!.turnEndSeq)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
   await Promise.all(['one', 'two'].map(text => ctx.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text })))
   await idleRequests(value, 3)
   expect(currentText(adapter.requests[2]!)).toContain('two')
+})
+
+it.each(['replaced', 'cleared'] as const)('hides recorded local activity when its Task assignment is %s', async (change) => {
+  const value = await fixture()
+  const { ctx, agent, target, task, participantId } = value
+  await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
+  await idleRequests(value, 1)
+  const completed = (await status(ctx, agent.id)).activity.completed
+  expect(completed).not.toBeNull()
+  if (change === 'replaced') {
+    await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: target.taskBindingId })
+  } else {
+    await ctx.developmentTasks.clear({ bindingId: target.taskBindingId, participantId, expectedBindingEpoch: target.expectedBindingEpoch })
+  }
+  const changed = await status(ctx, agent.id)
+  expect(changed.activity).toEqual({ request: null, completed: null, evaluation: null })
+  expect(changed.eligibility).toBe(change === 'replaced' ? 'task-conflict' : 'eligible')
+  expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed?.requestSeq).toBe(completed!.requestSeq)
 })
 
 it('does not bind or reserve without the real Task admission consumer', async () => {
@@ -162,18 +189,22 @@ it('does not bind or reserve without the real Task admission consumer', async ()
   expect(adapter.requests).toEqual([])
 })
 
-it('does not wake for its own ordinary local capture, but wakes for an explicit publication and terminal notice', async () => {
+it.each(['tool', 'turn'] as const)('does not wake for its own local %s capture, but wakes for explicit and terminal reports', async (kind) => {
   const value = await fixture()
   const { ctx, agent, target, task, participantId, adapter } = value
   await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
   await idleRequests(value, 1)
   const grant = localContributionGrantSchema.parse({ version: 1, taskId: task.id, participantId, bindingId: target.taskBindingId,
     expectedBindingEpoch: target.expectedBindingEpoch, captureId: randomUUID(), captureGeneration: randomUUID(),
-    source: { kind: 'tool-observations', name: 'local-work', tools: ['Write'] }, expiresAt: Date.now() + 60000, maxSamples: 2, maxSampleBytes: 6000 })
+    source: kind === 'tool' ? { kind: 'tool-observations', name: 'local-work', tools: ['Write'] }
+      : { kind: 'completed-turn-outcomes', version: 5, name: 'local-replies' }, expiresAt: Date.now() + 60000, maxSamples: 2, maxSampleBytes: 6000 })
   await ctx.developmentTasks.openLocalContribution(grant)
   vi.useFakeTimers()
   await ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant, sourceId: '1'.repeat(64), sequence: 1,
-    result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', fields: { rootIndex: 0, path: 'a.txt', content: 'Own tool value' }, omissions: [] } }))
+    result: kind === 'tool' ? { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+      fields: { rootIndex: 0, path: 'a.txt', content: 'Own tool value' }, omissions: [] }
+      : { kind: 'completed-turn-outcome', version: 5, text: 'Own completed reply',
+        sha256: createHash('sha256').update('Own completed reply').digest('hex') } }))
   await vi.advanceTimersByTimeAsync(30)
   expect(adapter.requests).toHaveLength(1)
   vi.useRealTimers()
@@ -181,7 +212,7 @@ it('does not wake for its own ordinary local capture, but wakes for an explicit 
   await idleRequests(value, 2)
   await ctx.developmentTasks.endLocalContribution({ grant, reason: 'left' })
   await idleRequests(value, 3)
-  expect(currentText(adapter.requests[2]!)).not.toContain('Own tool value')
+  expect(currentText(adapter.requests[2]!)).not.toContain(kind === 'tool' ? 'Own tool value' : 'Own completed reply')
 })
 
 it('rejects stale Task epochs and does not clear a replacement assignment', async () => {
@@ -356,4 +387,38 @@ it.each([false, true])('blocks incomplete current local tool evidence before aut
     expect(currentText(adapter.requests[3]!)).toContain('"withdrawnOmissions":3')
     expect((await status(ctx, agent.id)).state).toMatchObject({ mode: 'enabled', usedBudget: 3, pauseReason: null })
   }
+})
+
+it('pauses automatic work when the OpenAPI-only backend cannot interpret a completed reply', async () => {
+  const value = await fixture({ facts: true })
+  const { ctx, agent, task, target, adapter } = value
+  await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
+  await idleRequests(value, 1)
+  const originalSession = agent.session
+  const assignment = ctx.developmentTasks.assignmentList().find(item => item.participantId === value.participantId)
+  const baseline = ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed
+  const author = 'research-agent' as DevelopmentParticipantId
+  await ctx.developmentRooms.announce({ id: author, kind: 'agent', displayName: 'Research Agent' })
+  const checked = await ctx.developmentTasks.checkout({ taskId: task.id, participantId: author })
+  const epoch = ctx.developmentTasks.assignmentLog().at(-1)!
+  const grant = localContributionGrantSchema.parse({ version: 1, taskId: task.id, participantId: author,
+    bindingId: checked.assignment.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq },
+    captureId: randomUUID(), captureGeneration: randomUUID(), source: { kind: 'completed-turn-outcomes', version: 5, name: 'Research' },
+    expiresAt: Date.now() + 60000, maxSamples: 2, maxSampleBytes: 6000 })
+  await ctx.developmentTasks.openLocalContribution(grant)
+  const text = 'Research recommends postponing rollout.'
+  const admitted = await ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant,
+    sourceId: '1'.repeat(64), sequence: 1, result: { kind: 'completed-turn-outcome', version: 5, text,
+      sha256: createHash('sha256').update(text).digest('hex') } }))
+  await expect.poll(async () => (await status(ctx, agent.id)).state.pauseReason).toBe('coverage')
+  await agent.whenIdle()
+  expect(adapter.requests).toHaveLength(1)
+  expect(agent.session).toBe(originalSession)
+  expect(ctx.developmentTasks.assignmentList().find(item => item.participantId === value.participantId)).toEqual(assignment)
+  expect(ctx.sessionProjections.stateOf(agent.session, 'scopeAgentEvidence')!.completed).toEqual(baseline)
+  expect(agent.session.snapshotEvents().findLast(event => event.type === 'scope-agent-context/evaluation')).toMatchObject({
+    data: { decision: 'blocked-current', projection: { activation: { kind: 'recipient-evidence', coverage: 'blocked-current' },
+      omittedSources: [{ reason: 'unsupported', source: { publicationId: admitted.publication.id } }] } },
+  })
+  expect((await status(ctx, agent.id)).state.usedBudget).toBe(1)
 })

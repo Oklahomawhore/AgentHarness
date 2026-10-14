@@ -2,8 +2,9 @@
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
-import type { DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
-import { toolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
+import type { DevelopmentTaskCompletedFileToolObservationResult, DevelopmentTaskLocalToolObservationResult,
+  DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
+import { localToolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
 
 /**
  * Render a relative canonical URI path only after the actual provider authorizes containment.
@@ -33,31 +34,41 @@ export function nativeToolPath(fs: FileSystem, roots: readonly FsTarget[],
  * @param path - authorized relative canonical target.
  * @param failed - final durable tool outcome, including late cancellation.
  * @param fits - complete owner-bound payload byte check.
+ * @param completedFile - Separately permitted completion text or its omission; absent retains the original input-only report.
  * @returns complete structured report, or undefined if even its attribution cannot fit.
  */
 export function nativeToolReport(mutation: ToolFsMutation, path: { rootIndex: number; path: string }, failed: boolean,
-  fits: (report: DevelopmentTaskToolObservationResult) => boolean): DevelopmentTaskToolObservationResult | undefined {
+  fits: (report: DevelopmentTaskLocalToolObservationResult) => boolean,
+  completedFile?: DevelopmentTaskCompletedFileToolObservationResult['completedFile']): DevelopmentTaskLocalToolObservationResult | undefined {
   type Field = DevelopmentTaskToolObservationResult['omissions'][number]
   const candidates: readonly (readonly [Field, string])[] = mutation.tool === 'write'
     ? [['content', mutation.input.content]] : [['oldString', mutation.input.oldString], ['newString', mutation.input.newString]]
   const omissions: Field[] = candidates.map(([name]) => name)
   if (failed) omissions.push('error')
   const values: Record<Field, string | undefined> = { content: undefined, oldString: undefined, newString: undefined, error: undefined }
-  const render = (): DevelopmentTaskToolObservationResult => {
+  let file: DevelopmentTaskCompletedFileToolObservationResult['completedFile'] | undefined = completedFile === undefined ? undefined
+    : failed ? { state: 'omitted', reason: 'tool-failed' }
+      : completedFile.state === 'included' ? { state: 'omitted', reason: 'budget' } : completedFile
+  const render = (): DevelopmentTaskLocalToolObservationResult => {
     const common = { kind: 'tool-observation' as const, version: 1 as const,
       reportedStatus: failed ? 'failure' as const : 'success' as const, omissions: [...omissions] }
-    return mutation.tool === 'write'
+    const original: DevelopmentTaskToolObservationResult = mutation.tool === 'write'
       ? { ...common, tool: 'Write', fields: { ...path, ...(values.content === undefined ? {} : { content: values.content }) } }
       : { ...common, tool: 'Edit', fields: { ...path, replaceAll: mutation.input.replaceAll,
         ...(values.oldString === undefined ? {} : { oldString: values.oldString }),
         ...(values.newString === undefined ? {} : { newString: values.newString }) } }
+    return file === undefined ? original : { ...original, version: 3, completedFile: file }
   }
-  if (!toolObservationResultSchema.safeParse(render()).success || !fits(render())) return undefined
+  if (!localToolObservationResultSchema.safeParse(render()).success || !fits(render())) return undefined
   if (!failed) for (const [field, value] of candidates) {
     const index = omissions.indexOf(field)
     values[field] = value
     omissions.splice(index, 1)
     if (!fits(render())) { values[field] = undefined; omissions.splice(index, 0, field) }
+  }
+  if (!failed && completedFile?.state === 'included') {
+    file = completedFile
+    if (!fits(render())) file = { state: 'omitted', reason: 'budget' }
   }
   return render()
 }

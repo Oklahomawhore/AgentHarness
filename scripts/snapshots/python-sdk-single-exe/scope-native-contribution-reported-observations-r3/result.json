@@ -1,0 +1,44 @@
+{
+  "turns": [
+    {
+      "text": "Native source changes received.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Failed Edit retained as a failed report.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Withdrawn source reports are no longer current context.",
+      "finishReason": "completed"
+    }
+  ],
+  "contextRevisions": [
+    5,
+    7,
+    8
+  ],
+  "selectedSourceCounts": [
+    4,
+    4,
+    2
+  ],
+  "supersededSources": 2,
+  "withdrawnSources": 5,
+  "reportedBackend": {
+    "id": "reported-files",
+    "revision": "5"
+  },
+  "observationReferenceCounts": [
+    0,
+    3,
+    0
+  ],
+  "recipientRecallCalls": 0,
+  "joinReadPhases": [
+    "planned",
+    "adopted"
+  ],
+  "wirePreservesExactContextMessages": true,
+  "wirePreservesJoinRead": true
+}

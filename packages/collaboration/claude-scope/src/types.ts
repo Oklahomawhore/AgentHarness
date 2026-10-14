@@ -11,6 +11,9 @@ import type { DevelopmentTaskId, DevelopmentTaskObservedSourceId } from '@deepse
 /** Installation-scoped digest; the raw external session id is never a shared source identity. */
 export type ClaudeScopeSessionKey = Branded<'ClaudeScopeSessionKey'>
 
+/** One source user's joint receiving consent, independent of capture lifetime. */
+export type ClaudeScopeJointId = Branded<'ClaudeScopeJointId'>
+
 /** Explicit deployment inputs for project-local hook installation. */
 export interface ClaudeScopeSetupConfig {
   /** Absolute Harness home used for the shared profile and the hook's DSH_HOME. */
@@ -119,6 +122,8 @@ export interface ClaudeScopePrepareContributionRequest {
 export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
+  /** Required for joint entries; grants passive receiving only at the displayed local read revision. */
+  readonly receive?: { readonly expectedReadRevision: number }
 }
 
 /** Durable online application intent; active grants retain their invitation instead of this waiting state. */
@@ -155,6 +160,31 @@ export interface ClaudeScopeContributionLeaveRequest {
   readonly expectedCapture: ClaudeScopeContributionSelection
   /** Optional replacement address for the identical retained grant; only termination is retried. */
   readonly invitation?: ScopeContributionInvitation
+}
+
+/** Receiving retained by one joint application; active means local adoption, not model admission. */
+export interface ClaudeScopeJointSummary {
+  readonly id: ClaudeScopeJointId
+  readonly capture: ClaudeScopeContributionSelection
+  /** Original consent revision, reused unchanged when retrying a pending application. */
+  readonly expectedReadRevision: number
+  readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
+  readonly intent: 'adopt' | 'cancel-pending' | 'leave'
+  /** Either original permission still has locally retained termination work. */
+  readonly cleanupPending: boolean
+  readonly subscriptionId?: ScopeSubscriptionId
+}
+
+/** Withdraw only the receiving and contribution identities owned by this joint application. */
+export interface ClaudeScopeLeaveJointRequest {
+  readonly sessionKey: ClaudeScopeSessionKey
+  readonly jointId: ClaudeScopeJointId
+}
+
+/** Change only the address of this joint application's retained grants; never reopen stopped work. */
+export interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {
+  readonly expectedReadRevision: number
+  readonly ownerAddress: string
 }
 
 /** Inspect one observed session without sampling files or checking remote permission. */
@@ -208,6 +238,10 @@ export interface ClaudeScopeSessionSummary {
   readonly cwd?: string
   readonly observedAt: number
   readonly ended: boolean
+  /** Monotonic local receive-management revision; unrelated Hook observations do not advance it. */
+  readonly readRevision: number
+  /** Latest joint operation remains visible after its contribution stops. */
+  readonly joint?: ClaudeScopeJointSummary
   readonly taskId?: DevelopmentTaskId
   readonly responsibility?: string
   /** Omitted when sharing has stopped and no owner confirmation remains pending. */

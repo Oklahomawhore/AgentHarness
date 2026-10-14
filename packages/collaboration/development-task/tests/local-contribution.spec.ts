@@ -1,10 +1,12 @@
+import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
 import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import DevelopmentTaskService, { localContributionId, localContributionPayloadDigest } from '../src/index.ts'
 import type { Config, DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionRequest } from '../src/index.ts'
-import { developmentTaskEventSchema, developmentTaskContextBlockSchema, localContributionStateSchema } from '../src/schema.ts'
+import { developmentTaskEventSchema, developmentTaskContextBlockSchema, localContributionStateSchema,
+  completedFileToolObservationResultSchema, toolObservationResultSchema, recordedToolObservationResultSchema } from '../src/schema.ts'
 
 const contexts: Context[] = []
 const human = 'owner' as DevelopmentParticipantId
@@ -193,4 +195,69 @@ it('checks leave consent in the owner queue and preserves a newer checkout and i
   await tasks.clear(currentGrant)
   expect(tasks.assignmentList()).toEqual([])
   expect(await tasks.localContributionStatus({ grant: currentGrant })).toMatchObject({ state: 'ended', reason: 'revoked' })
+})
+
+
+function completedResult(content = 'PRIVATE_BASE\nexport const value = 2\n') {
+  return completedFileToolObservationResultSchema.parse({ kind: 'tool-observation', version: 3, tool: 'Edit',
+    reportedStatus: 'success', omissions: [],
+    fields: { rootIndex: 0, path: 'existing.ts', oldString: 'value = 1', newString: 'value = 2', replaceAll: false },
+    completedFile: { state: 'included', content, sha256: createHash('sha256').update(content).digest('hex') } })
+}
+
+it('requires independent completed-file permission at local admission and preserves it through cold replay', async () => {
+  const ordinary = await scenario()
+  await ordinary.tasks.openLocalContribution(ordinary.grant)
+  await expect(ordinary.tasks.admitLocalContribution({ ...sample(ordinary.grant), result: completedResult() }))
+    .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  const f = await scenario({}, { source: { kind: 'tool-observations', version: 3, name: 'session-work',
+    tools: ['Write', 'Edit'], fileContent: 'completed-native-file' } })
+  await f.tasks.openLocalContribution(f.grant)
+  await expect(f.tasks.admitLocalContribution(sample(f.grant))).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  const request = { ...sample(f.grant), result: completedResult() }
+  const accepted = await f.tasks.admitLocalContribution(request)
+  expect(accepted.publication.localContribution?.grant.source).toEqual(f.grant.source)
+  expect(accepted.publication.localToolObservation).toMatchObject(request.result)
+  const observation = accepted.publication.localToolObservation
+  if (observation?.version !== 3) throw new Error('Missing completed-file observation')
+  expect(Object.isFrozen(observation.completedFile)).toBe(true)
+  expect(accepted.receipt.payloadDigest).toBe(localContributionPayloadDigest(request))
+  expect(localContributionPayloadDigest({ ...request, result: completedResult('DIFFERENT_FULL_FILE') }))
+    .not.toBe(accepted.receipt.payloadDigest)
+  const restored = await setup()
+  restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(f.tasks.log()))))
+  restored.tasks.restoreAssignmentLog(f.tasks.assignmentLog())
+  expect((await restored.tasks.admitLocalContribution(request)).receipt).toEqual(accepted.receipt)
+  await restored.tasks.endLocalContribution({ grant: f.grant, reason: 'left' })
+  expect((await restored.tasks.currentContextView(f.task.id)).task.context.at(-1)?.localContribution?.ended).toBe('left')
+  expect((await restored.tasks.admitLocalContribution(request)).receipt).toEqual(accepted.receipt)
+})
+
+it.each(['digest', 'crlf', 'surrogate', 'failure', 'failed-reason', 'history', 'legacy'] as const)
+('rejects completed-file %s that violates the durable result representation', (change) => {
+  const result = completedResult()
+  const raw = change === 'digest' ? { ...result, completedFile: { state: 'included', content: 'wrong', sha256: 'a'.repeat(64) } }
+    : change === 'crlf' || change === 'surrogate' ? { ...result, completedFile: { state: 'included',
+      content: change === 'crlf' ? 'A\r\nB' : '\ud800',
+      sha256: createHash('sha256').update(change === 'crlf' ? 'A\r\nB' : '\ud800').digest('hex') } }
+      : change === 'failure' ? { ...result, reportedStatus: 'failure', omissions: ['oldString', 'newString'],
+        fields: { rootIndex: 0, path: 'existing.ts', replaceAll: false } }
+        : change === 'failed-reason' ? { ...result, completedFile: { state: 'omitted', reason: 'tool-failed' } }
+          : change === 'history' ? { ...result, origin: { kind: 'recorded-local-tools', planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } }
+            : { ...result, version: 1 }
+  expect(completedFileToolObservationResultSchema.safeParse(raw).success).toBe(false)
+  expect(toolObservationResultSchema.safeParse(result).success).toBe(false)
+  expect(recordedToolObservationResultSchema.safeParse(result).success).toBe(false)
+})
+
+it.each(['tool-failed', 'budget', 'unavailable'] as const)('retains whole-field completed-file omission %s', async (reason) => {
+  const f = await scenario({}, { source: { kind: 'tool-observations', version: 3, name: 'session-work',
+    tools: ['Edit'], fileContent: 'completed-native-file' } })
+  await f.tasks.openLocalContribution(f.grant)
+  const result = completedFileToolObservationResultSchema.parse({ kind: 'tool-observation', version: 3, tool: 'Edit',
+    reportedStatus: reason === 'tool-failed' ? 'failure' : 'success', omissions: ['oldString', 'newString'],
+    fields: { rootIndex: 0, path: 'existing.ts', replaceAll: false }, completedFile: { state: 'omitted', reason } })
+  const accepted = await f.tasks.admitLocalContribution({ ...sample(f.grant), result })
+  expect(accepted.publication.localToolObservation).toMatchObject({ completedFile: { state: 'omitted', reason } })
+  expect(accepted.publication.text).not.toContain('PRIVATE_BASE')
 })

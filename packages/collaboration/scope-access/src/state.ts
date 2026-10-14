@@ -4,7 +4,8 @@ import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
 import { invitationSchema, projectionSchema } from './schema.ts'
-import { applicationRecordSchema, type ApplicationRecord } from './application-schema.ts'
+import { subscriptionSchema, originalCaptureSchema } from './subscription-schema.ts'
+import { applicationRecordSchema, groupRecordSchema, type ApplicationRecord, type GroupRecord } from './application-schema.ts'
 import type {
   ScopeChangeCursor, ScopeGeneration, ScopeGrantId, ScopeAccessProjection,
   ScopeReadGrant, ScopeSubscription, ScopeSubscriptionId, ScopeContributionEntryId,
@@ -15,16 +16,26 @@ const generation = z.uuid().transform(value => value as ScopeGeneration)
 const subscriptionId = z.uuid().transform(value => value as ScopeSubscriptionId)
 
 const grant: z.ZodType<ScopeReadGrant> = z.object({ invitation: invitationSchema, state: z.enum(['active', 'revoked']) }).strict()
-const subscription: z.ZodType<ScopeSubscription> = z.object({
-  id: subscriptionId, generation, invitation: invitationSchema, state: z.enum(['active', 'left', 'revoked', 'expired']),
-  routeRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-}).strict().transform(({ routeRevision, ...subscription }) =>
-  routeRevision === undefined ? subscription : { ...subscription, routeRevision })
-
-/** Read-only peer request; recipient routing comes exclusively from the owner's stored grant. */
+/** Original read protocol carries no source association; routing comes from the owner's stored grant. */
 export const readRequestSchema = z.object({
   version: z.literal(1), requestId: z.uuid(), subscriptionId, generation, invitation: invitationSchema,
 }).strict()
+
+/** Version-2 reads carry an explicit source association. */
+export const captureReadRequestSchema = readRequestSchema.extend({ version: z.literal(2), originalCapture: originalCaptureSchema })
+
+/** Version-3 reads negotiate backend text bytes without changing the optional original source association. */
+export const budgetReadRequestSchema = readRequestSchema.extend({ version: z.literal(3),
+  maxContextBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), originalCapture: originalCaptureSchema.optional(),
+})
+
+/** Version-4 reads bound both encoded and decoded responses while preserving optional text and source limits. */
+export const encodedReadRequestSchema = readRequestSchema.extend({ version: z.literal(4),
+  maxContextBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  maxResponseBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  maxDecodedResponseBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  originalCapture: originalCaptureSchema.optional(),
+})
 
 /** Response echoes one request identity; denied responses carry no scope metadata. */
 export const readResponseSchema = z.object({
@@ -56,10 +67,20 @@ export const scopeAccessDomainSpec = defineDomain({
   tables: {
     applications: domainTable<ScopeContributionEntryId, ApplicationRecord>(applicationRecordSchema),
     grants: domainTable<ScopeGrantId, ScopeReadGrant>(grant),
-    subscriptions: domainTable<ScopeSubscriptionId, ScopeSubscription>(subscription),
+    subscriptions: domainTable<ScopeSubscriptionId, ScopeSubscription>(subscriptionSchema),
     projections: domainTable<string, ScopeAccessProjection>(projectionSchema),
   },
 })
 
 /** Open authoritative scope authorization state. */
 export type ScopeAccessDomain = Domain<typeof scopeAccessDomainSpec>
+
+/** Reusable entries have their own versioned storage unit; existing scope_access records are unchanged. */
+export const scopeGroupDomainSpec = defineDomain({
+  name: 'scope_group_applications', version: 1,
+  global: { schema: z.object({ peerId: peer.nullable() }).strict(), initial: { peerId: null } },
+  tables: { entries: domainTable<ScopeContributionEntryId, GroupRecord>(groupRecordSchema) },
+})
+
+/** Open reusable-entry authority owned by the same scope-access service lifetime. */
+export type ScopeGroupDomain = Domain<typeof scopeGroupDomainSpec>

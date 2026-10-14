@@ -72,6 +72,9 @@ import type {
 } from './types.ts'
 
 export type {
+  DevelopmentTaskCompletedTurnObservationSource, DevelopmentTaskCompletedTurnObservationResult,
+  DevelopmentTaskLocalContributionObservationResult, DevelopmentTaskPeerContributionObservationResult,
+  DevelopmentTaskLocalTurnOutcome, DevelopmentTaskPeerTurnOutcome,
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContribution,
   DevelopmentTaskLocalContributionReceipt, DevelopmentTaskLocalContributionRequest, DevelopmentTaskLocalContributionResult,
   DevelopmentTaskEndLocalContributionRequest, DevelopmentTaskLocalContributionAdmissionReceipt,
@@ -81,6 +84,9 @@ export type {
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionEndReason,
   DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId, DevelopmentTaskCaptureGeneration,
   DevelopmentTaskContributionSource, DevelopmentTaskOpenApiContributionSource, DevelopmentTaskToolObservationSource,
+  DevelopmentTaskCompletedFileToolObservationSource, DevelopmentTaskCompletedFileToolObservationResult,
+  DevelopmentTaskLocalToolObservationResult, DevelopmentTaskCommandSelector, DevelopmentTaskCommandToolObservationSource,
+  DevelopmentTaskCommandOutput, DevelopmentTaskCommandObservationResult,
   DevelopmentTaskToolObservationResult, DevelopmentTaskPeerToolObservation, DevelopmentTaskPeerOpenApiObservation,
   DevelopmentTaskPeerContributionMetadata,
   DevelopmentTaskPeerContributionAdmissionReceipt,
@@ -549,8 +555,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
-   * Open explicitly authorized tool collection for one current owner-local Agent assignment.
-   * @param grant - exact capture, binding epoch, tools, and finite limits retained by the source adapter.
+   * Open explicitly authorized contribution collection for one current owner-local Agent assignment.
+   * @param grant - exact capture, binding epoch, source permission, and finite limits retained by the source adapter.
    * @returns original durable local authority; ended captures cannot reopen.
    */
   openLocalContribution(grant: DevelopmentTaskLocalContributionGrant): Promise<DevelopmentTaskLocalContribution> {
@@ -605,7 +611,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   admitLocalContribution(request: DevelopmentTaskLocalContributionRequest): Promise<DevelopmentTaskLocalContributionResult> {
     return this.enqueue(async () => {
       const parsed = localContributionRequestSchema.safeParse(request)
-      if (!parsed.success) throw new DevelopmentTaskError('invalid local tool sample', 'INVALID_REQUEST')
+      if (!parsed.success) throw new DevelopmentTaskError('invalid local contribution sample', 'INVALID_REQUEST')
       const sample = parsed.data
       let task = this.requirePeerTask(sample.grant.taskId)
       const id = localContributionId(sample.grant)
@@ -1334,7 +1340,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
         this.peerGrantBounds(this.parsePeerGrant(item.grant))
         this.peerTerminalBounds(item.grant, task.context.filter(publication =>
           publication.peerContribution?.grant.grantId === item.grant.grantId
-          && (publication.peerObservation !== undefined || publication.peerToolObservation !== undefined)).at(-1))
+          && (publication.peerObservation !== undefined || publication.peerToolObservation !== undefined
+            || publication.peerTurnOutcome !== undefined)).at(-1))
       }
       for (const item of task.localContributions.values()) if (item.state === 'active') this.localGrantBounds(this.parseLocalGrant(item.grant))
       const reserved = this.retirementReservations(task)
@@ -1627,7 +1634,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
           endReceipt: this.peerReceipt(entry, grant), ...(previous === undefined ? {} : { openReceipt: previous.openReceipt }),
         }))
         const latest = task.context.filter(item => item.peerContribution?.grant.grantId === grant.grantId
-          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined)).at(-1)
+          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined || item.peerTurnOutcome !== undefined)).at(-1)
         return { ...task, contributions, context: [...task.context,
           ...peerWithdrawals(grant, latest, entry.change.reason, entry.at).map(freezePublication)], events: [...task.events] }
       }
@@ -1670,11 +1677,12 @@ export class DevelopmentTaskService extends TypertRemoteService {
 
   private validateLocalPublication(task: TaskRecord, publication: DevelopmentTaskContextPublication,
     entry: DevelopmentTaskLogEntry, code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT'): void {
-    if (publication.localContribution?.ended !== undefined || publication.localToolObservation === undefined) {
+    if (publication.localContribution?.ended !== undefined
+      || (publication.localToolObservation === undefined && publication.localTurnOutcome === undefined)) {
       throw new DevelopmentTaskError('local withdrawal requires its terminal owner event', code)
     }
     const parsed = localContributionRequestSchema.safeParse(localPublicationRequest(publication))
-    if (!parsed.success) throw new DevelopmentTaskError('local report changes its permitted tools', code)
+    if (!parsed.success) throw new DevelopmentTaskError('local report changes its permitted source', code)
     const sample = parsed.data
     const id = localContributionId(sample.grant)
     const authority = task.localContributions.get(id)
@@ -1684,11 +1692,13 @@ export class DevelopmentTaskService extends TypertRemoteService {
       throw new DevelopmentTaskError('local report lacks its current canonical owner authorization', code)
     }
     const prior = task.context.filter(item => item.localContribution !== undefined
-      && localContributionId(item.localContribution.grant) === id && item.localToolObservation !== undefined)
+      && localContributionId(item.localContribution.grant) === id
+      && (item.localToolObservation !== undefined || item.localTurnOutcome !== undefined))
     if (prior.length >= sample.grant.maxSamples || sample.sequence > sample.grant.maxSamples) {
       throw new DevelopmentTaskError('local report exceeds its sample limit', code === 'INVALID_REQUEST' ? 'LIMIT_EXCEEDED' : code)
     }
-    if (prior.some(item => item.id === publication.id || (item.localToolObservation?.sequence ?? 0) >= sample.sequence)) {
+    if (prior.some(item => item.id === publication.id
+      || (item.localToolObservation?.sequence ?? item.localTurnOutcome?.sequence ?? 0) >= sample.sequence)) {
       throw new DevelopmentTaskError('local report sequence or source does not advance', code)
     }
     if (Buffer.byteLength(JSON.stringify(sample), 'utf8') > sample.grant.maxSampleBytes) {
@@ -1702,7 +1712,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   ): void {
     const metadata = publication.peerContribution
     if (metadata === undefined || metadata.ended !== undefined || publication.peerObservation?.state === 'revoked'
-      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
+      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined && publication.peerTurnOutcome === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
     const parsed = peerContributionRequestSchema.safeParse(peerPublicationRequest(publication))
     if (!parsed.success) throw new DevelopmentTaskError('peer sample does not match its permitted source and tools', code)
     const sample = parsed.data
@@ -1712,9 +1722,9 @@ export class DevelopmentTaskService extends TypertRemoteService {
       throw new DevelopmentTaskError('peer publication does not match current owner authorization', code)
     }
     const samples = task.context.filter(item => item.peerContribution?.grant.grantId === sample.grant.grantId
-      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined))
+      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined || item.peerTurnOutcome !== undefined))
     if (samples.length >= sample.grant.maxSamples) throw new DevelopmentTaskError('peer contribution sample capacity reached', 'LIMIT_EXCEEDED')
-    const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation
+    const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation ?? samples.at(-1)?.peerTurnOutcome
     if (!Number.isSafeInteger(sample.sequence) || sample.sequence < 1 || sample.sequence >= Number.MAX_SAFE_INTEGER
       || (previous !== undefined && sample.sequence <= previous.sequence)
       || task.context.some(item => item.id === publication.id)) {

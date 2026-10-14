@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-打开设置中的「插件」分区并选择**插件配置**标签页，即可编辑本部署所组装的宿主平面插件。卡片依次为 shell 执行器（`bash`）、agent 循环的工具调用并行度（`agent-loop`）、subagent 模型选择（`subagent-model-selection`）、DeepSeek 搜索提供方（`web-search-deepseek`）以及协作网络（`scope-network`）。
+打开设置中的「插件」分区并选择**插件配置**标签页，即可编辑本部署所组装的宿主平面插件。卡片依次为 shell 执行器（`bash`）、agent 循环的工具调用并行度（`agent-loop`）、subagent 模型选择（`subagent-model-selection`）、DeepSeek 搜索提供方（`web-search-deepseek`）协作网络（`scope-network`）以及协作摘要（`scope-context`）。
 
 ### 这里会出现什么
 
@@ -38,6 +38,8 @@ kind: "package-reference"
 Subagent 卡会同时暂存其权限开关与精确模型复选框。启用时必须至少选择一条适配器路由。保存会在一次 mutation 中提交 `enabled` 与 `allowedModels`，并以草稿开始时的 revision 设栅；Host revision 更新后，草稿会标记为失败，而不会恢复已撤销的路由。关闭时会保留已选路由供以后重新使用。可用模型按提供方分组；当前目录中缺失的已存路由排在末尾，且仍可移除。适配器名称与模型描述仍属于实时目录元数据，不会存储；适配器变化、设置提交和重连后，卡片会刷新这些元数据。
 
 **协作网络**卡片保存下次 Host 启动时使用的监听设置。可以保持**仅运行 AgentHarness 的设备**，或明确允许其他设备并填写 1–65535 之间的 TCP 端口；系统不会自动选择对外端口。对外模式监听所有 IPv4 网络接口。自定义地址列表（包括 IPv6）会保持不变，直到用户选择另一种范围并保存。只有 Host 本机页面且设置可写时才能保存；失败或过期的保存会保留草稿。保存后请手动重启 Host 并刷新邀请地址，只能使用运行中服务实际公布的地址。保存不证明对方可达，不会开放 Web 管理访问，也不会授予任何共享 Task 的权限。
+
+**协作摘要**卡片用于选择**报告（不调用摘要模型）**或**模型摘要**、已安装的摘要模型以及累计调用上限。它使用经身份验证的 Host 设置权限，不是 Task 所有者专属权限。目录中缺失的已存路由仍显示为不可用；模型凭据仍在**模型**中配置。打开或保存不会调用模型。窄屏上的摘要控件保持在设置内容列内。一次保存全部字段后，手动重启 Host；重启前运行中的后端和普通 Session 模型不变，重启后 Session 模型也不变。停用后重新启用摘要不会清零保留的审计额度。交付与失败语义见[摘要指南](../../../docs/user/guide/collaboration-semantic.zh.md)。
 
 ### secret 角色字段
 

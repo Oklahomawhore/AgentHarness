@@ -6,7 +6,8 @@ import {
   gradeContinuityPhase, parseContinuityDecision, type ContinuityPhase,
 } from './continuity-study.ts'
 
-const route = { provider: 'deepseek-official', model: 'registered-model', endpoint: 'https://api.deepseek.com/',
+const route = { provider: 'deepseek-official', endpointSource: { kind: 'deepseek-official' },
+  network: { kind: 'direct' }, model: 'registered-model', endpoint: 'https://api.deepseek.com/',
   apiKeyEnv: 'EVALUATION_API_KEY', credentialsPath: null,
   maxCalls: 12, maxInputBytes: 32768, maxOutputTokens: 2048, maxOutputBytes: 16384, timeoutMs: 30000 }
 const config = parseDataStudyConfig({ ordinary: route, semantic: { ...route, maxCalls: 2 },

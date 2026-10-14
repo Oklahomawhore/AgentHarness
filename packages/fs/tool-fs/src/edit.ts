@@ -13,6 +13,7 @@ import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
+import type { ToolFsMutation } from './index.ts'
 
 /** Validated `edit` arguments after defaulting. */
 interface EditInput {
@@ -122,11 +123,12 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
       // slot itself can throw FS_NOT_OBSERVED for an unread target, so it sits
       // inside the try: both that refusal and the provider's guarded-mutation
       // failure get the model-facing remedy below.
+      const mutation: ToolFsMutation = { execution: exec, filesystem: ctx.fs, target, tool: 'edit',
+        input: { oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll } }
       let outcome
       try {
         const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
-        ctx.emit('tool-fs/mutation-start', { execution: exec, filesystem: ctx.fs, target, tool: 'edit',
-          input: { oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll } })
+        ctx.emit('tool-fs/mutation-start', mutation)
         outcome = await ctx.fs.editText(
           target,
           { oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll },
@@ -141,6 +143,7 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
         throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
       }
       ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
+      ctx.emit('tool-fs/mutation-completed', { mutation, content: outcome.after })
       return {
         path: target.displayPath,
         before: outcome.before,

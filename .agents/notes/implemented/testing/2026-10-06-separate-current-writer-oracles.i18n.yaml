@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-10-06-separate-current-writer-oracles.md
+2026-10-06-separate-current-writer-oracles.md: cff3c47636855780172b83fe38ed7344ed80e8d6
+2026-10-06-separate-current-writer-oracles.zh.md: 6940d841db49666f9ac652a7c5de11bf0d11f388

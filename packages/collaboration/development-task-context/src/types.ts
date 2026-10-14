@@ -9,6 +9,7 @@ import type {
   DevelopmentTaskBindingId,
   DevelopmentTaskContextView,
   DevelopmentTaskId,
+  DevelopmentTaskPeerContributionGrant,
 } from '@deepseek-ai/dsh-development-task/types'
 
 /** Durable identity of the task-bound event that began one binding interval. */
@@ -28,6 +29,10 @@ export interface DevelopmentTaskContextOmission {
   readonly reason: 'self-published' | 'budget' | 'unsupported' | 'superseded' | 'withdrawn' | 'recipient-irrelevant'
 }
 
+/** Exact owner-authorized source interval of the recipient's original joint capture. */
+export type DevelopmentTaskContextPeerCapture = Pick<DevelopmentTaskPeerContributionGrant,
+  'ownerPeerId' | 'contributorPeerId' | 'taskId' | 'grantId' | 'generation' | 'captureId' | 'captureGeneration'>
+
 /** Captured computation inputs; providers must not mutate the Task or recipient. */
 export interface DevelopmentTaskContextInput {
   readonly view: DevelopmentTaskContextView
@@ -35,6 +40,8 @@ export interface DevelopmentTaskContextInput {
     readonly participantId: DevelopmentParticipantId
     /** Routing inputs only; the consumer owns authorization and delivery identity. */
     readonly sessionLabel?: string
+    /** Original joint capture verified by the consumer; omission identifies authorship, not retained model memory. */
+    readonly peerCapture?: DevelopmentTaskContextPeerCapture
   }
   /** Maximum UTF-8 bytes of the complete model-visible text, including framing. */
   readonly maxContextBytes: number

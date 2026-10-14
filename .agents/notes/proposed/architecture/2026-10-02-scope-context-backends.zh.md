@@ -12,7 +12,7 @@ Status: proposed
 
 ## 提案
 
-本地外部会话部分由 [Claude 适配器决策](../../implemented/architecture/2026-10-02-claude-scope-adapter.zh.md) 拥有；支持的文件声明子集由 [API 采样决策](../../implemented/architecture/2026-10-03-sampled-api-context.zh.md) 拥有。[独立读取](../../implemented/architecture/2026-10-03-independent-scope-read-grants.zh.md)、[独立贡献](../../implemented/architecture/2026-10-03-independent-scope-contributions.zh.md)和[原生 Session 控制](../../implemented/architecture/2026-10-03-native-scope-session-controls.zh.md)分别拥有已实现的授权与投递机制。[接收方证据决策](../../implemented/architecture/2026-10-03-recipient-evidence-activation.zh.md)拥有受支持声明的自动启动比较。通用工作采集、跨机器加入、外部空闲投递与可测量的协作收益仍是产品验收义务。
+本地外部会话部分由 [Claude 适配器决策](../../implemented/architecture/2026-10-02-claude-scope-adapter.zh.md) 拥有；支持的文件声明子集由 [API 采样决策](../../implemented/architecture/2026-10-03-sampled-api-context.zh.md) 拥有。[独立读取](../../implemented/architecture/2026-10-03-independent-scope-read-grants.zh.md)、[独立贡献](../../implemented/architecture/2026-10-03-independent-scope-contributions.zh.md)和[原生 Session 控制](../../implemented/architecture/2026-10-03-native-scope-session-controls.zh.md)分别拥有已实现的授权与投递机制。[接收方证据决策](../../implemented/architecture/2026-10-03-recipient-evidence-activation.zh.md)拥有受支持声明的自动启动比较。[原生命令决策](../../implemented/feature/2026-10-07-native-command-context.zh.md)增加另行获准的前台执行结果自动分享。更广泛的工作采集、跨机器加入、外部空闲投递与可测量的协作收益仍是产品验收义务。
 
 协作 scope 定义共同目标与参与会话的绑定。其内部事件不要求以对话界面呈现。产品自动把相关工作变化转成各参与会话所需的上下文；用户可以在排查行为时检查来源和投递状态，而无需维护信息交换。
 

@@ -10,7 +10,7 @@ import { createClaudeScopeDirectory, type ClaudeScopeDirectory, type ClaudeScope
 import { zh } from '../src/client/locales.ts'
 
 const TASK = 'task-local' as DevelopmentTaskId
-const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false }
+const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const B: ClaudeScopeSessionSummary = { ...A, sessionKey: 'b' as ClaudeScopeSessionKey, sessionId: 'claude-b' }
 const PROJECT = { projectPath: '/project', settingsPath: '/project/.claude/settings.local.json', profileName: 'scope-hook' }
 const t = makeTranslate(zh)
@@ -25,6 +25,8 @@ function Harness({ directory, localTask }: { directory: ClaudeScopeDirectory; lo
     refresh={() => { directory.refresh() }} contributions={{}} readContribution={() => {}}
     requestContribution={async () => {}} prepareContribution={async () => {}}
     activateContribution={async () => {}} stopContribution={async () => {}}
+    leaveJointContribution={async () => {}} recoverJointContribution={async () => {}}
+    probeContributionEntry={async () => ({ status: 'ready' })}
     previewContributionText={async () => { throw new Error('unused') }} t={t} />
 }
 
@@ -51,6 +53,21 @@ function selectB() {
 }
 
 describe('Claude project and session controls', () => {
+  it('keeps ended sessions selectable while their exact joint cleanup needs recovery', async () => {
+    const ended: ClaudeScopeSessionSummary = { ...A, ended: true, joint: {
+      id: 'ended-joint' as NonNullable<ClaudeScopeSessionSummary['joint']>['id'],
+      capture: { captureId: 'capture' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureId'],
+        captureGeneration: 'generation' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureGeneration'] },
+      expectedReadRevision: 0, state: 'ended', intent: 'leave', cleanupPending: true,
+    } }
+    await mount({ sessions: async () => [ended] })
+    const choice = screen.getByRole<HTMLInputElement>('radio', { name: /claude-a/u })
+    expect(choice.disabled).toBe(false)
+    fireEvent.click(choice)
+    expect(screen.getByText(zh['claude.joint.ending'])).toBeTruthy()
+    expect(screen.getByRole('button', { name: zh['claude.joint.leave'] })).toBeTruthy()
+  })
+
   it('checks, configures, and removes only project hooks while retaining joined-session controls', async () => {
     const { port } = await mount({
       sessions: async () => [{ ...A, taskId: TASK }],

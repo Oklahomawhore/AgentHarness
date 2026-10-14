@@ -28,6 +28,12 @@ export type ToolFsMutation = {
   | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
 )
 
+/** Successful provider result; content is the complete LF-normalized text produced by this exact mutation. */
+export interface ToolFsCompletion {
+  readonly mutation: ToolFsMutation
+  readonly content: string
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
@@ -37,6 +43,13 @@ declare module '@deepseek-ai/cordis' {
      * @mode emit
      */
     'tool-fs/mutation-start'(mutation: ToolFsMutation): void
+    /**
+     * Observe the same provider's successful result before tool settlement; later failure or cancellation remains possible.
+     * Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.
+     * @param completion - Original mutation identity and produced text, without a second filesystem read.
+     * @mode emit
+     */
+    'tool-fs/mutation-completed'(completion: ToolFsCompletion): void
   }
 }
 

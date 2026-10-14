@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { assertDeliveryCoverage, capturedSummaryInput } from '../semantic-audit-fixture.mjs'
 
 const packageRequire = createRequire(new URL('../../../packages/collaboration/development-task-context/package.json', import.meta.url))
 const { Session } = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-session')).href)
@@ -14,7 +15,8 @@ const { peerContributionPayloadDigest } = await import(pathToFileURL(packageRequ
 /** Loader fixture identity. */
 export const name = 'task-context-semantic-snapshot'
 /** Shared application services and this group's isolated audit persistence. */
-export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'sessionPersistence', 'developmentTaskContextBackend']
+export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'llm', 'settings',
+  'sessionPersistence', 'developmentTaskContextBackend']
 
 const now = 1790985600000
 const auditId = 'task-context-semantic-audit'
@@ -26,8 +28,9 @@ const bindingId = 'binding-semantic-snapshot'
 const grant = {
   version: 1, taskId, grantId: 'grant-semantic-snapshot', generation: 'grant-generation-one',
   ownerPeerId, contributorPeerId, captureId: 'capture-semantic-snapshot', captureGeneration: 'capture-generation-one',
-  source: { kind: 'tool-observations', name: 'session-work', tools: ['Edit', 'Write'] },
-  expiresAt: now + 60000, maxSamples: 4, maxSampleBytes: 4096,
+  source: { kind: 'tool-observations', version: 4, name: 'session-work', tools: ['Edit', 'Write'],
+    commands: [{ command: 'pnpm verify', rootIndex: 0 }] },
+  expiresAt: now + 60000, maxSamples: 15, maxSampleBytes: 4096,
 }
 const reports = [
   { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success', omissions: [],
@@ -46,9 +49,75 @@ const summaries = [
   { marker: 'WRITE_CURRENT', text: 'The source reports replacing the implementation retry policy (WRITE_CURRENT).' },
   { marker: 'FAILURE_GAMMA', text: 'A later Write failed with permission denied (FAILURE_GAMMA); it does not confirm a file update.' },
 ]
+const command = { kind: 'command-observation', version: 4, tool: 'Bash',
+  fields: { command: 'pnpm verify', rootIndex: 0 }, state: 'completed', exitCode: 7,
+  signal: null, timedOut: false, aborted: false, timeoutMs: 1000,
+  stdout: { state: 'included', text: 'FAILED_VERIFY: 检查 <checks>\n', truncated: true },
+  stderr: { state: 'omitted', reason: 'budget', truncated: false } }
 const digest = value => createHash('sha256').update(value).digest('hex')
 const contexts = messages => messages.filter(message => message.source.kind === 'development-task-context')
 const content = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+
+// Expand retained references independently; superseded counts do not reconstruct historical publication IDs.
+function expandDelivery(value) {
+  const at = (table, index) => {
+    assert.ok(Number.isInteger(index) && index >= 0 && index < table.length)
+    return table[index]
+  }
+  const source = index => {
+    const entry = at(value.sourceTable, index)
+    assert.ok(entry)
+    if (entry.kind === 'task') return { kind: entry.kind, taskId: entry.taskId, revision: entry.revision }
+    assert.equal(entry.kind, 'publication')
+    const task = at(value.sourceTable, entry.taskSourceIndex)
+    assert.equal(task.kind, 'task')
+    return { kind: entry.kind, taskId: task.taskId, revision: task.revision, publicationId: entry.publicationId }
+  }
+  const attribution = index => {
+    const entry = at(value.sourceTable, index).attribution
+    const result = { ...entry }
+    for (const key of ['authorization', 'localAuthorization']) {
+      if (entry[key] === undefined) continue
+      assert.deepEqual(Object.keys(entry[key]), ['authorizationIndex'])
+      const authorization = at(value.authorizationTable, entry[key].authorizationIndex)
+      assert.ok(authorization)
+      result[key] = authorization
+    }
+    return result
+  }
+  const mandatoryReferences = value.mandatoryReferences ?? []
+  assert.equal(new Set(mandatoryReferences).size, mandatoryReferences.length)
+  for (const index of mandatoryReferences) at(value.mandatory, index)
+  const authorizationKeys = ['ownerPeerId', 'contributorPeerId', 'grantId', 'generation', 'captureId', 'captureGeneration']
+  const mandatory = value.mandatory.map((entry, index) => {
+    if (!mandatoryReferences.includes(index)) return entry
+    assert.equal(entry.kind, 'command-evidence')
+    assert.equal(entry.source, undefined)
+    const grant = entry.publication.peerContribution.grant
+    assert.equal(Object.hasOwn(entry.publication, 'id'), false)
+    assert.equal(Object.hasOwn(grant, 'taskId'), false)
+    const authorization = at(value.authorizationTable, grant.authorizationIndex)
+    assert.deepEqual(Object.keys(authorization).sort(), [...authorizationKeys].sort())
+    for (const key of authorizationKeys) assert.equal(grant[key], undefined)
+    const { sourceIndex, ...rest } = entry
+    const originalSource = source(sourceIndex)
+    assert.equal(originalSource.kind, 'publication')
+    const { authorizationIndex: _authorizationIndex, ...fields } = grant
+    return { ...rest, source: originalSource, publication: { ...entry.publication, id: originalSource.publicationId,
+      peerContribution: { ...entry.publication.peerContribution,
+        grant: { ...fields, ...authorization, taskId: originalSource.taskId } } } }
+  })
+  return { ...value,
+    mandatory,
+    coverage: {
+      selectedSources: value.coverage.selectedSources.map(source),
+      omittedSources: value.coverage.omittedSources.map(item => ({ source: source(item.sourceIndex), reason: item.reason })),
+    },
+    updates: value.updates.map(update => ({ ...update, sources: update.sources.map(item => ({
+      source: source(item.sourceIndex), quote: item.quote, attribution: attribution(item.sourceIndex),
+    })) })),
+  }
+}
 
 class ControlledSummaryAdapter extends LlmAdapter {
   constructor(readAudit) { super(); this.readAudit = readAudit; this.requests = [] }
@@ -63,6 +132,7 @@ class ControlledSummaryAdapter extends LlmAdapter {
     assert.deepEqual(request.data.messages, options.messages)
     assert.equal(request.data.system, options.system)
     assert.equal(request.data.call.maxTokens, options.maxTokens)
+    capturedSummaryInput(requests.at(-1).data, 32768)
     const input = JSON.parse(content(options.messages[0]))
     assert.equal(input.recipient.sessionLabel, 'Implementation and documentation')
     const decisions = []
@@ -91,11 +161,20 @@ export async function apply(ctx) {
     return () => { Date.now = original }
   })
   const readAudit = async () => {
-    await using handle = await ctx.sessionPersistence.open(auditId, 'read')
-    return (await handle.read()).events
+    const handle = await ctx.sessionPersistence.open(auditId, 'read')
+    try { return (await handle.read()).events }
+    finally { await handle.close() }
   }
+  const selection = ctx.settings.describe().find(descriptor => descriptor.ns === 'scope-context')
+  assert.ok(selection, 'the shipped SDK composition must mount the configured backend')
+  assert.equal(selection.applies, 'restart')
+  assert.deepEqual(selection.value, { mode: 'semantic', provider: 'semantic-snapshot',
+    model: 'controlled-summary', maxCalls: 8 })
+  assert.equal(ctx.developmentTaskContextBackend.identity.id, 'semantic')
+  assert.deepEqual(await readAudit(), [], 'startup must not reserve or dispatch a summary call')
   const adapter = new ControlledSummaryAdapter(readAudit)
   ctx.effect(() => ctx.llm.registerAdapter(['semantic-snapshot'], adapter))
+  assert.equal(adapter.requests.length, 0)
   const owner = 'snapshot-human-owner'
   await ctx.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Snapshot owner' })
   const unrelated = { id: 'publication-unrelated-admin', publishedBy: owner, publishedAt: now,
@@ -112,6 +191,23 @@ export async function apply(ctx) {
   let observedTurn = 0
   let ordinaryRequests = 0
   const admitted = []
+  const admittedCommands = []
+  let sequence = 0
+  const admit = async observation => {
+    sequence++
+    const request = { grant, sourceId: digest(`semantic-snapshot/${sequence}`), sequence, result: observation }
+    const { taskId, ownerPeerId, contributorPeerId, grantId, generation, captureId, captureGeneration } = grant
+    const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
+    assert.equal(result.outcome, 'published')
+    assert.deepEqual(result.receipt, { taskId, ownerPeerId, contributorPeerId, grantId, generation, captureId, captureGeneration,
+      revision: sequence + 3, event: { nodeId, seq: sequence + 3, kind: 'context-published' },
+      sourceId: request.sourceId, sequence, payloadDigest: peerContributionPayloadDigest(request), publicationId: result.publication.id })
+    assert.deepEqual(result.publication.peerContribution.grant, grant)
+    assert.deepEqual(result.publication.peerToolObservation, { ...observation,
+      sourceId: request.sourceId, sequence, observerPeerId: contributorPeerId, grantId, sourceName: grant.source.name,
+      capture: { id: captureId, generation: captureGeneration } })
+    return result.publication
+  }
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
@@ -124,13 +220,9 @@ export async function apply(ctx) {
     }
     if (turn < 4) {
       const indices = turn === 1 ? [0, 1] : [turn]
-      for (const index of indices) {
-        const sequence = admitted.length + 1
-        const request = { grant, sourceId: digest(`semantic-snapshot/${sequence}`), sequence, result: reports[index] }
-        const result = await ctx.developmentTasks.admitPeerContribution(request, contributorPeerId)
-        assert.equal(result.outcome, 'published')
-        assert.equal(result.receipt.payloadDigest, peerContributionPayloadDigest(request))
-        admitted.push(result.publication)
+      for (const index of indices) admitted.push(await admit(reports[index]))
+      for (let index = 0; index < (turn === 1 ? 1 : turn === 2 ? 10 : 0); index++) {
+        admittedCommands.push(await admit(command))
       }
     } else {
       const ended = await ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, ownerPeerId)
@@ -150,16 +242,28 @@ export async function apply(ctx) {
     assert.equal(visible.length, 1)
     const message = visible[0]
     assert.equal(message.source.backend.id, 'semantic')
-    assert.equal(message.source.revision, observedTurn + 4)
+    assert.equal(message.source.revision, [6, 17, 18, 19][observedTurn - 1])
     const json = content(message).split('<shared-work-updates>\n')[1]?.split('\n</shared-work-updates>')[0]
     assert.ok(json)
-    const projection = JSON.parse(json)
-    assert.deepEqual(projection.coverage.omittedSources, message.source.omittedSources)
-    assert.deepEqual(projection.coverage.selectedSources, message.source.selectedSources)
+    const delivered = JSON.parse(json)
+    const projection = expandDelivery(delivered)
+    const superseded = message.source.omittedSources.filter(item => item.reason === 'superseded' && item.source.kind === 'publication')
+    assertDeliveryCoverage(delivered, message.source)
     assert.ok(message.source.omittedSources.some(item => item.reason === 'recipient-irrelevant'
       && item.source.publicationId === unrelated.id))
     assert.ok(!JSON.stringify(options.messages).includes('UNRELATED_ADMIN'))
     if (observedTurn < 4) {
+      const admittedCommand = admittedCommands.at(-1)
+      assert.ok(admittedCommand)
+      assert.deepEqual(delivered.mandatoryReferences, [0])
+      assert.deepEqual(projection.mandatory, [{ kind: 'command-evidence', basis: 'current-task-as-reported',
+        source: { kind: 'publication', taskId, revision: message.source.revision, publicationId: admittedCommand.id },
+        publication: admittedCommand }])
+      assert.deepEqual(projection.mandatory[0].publication.peerContribution.grant, grant)
+      assert.deepEqual(projection.mandatory[0].publication.peerToolObservation,
+        { ...command, sourceId: digest(`semantic-snapshot/${observedTurn === 1 ? 3 : 14}`), sequence: observedTurn === 1 ? 3 : 14,
+          observerPeerId: contributorPeerId, grantId: grant.grantId, sourceName: grant.source.name,
+          capture: { id: grant.captureId, generation: grant.captureGeneration } })
       const indices = observedTurn === 1 ? [0, 1] : observedTurn === 2 ? [1, 2] : [1, 2, 3]
       assert.deepEqual(projection.updates.map(update => update.text), indices.map(index => summaries[index].text))
       for (const [position, update] of projection.updates.entries()) {
@@ -171,14 +275,18 @@ export async function apply(ctx) {
       if (observedTurn > 1) {
         assert.ok(!JSON.stringify(options.messages).includes('WRITE_ALPHA'))
         assert.deepEqual(message.source.omittedSources.filter(item => item.reason === 'superseded')
-          .map(item => item.source.publicationId), [admitted[0].id])
+          .map(item => item.source.publicationId).sort(), [admitted[0].id, ...admittedCommands.slice(0, -1).map(item => item.id)].sort())
+        assert.equal(superseded.length, 11)
       }
     } else {
       assert.deepEqual(projection.updates, [])
       assert.equal(projection.mandatory.length, 1)
       assert.equal(projection.mandatory[0].kind, 'withdrawal')
-      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 4)
-      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'WRITE_CURRENT', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md']) {
+      assert.equal(message.source.omittedSources.filter(item => item.reason === 'withdrawn').length, 15)
+      assert.deepEqual(message.source.omittedSources.filter(item => item.reason === 'withdrawn')
+        .map(item => item.source.publicationId).sort(), [...admitted, ...admittedCommands].map(item => item.id).sort())
+      assert.equal(delivered.mandatoryReferences, undefined)
+      for (const value of ['WRITE_ALPHA', 'EDIT_BETA', 'WRITE_CURRENT', 'FAILURE_GAMMA', 'src/retry.ts', 'docs/coordination.md', 'FAILED_VERIFY']) {
         assert.ok(!JSON.stringify(options.messages).includes(value), 'withdrawn reports must not remain in the actual request')
       }
     }
@@ -186,7 +294,12 @@ export async function apply(ctx) {
     const result = audit.filter(event => event.type === 'context/semantic-result').at(-1)
     const request = audit.find(event => event.type === 'context/semantic-request' && event.seq === result.data.requestSeq)
     assert.equal(result.data.status, 'completed')
+    assert.equal(result.data.version, 7)
     assert.equal(result.data.key, request.data.key)
+    const captured = capturedSummaryInput(request.data, 32768)
+    assert.deepEqual(projection.mandatory, captured.mandatory)
+    assert.deepEqual(captured.coverage.omittedSources,
+      message.source.omittedSources.filter(item => item.reason !== 'recipient-irrelevant'))
     assert.equal(result.data.projection.text, content(message))
     assert.deepEqual(result.data.projection.selectedSources, message.source.selectedSources)
     assert.deepEqual(result.data.projection.omittedSources, message.source.omittedSources)

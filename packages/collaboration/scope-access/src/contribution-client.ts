@@ -292,7 +292,8 @@ export class ContributionController<R extends ContributionRecord> {
           result.status === 'approved' ? 'peer-contribution-opened' : 'peer-contribution-ended')
       }
       if ((result.status === 'approved' || result.status === 'ended') && current.state !== 'ending' && !store.current().ended) {
-        if (current.application.entry.kind === 'scope-join-entry' && store.selectApproval === undefined) {
+        if ((current.application.entry.kind === 'scope-join-entry' || current.application.entry.kind === 'scope-group-entry')
+          && store.selectApproval === undefined) {
           throw store.error('invitation-mismatch', 'This source adapter does not support joint receiving consent')
         }
         if (store.selectApproval !== undefined) await store.selectApproval(current, result)

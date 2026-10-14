@@ -1,0 +1,5 @@
+- button "Collaboration":
+  - img
+  - text: Size limit
+  - img
+- text: The current session record excludes 2 shared sources because of capacity.

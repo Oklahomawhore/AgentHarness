@@ -7,7 +7,11 @@ import { executePayment, paymentCasesJsonSchema, paymentPolicyJsonSchema,
 
 /** One explicitly selected model route and its finite per-role or per-owner limits. */
 export interface DataModelRoute {
+  /** Production adapter route; endpointSource identifies the service receiving requests. */
   readonly provider: 'deepseek-official'
+  readonly endpointSource: { readonly kind: 'deepseek-official' }
+    | { readonly kind: 'openai-compatible-gateway'; readonly name: string }
+  readonly network: { readonly kind: 'direct' } | { readonly kind: 'env-proxy'; readonly urlEnv: string }
   readonly model: string
   readonly endpoint: string
   readonly apiKeyEnv: string
@@ -69,6 +73,15 @@ export const dataStudyConditions = ['N', 'E', 'R'] as const
 
 const routeSchema = z.object({
   provider: z.literal('deepseek-official'), model: z.string().min(1).max(128),
+  endpointSource: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('deepseek-official') }).strict(),
+    z.object({ kind: z.literal('openai-compatible-gateway'),
+      name: z.string().min(1).max(128).refine(name => name.trim().length > 0, 'gateway name must not be blank') }).strict(),
+  ]),
+  network: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('direct') }).strict(),
+    z.object({ kind: z.literal('env-proxy'), urlEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/) }).strict(),
+  ]),
   endpoint: z.url(), apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
   credentialsPath: z.string().refine(isAbsolute).nullable(),
   maxCalls: z.number().int().min(1).max(12), maxInputBytes: z.number().int().min(1024).max(262144),
@@ -86,23 +99,28 @@ const configurationSchema = z.object({ ordinary: routeSchema, semantic: routeSch
 
 /** Parse explicit configuration without reading credentials or contacting a provider.
  * @param input - Untrusted registration JSON; unknown fields, including credential values, are rejected.
- * @param execution - Live uses the official endpoint; local calibration accepts only a loopback HTTP endpoint.
+ * @param execution - Live uses an explicitly identified HTTPS service; calibration accepts only a loopback HTTP endpoint.
  * @returns Validated model routes and limits, detached from the input.
  */
 export function parseDataStudyConfig(input: unknown, execution: 'live' | 'transport-calibration'): DataStudyConfig {
   const value = configurationSchema.parse(input)
   for (const route of [value.ordinary, value.semantic]) {
+    if (execution === 'transport-calibration' && route.network.kind !== 'direct') {
+      throw new Error('transport calibration requires direct networking')
+    }
     if (execution === 'transport-calibration' && route.credentialsPath !== null) {
       throw new Error('transport calibration must not load credential files')
     }
     const url = new URL(route.endpoint)
-    if (url.username || url.password || url.search || url.hash || !['/', '/v1', '/v1/'].includes(url.pathname)) {
-      throw new Error('data study endpoint must contain no credentials, query, fragment, or unsupported path')
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error('data study endpoint must contain no credentials, query, or fragment')
     }
-    if (execution === 'live' ? url.protocol !== 'https:' || url.hostname !== 'api.deepseek.com' || url.port !== ''
-      : url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || url.port === '') {
-      throw new Error('data study endpoint does not match its registered execution provenance')
-    }
+    const standardPath = ['/', '/v1', '/v1/'].includes(url.pathname)
+    const invalidEndpoint = execution === 'transport-calibration'
+      ? url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || url.port === '' || !standardPath
+      : url.protocol !== 'https:' || route.endpointSource.kind === 'deepseek-official'
+        && (url.hostname !== 'api.deepseek.com' || url.port !== '' || !standardPath)
+    if (invalidEndpoint) throw new Error('data study endpoint does not match its registered execution provenance')
   }
   if (value.semantic.maxCalls < 2) throw new Error('semantic maxCalls must cover both recipient responsibilities')
   return value

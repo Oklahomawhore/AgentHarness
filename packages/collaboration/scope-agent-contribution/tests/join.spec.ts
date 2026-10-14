@@ -148,8 +148,8 @@ describe('joint native receiving and contribution consent', () => {
     const disk = await source.readEvents(b)
     expect(disk).toEqual(b.session.snapshotEvents())
     expect(disk.filter(event => event.type === 'scope-agent-context/join-read'))
-      .toMatchObject([{ data: { version: 2, phase: 'planned', plan: { automatic: automaticPolicy } } },
-        { data: { version: 2, phase: 'adopted', plan: { automatic: automaticPolicy } } }])
+      .toMatchObject([{ data: { version: 4, phase: 'planned', plan: { automatic: automaticPolicy } } },
+        { data: { version: 4, phase: 'adopted', plan: { automatic: automaticPolicy } } }])
     const ownerAfter = await readFile(join(owner.root, 'domains/scope_access.json'), 'utf8')
     expect(ownerAfter).not.toContain(automaticPolicy.goal)
     expect(ownerAfter).not.toContain('"automatic"')
@@ -511,6 +511,55 @@ describe('joint native receiving and contribution consent', () => {
     expect(replay.deriveMessages().filter(message => message.source.kind === 'scope-agent-context'))
       .toEqual(source.adapter.requests.at(-1)!.messages.filter(message => message.source.kind === 'scope-agent-context'))
     expect(disk.filter(event => event.type === 'scope-agent-context/request')).toEqual([])
+  })
+
+
+  it('omits only the adopted Session capture while preserving same-peer manual reads and terminal withdrawal', async () => {
+    const { owner, source, task, b, bystander, capture, approve, status } = await fixture()
+    await approve()
+    await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+    const joined = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    if (joined.binding === null || joined.binding.kind === 'local-task') throw new Error('Missing joint binding')
+    const origin = { captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration }
+    expect(joined).toMatchObject({ version: 4, binding: { originalCapture: origin } })
+    expect((await storedSource(source, b.id)).capture?.receiving?.version).toBe(2)
+    const read = joined.binding.invitation
+    await run(source, b, [toolCallResponse('capture-original-write', 'write', { file_path: 'origin.txt', content: 'ORIGINAL_CAPTURE_REPORT' })])
+    await expect.poll(() => owner.ctx.developmentTasks.get({ taskId: task.id })
+      .context.filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    await run(source, b)
+    const ownRequest = source.adapter.requests.at(-1)!
+    const own = ownRequest.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(JSON.stringify(own)).not.toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(JSON.stringify(ownRequest.messages)).toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(own).toMatchObject([{ source: { version: 2, form: 'snapshot', projection: { version: 3,
+      peerCapture: origin, omittedSources: [{ reason: 'self-published' }] } } }])
+    const other = await source.ctx.scopeAgentContext.bind({ agentId: bystander.id,
+      expectedBindingId: null, invitation: read, automatic: null })
+    expect(other.version).toBe(1)
+    expect(other.binding).not.toHaveProperty('originalCapture')
+    await run(source, bystander)
+    const otherContext = source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(JSON.stringify(otherContext)).toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(otherContext).toMatchObject([{ source: { version: 1, projection: { version: 2 } } }])
+    await source.ctx.scopeAgentContributions.stop({ agentId: b.id, expectedCapture: capture.selection })
+    await expect.poll(async () => (await status()).capture).toBeNull()
+    await run(source, b)
+    const stopped = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    expect(stopped).toMatchObject({ version: 4, binding: { id: joined.binding.id, originalCapture: origin } })
+    const stoppedContext = source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(stoppedContext).toMatchObject([{ source: { version: 2, projection: { version: 3 } } }])
+    expect(JSON.stringify(stoppedContext)).toContain('withdrawn')
+    await source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: joined.binding.id })
+    const manual = await source.ctx.scopeAgentContext.bind({ agentId: b.id, expectedBindingId: null, invitation: read, automatic: null })
+    expect(manual).toMatchObject({ version: 1, mode: 'passive' })
+    expect(manual.binding).not.toHaveProperty('originalCapture')
+    await run(source, b)
+    expect(source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context'))
+      .toMatchObject([{ source: { version: 1, projection: { version: 2 } } }])
+    expect(await source.ctx.sessions.flush(b.session)).toBe(true)
+    const disk = await source.readEvents(b)
+    expect(Session.create(b.id, disk, b.session.header).deriveMessages()).toEqual(b.session.deriveMessages())
   })
 
   it('retains a failed receiving adoption while independently approved contribution remains active', async () => {

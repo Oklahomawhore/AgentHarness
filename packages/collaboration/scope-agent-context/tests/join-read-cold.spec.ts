@@ -77,7 +77,7 @@ async function fixture() {
   await writeFile(path, JSON.stringify([
     { id: 'persistence', name: 'cordis:fixture-jsonl', config: { root, compression: 'none' } },
     { id: 'access', name: 'cordis:fixture-access' },
-    { id: 'consumer', name: 'cordis:fixture-consumer', config: { maxContextBytes: 8000, coalesceMs: 1, retryDelayMs: 1000 } },
+    { id: 'consumer', name: 'cordis:fixture-consumer', config: { maxContextBytes: 8000, maxLocalContextBytes: 4000, coalesceMs: 1, retryDelayMs: 1000 } },
   ]))
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
   await ctx.loader.await()
@@ -107,7 +107,7 @@ function prepared() {
   const plan = joinReadEventSchema.parse({ version: 1, agentId: session.id, adoptionId: randomUUID(), phase: 'planned', plan: {
     expectedReadStateSeq: -1, bindingId: randomUUID(), subscription: { id: randomUUID(), generation: randomUUID(), invitation, state: 'active' },
   } })
-  if (plan.phase !== 'planned') throw new Error('expected pending plan')
+  if (plan.version !== 1 || plan.phase !== 'planned') throw new Error('expected original passive pending plan')
   return { session, plan }
 }
 function adopted(session: Session, plan: Extract<ScopeAgentJoinReadEvent, { phase: 'planned' | 'adopted' }>) {

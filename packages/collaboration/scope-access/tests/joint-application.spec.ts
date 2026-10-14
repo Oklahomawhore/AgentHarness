@@ -248,13 +248,13 @@ it('reports independent read expiration and rejects a restored mismatched read p
   expect(restored.exit).toHaveBeenCalledWith(1)
 })
 
-it('cancels an unapproved joint entry without inventing reading when an independent contribution already exists', async () => {
+it('cancels an unapproved joint entry without ending an independently granted contribution', async () => {
   const fixture = await application()
   const grant = plannedContributionGrant(fixture.request.entry.ownerPeerId, { taskId: fixture.task.id,
     proposal: fixture.request.proposal, ownerAddress: fixture.ownerAddress, ...fixture.request.limits })
   await fixture.a.access.inviteContribution({ ownerAddress: fixture.ownerAddress, grant })
   expect(await fixture.b.access.cancelContributionApplication(fixture.request, signal())).toEqual({ status: 'cancelled' })
-  expect(fixture.a.tasks.peerContributions({})[0]?.state).toBe('ended')
+  expect(fixture.a.tasks.peerContributions({})[0]?.state).toBe('active')
   expect((await fixture.a.access.list()).grants).toEqual([])
 })
 

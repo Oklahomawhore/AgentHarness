@@ -32,7 +32,7 @@ Grant expiry, owner revocation, and contributor leave produce terminal Task even
 
 ## Consequences
 
-The independent workflow automatically contributes bounded source observations after ordinary authorized tool work and can drive the existing native receiving and finite activation mechanisms. Setup still requires explicit local collection permission, owner approval, and a separate receiving invitation. [Source setup controls](2026-10-03-independent-contribution-controls.md) manage preparation, approval, and recovery. General semantic extraction, native tool capture, and cross-machine discovery need their own product validation.
+The independent workflow automatically contributes bounded source observations after ordinary authorized tool work and can drive the existing native receiving and finite activation mechanisms. Setup requires explicit local collection permission and owner approval. The [joint online entry](2026-10-03-online-contribution-approval.md) also accepts separate passive-reading consent; the manual path uses a distinct receiving invitation. [Source setup controls](2026-10-03-independent-contribution-controls.md) manage preparation, approval, and recovery. General semantic extraction and cross-machine discovery need their own product validation.
 
 Committed Task generations and existing SQLite tables retain their identities. New peer publications have canonical serialization for context hashes and restore. Ending a grant removes current injected evidence; it cannot retract bytes already sent, erase historical requests, or prove that a model has forgotten them.
 

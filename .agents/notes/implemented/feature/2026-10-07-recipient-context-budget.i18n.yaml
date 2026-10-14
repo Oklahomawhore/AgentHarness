@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-07-recipient-context-budget.md
+2026-10-07-recipient-context-budget.md: 1f671d7edcec7e11fa3baaad27c7573414a4d840
+2026-10-07-recipient-context-budget.zh.md: b1c3526b7262ba68dd3a9fe79f5fecda45a45965
