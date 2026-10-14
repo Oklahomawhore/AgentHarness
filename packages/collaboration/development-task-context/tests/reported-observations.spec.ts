@@ -174,3 +174,19 @@ it('keeps the original result key order rather than adopting schema parse order'
   expect(expand(encoded)).toEqual(input)
   expect(isDeepStrictEqual(input, expand(encoded))).toBe(true)
 })
+
+it('retains the full combined permission while encoding its file and command reports and leaving final answers literal', () => {
+  const permission = { ...grant, source: { ...grant.source, kind: 'native-work', version: 6, completedTurns: true } }
+  const text = 'Review remains pending.'
+  const request = peerContributionRequestSchema.parse({ grant: permission, sequence: 3, sourceId: 'f'.repeat(64),
+    result: { kind: 'completed-turn-outcome', version: 5, text, sha256: createHash('sha256').update(text).digest('hex') } })
+  const { peerTurnOutcome: _outcome, ...answer } = peerPublication(request, 3)
+  const input = [publication(1, write, permission), publication(2, command, permission),
+    { source: { kind: 'publication', taskId: grant.taskId, revision: 7, publicationId: answer.id }, ...answer }]
+  const encoded = encodeReportedObservations(input)
+  expect(encoded.observationReferences?.entries).toHaveLength(2)
+  expect(encoded.grantReferences?.grants).toHaveLength(1)
+  expect(encoded.grantReferences?.grants[0]?.value).toMatchObject({ source: permission.source })
+  expect(expand(encoded)).toEqual(input)
+  expect(record.parse(encoded.publications[2]).text).toBe(answer.text)
+})

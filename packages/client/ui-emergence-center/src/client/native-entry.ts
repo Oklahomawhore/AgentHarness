@@ -21,7 +21,8 @@ export function previewNativeEntry(text: string): NativeEntryPreview {
   const fields = value as Record<string, unknown>
   const contribution = fields.kind === 'contribution-entry' || fields.kind === 'scope-join-entry' || fields.kind === 'scope-group-entry'
   if (fields.kind !== undefined && !contribution) return { kind: 'invalid', reason: 'unsupported' }
-  if (contribution && fields.sourceKind !== undefined && fields.sourceKind !== 'tool-observations' && fields.sourceKind !== 'completed-turn-outcomes') {
+  if (contribution && fields.sourceKind !== undefined && fields.sourceKind !== 'tool-observations'
+    && fields.sourceKind !== 'completed-turn-outcomes' && fields.sourceKind !== 'native-work') {
     return { kind: 'invalid', reason: 'unsupported' }
   }
   const strings = contribution ? ['entryId', 'ownerPeerId', 'ownerAddress', 'taskId', 'sourceKind']

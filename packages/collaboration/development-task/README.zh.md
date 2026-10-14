@@ -65,7 +65,7 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 
 ## 独立 peer 贡献
 
-已认证的 Host facade 为本地 Root Task、贡献者 PeerId、capture 代际及精确来源许可调用 `openPeerContribution`：来源可以是一个 OpenAPI 操作、明确的文件／命令观察许可，或完整最终答复许可。Grant 限制有效期、样本数和完整样本字节。它不授予本地采集、Task 读取、Room membership 或任意发布权限。来源适配器单独授权采集，transport 提供已认证 peer。Peer publication 记录 `peerContribution`，以及 OpenAPI 的 `peerObservation`、有序的 `peerToolObservation` 或 `peerTurnOutcome`，不虚构 participant 或 Mesh node。解析公开 capture 申请不会建立授权。
+已认证的 Host facade 为本地 Root Task、贡献者 PeerId、capture 代际及精确来源许可调用 `openPeerContribution`：来源可以是一个 OpenAPI 操作、明确的文件／命令观察许可，完整最终答复许可，或明确组合的原生来源选择。Grant 限制有效期、样本数和完整样本字节。它不授予本地采集、Task 读取、Room membership 或任意发布权限。来源适配器单独授权采集，transport 提供已认证 peer。Peer publication 记录 `peerContribution`，以及 OpenAPI 的 `peerObservation`、有序的 `peerToolObservation` 或 `peerTurnOutcome`，不虚构 participant 或 Mesh node。解析公开 capture 申请不会建立授权。
 
 批准、样本准入和终结共用 Task owner 队列与事件日志。`admitPeerContribution` 派生来源归属及规范报告正文；OpenAPI 来源还获得逻辑工件身份。新样本必须在该 grant 内递增序号；重复不消耗额度。即使终结或降低新准入字节上限后，精确样本和终结重试仍返回原 receipt，不触发新的到期写入。更改内容或授权会被拒绝。Receipt 包含原事件种类、revision、来源身份和完整 payload digest；它证明持久准入，不证明工具执行、文件真实性、模型交付或内容真相。
 
@@ -73,11 +73,13 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 
 已记录工作报告要求来源具有明确的第 2 版 `recorded-local-tools` 许可。其第 2 版 origin 用摘要标识冻结的选择和执行证据，规范正文将报告标为此前记录、未经重新执行或当前文件核对的操作尝试。普通工具 grant 拒绝此变体；本地报告不会获得历史来源标记。已记录与实时报告共用同一有序 grant、额度、重试和终结撤回。[已记录工作决策](../../../.agents/notes/implemented/feature/2026-10-07-recorded-work-on-scope-join.zh.md)说明来源选择及独立许可。
 
-第 3 版工具来源明确授权 `fileContent: completed-native-file`。本地和同伴的第 3 版报告保留原工具参数，并单独包含原生操作返回的 LF 文本及 SHA-256 摘要，或明确的整字段省略（`tool-failed`、`budget` 或 `unavailable`）。这是该次操作的结果文本，并非当前磁盘快照。准入和恢复要求第 3 或第 4 版来源中相匹配的完成文件许可；普通与历史许可不能获得该能力。失败报告不能包含完成文本。Receipt 和继承块摘要覆盖完整的获准结果。
+第 3 版工具来源明确授权 `fileContent: completed-native-file`。本地和同伴的第 3 版报告保留原工具参数，并单独包含原生操作返回的 LF 文本及 SHA-256 摘要，或明确的整字段省略（`tool-failed`、`budget` 或 `unavailable`）。这是该次操作的结果文本，并非当前磁盘快照。准入和恢复要求第 3、第 4 或第 6 版来源中相匹配的完成文件许可；普通与历史许可不能获得该能力。失败报告不能包含完成文本。Receipt 和继承块摘要覆盖完整的获准结果。
 
 第 4 版工具来源明确授权精确的前台命令和工作目录根索引，并可同时包含 Write/Edit 与完成文件许可。文件工具集合可以为空，命令选择不能为空。命令结果分别保留退出码、信号、超时与中止字段，完整 stdout/stderr 或明确的预算省略，以及 provider 截断标记。缺少完成证据或最终工具失败标为不可用，不能推定成功。这些报告记录一次执行，不证明当前代码通过验证。准入核对精确选择与来源版本；旧文件及历史许可不能授权命令。命令 receipt、继承块与撤回保留相同的完整证据及授权区间身份。
 
 `completed-turn-outcomes` 第 5 版许可带有匹配 SHA-256 摘要的完整最终答复报告。本地与同伴准入保留 `localTurnOutcome` 或 `peerTurnOutcome`、原贡献授权及单调样本序号。完整结果参与收据身份与不可变块校验。这些内容是具有归属的 Agent 报告，不是所有者批准的事实；完全相同的重试保持幂等，结束原许可会撤回其当前报告。
+
+`native-work` 第 6 版在同一采集、序号和总样本额度内，组合明确选择的 Write/Edit 工具、精确命令及完整最终答复。任何非空类别组合均有效；未选类别不获得许可。完成文件披露必须选择文件工具。准入保留各自第 1、3、4、5 版结果，拒绝历史初始化。每个所选类别均参与收据身份、不可变复制、恢复及终结撤回。更改类别需要新的授权；现有工具或答复许可不能隐式扩张。
 
 `endPeerContribution` 允许来源退出或 owner 撤权。它记录一个终结事件，派生撤回证据和通知，并拒绝后续激活或新采样。即使 grant 尚无采样，也在 `maxEventsPerTask` 内预留该事件；先于批准到达的 end 留下永久 tombstone。历史采样与继承快照保持原样。`expirePeerContributions` 在同一队列中终结任意 origin 的本地所有 Task 的到期授权；facade 还在启动时核对到期状态。采样字节上限约束新准入；恢复保留历史字节，并拒绝无法终结活跃 grant 的容量配置。
 
@@ -87,7 +89,7 @@ Host 消费者在延迟投影前后调用 `currentContextView`。它先提交本
 
 ## Owner 本地贡献
 
-Host-only 的 `openLocalContribution`、`admitLocalContribution`、`localContributionStatus` 和 `endLocalContribution` 授权 Task owner 自己的 Agent，不经过 self-peer transport。许可绑定一个本地 Root Task、参与者、binding epoch、capture 代际和明确的工具或最终答复选择。有效期、样本数和完整样本字节均有上限。来源消费者另行负责来源同意和采集；Task 准入核对原 assignment，且新样本必须仍属于同一本地 Agent 的当前 binding。
+Host-only 的 `openLocalContribution`、`admitLocalContribution`、`localContributionStatus` 和 `endLocalContribution` 授权 Task owner 自己的 Agent，不经过 self-peer transport。许可绑定一个本地 Root Task、参与者、binding epoch、capture 代际和明确的单类或组合原生来源选择。有效期、样本数和完整样本字节均有上限。来源消费者另行负责来源同意和采集；Task 准入核对原 assignment，且新样本必须仍属于同一本地 Agent 的当前 binding。
 
 每个 capture 预留一个终结事件。状态及当前上下文读取先提交到期或失效绑定的终结再返回；clear 和 checkout 先结束 capture 再改变 binding。Agent 离开或 binding 改变后仍可显式终结。先于打开的终结留下关闭的代际。终结后，已准入内容的精确重试仍返回原 receipt，但修改许可或新样本不能重开该代际。持久化失败时，不会把受影响的授权变更报告为已完成。
 

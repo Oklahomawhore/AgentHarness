@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { commandResultValues, freezeCommandResult } from './command.ts'
+import { freezeNativeWorkSource, nativeWorkSourceValues } from './native-work.ts'
 import type {
   DevelopmentTaskArtifactId, DevelopmentTaskContextPublication, DevelopmentTaskObservedSourceId,
   DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskPeerOpenApiObservation,
@@ -16,7 +17,7 @@ function digest(value: unknown): string { return createHash('sha256').update(JSO
  * @returns detached immutable authorization.
  */
 export function freezePeerGrant(grant: DevelopmentTaskPeerContributionGrant): DevelopmentTaskPeerContributionGrant {
-  return Object.freeze({ ...grant, source: Object.freeze({ ...grant.source,
+  return Object.freeze({ ...grant, source: grant.source.kind === 'native-work' ? freezeNativeWorkSource(grant.source) : Object.freeze({ ...grant.source,
     ...grant.source.kind === 'tool-observations' ? { tools: Object.freeze([...grant.source.tools]),
       ...grant.source.version === 4
         ? { commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))) } : {},
@@ -65,13 +66,14 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
       : result.state === 'invalid' ? [result.state, result.sha256, result.reason] : [result.state, result.reason]
   return digest([grant.version, grant.taskId, grant.grantId, grant.generation, grant.ownerPeerId, grant.contributorPeerId,
     grant.captureId, grant.captureGeneration,
-    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
-      ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : [],
-      ...grant.source.version === 3 ? [grant.source.version, grant.source.fileContent] : [],
-      ...grant.source.version === 4 ? [grant.source.version,
-        grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null] : []]
-      : grant.source.kind === 'completed-turn-outcomes' ? [grant.source.kind, grant.source.version, grant.source.name]
-        : [grant.source.name, grant.source.method, grant.source.path],
+    ...grant.source.kind === 'native-work' ? nativeWorkSourceValues(grant.source)
+      : grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
+        ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : [],
+        ...grant.source.version === 3 ? [grant.source.version, grant.source.fileContent] : [],
+        ...grant.source.version === 4 ? [grant.source.version,
+          grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null] : []]
+        : grant.source.kind === 'completed-turn-outcomes' ? [grant.source.kind, grant.source.version, grant.source.name]
+          : [grant.source.name, grant.source.method, grant.source.path],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, values])
 }
 
@@ -84,7 +86,9 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
 export function peerPublication(request: DevelopmentTaskPeerContributionRequest, at: number): DevelopmentTaskContextPublication {
   const { grant } = request
   if ('kind' in request.result && request.result.kind === 'completed-turn-outcome') {
-    if (grant.source.kind !== 'completed-turn-outcomes') throw new Error('turn report requires completed-turn authorization')
+    if (grant.source.kind !== 'completed-turn-outcomes' && !(grant.source.kind === 'native-work' && grant.source.completedTurns)) {
+      throw new Error('turn report requires completed-turn authorization')
+    }
     const observation: DevelopmentTaskPeerTurnOutcome = {
       kind: request.result.kind, version: request.result.version, text: request.result.text, sha256: request.result.sha256,
       sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
@@ -97,13 +101,14 @@ export function peerPublication(request: DevelopmentTaskPeerContributionRequest,
   }
   if ('kind' in request.result) {
     const result = request.result
-    if (grant.source.kind !== 'tool-observations' || (grant.source.version === 4
-      ? result.kind === 'command-observation'
-        ? !grant.source.commands.some(selector => selector.command === result.fields.command
+    if ((grant.source.kind !== 'tool-observations' && grant.source.kind !== 'native-work')
+      || ((grant.source.version === 4 || grant.source.version === 6)
+        ? result.kind === 'command-observation'
+          ? !grant.source.commands.some(selector => selector.command === result.fields.command
           && selector.rootIndex === result.fields.rootIndex)
-        : result.version !== (grant.source.fileContent === undefined ? 1 : 3)
-      : result.version === 4 || (grant.source.version === 3 ? result.version !== 3
-        : result.version === 3 || (result.version === 2 && grant.source.version !== 2)))) {
+          : result.version !== (grant.source.fileContent === undefined ? 1 : 3)
+        : result.version === 4 || (grant.source.version === 3 ? result.version !== 3
+          : result.version === 3 || (result.version === 2 && grant.source.version !== 2)))) {
       throw new Error('tool report requires its matching live or recorded observation authorization')
     }
     const observation: DevelopmentTaskPeerToolObservation = {

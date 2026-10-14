@@ -68,11 +68,15 @@ export function ContributionGrantSummary({ grant, t }: PropsLocale<'emergenceCen
 export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceCenter'> & { source: ScopeContributionInvitation['grant']['source'] }) {
   return <>
     <dt>{t('contribution.sourceName')}</dt><dd>{source.name}</dd>
-    {source.kind === 'tool-observations' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('contribution.toolObservations')}</dd>
-      <dt>{t('contribution.tools')}</dt><dd>{source.tools.join(', ')}</dd>
-      {source.version === 4 && <><dt>{t('native.commands.scope')}</dt><dd>
-        <NativeCommandSummary commands={source.commands} t={t} />
+    {source.kind === 'tool-observations' || source.kind === 'native-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t(source.kind === 'native-work' ? 'native.work.source' : 'contribution.toolObservations')}</dd>
+      <dt>{t('contribution.tools')}</dt><dd>{source.kind === 'native-work' && source.tools.length === 0
+        ? t('native.work.notSelected') : source.tools.join(', ')}</dd>
+      {(source.version === 4 || source.version === 6) && <><dt>{t('native.commands.scope')}</dt><dd>
+        {source.kind === 'native-work' && source.commands.length === 0
+          ? t('native.work.notSelected') : <NativeCommandSummary commands={source.commands} t={t} />}
       </dd></>}
+      {source.kind === 'native-work' && <><dt>{t('native.work.completedTurns')}</dt>
+        <dd>{t(source.completedTurns ? 'native.work.selected' : 'native.work.notSelected')}</dd></>}
       {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}
       {source.fileContent === 'completed-native-file' && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
       : source.kind === 'completed-turn-outcomes' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('native.outcomes.source')}</dd>

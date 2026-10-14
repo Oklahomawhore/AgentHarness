@@ -617,10 +617,10 @@ describe('owner reusable collaboration entries', () => {
 })
 
 
-describe('completed-answer source compatibility', () => {
+describe.each(['completed-turn-outcomes', 'native-work'] as const)('%s source compatibility', (sourceKind) => {
   it.each(['contribution-entry', 'scope-join-entry', 'scope-group-entry'] as const)(
-    'rejects a %s answer entry in the Claude file-only capture surface', async (kind) => {
-      const turnEntry: ScopeContributionEntry = { ...applicationEntry, kind, sourceKind: 'completed-turn-outcomes',
+    'rejects an unsupported %s entry in the Claude capture surface', async (kind) => {
+      const turnEntry: ScopeContributionEntry = { ...applicationEntry, kind, sourceKind,
         ...(kind === 'scope-group-entry' ? { maxMembers: 2 } : {}) } as ScopeContributionEntry
       const actions = sourceActions({ previewContributionText: vi.fn(async () => turnEntry) })
       render(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false,

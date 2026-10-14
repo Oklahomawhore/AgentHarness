@@ -330,6 +330,10 @@ export class IndependentContribution {
    */
   async activate(domain: ScopeDomain, request: ClaudeScopeActivateContributionRequest, signal: AbortSignal): Promise<ScopeSession> {
     this.assertExpected(domain, request.sessionKey, request.expectedCapture)
+    if (request.invitation.grant.source.kind === 'native-work') {
+      throw new RemoteError('claude-scope/invitation-mismatch', 'Combined native work permissions are not supported by Claude Hooks',
+        { sessionKey: request.sessionKey })
+    }
     if (request.invitation.grant.source.kind === 'completed-turn-outcomes'
       || (request.invitation.grant.source.kind === 'tool-observations'
         && (request.invitation.grant.source.version === 3 || request.invitation.grant.source.version === 4))) {

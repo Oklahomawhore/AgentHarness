@@ -2850,10 +2850,13 @@ it('refuses command permissions and outcomes in the file-only Claude contributio
     } } }).success).toBe(false)
 })
 
-it('refuses completed-turn permissions, entries and durable samples without changing Claude file capture', async () => {
+it.each([
+  { label: 'completed-turn', source: { kind: 'completed-turn-outcomes', version: 5, name: 'answers' }, kind: 'turn-contribution' },
+  { label: 'combined native work', source: { kind: 'native-work', version: 6, name: 'work', tools: ['Write'],
+    commands: [{ command: 'node check.js', rootIndex: 0 }], completedTurns: true }, kind: 'native-work-contribution' },
+] as const)('refuses $label permissions, entries and durable samples without changing Claude file capture', async ({ source: turnSource, kind }) => {
   const f = await toolContributionHosts()
-  const turnSource = { kind: 'completed-turn-outcomes' as const, version: 5 as const, name: 'answers' }
-  const invitation = { ...f.invitation, kind: 'turn-contribution' as const, grant: { ...f.invitation.grant, source: turnSource } }
+  const invitation = { ...f.invitation, kind, grant: { ...f.invitation.grant, source: turnSource } }
   const network = vi.spyOn(f.source.transport, 'request')
   await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
     .rejects.toThrow('not supported by Claude Hooks')
@@ -2876,7 +2879,7 @@ it('refuses completed-turn permissions, entries and durable samples without chan
     if (joint.request.entry.kind !== 'scope-join-entry' && joint.request.entry.kind !== 'scope-group-entry') {
       throw new Error('Native contribution fixture requires a joint entry')
     }
-    const entry = { ...joint.request.entry, sourceKind: 'completed-turn-outcomes' as const }
+    const entry = { ...joint.request.entry, sourceKind: turnSource.kind }
     const calls = vi.spyOn(joint.source.transport, 'request')
     await expect(joint.source.scope.requestContribution({ ...joint.request, entry }))
       .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })

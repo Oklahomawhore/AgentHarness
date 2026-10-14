@@ -1,0 +1,40 @@
+- group:
+  - text: 分享本会话的工作
+  - paragraph: 分别选择允许分享的文件操作、精确命令结果和最终答复。一次批准只授权勾选的类别；它不允许执行新工作。
+  - status: 正在采集已授权的文件、命令或最终答复
+  - term: 目标 Task
+  - definition: {{sharedTaskId}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 允许采集的目录
+  - definition: {{cwd}}/commands-source
+  - term: 文件内容范围
+  - definition: 原始工具参数及完成状态
+  - term: 允许分享的文件操作
+  - definition: 写入文件（write）
+  - term: 获准分享的命令结果
+  - definition:
+    - list:
+      - listitem:
+        - code: node verify.mjs
+        - text: — 目录 1
+  - term: 分享未来完整的最终答复
+  - definition: 已选择
+  - term: 授权到期时间
+  - definition: {{permissionExpiresLocal}}
+  - term: 最多样本数
+  - definition: "100"
+  - term: 每份样本字节上限
+  - definition: "8192"
+  - paragraph: 停止会撤回此许可下所有已选类别的贡献。读取共享上下文的许可独立保留；更换类别需要停止后重新申请。
+  - status: 此次加入的读取已连接
+  - paragraph: 此次申请未附自动许可；可在读取面板另行启用。
+  - paragraph: 协作职责：运行自己负责实现的检查，并使用共享接口。
+  - button "退出此次协作"
+  - paragraph: 结束此许可下所有已选类别的工作分享和本次加入创建的读取连接，不影响后来另行建立的读取。
+  - group: 已批准的权限
+  - paragraph: 等待提交的观察：0
+  - button "停止分享并撤回"
+  - paragraph: 仅停止分享会保留已连接的读取及其已授自动许可；可在上方暂停自动工作或离开。停止分享和此次读取请使用“退出此次协作”。
+  - group: 更新所有者连接地址
+  - button "重新读取分享状态"

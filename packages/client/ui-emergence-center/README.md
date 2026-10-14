@@ -72,6 +72,8 @@ Capacity omissions also appear on the collapsed collaboration entry for the curr
 
 Native local contribution forms and owner-issued single, joint and group entries offer “Completed final answers” as an explicit source choice. Its permission form shows expiry, sample limits and independent answer-disclosure consent; it has no directory, file tool, command or history-initialization fields. Source, limits, Task binding or entry changes require renewed consent. Owners see the exact answer source before approval. Active status and Stop apply to the displayed capture, and an existing capture cannot silently change sources. The [native contribution reference](../../collaboration/scope-agent-contribution/README.md) owns eligibility and disclosure details.
 
+“Files, commands and final answers from one Session” offers an explicit combined selection in local forms and owner entries. A new empty form starts with file tools, exact commands and complete answers unselected, and at least one category is required. Existing file drafts or local file permission can prefill file selections, but still require confirmation. All categories share one sample allowance and stop action. Owner summaries display every selected category, including explicit absence; changing categories clears the final confirmation. Answer disclosure remains explicit because it may include private user inputs. This source excludes historical initialization and is rejected by Claude controls.
+
 <a id="model-experience"></a>
 
 ## Model Experience

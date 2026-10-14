@@ -1,6 +1,7 @@
 /** Canonical owner-local capture identities, reports, and terminal notices. */
 import { createHash } from 'node:crypto'
 import { commandResultValues, freezeCommandResult } from './command.ts'
+import { freezeNativeWorkSource, nativeWorkSourceValues, nativeWorkResultValues } from './native-work.ts'
 import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContributionRequest,
   DevelopmentTaskContextPublication, DevelopmentTaskContributionEndReason, DevelopmentTaskLocalToolObservation,
@@ -29,12 +30,13 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
   return Object.freeze({ version: grant.version, taskId: grant.taskId, participantId: grant.participantId, bindingId: grant.bindingId,
     expectedBindingEpoch: Object.freeze({ nodeId: grant.expectedBindingEpoch.nodeId, seq: grant.expectedBindingEpoch.seq }),
     captureId: grant.captureId, captureGeneration: grant.captureGeneration,
-    source: grant.source.kind === 'completed-turn-outcomes' ? Object.freeze({ ...grant.source })
-      : Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
-        ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent }
-          : grant.source.version === 4 ? { version: 4 as const,
-            commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))),
-            ...(grant.source.fileContent === undefined ? {} : { fileContent: grant.source.fileContent }) } : {}) }),
+    source: grant.source.kind === 'native-work' ? freezeNativeWorkSource(grant.source)
+      : grant.source.kind === 'completed-turn-outcomes' ? Object.freeze({ ...grant.source })
+        : Object.freeze({ kind: grant.source.kind, name: grant.source.name, tools: Object.freeze([...grant.source.tools]),
+          ...(grant.source.version === 3 ? { version: 3 as const, fileContent: grant.source.fileContent }
+            : grant.source.version === 4 ? { version: 4 as const,
+              commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))),
+              ...(grant.source.fileContent === undefined ? {} : { fileContent: grant.source.fileContent }) } : {}) }),
     expiresAt: grant.expiresAt, maxSamples: grant.maxSamples, maxSampleBytes: grant.maxSampleBytes })
 }
 
@@ -45,6 +47,10 @@ export function freezeLocalGrant(grant: DevelopmentTaskLocalContributionGrant): 
  */
 export function localContributionPayloadDigest(request: DevelopmentTaskLocalContributionRequest): string {
   const { grant, result } = request
+  if (grant.source.kind === 'native-work') {
+    return digest([localContributionId(grant), grant.version, ...nativeWorkSourceValues(grant.source),
+      grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, nativeWorkResultValues(result)])
+  }
   if (result.kind === 'completed-turn-outcome') {
     if (grant.source.kind !== 'completed-turn-outcomes') throw new Error('turn outcome requires completed-turn authorization')
     return digest([localContributionId(grant), grant.version, grant.source.kind, grant.source.version, grant.source.name,

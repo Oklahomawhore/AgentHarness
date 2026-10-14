@@ -23,10 +23,11 @@ export interface OwnerApplicationActions {
   readonly rejectContributionApplication: (taskId: DevelopmentTaskId, request: ScopeContributionApplicationRejectRequest) => Promise<void>
 }
 
-function JoinApproval({ pending, commands, outcomes, approve, t }: PropsLocale<'emergenceCenter'> & {
+function JoinApproval({ pending, commands, outcomes, nativeWork, approve, t }: PropsLocale<'emergenceCenter'> & {
   pending: boolean
   commands: boolean
   outcomes: boolean
+  nativeWork: boolean
   approve: (responsibility: string) => void
 }) {
   const id = useId()
@@ -35,12 +36,12 @@ function JoinApproval({ pending, commands, outcomes, approve, t }: PropsLocale<'
     event.preventDefault()
     if (!pending && responsibility.trim()) approve(responsibility.trim())
   }}>
-    <p className={css.hint}>{t(outcomes ? 'native.outcomes.approvalHint' : commands ? 'native.commands.approvalHint' : 'contribution.join.approvalHint')}</p>
+    <p className={css.hint}>{t(nativeWork ? 'native.work.approvalHint' : outcomes ? 'native.outcomes.approvalHint' : commands ? 'native.commands.approvalHint' : 'contribution.join.approvalHint')}</p>
     <label className={css.field} htmlFor={id}>{t('contribution.join.responsibility')}
       <Input id={id} required value={responsibility} disabled={pending}
         onChange={(event) => { setResponsibility(event.target.value) }} /></label>
     <p className={css.hint}>{t('contribution.join.responsibilityHint')}</p>
-    <Button type="submit" disabled={pending || !responsibility.trim()}>{t(outcomes ? 'native.outcomes.approve' : commands ? 'native.commands.approve' : 'contribution.join.approve')}</Button>
+    <Button type="submit" disabled={pending || !responsibility.trim()}>{t(nativeWork ? 'native.work.approve' : outcomes ? 'native.outcomes.approve' : commands ? 'native.commands.approve' : 'contribution.join.approve')}</Button>
   </form>
 }
 
@@ -63,7 +64,7 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
   const [hours, setHours] = useState('')
   const [participation, setParticipation] = useState<'join' | 'contribution' | 'group'>('join')
   const [capacity, setCapacity] = useState('')
-  const [sourceKind, setSourceKind] = useState<'tool-observations' | 'completed-turn-outcomes' | 'openapi'>('tool-observations')
+  const [sourceKind, setSourceKind] = useState<'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'openapi'>('tool-observations')
   const [recovered, setRecovered] = useState<ScopeContributionEntryResult>()
   useEffect(() => () => { generation.current += 1 }, [taskId])
   const validHours = Number.isSafeInteger(Number(hours)) && Number(hours) > 0
@@ -95,8 +96,10 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
       <label className={css.field} htmlFor={`${id}-source-kind`}>{t('contribution.sourceKind')}<select id={`${id}-source-kind`} value={sourceKind} disabled={pending} onChange={(event) => { setSourceKind(event.target.value as typeof sourceKind) }}>
         <option value="tool-observations">{t('contribution.toolObservations')}</option>
         <option value="completed-turn-outcomes">{t('native.outcomes.source')}</option>
+        <option value="native-work">{t('native.work.source')}</option>
         {participation === 'contribution' && <option value="openapi">{t('contribution.openApi')}</option>}
       </select></label>
+      {sourceKind === 'native-work' && <p className={css.hint}>{t('native.work.entryHint')}</p>}
       {sourceKind === 'completed-turn-outcomes' && <p className={css.hint}>{t('native.outcomes.entryHint')}</p>}
       {participation === 'group' && <>
         <label className={css.field} htmlFor={`${id}-capacity`}>{t('contribution.group.capacity')}
@@ -105,7 +108,7 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
         <p className={css.hint}>{t('contribution.group.capacityHint')}</p>
       </>}
       <label className={css.field} htmlFor={`${id}-hours`}>{t('contribution.application.entryHours')}<Input id={`${id}-hours`} type="number" min="1" required value={hours} disabled={pending} onChange={(event) => { setHours(event.target.value) }} /></label>
-      {sourceKind !== 'completed-turn-outcomes' && <p className={css.hint}>{t(participation === 'group' ? 'contribution.group.entryHint'
+      {sourceKind !== 'completed-turn-outcomes' && sourceKind !== 'native-work' && <p className={css.hint}>{t(participation === 'group' ? 'contribution.group.entryHint'
         : participation === 'join' ? 'contribution.join.entryHint' : 'contribution.application.entryHint')}</p>}
       <Button type="submit" disabled={pending || !ownerAddress || !validHours || (participation === 'group' && !validCapacity)}>{t(createLabel)}</Button>
     </form>
@@ -149,6 +152,7 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
           }}>{t('contribution.group.endMember')}</Button>}
         {item.result.status === 'pending' && <div className={css.actions}>
           {item.limits !== null && <JoinApproval pending={pending || !ownerAddress} t={t}
+            nativeWork={item.proposal.source.kind === 'native-work'}
             outcomes={item.proposal.source.kind === 'completed-turn-outcomes'}
             commands={item.proposal.source.kind === 'tool-observations' && item.proposal.source.version === 4} approve={(responsibility) => {
               if (item.limits === null) return
@@ -186,6 +190,7 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
           {item.result.status === 'pending' && proposal !== null && limits !== null && (joint
             ? <JoinApproval key={`${item.entry.entryId}/${proposal.captureId}/${proposal.captureGeneration}`}
               pending={pending || !ownerAddress} t={t}
+              nativeWork={proposal.source.kind === 'native-work'}
               outcomes={proposal.source.kind === 'completed-turn-outcomes'}
               commands={proposal.source.kind === 'tool-observations' && proposal.source.version === 4}
               approve={(responsibility) => { void approveContributionApplication(taskId, { entryId: item.entry.entryId,

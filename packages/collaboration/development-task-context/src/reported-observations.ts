@@ -53,7 +53,7 @@ function components(value: unknown) {
   const publication = parsed.data
   const grant = publication.peerContribution.grant
   if (publication.source.publicationId !== publication.id || publication.source.taskId !== grant.taskId
-    || grant.source.kind !== 'tool-observations') return undefined
+    || (grant.source.kind !== 'tool-observations' && grant.source.kind !== 'native-work')) return undefined
   const split = publication.text.indexOf('\n')
   let json: unknown
   try { json = JSON.parse(publication.text.slice(split + 1)) as unknown }

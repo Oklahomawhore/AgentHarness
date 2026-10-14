@@ -1209,6 +1209,7 @@ interface ScopeAgentContributionPermissionDraft {
 ```ts type-equiv
 /** One explicitly selected source for a peer contribution application. */
 type ScopeAgentContributionRequest = ScopeAgentContributionRequestBase & (ScopeAgentTurnContributionPermission
+  | ScopeAgentNativeWorkContributionPermission
   | (ScopeAgentToolContributionPermission & { readonly initialization?: ScopeAgentContributionInitializationRequest }))
 ```
 
@@ -1818,11 +1819,25 @@ type DevelopmentTaskCaptureGeneration = Branded<'DevelopmentTaskCaptureGeneratio
 ```
 
 ```ts type-equiv
+/** Explicit categories sharing one native capture, sequence and cumulative sample allowance. */
+interface DevelopmentTaskNativeWorkSource {
+  readonly kind: 'native-work'
+  readonly version: 6
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
+}
+```
+
+```ts type-equiv
 /** Immutable source permission without local filesystem roots or session identifiers. */
 type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
-  | DevelopmentTaskCompletedTurnObservationSource
+  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
 ```
 
 ```ts type-equiv
@@ -2262,7 +2277,7 @@ type ScopeContributionProposal = Pick<DevelopmentTaskPeerContributionGrant,
 ```ts type-equiv
 /** Versioned text representations that an authenticated local UI can preview before granting permission. */
 type ScopeContributionTransfer =
-  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request'; readonly proposal: ScopeContributionProposal }
+  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request' | 'native-work-contribution-request'; readonly proposal: ScopeContributionProposal }
   | ScopeContributionInvitation
   | ScopeContributionEntry
 ```
@@ -2329,7 +2344,7 @@ type ScopeContributionManagementErrorCode =
 /** Separate write invitation; a read invitation cannot be promoted into contribution authority. */
 interface ScopeContributionInvitation {
   readonly version: 1
-  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution'
+  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution' | 'native-work-contribution'
   readonly ownerAddress: string
   readonly grant: DevelopmentTaskPeerContributionGrant
 }
@@ -2395,8 +2410,8 @@ type ScopeSingleContributionEntry = {
   readonly expiresAt: number
 } & (
   | { readonly kind: 'openapi-contribution-entry'; readonly sourceKind?: never }
-  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' }
-  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' }
+  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' }
+  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' }
 )
 ```
 
@@ -2405,7 +2420,7 @@ type ScopeSingleContributionEntry = {
 interface ScopeGroupEntry {
   readonly version: 2
   readonly kind: 'scope-group-entry'
-  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes'
+  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
   readonly ownerPeerId: ScopePeerId
@@ -2425,7 +2440,7 @@ type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
 /** Explicitly create a reusable entry for one owned Root Task. */
 interface ScopeGroupEntryRequest {
   /** Omission resolves to tool observations; completed-turn sharing must be selected explicitly. */
-  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes'
+  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2576,7 +2591,7 @@ interface ScopeContributionApplication {
 interface ScopeContributionEntryRequest {
   /** Join offers separately approved passive Root Task reading; omission requests contribution only. */
   readonly participation?: 'join' | 'contribution'
-  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes'
+  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2857,7 +2872,7 @@ interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
-    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource
+    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number
@@ -2958,7 +2973,7 @@ type ScopeAgentLocalContributionBinding = Pick<DevelopmentTaskLocalContributionG
 ```ts type-equiv
 /** One explicitly selected source for the existing owner-local Task assignment. */
 type ScopeAgentLocalContributionRequest = ScopeAgentLocalContributionRequestBase
-  & (ScopeAgentToolContributionPermission | ScopeAgentTurnContributionPermission)
+  & (ScopeAgentToolContributionPermission | ScopeAgentTurnContributionPermission | ScopeAgentNativeWorkContributionPermission)
 ```
 
 ```ts type-equiv
@@ -4656,6 +4671,7 @@ interface ScopeAgentToolContributionPermission {
   readonly tools: ('write' | 'edit')[]
   readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly fileContent?: 'completed-native-file'
+  readonly completedTurns?: never
 }
 ```
 
@@ -4667,6 +4683,20 @@ interface ScopeAgentTurnContributionPermission {
   readonly tools?: never
   readonly commands?: never
   readonly fileContent?: never
+  readonly initialization?: never
+  readonly completedTurns?: never
+}
+```
+
+```ts type-equiv
+/** One explicit permission for selected file operations, exact commands and completed answers from the same Session. */
+interface ScopeAgentNativeWorkContributionPermission {
+  readonly sourceKind: 'native-work'
+  readonly roots: string[]
+  readonly tools: ('write' | 'edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
+  readonly fileContent?: 'completed-native-file'
   readonly initialization?: never
 }
 ```
@@ -4683,5 +4713,11 @@ type ScopeAgentContributionSourcePermission = {
   readonly roots?: never
   readonly tools?: never
   readonly commands?: never
+} | {
+  readonly sourceKind: 'native-work'
+  readonly roots: readonly string[]
+  readonly tools: readonly ('write' | 'edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
 }
 ```

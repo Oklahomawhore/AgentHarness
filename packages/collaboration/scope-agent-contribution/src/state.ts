@@ -96,7 +96,7 @@ export type NativeSample = NativeToolSample | NativeTurnSample
 
 /** One atomic row owns sequence allocation, source samples, and management revisions. */
 export interface NativeSourceRecord {
-  readonly version?: 2 | 3
+  readonly version?: 2 | 3 | 4
   readonly agentId: SessionId
   readonly revision: number
   readonly capture: NativeCapture | null
@@ -165,7 +165,12 @@ const captureSchema = contributionRecordSchema.safeExtend({
   const permissionMatches = turn
     ? capture.roots.length === 0 && capture.tools.length === 0 && capture.commands === undefined
       && capture.initialization === undefined && capture.turnAfterSeq !== undefined
-    : source.kind === 'tool-observations' && capture.roots.length > 0 && capture.turnAfterSeq === undefined
+    : source.kind === 'native-work'
+      ? (capture.roots.length > 0) === (source.tools.length > 0 || source.commands.length > 0)
+        && (capture.turnAfterSeq !== undefined) === source.completedTurns && capture.initialization === undefined
+        && JSON.stringify(capture.commands) === JSON.stringify(source.commands.length === 0 ? undefined : source.commands)
+        && JSON.stringify(source.tools) === JSON.stringify(tools)
+      : source.kind === 'tool-observations' && capture.roots.length > 0 && capture.turnAfterSeq === undefined
       && JSON.stringify(capture.commands) === JSON.stringify(source.version === 4 ? source.commands : undefined)
       && JSON.stringify(source.tools) === JSON.stringify(tools)
       && (source.version === 2) === (capture.initialization !== undefined)
@@ -205,7 +210,8 @@ const continuationSchema = z.object({
   proposal: contributionRecordSchema.shape.proposal, entry: contributionEntrySchema, limits: contributionLimitsSchema,
   receiving: receivingSchema,
 }).strict().refine(value => consistentRoute(value) && (value.entry.kind === 'scope-join-entry' || value.entry.kind === 'scope-group-entry')
-  && (value.proposal.source.kind === 'tool-observations' || value.proposal.source.kind === 'completed-turn-outcomes')
+  && (value.proposal.source.kind === 'tool-observations' || value.proposal.source.kind === 'completed-turn-outcomes'
+    || value.proposal.source.kind === 'native-work')
   && value.receiving.intent !== undefined
   && (value.receiving.routeRecovery === undefined || value.receiving.routeRecovery.ownerAddress === value.entry.ownerAddress)
   && (value.receiving.invitation === null ? value.receiving.intent !== 'adopt'
@@ -221,6 +227,7 @@ const recordFields = {
 }
 const legacyRecord = z.strictObject(recordFields).refine(record => record.capture?.initialization === undefined
   && record.capture?.turnAfterSeq === undefined && record.capture?.proposal.source.kind !== 'completed-turn-outcomes'
+  && record.capture?.proposal.source.kind !== 'native-work'
   && !(record.capture?.proposal.source.kind === 'tool-observations' && (record.capture.proposal.source.version === 3 || record.capture.proposal.source.version === 4))
   && !(record.receivingContinuation !== undefined && 'version' in record.receivingContinuation.proposal.source)
   && record.samples.every(item => item.turnProof === undefined && (!('kind' in item.sample.result) || item.sample.result.version === 1)),
@@ -228,10 +235,14 @@ const legacyRecord = z.strictObject(recordFields).refine(record => record.captur
 const recordSchema: z.ZodType<NativeSourceRecord> = z.union([legacyRecord,
   z.strictObject({ ...recordFields, version: z.literal(2) }).refine(record => record.capture?.turnAfterSeq === undefined
     && record.capture?.proposal.source.kind !== 'completed-turn-outcomes'
+    && record.capture?.proposal.source.kind !== 'native-work'
     && record.receivingContinuation?.proposal.source.kind !== 'completed-turn-outcomes'
+    && record.receivingContinuation?.proposal.source.kind !== 'native-work'
     && record.samples.every(item => item.turnProof === undefined && (!('kind' in item.sample.result) || item.sample.result.version !== 5)),
   'version-two native rows cannot acquire completed turns'),
-  z.strictObject({ ...recordFields, version: z.literal(3) }),
+  z.strictObject({ ...recordFields, version: z.literal(3) }).refine(record => record.capture?.proposal.source.kind !== 'native-work'
+    && record.receivingContinuation?.proposal.source.kind !== 'native-work', 'version-three native rows cannot acquire combined work'),
+  z.strictObject({ ...recordFields, version: z.literal(4) }),
 ]).superRefine((record, ctx) => {
   if (record.capture !== null && record.receivingContinuation !== undefined) {
     ctx.addIssue({ code: 'custom', message: 'capture and detached receiving cannot coexist' })
@@ -262,7 +273,9 @@ const recordSchema: z.ZodType<NativeSourceRecord> = z.union([legacyRecord,
 export function validateNativeSample(agentId: SessionId, item: NativeSample, capture: NativeCapture): void {
   if (item.turnProof !== undefined) {
     const id = turnOutcomeId('remote', agentId, capture.proposal, item.turnProof)
-    if (capture.proposal.source.kind !== 'completed-turn-outcomes' || capture.turnAfterSeq === undefined
+    const source = capture.proposal.source
+    if (!(source.kind === 'completed-turn-outcomes' || source.kind === 'native-work' && source.completedTurns)
+      || capture.turnAfterSeq === undefined
       || item.turnProof.activationSeq < capture.turnAfterSeq || item.id !== id
       || item.captureId !== capture.proposal.captureId || item.captureGeneration !== capture.proposal.captureGeneration
       || item.sample.sourceId !== nativeDigest([id, item.sample.sequence]) || item.sample.sequence > capture.sequence

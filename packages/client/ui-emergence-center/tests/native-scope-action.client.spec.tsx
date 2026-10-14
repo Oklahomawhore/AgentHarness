@@ -411,6 +411,40 @@ const verifyEntry = async () => {
 }
 
 describe('one native collaboration entrance', () => {
+
+  it.each([
+    { ...applicationEntry, sourceKind: 'native-work' },
+    { ...applicationEntry, kind: 'scope-join-entry', sourceKind: 'native-work' },
+    { ...groupEntry, sourceKind: 'native-work' },
+  ] satisfies ScopeContributionEntry[])('opens a native-work $kind without selecting any category or read permission', async (entry) => {
+    const f = entranceFixture(entry)
+    paste(JSON.stringify(entry))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(f.request).not.toHaveBeenCalled()
+    await verifyEntry()
+    expect(f.preview).toHaveBeenCalledExactlyOnceWith(JSON.stringify(entry))
+    for (const key of ['native.share.write', 'native.share.edit', 'native.commands.consent', 'native.work.completedTurns'] as const) {
+      expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh[key] }).checked).toBe(false)
+    }
+    fireEvent.change(screen.getByLabelText(zh['contribution.hours']), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText(zh['contribution.maxSamples']), { target: { value: '8' } })
+    fireEvent.change(screen.getByLabelText(zh['contribution.maxBytes']), { target: { value: '4096' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.work.completedTurns'] }))
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.work.remoteConsent'] }))
+    const button = screen.getByRole<HTMLButtonElement>('button', {
+      name: zh[entry.kind === 'contribution-entry' ? 'native.share.request' : 'native.join.request'],
+    })
+    if (entry.kind !== 'contribution-entry') {
+      expect(button.disabled).toBe(true)
+      fireEvent.click(screen.getByRole('checkbox', { name: zh['native.join.readConsent'] }))
+    }
+    fireEvent.click(button)
+    await waitFor(() => { expect(f.request).toHaveBeenCalledOnce() })
+    expect(f.request.mock.calls[0]?.[0]).toMatchObject({ agentId: state.agentId, entry,
+      sourceKind: 'native-work', roots: [], tools: [], commands: [], completedTurns: true })
+    expect(f.action).not.toHaveBeenCalled()
+  })
+
   it.each([
     applicationEntry,
     { ...applicationEntry, kind: 'scope-join-entry' } satisfies ScopeContributionEntry,

@@ -46,7 +46,7 @@ export type LocalSample = LocalToolSample | LocalTurnSample
 
 /** One source Session's atomic local sequence allocation and immutable outbox. */
 export interface LocalSourceRecord {
-  readonly version?: 2
+  readonly version?: 2 | 3
   readonly agentId: SessionId
   readonly revision: number
   readonly capture: LocalCapture | null
@@ -91,7 +91,12 @@ const captureSchema: z.ZodType<LocalCapture> = z.object({
   const turn = source.kind === 'completed-turn-outcomes'
   const permissionMatches = turn
     ? capture.roots.length === 0 && capture.tools.length === 0 && capture.commands === undefined && capture.turnAfterSeq !== undefined
-    : capture.roots.length > 0 && capture.turnAfterSeq === undefined
+    : source.kind === 'native-work'
+      ? (capture.roots.length > 0) === (source.tools.length > 0 || source.commands.length > 0)
+        && (capture.turnAfterSeq !== undefined) === source.completedTurns
+        && isDeepStrictEqual(capture.commands, source.commands.length === 0 ? undefined : source.commands)
+        && isDeepStrictEqual(source.tools, capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'))
+      : capture.roots.length > 0 && capture.turnAfterSeq === undefined
       && isDeepStrictEqual(capture.commands, source.version === 4 ? source.commands : undefined)
       && isDeepStrictEqual(source.tools, capture.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'))
   if (capture.roots.length !== capture.rootUrls.length || new Set(capture.rootUrls).size !== capture.rootUrls.length
@@ -127,9 +132,12 @@ const recordFields = {
 const recordSchema: z.ZodType<LocalSourceRecord> = z.union([
   z.strictObject(recordFields).refine(record => record.capture?.turnAfterSeq === undefined
     && record.capture?.grant.source.kind !== 'completed-turn-outcomes'
+    && record.capture?.grant.source.kind !== 'native-work'
     && record.samples.every(sample => sample.turnProof === undefined && sample.sample.result.version !== 5),
   'historical local rows cannot acquire completed turns'),
-  z.strictObject({ ...recordFields, version: z.literal(2) }),
+  z.strictObject({ ...recordFields, version: z.literal(2) }).refine(record => record.capture?.grant.source.kind !== 'native-work',
+    'version-two local rows cannot acquire combined work'),
+  z.strictObject({ ...recordFields, version: z.literal(3) }),
 ]).superRefine((record, ctx) => {
   const capture = record.capture
   const seen = new Set<number>()
@@ -139,7 +147,9 @@ const recordSchema: z.ZodType<LocalSourceRecord> = z.union([
       if (capture === null) throw new Error('local sample has no capture')
       if (item.turnProof !== undefined) {
         const id = turnOutcomeId('local', record.agentId, capture.grant, item.turnProof)
-        if (capture.grant.source.kind !== 'completed-turn-outcomes' || capture.turnAfterSeq === undefined
+        const source = capture.grant.source
+        if (!(source.kind === 'completed-turn-outcomes' || source.kind === 'native-work' && source.completedTurns)
+          || capture.turnAfterSeq === undefined
           || item.turnProof.activationSeq < capture.turnAfterSeq || item.id !== id
           || item.captureId !== capture.grant.captureId || item.captureGeneration !== capture.grant.captureGeneration
           || item.sample.sourceId !== nativeDigest([id, item.sample.sequence]) || item.sample.sequence > capture.sequence

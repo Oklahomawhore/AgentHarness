@@ -126,7 +126,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
       if (result.kind === 'openapi-contribution-entry' || result.kind === 'contribution-entry'
         || result.kind === 'scope-join-entry' || result.kind === 'scope-group-entry') {
         const selectedSource = result.kind === 'openapi-contribution-entry' ? 'openapi' : result.sourceKind
-        if (selectedSource === 'completed-turn-outcomes') { setInvalid(true); return }
+        if (selectedSource === 'completed-turn-outcomes' || selectedSource === 'native-work') { setInvalid(true); return }
         if ((result.kind === 'scope-join-entry' || result.kind === 'scope-group-entry') && capture === null) {
           const checked = await probeContributionEntry({ entry: result }).catch(() => ({ status: 'unavailable' as const }))
           if (revision !== previewRevision.current) return

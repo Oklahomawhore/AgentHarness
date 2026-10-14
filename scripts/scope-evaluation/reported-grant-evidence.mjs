@@ -20,21 +20,22 @@ function integer(value, minimum = 0) { return Number.isSafeInteger(value) && val
 function digest(value) { return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) }
 function permissionSource(value) {
   object(value, 'observation grant source')
+  const native = value.kind === 'native-work'
   const version = Object.hasOwn(value, 'version') ? value.version : 1
-  assert.ok(!Object.hasOwn(value, 'version') || [2, 3, 4].includes(version), 'invalid observation grant source version')
+  assert.ok(native ? version === 6 : !Object.hasOwn(value, 'version') || [2, 3, 4].includes(version), 'invalid observation grant source version')
   fields(value, ['kind', 'name', 'tools', ...version === 1 ? [] : ['version'],
-    ...version === 2 ? ['initialization'] : version === 3 ? ['fileContent'] : version === 4 ? ['commands'] : []],
-  version === 4 ? ['fileContent'] : [], 'observation grant source')
-  assert.ok(value.kind === 'tool-observations' && typeof value.name === 'string'
+    ...native ? ['commands', 'completedTurns'] : version === 2 ? ['initialization'] : version === 3 ? ['fileContent'] : version === 4 ? ['commands'] : []],
+  version === 4 || native ? ['fileContent'] : [], 'observation grant source')
+  assert.ok((native || value.kind === 'tool-observations') && typeof value.name === 'string'
     && value.name.trim() !== '' && value.name.length <= 256, 'invalid observation grant source')
-  assert.ok(Array.isArray(value.tools) && value.tools.length >= (version === 4 ? 0 : 1) && value.tools.length <= 2
+  assert.ok(Array.isArray(value.tools) && value.tools.length >= (version === 4 || native ? 0 : 1) && value.tools.length <= 2
     && value.tools.every(tool => ['Write', 'Edit'].includes(tool)) && new Set(value.tools).size === value.tools.length,
   'invalid observation grant tools')
   assert.ok(version !== 2 || value.initialization === 'recorded-local-tools', 'invalid observation grant initialization')
   assert.ok(!Object.hasOwn(value, 'fileContent') || value.fileContent === 'completed-native-file'
     && value.tools.length > 0, 'invalid observation grant file content')
-  if (version === 4) {
-    assert.ok(Array.isArray(value.commands) && value.commands.length > 0, 'invalid observation grant commands')
+  if (version === 4 || native) {
+    assert.ok(Array.isArray(value.commands) && (native || value.commands.length > 0), 'invalid observation grant commands')
     const selectors = new Set()
     for (const command of value.commands) {
       fields(command, ['command', 'rootIndex'], [], 'observation grant command')
@@ -44,6 +45,8 @@ function permissionSource(value) {
     }
     assert.equal(selectors.size, value.commands.length, 'duplicate observation grant command')
   }
+  if (native) assert.ok(typeof value.completedTurns === 'boolean'
+    && (value.tools.length > 0 || value.commands.length > 0 || value.completedTurns), 'invalid native work categories')
   return value
 }
 const observationLegend = 'Expand grantReferences first if present. Indices are zero-based. For each entry let '
@@ -73,7 +76,7 @@ function resultWarning(result, source) {
     assert.ok(result.version === 4 && result.tool === 'Bash' && integer(result.fields.rootIndex)
       && typeof result.fields.command === 'string' && result.fields.command.trim() !== '' && !result.fields.command.includes('\0'),
     'invalid command result')
-    assert.ok(source.version === 4 && Array.isArray(source.commands) && source.commands.some(selector =>
+    assert.ok((source.version === 4 || source.kind === 'native-work' && source.version === 6) && Array.isArray(source.commands) && source.commands.some(selector =>
       selector.command === result.fields.command && selector.rootIndex === result.fields.rootIndex), 'command grant differs')
     if (result.state === 'completed') {
       assert.ok((result.exitCode === null || Number.isSafeInteger(result.exitCode))
@@ -92,7 +95,7 @@ function resultWarning(result, source) {
     && ['Write', 'Edit'].includes(result.tool) && ['success', 'failure'].includes(result.reportedStatus), 'invalid tool result')
   const version = source.version ?? 1
   assert.ok(Array.isArray(source.tools) && source.tools.includes(result.tool)
-    && (version === 4 ? result.version === (source.fileContent === undefined ? 1 : 3)
+    && (version === 4 || version === 6 ? result.version === (source.fileContent === undefined ? 1 : 3)
       : version === 3 ? result.version === 3 : result.version === 1 || version === 2 && result.version === 2), 'tool grant differs')
   const bodyFields = result.tool === 'Write' ? ['content'] : ['oldString', 'newString']
   fields(result.fields, ['rootIndex', 'path', ...result.tool === 'Edit' ? ['replaceAll'] : []], [...bodyFields, 'error'], 'tool fields')

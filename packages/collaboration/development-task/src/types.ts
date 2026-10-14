@@ -135,6 +135,18 @@ export interface DevelopmentTaskCompletedTurnObservationSource {
   readonly name: string
 }
 
+/** Explicit categories sharing one native capture, sequence and cumulative sample allowance. */
+export interface DevelopmentTaskNativeWorkSource {
+  readonly kind: 'native-work'
+  readonly version: 6
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
+}
+
 /** A complete Agent report; its digest verifies text integrity, not owner approval or factual accuracy. */
 export interface DevelopmentTaskCompletedTurnObservationResult {
   readonly kind: 'completed-turn-outcome'
@@ -147,7 +159,7 @@ export interface DevelopmentTaskCompletedTurnObservationResult {
 export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
-  | DevelopmentTaskCompletedTurnObservationSource
+  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -254,7 +266,7 @@ export interface DevelopmentTaskLocalContributionGrant {
   readonly captureId: DevelopmentTaskCaptureId
   readonly captureGeneration: DevelopmentTaskCaptureGeneration
   readonly source: DevelopmentTaskToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource
-    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource
+    | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
   readonly expiresAt: number
   readonly maxSamples: number
   readonly maxSampleBytes: number

@@ -23,19 +23,20 @@ export interface NativeContributionDraft {
  * @param props - unique field prefix, local draft, editing state and localized consent label.
  * @returns controlled source-permission fields without a submit action.
  */
-export function NativeContributionPermission({ id, draft, disabled, fileContentDisabled, consentKey, change, t,
+export function NativeContributionPermission({ id, draft, disabled, fileContentDisabled, consentKey, outcomes, change, t,
 }: PropsLocale<'emergenceCenter'> & {
   id: string
   draft: NativeContributionDraft
   disabled: boolean
   fileContentDisabled?: boolean
   consentKey: EmergenceCenterKey
+  outcomes?: { readonly selected: boolean; readonly change: (selected: boolean) => void } | undefined
   change: (value: NativeContributionDraft) => void
 }) {
   const roots = draft.roots.split('\n').map(value => value.trim()).filter(Boolean)
   return <>
     <label className={css.field} htmlFor={`${id}-roots`}>{t('contribution.roots')}
-      <textarea id={`${id}-roots`} rows={2} required value={draft.roots} disabled={disabled}
+      <textarea id={`${id}-roots`} rows={2} required={outcomes === undefined || draft.write || draft.edit || draft.commands.enabled} value={draft.roots} disabled={disabled}
         onChange={(event) => { change({ ...draft, roots: event.target.value }) }} /></label>
     <fieldset className={css.modes} disabled={disabled}><legend>{t('native.share.tools')}</legend>
       <label><input type="checkbox" checked={draft.write} onChange={(event) => { change({ ...draft, write: event.target.checked }) }} />{t('native.share.write')}</label>
@@ -48,6 +49,11 @@ export function NativeContributionPermission({ id, draft, disabled, fileContentD
     <p className={css.hint}>{t('native.fileContent.hint')}</p>
     <NativeCommandPermission id={id} draft={draft.commands} roots={roots} disabled={disabled}
       unavailable={fileContentDisabled === true} t={t} change={(commands) => { change({ ...draft, commands }) }} />
+    {outcomes !== undefined && <div data-native-work-outcomes>
+      <label className={css.consent}><input type="checkbox" checked={outcomes.selected} disabled={disabled}
+        onChange={(event) => { outcomes.change(event.target.checked) }} />{t('native.work.completedTurns')}</label>
+      <p className={css.hint}>{t('native.outcomes.scope')}</p>
+    </div>}
     <label className={css.consent}><input type="checkbox" checked={draft.consent} disabled={disabled}
       onChange={(event) => { change({ ...draft, consent: event.target.checked }) }} />{t(consentKey)}</label>
   </>

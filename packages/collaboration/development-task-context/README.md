@@ -158,6 +158,8 @@ The `development-task-context/admit` waterfall delegates before passive computat
 
 An ordinary publication arriving during computation leaves the captured revision valid; the next request selects the newer revision. Switching away and back creates a new binding interval, so a computation started before that switch cannot publish its result. Model retries use the exact logged text.
 
+Combined native-work permission retains its complete category selection in reported grant references and semantic source attribution. File and command samples keep their existing evidence forms; complete answers remain literal reports.
+
 Complete final-answer reports remain independent publications under Text and Reported backends: a newer answer does not by itself supersede an older answer. Original source authority, warning and full text remain available; same-capture selection omits the recipient’s own reports. The semantic backend retains explicit unverified-report attribution. The OpenAPI-only facts backend marks current final-answer evidence unsupported and blocks exact automatic use rather than claiming complete coverage.
 
 <a id="model-experience"></a>

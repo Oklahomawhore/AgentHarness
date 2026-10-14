@@ -9,8 +9,8 @@ import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolBashExecution, ToolBashCompletion } from '@deepseek-ai/dsh-tool-bash'
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell'
-import { commandSelectorSchema } from '@deepseek-ai/dsh-development-task/schema'
-import type { DevelopmentTaskCommandSelector, DevelopmentTaskCommandObservationResult } from '@deepseek-ai/dsh-development-task/types'
+import { commandSelectorSchema, nativeWorkSourceSchema } from '@deepseek-ai/dsh-development-task/schema'
+import type { DevelopmentTaskCommandSelector, DevelopmentTaskCommandObservationResult, DevelopmentTaskNativeWorkSource } from '@deepseek-ai/dsh-development-task/types'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { ToolFsCompletion, ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -42,7 +42,7 @@ import { initializationRequestSchema, pendingInitialization, recordedProof, reco
 import type { NativeInitialization, InitializationProof } from './initialization.ts'
 import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationSource } from './types.ts'
 import type { ScopeAgentContributionRecoverRouteRequest, ScopeAgentContributionRequest, ScopeAgentContributionSelection, ScopeAgentContributionStatus, ScopeAgentContributionStopRequest } from './types.ts'
-import type { ScopeAgentToolContributionPermission, ScopeAgentContributionSourcePermission } from './types.ts'
+import type { ScopeAgentToolContributionPermission, ScopeAgentNativeWorkContributionPermission, ScopeAgentContributionSourcePermission } from './types.ts'
 import { completedTurnOutcome, turnOutcomeId } from './turn-outcome.ts'
 
 export type * from './types.ts'
@@ -372,10 +372,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
-    const outcome = this.outcomePermission(agent.id, request)
-    const permission: ScopeAgentToolContributionPermission = request.sourceKind === 'completed-turn-outcomes'
+    const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
+    const outcome = this.outcomePermission(agent.id, request) || native?.completedTurns === true
+    const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
       ? { roots: [], tools: [] } : request
-    const commands = outcome ? undefined : this.permissionCommands(agent.id, permission)
+    const commands = native === undefined ? this.permissionCommands(agent.id, permission)
+      : native.commands.length === 0 ? undefined : native.commands
     const initialization = request.initialization === undefined ? undefined : initializationRequestSchema.parse(request.initialization)
     if ((request.fileContent !== undefined || commands !== undefined) && initialization !== undefined) {
       throw this.invalid(agent.id, 'Complete file-result sharing cannot include recorded-tool initialization')
@@ -383,7 +385,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const automatic = request.receive?.automatic === undefined
       ? undefined : scopeAgentAutomaticPolicySchema.parse(request.receive.automatic)
     if ((entry.kind !== 'contribution-entry' && entry.kind !== 'scope-join-entry' && entry.kind !== 'scope-group-entry')
-      || entry.sourceKind !== (outcome ? 'completed-turn-outcomes' : 'tool-observations')
+      || entry.sourceKind !== (native !== undefined ? 'native-work' : outcome ? 'completed-turn-outcomes' : 'tool-observations')
       || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now()
       || !outcome && (permission.roots.length === 0 || permission.tools.length === 0 && commands === undefined)
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) {
@@ -407,8 +409,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           if (name === 'scopeAgentContext' && receiverIdentity(this.ctx.get('scopeAgentContext')) !== provider) consent.revoked = true
         })
       }
-      const filesystem = outcome ? undefined : agent.ctx.get('fs')
-      if (!outcome && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      const filesystem = permission.roots.length === 0 ? undefined : agent.ctx.get('fs')
+      if (permission.roots.length > 0 && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
@@ -445,13 +447,15 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const rootUrls = filesystem === undefined ? [] : roots.map(root => filesystem.fileUrl(root))
         let capture: NativeCapture
         if (retained != null) {
-          if (retained.state === 'ending' || (retained.proposal.source.kind === 'completed-turn-outcomes') !== outcome
+          if (retained.state === 'ending'
+            || retained.proposal.source.kind !== (native !== undefined ? 'native-work' : outcome ? 'completed-turn-outcomes' : 'tool-observations')
+            || native !== undefined && !isDeepStrictEqual(retained.proposal.source, native)
             || !isDeepStrictEqual(retained.entry, entry) || !isDeepStrictEqual(retained.limits, limits)
             || retained.receiving?.expectedReadStateSeq !== request.receive?.expectedReadStateSeq
             || !isDeepStrictEqual(retained.receiving?.localTask, request.receive?.localTask)
             || !isDeepStrictEqual(retained.receiving?.automatic, automatic)
             || !isDeepStrictEqual(retained.initialization?.request, initialization)
-            || (retained.proposal.source.kind === 'tool-observations' && (retained.proposal.source.version === 3 || retained.proposal.source.version === 4)
+            || ('fileContent' in retained.proposal.source
               ? retained.proposal.source.fileContent : undefined) !== request.fileContent
             || !isDeepStrictEqual(retained.commands, commands)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
@@ -496,13 +500,13 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           capture = { proposal: { contributorPeerId: identity.peerId,
             captureId: randomUUID() as NativeCapture['proposal']['captureId'],
             captureGeneration: randomUUID() as NativeCapture['proposal']['captureGeneration'],
-            source: outcome ? { kind: 'completed-turn-outcomes', version: 5, name: 'session-outcomes' }
+            source: native ?? (outcome ? { kind: 'completed-turn-outcomes', version: 5, name: 'session-outcomes' }
               : { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
                 ...(commands !== undefined ? { version: 4 as const, commands,
                   ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) }
                   : request.fileContent === undefined
                     ? initialization === undefined ? {} : { version: 2 as const, initialization: 'recorded-local-tools' as const }
-                    : { version: 3 as const, fileContent: request.fileContent }) } },
+                    : { version: 3 as const, fileContent: request.fileContent }) }) },
           roots: localRoots, rootUrls, tools, ...(commands === undefined ? {} : { commands }), entry, limits, sequence: 0, state: 'prepared', application: { entry, limits, state: 'applying' },
           ...(outcome ? { turnAfterSeq: (agent.session.seq - 1) as SessionSeqCursor } : {}),
           ...(initialization === undefined ? {} : { initialization: pendingInitialization(initialization) }),
@@ -706,18 +710,20 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     this.assertExpected(domain, agent.id, role, request.expectedCapture)
     this.requireLocalEligible(agent, request)
     const limits = contributionLimitsSchema.parse(request.limits)
-    const outcome = this.outcomePermission(agent.id, request)
-    const permission: ScopeAgentToolContributionPermission = request.sourceKind === 'completed-turn-outcomes'
+    const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
+    const outcome = this.outcomePermission(agent.id, request) || native?.completedTurns === true
+    const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
       ? { roots: [], tools: [] } : request
-    const commands = outcome ? undefined : this.permissionCommands(agent.id, permission)
+    const commands = native === undefined ? this.permissionCommands(agent.id, permission)
+      : native.commands.length === 0 ? undefined : native.commands
     if (limits.expiresAt <= Date.now()
       || !outcome && (permission.roots.length === 0 || permission.tools.length === 0 && commands === undefined)
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) throw this.invalid(agent.id, 'Invalid local source permission')
     const signal = this.invalidate(agent.id, role, false)
     const command = this.sources[role].controls.get(agent.id)
     try {
-      const filesystem = outcome ? undefined : agent.ctx.get('fs')
-      if (!outcome && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      const filesystem = permission.roots.length === 0 ? undefined : agent.ctx.get('fs')
+      if (permission.roots.length > 0 && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
@@ -749,10 +755,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         let capture: LocalCapture
         if (retained != null) {
           const { expiresAt, maxSamples, maxSampleBytes } = retained.grant
-          if (retained.state === 'ending' || (retained.grant.source.kind === 'completed-turn-outcomes') !== outcome
+          if (retained.state === 'ending'
+            || retained.grant.source.kind !== (native !== undefined ? 'native-work' : outcome ? 'completed-turn-outcomes' : 'tool-observations')
+            || native !== undefined && !isDeepStrictEqual(retained.grant.source, native)
             || !this.matchesBinding(agent.id, retained.grant)
             || !isDeepStrictEqual({ expiresAt, maxSamples, maxSampleBytes }, limits)
-            || (retained.grant.source.version === 3 || retained.grant.source.version === 4
+            || ('fileContent' in retained.grant.source
               ? retained.grant.source.fileContent : undefined) !== request.fileContent
             || !isDeepStrictEqual(retained.commands, commands)
             || !isDeepStrictEqual(retained.rootUrls, rootUrls) || !isDeepStrictEqual(retained.tools, tools)) {
@@ -767,11 +775,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             participantId: developmentAgentParticipantId(agent.id),
             captureId: randomUUID() as DevelopmentTaskLocalContributionGrant['captureId'],
             captureGeneration: randomUUID() as DevelopmentTaskLocalContributionGrant['captureGeneration'],
-            source: outcome ? { kind: 'completed-turn-outcomes', version: 5, name: 'session-outcomes' }
+            source: native ?? (outcome ? { kind: 'completed-turn-outcomes', version: 5, name: 'session-outcomes' }
               : { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
                 ...(commands !== undefined ? { version: 4 as const, commands,
                   ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) }
-                  : request.fileContent === undefined ? {} : { version: 3 as const, fileContent: request.fileContent }) }, ...limits }
+                  : request.fileContent === undefined ? {} : { version: 3 as const, fileContent: request.fileContent }) }), ...limits }
           capture = { grant, roots: filesystem === undefined ? [] : roots.map(root => filesystem.processPath(root)), rootUrls, tools,
             ...(commands === undefined ? {} : { commands }), state: 'opening', sequence: 0,
             ...(outcome ? { turnAfterSeq: (agent.session.seq - 1) as SessionSeqCursor } : {}) }
@@ -802,14 +810,27 @@ export default class ScopeAgentContributions extends TypertRemoteService {
 
   private outcomePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest): boolean {
     if (request.sourceKind === 'completed-turn-outcomes') {
-      if (['roots', 'tools', 'commands', 'fileContent', 'initialization'].some(key => Object.hasOwn(request, key))) {
+      if (['roots', 'tools', 'commands', 'fileContent', 'initialization', 'completedTurns'].some(key => Object.hasOwn(request, key))) {
         throw this.invalid(id, 'Completed-answer sharing cannot include file or historical permissions')
       }
       return true
     }
     return false
   }
-  private permissionCommands(id: SessionId, request: ScopeAgentToolContributionPermission)
+  private nativePermission(id: SessionId, request: ScopeAgentNativeWorkContributionPermission): DevelopmentTaskNativeWorkSource {
+    const source = nativeWorkSourceSchema.parse({ kind: 'native-work', version: 6, name: 'session-work',
+      tools: request.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'), commands: request.commands,
+      completedTurns: request.completedTurns, ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) })
+    const execution = source.tools.length > 0 || source.commands.length > 0
+    if (Object.hasOwn(request, 'initialization') || execution !== (request.roots.length > 0)
+      || source.commands.some(command => command.rootIndex >= request.roots.length)) {
+      throw this.invalid(id, 'Native work requires explicit execution roots and cannot initialize recorded history')
+    }
+    const { fileContent, ...selected } = source
+    return { ...selected, tools: (['Write', 'Edit'] as const).filter(tool => source.tools.includes(tool)),
+      ...(fileContent === undefined ? {} : { fileContent }) }
+  }
+  private permissionCommands(id: SessionId, request: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'>)
     : readonly DevelopmentTaskCommandSelector[] | undefined {
     if (request.fileContent !== undefined && request.tools.length === 0) throw this.invalid(id, 'Complete file sharing requires a file tool')
     if (request.commands === undefined) return undefined
@@ -945,7 +966,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const revision = (previous?.revision ?? 0) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: local source revision exhausted')
     await table.put(id, { agentId: id, revision, capture, samples,
-      ...(previous?.version === 2 || capture?.grant.source.kind === 'completed-turn-outcomes' ? { version: 2 as const } : {}) })
+      ...(previous?.version === 3 || capture?.grant.source.kind === 'native-work' ? { version: 3 as const }
+        : previous?.version === 2 || capture?.grant.source.kind === 'completed-turn-outcomes' ? { version: 2 as const } : {}) })
     this.activateTurnRuntime(id, 'local', capture)
     if (this.domain !== undefined) this.notify(this.domain, id)
   }
@@ -1119,8 +1141,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private sourcePermission(capture: NativeCapture | LocalCapture): ScopeAgentContributionSourcePermission {
     const source = 'grant' in capture ? capture.grant.source : capture.proposal.source
     return source.kind === 'completed-turn-outcomes' ? { sourceKind: 'completed-turn-outcomes' }
-      : { sourceKind: 'tool-observations', roots: capture.roots, tools: capture.tools,
-        ...(capture.commands === undefined ? {} : { commands: capture.commands }) }
+      : source.kind === 'native-work' ? { sourceKind: 'native-work', roots: capture.roots, tools: capture.tools,
+        commands: source.commands, completedTurns: source.completedTurns }
+        : { sourceKind: 'tool-observations', roots: capture.roots, tools: capture.tools,
+          ...(capture.commands === undefined ? {} : { commands: capture.commands }) }
   }
   private activateTurnRuntime(id: SessionId, role: CaptureRole, capture: NativeCapture | LocalCapture | null): void {
     const runtime = this.sources[role].runtimes.get(id)
@@ -1138,10 +1162,12 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const revision = (previous?.revision ?? 0) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: source revision exhausted')
     const record: NativeSourceRecord = { agentId: id, revision, capture, samples,
-      ...(previous?.version === 3 || capture?.proposal.source.kind === 'completed-turn-outcomes'
-        || receivingContinuation?.proposal.source.kind === 'completed-turn-outcomes' ? { version: 3 as const }
-        : previous?.version === 2 || capture?.initialization !== undefined
-        || (capture?.proposal.source.kind === 'tool-observations' && (capture.proposal.source.version === 3 || capture.proposal.source.version === 4)) ? { version: 2 as const } : {}),
+      ...(previous?.version === 4 || capture?.proposal.source.kind === 'native-work'
+        || receivingContinuation?.proposal.source.kind === 'native-work' ? { version: 4 as const }
+        : previous?.version === 3 || capture?.proposal.source.kind === 'completed-turn-outcomes'
+          || receivingContinuation?.proposal.source.kind === 'completed-turn-outcomes' ? { version: 3 as const }
+          : previous?.version === 2 || capture?.initialization !== undefined
+            || (capture?.proposal.source.kind === 'tool-observations' && (capture.proposal.source.version === 3 || capture.proposal.source.version === 4)) ? { version: 2 as const } : {}),
       ...(receivingContinuation === undefined ? {} : { receivingContinuation }) }
     await domain.table('sessions').put(id, record)
     this.activateTurnRuntime(id, 'remote', capture)
@@ -1549,7 +1575,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             const retained = completion.kind === 'turn' ? await this.finishTurn(completion)
               : await this.finish(completion.pending, completion.event, completion.failed)
             if (this.sources[role].completed.get(id) === completions) completions.delete(seq)
-            if (retained) this.sources[role].collectionIssues.delete(id)
+            if (retained && (this.sources[role].collectionIssues.get(id) !== 'retention-limit'
+              || this.retainedSamples(domain) < this.config.maxLeases)) this.sources[role].collectionIssues.delete(id)
             this.notify(domain, id)
           } catch (error) {
             if (aborted()) return
@@ -1635,7 +1662,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (path === undefined) return
     const source = 'grant' in capture ? capture.grant.source : capture.proposal.source
     this.reserveObservation(runtime, mutation.execution, mutation.tool, domain, callSeq => ({ kind: 'file', runtime,
-      mutation, callSeq, path, ...(source.kind === 'tool-observations' && 'fileContent' in source
+      mutation, callSeq, path, ...('fileContent' in source
         ? { completedFile: { state: 'omitted' as const, reason: 'unavailable' as const } } : {}) }))
   }
   private observeCommand(operation: ToolBashExecution): void {
@@ -1803,7 +1830,8 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         || runtime.turnAfterSeq !== outcome.proof.activationSeq || capture.turnAfterSeq === undefined) return false
       this.requireCaptureCompatible(id, capture)
       const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
-      if (grant?.source.kind !== 'completed-turn-outcomes') return false
+      if (grant === undefined || !(grant.source.kind === 'completed-turn-outcomes'
+        || grant.source.kind === 'native-work' && grant.source.completedTurns)) return false
       const identity = selection(capture)
       const leaseId = completionLeaseId(completion)
       const samples = role === 'local' ? local?.samples : remote?.samples
@@ -1815,7 +1843,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         turnProof: outcome.proof, sample } satisfies Omit<LocalTurnSample, 'receipt'>
       if (Buffer.byteLength(JSON.stringify({ grant, ...sample }), 'utf8') > Math.min(grant.maxSampleBytes, this.config.maxObservationBytes)
         || Buffer.byteLength(JSON.stringify(retained), 'utf8') > this.config.maxObservationBytes
-        || !('grant' in capture) && Buffer.byteLength(JSON.stringify({ version: 5,
+        || !('grant' in capture) && Buffer.byteLength(JSON.stringify({ version: grant.source.kind === 'native-work' ? 6 : 5,
           requestId: '00000000-0000-0000-0000-000000000000', op: 'sample', invitation: capture.invitation, sample }), 'utf8')
             > this.config.maxObservationBytes) {
         this.sources[role].collectionIssues.set(id, 'attribution-budget')
@@ -1854,8 +1882,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const fits = (result: ScopeContributionSample['result']) => {
         if (Buffer.byteLength(JSON.stringify({ grant, sourceId, sequence, result }), 'utf8')
           > Math.min(this.config.maxObservationBytes, grant.maxSampleBytes)) return false
-        return 'grant' in capture || grant.source.kind !== 'tool-observations' || grant.source.version !== 4
-          || Buffer.byteLength(JSON.stringify({ version: 4, requestId: '00000000-0000-0000-0000-000000000000',
+        return 'grant' in capture || (grant.source.kind !== 'native-work'
+          && (grant.source.kind !== 'tool-observations' || grant.source.version !== 4))
+          || Buffer.byteLength(JSON.stringify({ version: grant.source.kind === 'native-work' ? 6 : 4,
+            requestId: '00000000-0000-0000-0000-000000000000',
             op: 'sample', invitation: capture.invitation, sample: { sourceId, sequence, result } }), 'utf8') <= this.config.maxObservationBytes
       }
       const result = pending.kind === 'file'

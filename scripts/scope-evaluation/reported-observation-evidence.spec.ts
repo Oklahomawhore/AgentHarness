@@ -32,7 +32,7 @@ function entry(body: JsonRecord): JsonRecord { return object(array(object(body.o
 function publication(body: JsonRecord): JsonRecord { return object(array(body.publications)[0]) }
 function grant(body: JsonRecord): JsonRecord { return object(object(publication(body).peerContribution).grant) }
 
-function fixture(version = 1, indexedGrant = false, failed = false) {
+function fixture(version = 1, indexedGrant = false, failed = false, native = false) {
   const content = '原文 <tag> "quoted"\nnext\u0001🙂\ud800'
   const permission: JsonRecord = { kind: 'tool-observations', name: 'source', tools: ['Write', 'Edit'] }
   // Non-schema key order is part of the original canonical text and must survive expansion.
@@ -64,6 +64,8 @@ function fixture(version = 1, indexedGrant = false, failed = false) {
     result.omissions = ['oldString', 'newString']
     if (version === 3) result.completedFile = { state: 'omitted', reason: 'tool-failed' }
   }
+  if (native) Object.assign(permission, { kind: 'native-work', version: 6,
+    commands: permission.commands ?? [], completedTurns: true })
   const completeGrant = { version: 1, taskId: 'task', grantId: 'grant', generation: 'generation', ownerPeerId: 'owner',
     contributorPeerId: 'peer', captureId: 'capture', captureGeneration: 'capture-generation', source: permission,
     expiresAt: 10000, maxSamples: 20, maxSampleBytes: 8192 }
@@ -167,6 +169,33 @@ it('refuses a command that names an unauthorized working root', () => {
   expect(() => expandReportedGrants(body, '5')).toThrow('command grant differs')
 })
 
+it.each([1, 3, 4])('preserves native work permission categories while expanding result version %i', (version) => {
+  for (const indexed of [false, true]) for (const failed of [false, true]) {
+    const { body, expected } = fixture(version, indexed, failed, true)
+    expect(expandReportedGrants(body, '6')).toEqual(expected)
+  }
+})
+const invalidNative: [string, (body: JsonRecord) => void, string][] = [
+  ['old source tag', (body) => { object(grant(body).source).kind = 'tool-observations' }, 'invalid observation grant source version'],
+  ['old source version', (body) => { object(grant(body).source).version = 4 }, 'invalid observation grant source version'],
+  ['implicit answer consent', (body) => { delete object(grant(body).source).completedTurns }, 'observation grant source fields'],
+  ['non-boolean consent', (body) => { object(grant(body).source).completedTurns = 1 }, 'invalid native work categories'],
+  ['implicit commands', (body) => { delete object(grant(body).source).commands }, 'observation grant source fields'],
+  ['empty categories', (body) => { Object.assign(object(grant(body).source), { tools: [], completedTurns: false }) }, 'invalid native work categories'],
+  ['forbidden initialization', (body) => { object(grant(body).source).initialization = 'recorded-local-tools' }, 'observation grant source fields'],
+  ['unselected file evidence', (body) => { object(grant(body).source).tools = [] }, 'tool grant differs'],
+  ['unselected completed file', (body) => { object(grant(body).source).fileContent = 'completed-native-file' }, 'tool grant differs'],
+  ['recorded result under combined authority', (body) => {
+    Object.assign(object(entry(body).result), { version: 2, origin: { kind: 'recorded-local-tools',
+      planDigest: 'a'.repeat(64), executionDigest: 'b'.repeat(64) } })
+  }, 'tool grant differs'],
+]
+it.each(invalidNative)('refuses native work %s without broadening a permission', (_name, mutate, error) => {
+  const { body } = fixture(1, false, false, true)
+  mutate(body)
+  expect(() => expandReportedGrants(body, '6')).toThrow(error)
+})
+
 it('the independent Python decoder preserves exact text and rejects the same malformed tables', async () => {
   const cases: { body: JsonRecord; revision: string; expected?: unknown; error?: string }[] = []
   for (const version of [1, 2, 3, 4]) for (const indexed of [false, true]) {
@@ -184,6 +213,15 @@ it('the independent Python decoder preserves exact text and rejects the same mal
   }
   for (const revision of ['3', '4']) cases.push({ body: fixture().body, revision, error: 'legacy reported revision' })
   cases.push({ body: fixture().body, revision: '7', error: 'unsupported reported revision' })
+  for (const version of [1, 3, 4]) for (const indexed of [false, true]) for (const failed of [false, true]) {
+    const { body, expected } = fixture(version, indexed, failed, true)
+    cases.push({ body, revision: '6', expected })
+  }
+  for (const [_name, mutate, error] of invalidNative) {
+    const { body } = fixture(1, false, false, true)
+    mutate(body)
+    cases.push({ body, revision: '6', error })
+  }
   const run = promisify(execFile)
   const pending = run(process.platform === 'win32' ? 'python' : 'python3',
     [fileURLToPath(new URL('./reported-observation-evidence.py', import.meta.url))],

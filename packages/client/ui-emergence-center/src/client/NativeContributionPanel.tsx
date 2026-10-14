@@ -45,8 +45,9 @@ function issueKey(code: string): EmergenceCenterKey {
   }
 }
 
-function JoinReceiving({ receiving, intent, ready, leave, t }: PropsLocale<'emergenceCenter'> & {
+function JoinReceiving({ receiving, sourceKind, intent, ready, leave, t }: PropsLocale<'emergenceCenter'> & {
   receiving: ScopeAgentContributionReceiving
+  sourceKind: ScopeContributionEntry['sourceKind']
   intent: 'adopt' | 'cancel-pending' | 'leave' | undefined
   ready: boolean
   leave: () => void
@@ -67,7 +68,7 @@ function JoinReceiving({ receiving, intent, ready, leave, t }: PropsLocale<'emer
     </>}
     {receiving.invitation !== null && <p className={css.hint}>{t('native.join.responsibility', { value: receiving.invitation.responsibility })}</p>}
     <Button disabled={!ready} onClick={leave}>{t('native.join.leave')}</Button>
-    <p className={css.hint}>{t('native.join.leaveHint')}</p>
+    <p className={css.hint}>{t(sourceKind === 'native-work' ? 'native.work.leaveHint' : 'native.join.leaveHint')}</p>
   </div>
 }
 
@@ -118,6 +119,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const [bytes, setBytes] = useState('')
   const [consent, setConsent] = useState(false)
   const [fileContent, setFileContent] = useState(false)
+  const [completedTurns, setCompletedTurns] = useState(false)
   const [commandDraft, setCommandDraft] = useState(emptyNativeCommands)
   const [initializationConsent, setInitializationConsent] = useState<{
     entry: ScopeContributionEntry
@@ -144,15 +146,16 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     previewRevision.current++
     setPreview(undefined); setProbe(undefined); setInvalid(false); setPreviewing(false)
     setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
-    setFileContent(false); setCommandDraft(emptyNativeCommands())
+    setFileContent(false); setCommandDraft(emptyNativeCommands()); setCompletedTurns(false)
     if (entryText !== undefined && details.current !== null) details.current.open = true
   }, [entryText])
   const turnOutcomes = preview?.sourceKind === 'completed-turn-outcomes'
+  const nativeWork = preview?.sourceKind === 'native-work'
   const localStatus = localEntry?.value
   const localCapture = localStatus?.capture
   const localAssignment = localStatus?.assignment
   useLayoutEffect(() => {
-    setCommandDraft(emptyNativeCommands()); setConsent(false)
+    setCommandDraft(emptyNativeCommands()); setCompletedTurns(false); setConsent(false)
   }, [localAssignment?.taskId, localAssignment?.bindingId,
     localAssignment?.expectedBindingEpoch.nodeId, localAssignment?.expectedBindingEpoch.seq])
   const initializationReady = localEntry?.status === 'ready' && !localEntry.pending
@@ -180,7 +183,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     if (!occupied) return
     previewRevision.current++
     setPreview(undefined); setProbe(undefined); setPreviewing(false); setReadConsent(null); setConsent(false); setAutomaticConsent(null)
-    setInitializationConsent(null); setFileContent(false); setCommandDraft(emptyNativeCommands())
+    setInitializationConsent(null); setFileContent(false); setCommandDraft(emptyNativeCommands()); setCompletedTurns(false)
   }, [occupied])
   const routeReadSeq = scope.observation?.eligibility === 'not-live' ? undefined : scope.observation?.readStateSeq
   const ready = entry?.status === 'ready' && !entry.pending
@@ -220,7 +223,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   const limitsValid = [hours, samples, bytes].every(value => value.trim() !== '' && Number.isSafeInteger(Number(value)) && Number(value) > 0)
     && Number.isSafeInteger(expiresAt)
   const canRequest = eligible && capture === null && continuation === undefined && consent && preview !== undefined
-    && (turnOutcomes || ((tools.length > 0 || commands !== undefined) && commands !== null && selectedRoots.length > 0))
+    && (turnOutcomes || (commands !== null && ((tools.length > 0 || commands !== undefined)
+      ? selectedRoots.length > 0 : nativeWork && completedTurns)))
     && (initializationConsent === null || (initializationConfirmed && initializationReady))
     && limitsValid && !previewing && (!joint || (readConfirmed
       && (automaticConsent === null || (automaticConfirmed && policy !== undefined))))
@@ -228,7 +232,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     const revision = ++previewRevision.current
     setPreviewing(true); setInvalid(false); setPreview(undefined); setProbe(undefined)
     setReadConsent(null); setConsent(false); setAutomaticConsent(null); setInitializationConsent(null)
-    setFileContent(false); setCommandDraft(emptyNativeCommands())
+    setFileContent(false); setCommandDraft(emptyNativeCommands()); setCompletedTurns(false)
     let result: ScopeContributionTransfer
     try { result = await previewNativeContribution(text) }
     catch {
@@ -236,7 +240,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       return
     }
     if (revision !== previewRevision.current) return
-    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || (result.sourceKind !== 'tool-observations' && result.sourceKind !== 'completed-turn-outcomes')) {
+    if ((result.kind !== 'contribution-entry' && result.kind !== 'scope-join-entry' && result.kind !== 'scope-group-entry') || (result.sourceKind !== 'tool-observations' && result.sourceKind !== 'completed-turn-outcomes' && result.sourceKind !== 'native-work')) {
       setInvalid(true); setPreviewing(false); return
     }
     let checked: ScopeContributionEntryProbeResult
@@ -256,12 +260,12 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
   }
   const stateKey: EmergenceCenterKey = capture == null ? turnOutcomes ? 'native.outcomes.none' : 'native.share.none'
     : capture.state === 'ending' ? 'contribution.ending'
-      : capture.state === 'active' ? capture.collecting ? capture.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.active' : capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
+      : capture.state === 'active' ? capture.collecting ? capture.sourceKind === 'native-work' ? 'native.work.active' : capture.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.active' : capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
         : capture.application === null ? 'contribution.prepared' : `contribution.application.${capture.application}`
   return <details ref={details} data-native-contribution className={css.sharing}>
     <summary>{t('native.share.title')}</summary>
     <div className={css.form}>
-      <p className={css.hint}>{t(turnOutcomes || capture?.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.hint' : 'native.share.hint')}</p>
+      <p className={css.hint}>{t(nativeWork || capture?.sourceKind === 'native-work' ? 'native.work.hint' : turnOutcomes || capture?.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.hint' : 'native.share.hint')}</p>
       {entry?.status === 'loading' && <p role="status" className={css.hint}>{t('contribution.loading')}</p>}
       {entry?.status === 'error' && <p role="alert" className={css.notice}>{t(issueKey(entry.error ?? 'unknown'))}</p>}
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
@@ -270,7 +274,11 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       {entryText !== undefined && capture === null && continuation === undefined && <form className={css.form} onSubmit={(event) => {
         event.preventDefault()
         if (!canRequest) return
-        const permission = turnOutcomes ? { sourceKind: 'completed-turn-outcomes' as const } : {
+        const permission = turnOutcomes ? { sourceKind: 'completed-turn-outcomes' as const } : nativeWork ? {
+          sourceKind: 'native-work' as const, roots: tools.length > 0 || commands !== undefined ? selectedRoots : [],
+          tools, commands: commands ?? [], completedTurns,
+          ...(fileContent && tools.length > 0 ? { fileContent: 'completed-native-file' as const } : {}),
+        } : {
           roots: selectedRoots, tools,
           ...(initializationConfirmed ? { initialization: initializationConsent.request } : {}),
           ...(commands == null ? {} : { commands }),
@@ -310,7 +318,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               permissionEdited.current = true
               setRoots(draft.roots.join('\n')); setWrite(draft.tools.includes('write')); setEdit(draft.tools.includes('edit'))
               setHours(String(draft.durationHours)); setSamples(String(draft.maxSamples)); setBytes(String(draft.maxSampleBytes))
-              setConsent(false); setFileContent(false); setCommandDraft(emptyNativeCommands())
+              setConsent(false); setFileContent(false); setCommandDraft(emptyNativeCommands()); setCompletedTurns(false)
               setReadConsent(null); setAutomaticConsent(null); setInitializationConsent(null)
             }} />}
           {turnOutcomes ? <NativeTurnOutcomePermission id={id} draft={{ hours, samples, bytes, consent }}
@@ -319,18 +327,24 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             }} /> : <><NativeContributionPermission id={id}
             draft={{ roots, write, edit, hours, samples, bytes, consent, fileContent, commands: commandDraft }}
             disabled={!eligible} fileContentDisabled={initializationConfirmed}
-            consentKey={commandDraft.enabled ? 'native.commands.remoteConsent' : 'native.share.consent'} t={t} change={(draft) => {
+            outcomes={nativeWork ? { selected: completedTurns, change: (selected) => {
+              setCompletedTurns(selected); setConsent(false)
+            } } : undefined}
+            consentKey={nativeWork ? 'native.work.remoteConsent' : commandDraft.enabled ? 'native.commands.remoteConsent' : 'native.share.consent'} t={t} change={(draft) => {
               permissionEdited.current = true
               if (draft.roots !== roots || draft.write !== write || draft.edit !== edit || draft.hours !== hours
                 || draft.samples !== samples || draft.bytes !== bytes || draft.commands !== commandDraft) {
                 setInitializationConsent(null); setFileContent(false); setConsent(false)
-              } else { setFileContent(draft.fileContent); setConsent(draft.consent) }
+              } else {
+                setFileContent(draft.fileContent)
+                setConsent(nativeWork && draft.fileContent !== fileContent ? false : draft.consent)
+              }
               setCommandDraft(draft.roots !== roots ? { ...draft.commands, enabled: false,
                 selectors: draft.commands.selectors.map(item => ({ ...item, rootIndex: '' })) } : draft.commands)
               setRoots(draft.roots); setWrite(draft.write); setEdit(draft.edit); setHours(draft.hours)
               setSamples(draft.samples); setBytes(draft.bytes)
             }} />
-          <div data-native-initialization-consent className={css.form}>
+          {!nativeWork && <div data-native-initialization-consent className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={initializationConfirmed}
               disabled={!eligible || !initializationReady || !initializationEligible || fileContent || commandDraft.enabled}
               onChange={(event) => {
@@ -344,7 +358,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
             <p className={css.hint}>{initializationEligible
               ? t('native.initialization.available', { count: localStatus.initialization.recordedSamples,
                 unconfirmed: localStatus.initialization.unconfirmedSamples }) : t('native.initialization.unavailable')}</p>
-          </div></>}
+          </div>}</>}
           {joint && <div data-native-join-automatic className={css.form}>
             <label className={css.consent}><input type="checkbox" checked={automaticConfirmed} disabled={!eligible || !readConfirmed}
               onChange={(event) => {
@@ -374,7 +388,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
           {capture.sourceKind === 'completed-turn-outcomes' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('native.outcomes.source')}</dd></> : <>
             <dt>{t('contribution.roots')}</dt><dd>{capture.roots.join('\n')}</dd>
             {capture.tools.length > 0 && <><dt>{t('native.fileContent.scope')}</dt>
-              <dd>{t(capture.proposal.source.kind === 'tool-observations'
+              <dd>{t((capture.proposal.source.kind === 'tool-observations' || capture.proposal.source.kind === 'native-work')
               && capture.proposal.source.fileContent === 'completed-native-file'
                 ? 'native.fileContent.complete' : 'native.fileContent.arguments')}</dd></>}
             <dt>{t('native.share.tools')}</dt><dd>{capture.tools.map(tool => t(tool === 'write' ? 'native.share.write' : 'native.share.edit')).join(', ')}</dd>
@@ -382,14 +396,17 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
               <NativeCommandSummary commands={capture.commands} t={t} />
             </dd></>}
           </>}
+          {capture.sourceKind === 'native-work' && <><dt>{t('native.work.completedTurns')}</dt>
+            <dd>{t(capture.completedTurns ? 'native.work.selected' : 'native.work.notSelected')}</dd></>}
           <dt>{t('contribution.expires')}</dt><dd>{new Date(capture.limits.expiresAt).toLocaleString()}</dd>
           <dt>{t('contribution.maxSamples')}</dt><dd>{capture.limits.maxSamples}</dd>
           <dt>{t('contribution.maxBytes')}</dt><dd>{capture.limits.maxSampleBytes}</dd>
         </dl>
+        {capture.sourceKind === 'native-work' && <p className={css.hint}>{t('native.work.stopHint')}</p>}
         {capture.sourceKind === 'completed-turn-outcomes' && <p className={css.hint}>{t('native.outcomes.stopHint')}</p>}
         {capture.sourceKind === 'tool-observations' && capture.commands !== undefined && <p className={css.hint}>{t('native.commands.stopHint')}</p>}
         {capture.sourceKind === 'tool-observations' && capture.commands === undefined && <p className={css.hint}>{t('native.commands.renew')}</p>}
-        {capture.receiving !== null && <JoinReceiving receiving={capture.receiving}
+        {capture.receiving !== null && <JoinReceiving receiving={capture.receiving} sourceKind={capture.sourceKind}
           intent={capture.receivingIntent ?? (capture.state === 'ending' ? undefined : 'adopt')} ready={ready} t={t}
           leave={() => { void perform(() => leaveNativeJoin({ agentId, expectedCapture: capture.selection })) }} />}
         {capture.invitation !== null && <details><summary>{t('native.share.approval')}</summary><ContributionGrantSummary grant={capture.invitation.grant} t={t} /></details>}
@@ -405,7 +422,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
       </>}
       {capture === null && continuation !== undefined && <div data-native-join-continuation>
         <p role="status" className={css.hint}>{t('native.join.continuation')}</p>
-        <JoinReceiving receiving={continuation.receiving} intent={continuation.intent} ready={ready} t={t}
+        <JoinReceiving receiving={continuation.receiving} sourceKind={continuation.entry.sourceKind}
+          intent={continuation.intent} ready={ready} t={t}
           leave={() => { void perform(() => leaveNativeJoin({ agentId, expectedCapture: continuation.selection })) }} />
         {continuation.intent !== 'leave' && <Button disabled={!ready} onClick={() => {
           void perform(() => stopNativeContribution({ agentId, expectedCapture: continuation.selection }))

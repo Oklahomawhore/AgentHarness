@@ -12,7 +12,7 @@ import type {
   DevelopmentTaskRecordedToolObservationResult, DevelopmentTaskPeerToolObservationResult,
   DevelopmentTaskCompletedFileToolObservationResult, DevelopmentTaskLocalToolObservationResult,
   DevelopmentTaskCompletedTurnObservationResult, DevelopmentTaskLocalContributionObservationResult,
-  DevelopmentTaskPeerContributionObservationResult,
+  DevelopmentTaskPeerContributionObservationResult, DevelopmentTaskNativeWorkSource,
   DevelopmentTaskAssignmentLogEntry,
   DevelopmentTaskContextBlock,
   DevelopmentTaskLogEntry,
@@ -87,12 +87,22 @@ const commandToolSource = z.strictObject({ kind: z.literal('tool-observations'),
 
 const completedTurnSource = z.strictObject({ kind: z.literal('completed-turn-outcomes'), version: z.literal(5), name: opaque })
 
+/** Explicit native categories; no local roots, implicit answer permission or historical initialization. */
+export const nativeWorkSourceSchema = z.strictObject({
+  kind: z.literal('native-work'), version: z.literal(6), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).max(2).refine(values => new Set(values).size === values.length),
+  commands: z.array(commandSelectorSchema).refine(values =>
+    new Set(values.map(value => JSON.stringify([value.command, value.rootIndex]))).size === values.length),
+  completedTurns: z.boolean(), fileContent: z.literal('completed-native-file').optional(),
+}).refine(value => (value.tools.length > 0 || value.commands.length > 0 || value.completedTurns)
+  && (value.fileContent === undefined || value.tools.length > 0)) as unknown as z.ZodType<DevelopmentTaskNativeWorkSource>
+
 const peerGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, grantId: opaque, generation: opaque, ownerPeerId: opaque, contributorPeerId: opaque,
   captureId: opaque, captureGeneration: opaque,
   source: z.union([
     z.strictObject({ name: opaque, method: z.enum(['post', 'put', 'patch']), path: z.string().startsWith('/').max(2048) }),
-    toolSource, recordedToolSource, completedFileToolSource, commandToolSource, completedTurnSource,
+    toolSource, recordedToolSource, completedFileToolSource, commandToolSource, completedTurnSource, nativeWorkSourceSchema,
   ]),
   expiresAt: natural, maxSamples: natural, maxSampleBytes: natural,
 })
@@ -192,15 +202,17 @@ export const peerContributionObservationResultSchema = z.union([peerToolObservat
 
 function contributionPermissionMatches(
   source: z.infer<typeof toolSource | typeof recordedToolSource | typeof completedFileToolSource
-    | typeof commandToolSource | typeof completedTurnSource>,
-  result: DevelopmentTaskPeerContributionObservationResult,
+    | typeof commandToolSource | typeof completedTurnSource | typeof nativeWorkSourceSchema>,
+  result: Parameters<typeof toolPermissionMatches>[1] | { readonly kind: 'completed-turn-outcome' },
 ): boolean {
   if (source.kind === 'completed-turn-outcomes') return result.kind === 'completed-turn-outcome'
-  return result.kind !== 'completed-turn-outcome' && toolPermissionMatches(source, result)
+  if (result.kind === 'completed-turn-outcome') return source.kind === 'native-work' && source.completedTurns
+  return toolPermissionMatches(source, result)
 }
 
 function toolPermissionMatches(
-  source: z.infer<typeof toolSource | typeof recordedToolSource | typeof completedFileToolSource | typeof commandToolSource>,
+  source: z.infer<typeof toolSource | typeof recordedToolSource | typeof completedFileToolSource
+    | typeof commandToolSource | typeof nativeWorkSourceSchema>,
   result: {
     readonly kind: 'tool-observation'
     readonly tool: 'Write' | 'Edit'
@@ -215,11 +227,11 @@ function toolPermissionMatches(
 ): boolean {
   const version = 'version' in source ? source.version : 1
   if (result.kind === 'command-observation') {
-    return 'version' in source && source.version === 4 && source.commands.some(selector => selector.command === result.fields.command
+    return 'version' in source && (source.version === 4 || source.version === 6) && source.commands.some(selector => selector.command === result.fields.command
       && selector.rootIndex === result.fields.rootIndex)
   }
   if (!source.tools.includes(result.tool)) return false
-  if ('version' in source && source.version === 4) return result.version === (source.fileContent === undefined ? 1 : 3)
+  if ('version' in source && (source.version === 4 || source.version === 6)) return result.version === (source.fileContent === undefined ? 1 : 3)
   return version === 3 ? result.version === 3 : result.version === 1 || (version === 2 && result.version === 2)
 }
 
@@ -257,13 +269,14 @@ const peerPublication = z.strictObject({
   peerTurnOutcome: peerTurnOutcome.optional(),
 }).refine(value => [value.peerObservation, value.peerToolObservation, value.peerTurnOutcome].filter(item => item !== undefined).length <= 1
   && (value.peerObservation === undefined || !('kind' in value.peerContribution.grant.source))
-  && (value.peerToolObservation === undefined || ('kind' in value.peerContribution.grant.source && value.peerContribution.grant.source.kind === 'tool-observations'
-    && toolPermissionMatches(value.peerContribution.grant.source, value.peerToolObservation)))
-  && (value.peerTurnOutcome === undefined || ('kind' in value.peerContribution.grant.source && value.peerContribution.grant.source.kind === 'completed-turn-outcomes')))
+  && (value.peerToolObservation === undefined || ('kind' in value.peerContribution.grant.source
+    && contributionPermissionMatches(value.peerContribution.grant.source, value.peerToolObservation)))
+  && (value.peerTurnOutcome === undefined || ('kind' in value.peerContribution.grant.source
+    && contributionPermissionMatches(value.peerContribution.grant.source, value.peerTurnOutcome))))
 const localGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, participantId: opaque, bindingId: opaque,
   expectedBindingEpoch: z.strictObject({ nodeId: opaque, seq: natural }), captureId: opaque, captureGeneration: opaque,
-  source: z.union([toolSource, completedFileToolSource, commandToolSource, completedTurnSource]),
+  source: z.union([toolSource, completedFileToolSource, commandToolSource, completedTurnSource, nativeWorkSourceSchema]),
   expiresAt: natural, maxSamples: natural, maxSampleBytes: natural,
 })
 const localSample = z.strictObject({ sourceId: digest, sequence: natural, result: localContributionObservationResultSchema })
@@ -283,9 +296,9 @@ const localPublication = z.strictObject({
   localToolObservation: localTool.optional(),
   localTurnOutcome: completedTurnResult.extend({ sourceId: digest, sequence: natural }).refine(completedTurnValid).optional(),
 }).refine(value => (value.localToolObservation === undefined || value.localTurnOutcome === undefined)
-  && (value.localToolObservation === undefined || (value.localContribution.grant.source.kind === 'tool-observations'
-    && toolPermissionMatches(value.localContribution.grant.source, value.localToolObservation)))
-  && (value.localTurnOutcome === undefined || value.localContribution.grant.source.kind === 'completed-turn-outcomes'))
+  && (value.localToolObservation === undefined
+    || contributionPermissionMatches(value.localContribution.grant.source, value.localToolObservation))
+  && (value.localTurnOutcome === undefined || contributionPermissionMatches(value.localContribution.grant.source, value.localTurnOutcome)))
 const localReceipt = z.strictObject({ taskId: opaque, ownerNodeId: opaque, intervalId: digest, participantId: opaque,
   bindingId: opaque, expectedBindingEpoch: z.strictObject({ nodeId: opaque, seq: natural }), captureId: opaque,
   captureGeneration: opaque, revision: natural, event: z.strictObject({ nodeId: opaque, seq: natural,
@@ -361,6 +374,11 @@ export const commandPeerContributionSampleSchema = peerRequest.omit({ grant: tru
 /** Version-five transport carries only independently authorized complete turn reports. */
 export const completedTurnPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
   result: completedTurnObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-six samples preserve live file, command and completed-answer evidence without recorded initialization. */
+export const nativeWorkPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: localContributionObservationResultSchema,
 }) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
 
 /** Original open or terminal owner commit. */

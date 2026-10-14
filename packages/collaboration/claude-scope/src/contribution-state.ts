@@ -41,7 +41,7 @@ export interface ScopeContributionLease {
 }
 
 const opaque = z.string().min(1).max(256)
-const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes'
+const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes' && value.source.kind !== 'native-work'
   && (value.source.kind !== 'tool-observations' || (value.source.version !== 3 && value.source.version !== 4)))
 
 /** Strict additive record; missing records in older adapter data grant no contribution permission. */
@@ -53,7 +53,7 @@ const contributionRecord = z.object({
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   application: z.object({ entry: contributionEntrySchema, limits: contributionLimitsSchema,
     state: z.enum(['applying', 'waiting', 'cancelling', 'rejected', 'expired']) }).strict().optional(),
-  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes'
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes' && value.grant.source.kind !== 'native-work'
     && (value.grant.source.kind !== 'tool-observations' || (value.grant.source.version !== 3 && value.grant.source.version !== 4))).optional(),
   endReceipt: peerContributionReceiptSchema.optional(),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),

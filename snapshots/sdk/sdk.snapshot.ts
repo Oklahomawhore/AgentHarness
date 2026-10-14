@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-native-work': {
+    expectedFinalResponse: 'All contributions from the combined permission are withdrawn.',
+  },
   'scope-initialization-reservations': {
     expectedFinalResponse: 'The initialized file is withdrawn; the independent answer remains.',
   },

@@ -45,6 +45,7 @@ export interface ScopeAgentToolContributionPermission {
   readonly tools: ('write' | 'edit')[]
   readonly commands?: readonly DevelopmentTaskCommandSelector[]
   readonly fileContent?: 'completed-native-file'
+  readonly completedTurns?: never
 }
 
 /** Share only new, completed user-origin final answers; no file or history permission is implied. */
@@ -55,10 +56,23 @@ export interface ScopeAgentTurnContributionPermission {
   readonly commands?: never
   readonly fileContent?: never
   readonly initialization?: never
+  readonly completedTurns?: never
+}
+
+/** One explicit permission for selected file operations, exact commands and completed answers from the same Session. */
+export interface ScopeAgentNativeWorkContributionPermission {
+  readonly sourceKind: 'native-work'
+  readonly roots: string[]
+  readonly tools: ('write' | 'edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
+  readonly fileContent?: 'completed-native-file'
+  readonly initialization?: never
 }
 
 /** One explicitly selected source for a peer contribution application. */
 export type ScopeAgentContributionRequest = ScopeAgentContributionRequestBase & (ScopeAgentTurnContributionPermission
+  | ScopeAgentNativeWorkContributionPermission
   | (ScopeAgentToolContributionPermission & { readonly initialization?: ScopeAgentContributionInitializationRequest }))
 
 /** Update only the original capture's owner address, including retained termination for a cold Session. */
@@ -87,7 +101,7 @@ export interface ScopeAgentLocalContributionRequestBase extends ScopeAgentLocalC
 
 /** One explicitly selected source for the existing owner-local Task assignment. */
 export type ScopeAgentLocalContributionRequest = ScopeAgentLocalContributionRequestBase
-  & (ScopeAgentToolContributionPermission | ScopeAgentTurnContributionPermission)
+  & (ScopeAgentToolContributionPermission | ScopeAgentTurnContributionPermission | ScopeAgentNativeWorkContributionPermission)
 
 /** One explicit historical export selection, independent of local recording and remote reading permission. */
 export interface ScopeAgentContributionInitializationRequest {
@@ -143,6 +157,12 @@ export type ScopeAgentContributionSourcePermission = {
   readonly roots?: never
   readonly tools?: never
   readonly commands?: never
+} | {
+  readonly sourceKind: 'native-work'
+  readonly roots: readonly string[]
+  readonly tools: readonly ('write' | 'edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly completedTurns: boolean
 }
 
 /** Durable owner-local permission with the explicitly selected source. */

@@ -39,12 +39,12 @@ const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 /** Strict new consent; a legacy record never acquires joint receiving by normalization. */
 export const jointSchema: z.ZodType<ScopeJoint> = z.object({
   id: z.string().min(1).transform(value => value as ClaudeScopeJointId),
-  proposal: peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes'),
-  entry: contributionEntrySchema.refine(value => value.sourceKind !== 'completed-turn-outcomes'), limits: contributionLimitsSchema,
+  proposal: peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes' && value.source.kind !== 'native-work'),
+  entry: contributionEntrySchema.refine(value => value.sourceKind !== 'completed-turn-outcomes' && value.sourceKind !== 'native-work'), limits: contributionLimitsSchema,
   expectedReadRevision: revision, authorizedReadRevision: revision, cleanupPending: z.boolean(),
   state: z.enum(['waiting', 'adopting', 'active', 'ended', 'superseded', 'failed']),
   intent: z.enum(['adopt', 'cancel-pending', 'leave']), ready: z.boolean(),
-  subscription: captureSubscriptionSchema.extend({ state: z.literal('active'), routeRevision: revision }).optional(), contributionInvitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes').optional(),
+  subscription: captureSubscriptionSchema.extend({ state: z.literal('active'), routeRevision: revision }).optional(), contributionInvitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes' && value.grant.source.kind !== 'native-work').optional(),
   adoptedReadRevision: revision.optional(), routeRevision: revision, routePending: z.boolean(),
   routeRequest: z.object({
     expectedReadRevision: revision, appliedReadRevision: revision, ownerAddress: z.string().min(1),

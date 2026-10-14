@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { expect, it } from 'vitest'
 import { expandSemanticText, semanticTextValue } from './fixtures/semantic-display.ts'
 import type { DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant, DevelopmentTaskOpenApiObservation } from '@deepseek-ai/dsh-development-task/types'
-import { prepareSemanticInput, projectSemanticReply } from '../src/semantic-input.ts'
+import { prepareSemanticInput, projectSemanticReply, semanticModelInput } from '../src/semantic-input.ts'
 import type { DevelopmentTaskContextInput } from '../src/types.ts'
 
 function input(context: readonly DevelopmentTaskContextPublication[], revision = 2): DevelopmentTaskContextInput {
@@ -199,4 +199,31 @@ it('keeps frozen-parent structured evidence and superseded source identities sep
     view: { ...frozen.view, task: { ...frozen.view.task, revision: 9 } },
   }, []).activation)
   expect(projected.text).toContain('invalid-json')
+})
+
+it('binds the complete combined permission to semantic capture and recipient evidence with identical report text', () => {
+  const base = tool('report', 1, 'success')
+  if (base.peerContribution === undefined) throw new Error('missing grant')
+  const source = { kind: 'native-work' as const, version: 6 as const, name: 'work', tools: ['Edit'] as const,
+    commands: [{ command: 'node check.js', rootIndex: 0 }], completedTurns: true }
+  const contribution = base.peerContribution
+  const make = (permission: typeof contribution.grant.source): DevelopmentTaskContextPublication => ({ ...base,
+    peerContribution: { ...contribution, grant: { ...contribution.grant, source: permission } } })
+  const original = make(source)
+  const captured = semanticModelInput(prepareSemanticInput(input([original])))
+  expect(z.object({ sources: z.array(z.object({ attribution: z.object({
+    authorization: z.object({ source: z.unknown() }),
+  }) })) }).parse(JSON.parse(captured) as unknown).sources[0]?.attribution.authorization.source).toEqual(source)
+  for (const changed of [
+    { ...source, name: 'other responsibility' },
+    { ...source, tools: ['Write', 'Edit'] as const },
+    { ...source, commands: [{ command: 'node verify.js', rootIndex: 0 }] },
+    { ...source, commands: [{ command: 'node check.js', rootIndex: 1 }] },
+    { ...source, completedTurns: false },
+  ]) {
+    const value = make(changed)
+    expect(value.text).toBe(original.text)
+    expect(semanticModelInput(prepareSemanticInput(input([value])))).not.toBe(captured)
+    expect(projection(input([value])).activation).not.toEqual(projection(input([original])).activation)
+  }
 })

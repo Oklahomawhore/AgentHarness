@@ -3681,6 +3681,16 @@
       "doc": "docs/subsystems/development-room.md",
       "symbol": "ScopeAgentContributionSourcePermission",
       "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "DevelopmentTaskNativeWorkSource",
+      "source": "packages/collaboration/development-task/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "ScopeAgentNativeWorkContributionPermission",
+      "source": "packages/collaboration/scope-agent-contribution/src/types.ts"
     }
   ]
 }

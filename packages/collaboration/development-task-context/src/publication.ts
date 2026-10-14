@@ -72,7 +72,7 @@ export function publicationToolHistory(context: readonly DevelopmentTaskContextP
     const tool = publication.peerToolObservation ?? publication.localToolObservation
     const source = publication.peerContribution?.grant.source ?? publication.localContribution?.grant.source
     const interval = publicationInterval(publication)
-    if (tool === undefined || source?.kind !== 'tool-observations' || interval === undefined
+    if (tool === undefined || (source?.kind !== 'tool-observations' && source?.kind !== 'native-work') || interval === undefined
       || isTerminalPublication(publication)) return undefined
     if (tool.kind === 'command-observation') {
       const chain = JSON.stringify([interval, source.name, 'command', tool.fields.rootIndex, tool.fields.command])

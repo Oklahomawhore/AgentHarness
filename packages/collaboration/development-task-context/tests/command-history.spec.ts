@@ -274,3 +274,38 @@ it('withdraws one grant without hiding another grant current command, quoted rep
   expect(prepared.mandatory).toContainEqual({ source: { kind: 'publication', taskId: grant().taskId,
     revision: 100, publicationId: terminal.id }, basis: 'current-task-as-reported', kind: 'withdrawal', publication: terminal })
 })
+
+it.each(['local', 'peer'] as const)('selects current %s native-work file checkpoints and command failures under one permission', async (mode) => {
+  const combined = (publication: DevelopmentTaskContextPublication): DevelopmentTaskContextPublication => {
+    const source = { ...permission(), kind: 'native-work' as const, version: 6 as const, completedTurns: true }
+    if (publication.peerContribution !== undefined) return { ...publication,
+      peerContribution: { ...publication.peerContribution, grant: { ...publication.peerContribution.grant, source } } }
+    if (publication.localContribution !== undefined) return { ...publication,
+      localContribution: { ...publication.localContribution, grant: { ...publication.localContribution.grant, source } } }
+    throw new Error('missing contribution authority')
+  }
+  const oldFile = combined(report(mode, 1, write('OLD_FILE')))
+  const oldCommand = combined(report(mode, 2, completed(0, 'OLD_PASS')))
+  const currentFile = combined(report(mode, 3, write('CURRENT_FILE')))
+  const currentCommand = combined(report(mode, 4, completed(7, 'CURRENT_FAILURE')))
+  const value = input([oldFile, oldCommand, currentFile, currentCommand])
+  for (const backend of backends()) {
+    const result = await backend.compute(value)
+    expect(ids(result)).toEqual([currentFile.id, currentCommand.id])
+    expect(result.omittedSources).toMatchObject([
+      { source: { publicationId: oldFile.id }, reason: 'superseded' },
+      { source: { publicationId: oldCommand.id }, reason: 'superseded' },
+    ])
+    expect(result.text).toContain('CURRENT_FILE')
+    expect(result.text).toContain('CURRENT_FAILURE')
+    expect(result.text).not.toContain('OLD_FILE')
+    expect(result.text).not.toContain('OLD_PASS')
+  }
+  const prepared = prepareSemanticInput(value)
+  expect(prepared.sources.map(item => item.source)).toMatchObject([{ publicationId: currentFile.id }])
+  expect(prepared.mandatory).toMatchObject([{ kind: 'command-evidence', publication: { id: currentCommand.id } }])
+  expect(prepared.omitted).toMatchObject([
+    { source: { publicationId: oldFile.id }, reason: 'superseded' },
+    { source: { publicationId: oldCommand.id }, reason: 'superseded' },
+  ])
+})

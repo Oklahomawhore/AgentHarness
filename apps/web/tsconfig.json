@@ -123,6 +123,7 @@
     "tests/native-scope.e2e.ts",
     "tests/native-contribution.e2e.ts",
     "tests/native-turn-outcomes.e2e.ts",
+    "tests/native-work-sources.e2e.ts",
     "tests/native-command-contribution.e2e.ts",
     "tests/native-owner-contribution.e2e.ts",
     "tests/continuous-edit-context.e2e.ts",
