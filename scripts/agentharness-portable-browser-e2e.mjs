@@ -116,7 +116,7 @@ try {
   const contextInput = panel.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。')
   await contextInput.fill('这个结论可以被后续 Fork 与 Merge 继承。')
   await panel.getByRole('button', { name: '发布上下文' }).click()
-  await panel.getByText('这个结论可以被后续 Fork 与 Merge 继承。', { exact: true }).waitFor({ timeout: 15_000 })
+  await panel.getByRole('paragraph').filter({ hasText: /^这个结论可以被后续 Fork 与 Merge 继承。$/u }).waitFor({ timeout: 15_000 })
 
   const graphNode = panel.locator('.react-flow__node').first()
   await graphNode.waitFor({ timeout: 15_000 })
