@@ -1006,17 +1006,18 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const capture = row?.capture
     if (capture == null) return
     signal.throwIfAborted()
-    if (capture.state !== 'ending' && ((capture.state === 'opening' && capture.grant.expiresAt <= Date.now()) || !this.collecting(id, capture, true))) {
-      await this.enqueue(async () => {
-        signal.throwIfAborted()
-        const current = this.local().table('sessions').get(id)
-        if (current?.capture != null && isDeepStrictEqual(current.capture.grant, capture.grant)) {
-          this.sources[role].runtimes.delete(id); this.sources[role].pending.delete(id); this.sources[role].completed.delete(id)
-          await this.saveLocal(id, { ...current.capture, state: 'ending' }, current.samples)
-        }
-      })
-      return
-    }
+    if (await this.enqueue(async () => {
+      signal.throwIfAborted()
+      const current = this.local().table('sessions').get(id)
+      if (current?.capture == null || !isDeepStrictEqual(current.capture.grant, capture.grant)) return true
+      if (current.capture.state !== 'ending' && ((current.capture.state === 'opening' && current.capture.grant.expiresAt <= Date.now())
+        || !this.collecting(id, current.capture, true))) {
+        this.sources[role].runtimes.delete(id); this.sources[role].pending.delete(id); this.sources[role].completed.delete(id)
+        await this.saveLocal(id, { ...current.capture, state: 'ending' }, current.samples)
+        return true
+      }
+      return false
+    })) return
     if (capture.state === 'ending') {
       const receipt = await tasks.endLocalContribution({ grant: capture.grant, reason: 'left' })
       validateLocalReceipt(capture.grant, receipt)

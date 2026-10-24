@@ -61,8 +61,40 @@ export async function apply(ctx) {
   const local = await owner.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })
   assert.ok(local.assignment)
   const limits = { expiresAt: Date.now() + 50000, maxSamples: 8, maxSampleBytes: 8192 }
-  await owner.ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null,
-    ...local.assignment, roots: [owner.workspace], tools: [], commands: [{ command, rootIndex: 0 }], limits })
+  const records = owner.ctx.storageDomain.get('scope_agent_local_contributions').table('sessions')
+  const originalPut = records.put
+  const originalGet = records.get
+  const committed = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const reconciling = Promise.withResolvers()
+  let held = false
+  let reads = 0
+  records.put = async (key, value) => {
+    await originalPut.call(records, key, value)
+    if (key === agent.id && value.capture?.state === 'opening' && !held) {
+      held = true
+      committed.resolve()
+      await release.promise
+    }
+  }
+  records.get = key => {
+    const row = originalGet.call(records, key)
+    if (held && key === agent.id && ++reads === 2) reconciling.resolve()
+    return row
+  }
+  const restoreInstallation = () => { release.resolve(); records.put = originalPut; records.get = originalGet }
+  ctx.effect(() => restoreInstallation)
+  try {
+    const installing = Promise.allSettled([owner.ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null,
+      ...local.assignment, roots: [owner.workspace], tools: [], commands: [{ command, rootIndex: 0 }], limits })])
+    await committed.promise
+    reads = 0
+    await owner.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'command-human',
+      objective: 'Maintain an independent responsibility.', scope: 'No contribution permission for the original Session.' })
+    await reconciling.promise
+    release.resolve()
+    assert.equal((await installing)[0].status, 'fulfilled')
+  } finally { restoreInstallation() }
   await wait('explicit command collection', async () =>
     (await owner.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.collecting)
   const capture = (await owner.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture

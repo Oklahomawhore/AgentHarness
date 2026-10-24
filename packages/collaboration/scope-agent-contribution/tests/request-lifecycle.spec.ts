@@ -1,14 +1,17 @@
 /** Native management requests follow actual mounted providers and independently terminated owner authority. */
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
 const hosts: TestHost[] = []
+const cleanups: (() => void)[] = []
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
   for (const host of hosts.splice(0).reverse()) await host.close()
 })
 
@@ -48,6 +51,54 @@ async function fixture(files = true, receive = false) {
   }
   return { owner, source, task, localTask, agent, assignment, local, remote, ownerAddress, approve }
 }
+
+it('keeps new local permission when an unrelated Task update overlaps its durable installation', async () => {
+  const f = await fixture()
+  const records = f.source.ctx.storageDomain.get(nativeLocalContributionDomain.name)?.table('sessions')
+  if (records === undefined) throw new Error('Missing local contribution domain')
+  const put = records.put.bind(records)
+  const get = records.get.bind(records)
+  const committed = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const reconciling = Promise.withResolvers<undefined>()
+  let held = false
+  let reads = 0
+  const writing = vi.spyOn(records, 'put').mockImplementation(async (key, value) => {
+    await put(key, value)
+    if (key === f.agent.id && nativeLocalContributionDomain.tables.sessions.valueSchema.parse(value).capture?.state === 'opening' && !held) {
+      held = true
+      committed.resolve(undefined)
+      await release.promise
+    }
+  })
+  const reading = vi.spyOn(records, 'get').mockImplementation((key) => {
+    const row = get(key)
+    // The first read schedules work; the second observes the capture in reconciliation, before its queue entry.
+    if (held && key === f.agent.id && ++reads === 2) reconciling.resolve(undefined)
+    return row
+  })
+  const restore = () => { release.resolve(undefined); reading.mockRestore(); writing.mockRestore() }
+  cleanups.push(restore)
+  try {
+    const requesting = Promise.allSettled([f.source.ctx.scopeAgentContributions.requestLocal(f.local)])
+    await committed.promise
+    reads = 0
+    const unrelated = await rootTask(f.source)
+    expect(unrelated.id).not.toBe(f.localTask.id)
+    await reconciling.promise
+    release.resolve(undefined)
+    expect(await requesting).toMatchObject([{ status: 'fulfilled' }])
+    await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture)
+      .toMatchObject({ state: 'active', collecting: true })
+    expect(f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-ended')).toEqual([])
+    await run(f.source, f.agent, [toolCallResponse('after-local-install', 'write', {
+      file_path: 'after-install.txt', content: 'AUTHORIZED_AFTER_INSTALL',
+    })])
+    await expect.poll(() => JSON.stringify(f.source.ctx.developmentTasks.get({ taskId: f.localTask.id }).context))
+      .toContain('after-install.txt')
+    expect(f.source.ctx.developmentTasks.get({ taskId: unrelated.id }).context).toEqual([])
+  } finally { restore() }
+})
 
 it.each(['local', 'remote'] as const)('rejects %s file permission when the original Agent has no filesystem provider', async (role) => {
   const f = await fixture(false)
