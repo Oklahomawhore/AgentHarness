@@ -114,6 +114,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly maxContextBytes?: number
     readonly receive?: boolean
     readonly fileTools?: false
+    readonly sessionPersistence?: false
     readonly maxLeases?: number
     readonly maxObservationBytes?: number
     readonly invitationLifetimeMs?: number
@@ -183,7 +184,8 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
       waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
       maxContributionApplications: 16, maxApplicationRequestBytes: 16384,
       maxApplicationLifetimeMs: options.invitationLifetimeMs ?? 60000 } },
-    { name: 'sessions' }, { name: 'session-projection' }, { name: 'jsonl', config: { root: sessionsRoot, compression: 'none' } },
+    { name: 'sessions' }, { name: 'session-projection' },
+    ...(options.sessionPersistence === false ? [] : [{ name: 'jsonl', config: { root: sessionsRoot, compression: 'none' } }]),
     { name: 'system' }, { name: 'tools', config: { mode } }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
     ...(role === 'source' || options.ownerLocal === true ? [
       ...(options.fileTools === false ? [] : [

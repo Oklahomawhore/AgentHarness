@@ -1,5 +1,5 @@
 /** Explicit historical initialization uses only one current capture's persisted tool completions. */
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, parse, relative } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -293,6 +293,42 @@ it('reports in-flight work at the cutoff and never backfills its later settlemen
   await expect.poll(() => f.reports().length).toBe(2)
   expect(JSON.stringify(f.reports())).not.toContain('STARTED_BEFORE_CUTOFF_FINISHED_AFTER')
   expect(f.remoteRow().samples.map(item => item.sample.sequence)).toEqual([1, 2])
+})
+
+it('excludes a completed tool awaiting its checkpoint from the frozen initialization', async () => {
+  const f = await fixture()
+  await f.write('DURABLE_BEFORE_CUTOFF')
+  await expect.poll(() => f.localRow().samples[0]?.receipt?.event.kind).toBe('context-published')
+  const remote = await f.begin()
+  const held = barrier()
+  const off = f.source.ctx.on('session/flush', async (session) => {
+    if (session === f.agent.session && session.snapshotEvents().some(event => event.type === 'tool/result'
+      && event.data.message.content[0].toolCallId === 'COMPLETED_WITHOUT_CHECKPOINT')) await held.wait()
+  })
+  releases.push(off)
+  const work = own(f.write('COMPLETED_WITHOUT_CHECKPOINT'))
+  await held.entered
+  expect(await readFile(join(f.source.workspace, 'COMPLETED_WITHOUT_CHECKPOINT.txt'), 'utf8'))
+    .toBe('COMPLETED_WITHOUT_CHECKPOINT')
+  expect(f.agent.session.snapshotEvents().some(event => event.type === 'tool/result'
+    && event.data.message.content[0].toolCallId === 'COMPLETED_WITHOUT_CHECKPOINT')).toBe(true)
+  expect(f.localRow().samples).toHaveLength(1)
+  await remote.approve()
+  await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(1)
+  expect((await f.status()).capture?.initialization?.coverage)
+    .toMatchObject({ recorded: 1, selected: 1, inFlight: 1, acknowledged: 1 })
+  held.release()
+  await work
+  off()
+  await expect.poll(() => f.localRow().samples[1]?.receipt?.event.kind).toBe('context-published')
+  await f.write('NEW_AFTER_DURABLE_CUTOFF')
+  await expect.poll(() => f.remoteRow().samples.filter(sample => sample.receipt !== undefined).length).toBe(2)
+  expect(f.remoteRow().samples.map(sample => sample.sample.sequence)).toEqual([1, 2])
+  expect(f.remoteRow().samples.map(sample => sample.callId)).toEqual(['DURABLE_BEFORE_CUTOFF', 'NEW_AFTER_DURABLE_CUTOFF'])
+  expect(f.reports()).toHaveLength(2)
+  expect(JSON.stringify(f.reports())).not.toContain('COMPLETED_WITHOUT_CHECKPOINT')
+  expect((await f.status()).capture?.initialization?.coverage)
+    .toMatchObject({ recorded: 1, selected: 1, inFlight: 1, acknowledged: 1 })
 })
 
 it('rechecks local cancellation after asynchronous authority verification before freezing', async () => {
