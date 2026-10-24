@@ -21,8 +21,10 @@ jobs:
       AGENTHARNESS_ACCEPTANCE_PORT: '33080'
       AGENTHARNESS_RELEASE_PORT: '43177'
       AGENTHARNESS_RELEASE_TOKEN: ci-portable-accept
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
     steps:
+      - name: Use runner-owned browser cache
+        run: echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/playwright-browsers" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
@@ -152,8 +154,11 @@ jobs:
       AGENTHARNESS_ACCEPTANCE_PORT: '33081'
       AGENTHARNESS_RELEASE_PORT: '43178'
       AGENTHARNESS_RELEASE_TOKEN: ci-portable-win
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
     steps:
+      - name: Use runner-owned browser cache
+        shell: pwsh
+        run: Add-Content -LiteralPath $env:GITHUB_ENV -Value "PLAYWRIGHT_BROWSERS_PATH=$env:RUNNER_TEMP\playwright-browsers"
+
       - uses: actions/checkout@v6
 
       - name: Enable Developer Mode for pnpm links
