@@ -103,7 +103,8 @@ try {
   const agentHub = panel.getByRole('region', { name: '让 Agent Session 加入当前 Task' })
   await agentHub.waitFor({ timeout: 15_000 })
   assert.equal(await panel.getByRole('tab').count(), 0)
-  assert.match(await agentHub.textContent(), /目标 Codex\/Cursor\/Claude Session/u)
+  assert.match(await agentHub.textContent(), /使用 MCP 的会话需自行调用 agentharness_task_connect/u)
+  assert.match(await agentHub.textContent(), /配置不会自动加入其他会话/u)
   assert.match(await agentHub.textContent(), /agentharness_task_connect/u)
   const firstAgentCard = agentHub.locator('article').first()
   const firstAgentCardBox = await firstAgentCard.boundingBox()
@@ -123,6 +124,8 @@ try {
   assert(graphNodeBox !== null)
   assert(graphNodeBox.width >= 160)
   if (expectMcpGuidance) {
+    const configured = agentHub.locator('article').filter({ has: page.getByText('Cursor', { exact: true }) })
+    await configured.getByText('配置就绪', { exact: true }).waitFor({ timeout: 15_000 })
     const conflict = agentHub.locator('article').filter({ has: page.getByText('CodeBuddy', { exact: true }) })
     await conflict.getByText('同名冲突', { exact: true }).waitFor({ timeout: 15_000 })
     await conflict.getByText(/agentharness mcp-guide/u).waitFor({ timeout: 15_000 })
