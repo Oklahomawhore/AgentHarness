@@ -29,12 +29,12 @@ async function stored(source: TestHost, id: SessionId) {
 }
 
 async function fixture(approve = true, joint = false,
-  sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' = 'tool-observations') {
+  sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' = 'tool-observations', maxObservationBytes = 65536) {
   const network = new TestNetwork()
   const owner = await createHost(network, 'owner', 'native', { ownerLocal: true,
     peerId: '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy' as ScopePeerId })
   hosts.push(owner)
-  const source = await createHost(network, 'source', 'native', { receive: joint })
+  const source = await createHost(network, 'source', 'native', { receive: joint, maxObservationBytes })
   hosts.push(source)
   const task = await rootTask(owner)
   const agent = await source.createAgent('route-source')
@@ -73,6 +73,9 @@ async function fixture(approve = true, joint = false,
     await expect.poll(async () => (await status()).capture?.collecting).toBe(true)
   }
   await run(source, agent)
+  if (approve && sourceKind !== 'tool-observations') {
+    await expect.poll(async () => (await stored(source, agent.id)).samples[0]?.receipt).toBeDefined()
+  }
   const changeRoute = async (port: number) => {
     address = originalAddress.replace('/tcp/1/', `/tcp/${port}/`)
     const recovered = (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
@@ -87,6 +90,41 @@ async function fixture(approve = true, joint = false,
 }
 
 const receivingSources = ['tool-observations', 'completed-turn-outcomes', 'native-work'] as const
+it.each(receivingSources)('keeps %s collection unchanged when confirming the current owner route', async (sourceKind) => {
+  const f = await fixture(true, false, sourceKind)
+  const before = await stored(f.source, f.agent.id)
+  const ownerBefore = f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })
+  const reportsBefore = f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.length
+  await f.recover(f.entry)
+  expect(await stored(f.source, f.agent.id)).toEqual(before)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toEqual(ownerBefore)
+  expect((await f.status()).capture).toMatchObject({ selection: f.selection, state: 'active', collecting: true })
+  await run(f.source, f.agent, sourceKind === 'tool-observations'
+    ? [toolCallResponse('same-route-write', 'write', { file_path: 'project/route.txt', content: 'Same permission remains active.' })]
+    : [])
+  await expect.poll(() => f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.length).toBe(reportsBefore + 1)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toHaveLength(1)
+  expect((await stored(f.source, f.agent.id)).capture?.proposal).toEqual(before.capture?.proposal)
+})
+
+it.each(receivingSources)('rejects an oversized %s route request before changing consent', async (sourceKind) => {
+  const maxObservationBytes = 4096
+  const f = await fixture(true, false, sourceKind, maxObservationBytes)
+  const before = await stored(f.source, f.agent.id)
+  const ownerBefore = f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })
+  const request = { agentId: f.agent.id, expectedCapture: f.selection, expectedOwnerAddress: '界'.repeat(1400),
+    expectedRouteRevision: 0, entry: f.entry }
+  expect(JSON.stringify(request).length).toBeLessThan(maxObservationBytes)
+  expect(Buffer.byteLength(JSON.stringify(request), 'utf8')).toBeGreaterThan(maxObservationBytes)
+  await expect(f.source.ctx.scopeAgentContributions.recoverRoute(request))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission',
+      message: 'The route recovery request exceeds the configured byte limit' })
+  expect(await stored(f.source, f.agent.id)).toEqual(before)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toEqual(ownerBefore)
+  await f.recover(f.entry)
+  expect((await f.status()).capture).toMatchObject({ selection: f.selection, state: 'active', collecting: true })
+})
+
 it.each(receivingSources)('restores %s receiving continuations only with matching route and departure intent', async (sourceKind) => {
   const f = await fixture(false, true, sourceKind)
   const row = await stored(f.source, f.agent.id)
