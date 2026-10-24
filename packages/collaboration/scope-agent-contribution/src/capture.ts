@@ -21,7 +21,7 @@ export function nativeToolPath(fs: FileSystem, roots: readonly FsTarget[],
     const parent = new URL(fs.fileUrl(root))
     const child = new URL(fs.fileUrl(target))
     const prefix = parent.pathname.endsWith('/') ? parent.pathname : parent.pathname + '/'
-    if (parent.protocol !== 'file:' || child.protocol !== 'file:' || parent.host !== child.host || !child.pathname.startsWith(prefix)) continue
+    if (!child.pathname.startsWith(prefix)) continue
     const path = child.pathname.slice(prefix.length).split('/').map(part => decodeURIComponent(part)).join('/')
     return { rootIndex, path }
   }

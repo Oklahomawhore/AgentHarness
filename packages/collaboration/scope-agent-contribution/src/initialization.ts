@@ -4,7 +4,6 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { DevelopmentTaskRecordedToolObservationResult, DevelopmentTaskToolObservationResult } from '@deepseek-ai/dsh-development-task/types'
-import { recordedToolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
 import type { ScopeAgentContributionInitialization, ScopeAgentContributionInitializationRequest } from './types.ts'
 import type { NativeToolSample } from './state.ts'
 import type { LocalToolSample } from './local-state.ts'
@@ -153,7 +152,7 @@ export function recordedProof(session: Session, sample: LocalToolSample): Initia
 
 /**
  * Keep the recorded fields or omit whole fields to fit a new independently authorized payload.
- * @param original - Original local report; omitted text is never recovered.
+ * @param original - Validated original local report, retained unchanged; omitted text is never recovered.
  * @param rootIndex - Matching root ordinal in the current remote consent.
  * @param origin - Fixed original-plan and execution attribution.
  * @param fits - Complete owner-bound payload limit.
@@ -162,10 +161,8 @@ export function recordedProof(session: Session, sample: LocalToolSample): Initia
 export function recordedReport(original: DevelopmentTaskToolObservationResult, rootIndex: number,
   origin: DevelopmentTaskRecordedToolObservationResult['origin'],
   fits: (report: DevelopmentTaskRecordedToolObservationResult) => boolean): DevelopmentTaskRecordedToolObservationResult | undefined {
-  const parsed = recordedToolObservationResultSchema.safeParse({ ...original, version: 2,
-    fields: { ...original.fields, rootIndex }, origin })
-  if (!parsed.success) return undefined
-  let candidate: DevelopmentTaskRecordedToolObservationResult = parsed.data
+  let candidate = { ...original, version: 2, origin } satisfies DevelopmentTaskRecordedToolObservationResult
+  candidate.fields = { ...candidate.fields, rootIndex }
   if (fits(candidate)) return candidate
   if (candidate.tool === 'Write' && candidate.fields.content !== undefined) {
     const { content: _content, ...fields } = candidate.fields
@@ -184,7 +181,8 @@ export function recordedReport(original: DevelopmentTaskToolObservationResult, r
   if (candidate.fields.error !== undefined) {
     const fields = { ...candidate.fields }
     delete fields.error
-    candidate = recordedToolObservationResultSchema.parse({ ...candidate, fields, omissions: [...candidate.omissions, 'error'] })
+    candidate = { ...candidate, omissions: [...candidate.omissions, 'error'] }
+    candidate.fields = fields
     if (fits(candidate)) return candidate
   }
   return undefined

@@ -620,6 +620,7 @@ it('omits whole Edit fields in historical reports at UTF-8 byte limits without t
   const origin = { kind: 'recorded-local-tools' as const, planDigest: '1'.repeat(64), executionDigest: '2'.repeat(64) }
   const original = { kind: 'tool-observation' as const, version: 1 as const, tool: 'Edit' as const, reportedStatus: 'success' as const,
     fields: { rootIndex: 0, path: 'edit.txt', oldString: '旧'.repeat(200), newString: '新'.repeat(400), replaceAll: false }, omissions: [] }
+  const before = structuredClone(original)
   const oldOnly = recordedReport(original, 1, origin, value => Buffer.byteLength(JSON.stringify(value), 'utf8') < 1100)
   expect(oldOnly).toMatchObject({ fields: { oldString: original.fields.oldString }, omissions: ['newString'] })
   expect(oldOnly?.fields).not.toHaveProperty('newString')
@@ -632,16 +633,17 @@ it('omits whole Edit fields in historical reports at UTF-8 byte limits without t
     fields: { rootIndex: 0, path: 'failure.txt', error: 'FAILED' }, omissions: ['content'] }, 1, origin, () => false)).toBeUndefined()
   expect(recordedReport({ ...original, fields: { rootIndex: 0, path: 'edit.txt', replaceAll: false },
     omissions: ['oldString', 'newString'] }, 1, origin, () => false)).toBeUndefined()
+  expect(original).toEqual(before)
 })
 
-it('keeps native mutation fields whole and resolves relative paths from an actual filesystem volume root', async () => {
+it.each(['中文 name.txt', '中文 #50% name.txt'])('keeps native mutation fields whole and resolves %s from an actual filesystem volume root', async (file) => {
   const f = await fixture()
   const mutations: ToolFsMutation[] = []
   const off = f.agent.ctx.on('tool-fs/mutation-start', (mutation) => { mutations.push(mutation) })
   try {
-    await f.write('MULTIBYTE_CAPTURE', '旧'.repeat(200), '中文 name.txt')
+    await f.write('MULTIBYTE_CAPTURE', '旧'.repeat(200), file)
     await run(f.source, f.agent, [toolCallResponse('budget-edit', 'edit', {
-      file_path: '中文 name.txt', old_string: '旧'.repeat(200), new_string: '新'.repeat(400),
+      file_path: file, old_string: '旧'.repeat(200), new_string: '新'.repeat(400),
     })])
   } finally { off() }
   const mutation = mutations.find(item => item.tool === 'edit')
@@ -650,8 +652,8 @@ it('keeps native mutation fields whole and resolves relative paths from an actua
   const volume = await fs.resolve(parse(f.source.workspace).root)
   expect(nativeToolPath(fs, [volume], mutation.target)).toEqual({ rootIndex: 0,
     path: relative(parse(f.source.workspace).root, fs.processPath(mutation.target)).split('\\').join('/') })
-  const report = nativeToolReport(mutation, { rootIndex: 0, path: '中文 name.txt' }, false,
+  const report = nativeToolReport(mutation, { rootIndex: 0, path: file }, false,
     value => Buffer.byteLength(JSON.stringify(value), 'utf8') < 1000)
-  expect(report).toMatchObject({ fields: { oldString: '旧'.repeat(200) }, omissions: ['newString'] })
+  expect(report).toMatchObject({ fields: { path: file, oldString: '旧'.repeat(200) }, omissions: ['newString'] })
   expect(report?.fields).not.toHaveProperty('newString')
 })
