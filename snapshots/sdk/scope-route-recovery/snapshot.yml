@@ -4,7 +4,7 @@ profile: sdk
 composition: sdk-scope-route-recovery
 recording: authored
 writer: separate
-writerRevision: 2
+writerRevision: 3
 header:
   class: scope-route-recovery
   pin: true

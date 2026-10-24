@@ -167,7 +167,7 @@ Session 先记录并落盘地址变更意图，再由 Access 修改接收记录�
 
 #### 模型看到什么
 
-远端绑定接收标题为 `## Shared scope context` 的 user-role 消息。本地绑定通过 Task consumer 的第 3 版快照接收 Task backend 文本；调度器不会另加第二个上下文节点。本地自动触发消息要求模型使用当前快照继续显式授权的目标。`## Shared scope context withdrawn` 表明较早快照不能确立当前事实。无需 recall 工具或逐条 publication 发送动作。
+远端绑定接收标题为 `## Shared scope context` 的 user-role 消息。本地绑定通过 Task consumer 的第 3 版快照接收 Task backend 文本；调度器不会另加第二个上下文节点。自动提醒要求模型重读当前快照，即使替换后的快照位于旧轮次之前，并且只重述显式授权的目标。`## Shared scope context withdrawn` 表明较早快照不能确立当前事实。无需 recall 工具或逐条 publication 发送动作。
 
 #### Token 影响
 

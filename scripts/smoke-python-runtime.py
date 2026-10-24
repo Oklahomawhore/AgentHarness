@@ -1114,22 +1114,22 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
     if scenario not in {"scope-route-recovery", "scope-context-live", "task-context-peer-facts", "task-context-semantic", "scope-native-contribution", "scope-owner-participation", "scope-dual-contribution", "scope-local-joint", "scope-group-join", "scope-capture-self-omission", "scope-prejoin-initialization", "scope-recipient-budget", "scope-reported-file", "scope-completed-file", "scope-command-outcomes", "scope-turn-outcomes", "scope-mixed-source", "scope-initialization-reservations", "scope-native-work", "scope-claude-work", "scope-owner-idle", "scope-joint-automatic", "scope-semantic-idle", "scope-automatic-withdrawal"}:
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
-        "scope-automatic-withdrawal": "scope-automatic-withdrawal-command-outcome-evidence-r2",
+        "scope-automatic-withdrawal": "scope-automatic-withdrawal-snapshot-reminder-r3",
         "scope-capture-self-omission": "scope-capture-self-omission-command-outcome-evidence-r2",
         "scope-completed-file": "scope-completed-file-reported-fairness-r5",
-        "scope-context-live": "scope-context-live-command-outcome-evidence-r2",
+        "scope-context-live": "scope-context-live-snapshot-reminder-r3",
         "scope-dual-contribution": "scope-dual-contribution-command-outcome-evidence-r2",
-        "scope-group-join": "scope-group-join-command-outcome-evidence-r3",
-        "scope-joint-automatic": "scope-joint-automatic-command-outcome-evidence-r2",
-        "scope-local-joint": "scope-local-joint-recovery-admission-r4",
+        "scope-group-join": "scope-group-join-snapshot-reminder-r4",
+        "scope-joint-automatic": "scope-joint-automatic-snapshot-reminder-r3",
+        "scope-local-joint": "scope-local-joint-snapshot-reminder-r5",
         "scope-native-contribution": "scope-native-contribution-reported-fairness-r4",
-        "scope-owner-idle": "scope-owner-idle-command-outcome-evidence-r2",
+        "scope-owner-idle": "scope-owner-idle-snapshot-reminder-r3",
         "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",
         "scope-prejoin-initialization": "scope-prejoin-initialization-command-outcome-evidence-r2",
         "scope-recipient-budget": "scope-recipient-budget-command-outcome-evidence-r2",
         "scope-reported-file": "scope-reported-file-reported-fairness-r5",
-        "scope-route-recovery": "scope-route-recovery-command-outcome-evidence-r2",
-        "scope-semantic-idle": "scope-semantic-idle-captured-input-r8",
+        "scope-route-recovery": "scope-route-recovery-snapshot-reminder-r3",
+        "scope-semantic-idle": "scope-semantic-idle-snapshot-reminder-r9",
         "task-context-semantic": "task-context-semantic-captured-input-r9",
     }.get(scenario, scenario)
     expected = repository / "scripts/snapshots/python-sdk-single-exe" / expected_name

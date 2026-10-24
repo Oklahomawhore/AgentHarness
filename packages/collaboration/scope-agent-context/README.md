@@ -167,7 +167,7 @@ No invariant companion is published because the Session projection folds authori
 
 #### What the model sees
 
-Remote bindings receive a user-role `## Shared scope context` message. Local bindings receive the Task backend text through the Task consumer’s version-3 snapshot; the scheduler does not add a second context node. A local automatic pulse asks the model to continue the explicitly authorized goal using the current snapshot. `## Shared scope context withdrawn` states that earlier snapshots cannot establish current facts. No recall tool or per-publication send action is required.
+Remote bindings receive a user-role `## Shared scope context` message. Local bindings receive the Task backend text through the Task consumer’s version-3 snapshot; the scheduler does not add a second context node. An automatic reminder asks the model to re-read the current snapshot even when its replacement precedes older turns, and restates only the explicitly authorized goal. `## Shared scope context withdrawn` states that earlier snapshots cannot establish current facts. No recall tool or per-publication send action is required.
 
 #### Token effect
 

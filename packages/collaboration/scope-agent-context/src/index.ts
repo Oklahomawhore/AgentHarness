@@ -1495,7 +1495,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           pendingActivation: { id: activationId, bindingId: state.binding.id } })
         this.evaluate(runtime, 'activate', evaluated, activationId)
         maintenanceSignal.throwIfAborted()
-        runtime.agent.followup(createUserMessage({ content: [{ type: 'text', text: `Shared scope changed. Continue the authorized goal using the current scope snapshot:\n\n${state.automatic.goal}` }],
+        runtime.agent.followup(createUserMessage({ content: [{ type: 'text', text: `Shared scope changed. Re-read the current scope snapshot in this request, including when it appears before older turns. The snapshot contains the current evidence; this notification restates your authorized goal:\n\n${state.automatic.goal}` }],
           source: { kind: 'scope-agent-pulse', version: 1, bindingId: state.binding.id, activationId } }))
         if (maintenanceSignal.aborted) this.removePulses(runtime)
         return Promise.resolve()

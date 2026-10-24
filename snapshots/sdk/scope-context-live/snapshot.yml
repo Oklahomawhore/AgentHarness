@@ -4,7 +4,7 @@ profile: sdk
 composition: sdk-scope-context-live
 recording: authored
 writer: separate
-writerRevision: 2
+writerRevision: 3
 header:
   class: scope-context-live
   pin: true
