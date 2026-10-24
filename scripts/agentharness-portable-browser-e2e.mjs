@@ -16,7 +16,7 @@ function option(name, fallback) {
 const origin = option('--origin')
 const runtimeLog = option('--runtime-log')
 if (origin === undefined || runtimeLog === undefined) throw new Error('--origin and --runtime-log must identify the installed runtime')
-const url = await collaborationBrowserUrl(runtimeLog, origin)
+const url = await collaborationBrowserUrl(runtimeLog, origin, 0)
 const screenshot = option('--screenshot', '/tmp/agentharness-emergence-center-live.png')
 const expectMcpGuidance = process.argv.includes('--expect-mcp-guidance')
 const playwrightRoot = await realpath(join(

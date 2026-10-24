@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { homedir, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -505,12 +505,19 @@ export class McpClientSetupService extends TypertRemoteService {
   })
 
   private readonly options: McpClientSetupOptions
+  private readonly publication: Promise<void>
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'mcpClientSetup')
     resolveOptions(config)
     this.options = config
-    if (process.platform !== 'win32') publishLocalConnectionDescriptor(ctx, config, 'mcp-client-setup')
+    this.publication = process.platform === 'win32'
+      ? Promise.resolve()
+      : publishLocalConnectionDescriptor(ctx, config, 'mcp-client-setup').ready
+  }
+
+  async [Service.init](): Promise<void> {
+    await this.publication
   }
 
   /**

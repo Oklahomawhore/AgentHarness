@@ -28,8 +28,27 @@ it('opens the authenticated portable Web URL on the AgentHarness collaboration s
   const directory = await temporaryDirectory('agentharness browser url ')
   const log = join(directory, 'server.log')
   await writeFile(log, 'dsh web: http://127.0.0.1:3080/?token=fixture-launch-token\n')
-  expect(await collaborationBrowserUrl(log, 'http://127.0.0.1:3080'))
+  expect(await collaborationBrowserUrl(log, 'http://127.0.0.1:3080', 0))
     .toBe('http://127.0.0.1:3080/?token=fixture-launch-token#agentharness=collaboration')
+})
+
+it('selects the latest valid browser URL within the requested startup log interval', async () => {
+  const directory = await temporaryDirectory('agentharness browser generation ')
+  const log = join(directory, 'server.log')
+  const origin = 'http://127.0.0.1:3080'
+  const previous = `旧启动\ndsh web: ${origin}/?token=previous\n`
+  await writeFile(log, previous)
+  await expect(collaborationBrowserUrl(log, origin, Buffer.byteLength(previous))).rejects.toThrow('did not print')
+  await appendFile(log, [
+    `dsh web: ${origin}/?token=current`,
+    'dsh web: http://[incomplete',
+    'dsh web: http://127.0.0.1:3081/?token=another-host',
+    `dsh web: ${origin}/`,
+    '',
+  ].join('\n'))
+  expect(await collaborationBrowserUrl(log, origin, 0)).toBe(`${origin}/?token=current#agentharness=collaboration`)
+  expect(await collaborationBrowserUrl(log, origin, Buffer.byteLength(previous)))
+    .toBe(`${origin}/?token=current#agentharness=collaboration`)
 })
 
 afterEach(async () => {
@@ -312,6 +331,126 @@ describe('AgentHarness portable release staging', () => {
 })
 
 describe('AgentHarness LAN release server and installed command', () => {
+  it('waits for this startup URL with HTTP ready, concurrent reuse, and a previous launch in the log', async () => {
+    const fixture = await temporaryDirectory('agentharness startup generation ')
+    const portable = join(fixture, 'portable')
+    const state = join(fixture, 'state')
+    await mkdir(portable)
+    await mkdir(state)
+    await cp(commandScript, join(portable, 'agentharness.mjs'))
+    await copyClusterRuntime(portable)
+    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
+    // The bound fixture owns HTTP; each real runtime process opens a control stream before HTTP becomes ready.
+    let control: import('node:http').ServerResponse | undefined
+    let entered = Promise.withResolvers<import('node:http').ServerResponse>()
+    const probes = new Map<string, { count: number; blocked: ReturnType<typeof Promise.withResolvers<undefined>> }>()
+    const server = createServer((request, response) => {
+      if (request.url === '/fixture-control') {
+        control = response
+        response.writeHead(200)
+        response.flushHeaders()
+        response.once('close', () => { if (control === response) control = undefined })
+        entered.resolve(response)
+        return
+      }
+      response.writeHead(control === undefined ? 503 : 401)
+      response.end()
+      const probe = probes.get(String(request.headers['x-fixture-client']))
+      if (control !== undefined && probe !== undefined && ++probe.count === 3) probe.blocked.resolve(undefined)
+    })
+    await listen(server, 0)
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('fixture HTTP did not bind')
+    const origin = `http://127.0.0.1:${String(address.port)}`
+    const logPath = join(state, 'server.log')
+    const stale = `old startup\ndsh web: ${origin}/?token=stale\n`
+    await writeFile(logPath, stale)
+    await writeFile(join(portable, 'start.mjs'), [
+      "import { get } from 'node:http'",
+      "import { createInterface } from 'node:readline'",
+      'let stopping = false',
+      'const request = get(`${process.env.AGENTHARNESS_URL}/fixture-control`, response => {',
+      "  response.on('error', error => { if (!stopping) throw error })",
+      "  createInterface({ input: response }).on('line', token => console.log(`dsh web: ${process.env.AGENTHARNESS_URL}/?token=${token}`))",
+      '})',
+      "request.on('error', error => { if (!stopping) throw error })",
+      "process.on('SIGTERM', () => { stopping = true; request.destroy() })",
+      '',
+    ].join('\n'))
+    // Preserve real HTTP requests while identifying each concurrent management process at the fixture server.
+    const driver = join(portable, 'command-driver.mjs')
+    await writeFile(driver, [
+      "import { runInstalledCommand } from './agentharness.mjs'",
+      'const nativeFetch = globalThis.fetch',
+      'globalThis.fetch = (input, options) => {',
+      '  const headers = new Headers(options?.headers)',
+      "  headers.set('x-fixture-client', process.argv[2])",
+      '  return nativeFetch(input, { ...options, headers })',
+      '}',
+      'await runInstalledCommand(process.argv.slice(3))',
+      '',
+    ].join('\n'))
+    const env = { ...process.env, AGENTHARNESS_RUNTIME_DIR: state, AGENTHARNESS_PORT: String(address.port), AGENTHARNESS_NO_OPEN: '1' }
+    type CommandResult = { code: number | null; signal: NodeJS.Signals | null; error: Error | undefined; stdout: string; stderr: string }
+    const commands: { child: ReturnType<typeof spawn>; closed: Promise<CommandResult> }[] = []
+    const run = (label: string, command: string) => {
+      const blocked = Promise.withResolvers<undefined>()
+      probes.set(label, { count: 0, blocked })
+      const child = spawn(process.execPath, [driver, label, command], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+      let stdout = ''
+      let stderr = ''
+      let error: Error | undefined
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+      child.once('error', (failure) => { error = failure })
+      const closed = new Promise<CommandResult>((resolveClosed) => {
+        child.once('close', (code, signal) => { resolveClosed({ code, signal, error, stdout, stderr }) })
+      })
+      commands.push({ child, closed })
+      return { closed, blocked: Promise.race([blocked.promise.then(() => 'waiting'), closed.then(() => 'returned')]) }
+    }
+    try {
+      const first = run('first', 'start')
+      const firstControl = await entered.promise
+      expect(await first.blocked).toBe('waiting')
+      const pendingStatus = await run('pending-status', 'status').closed
+      expect(pendingStatus).toMatchObject({ code: 1, signal: null, error: undefined })
+      expect(pendingStatus.stdout).toContain('running without completed startup')
+      const reuse = run('reuse', 'start')
+      expect(await reuse.blocked).toBe('waiting')
+      firstControl.write('first-generation\n')
+      const results = await Promise.all([first.closed, reuse.closed])
+      for (const result of results) expect(result).toMatchObject({ code: 0, signal: null, error: undefined, stderr: '' })
+      expect(results[0]?.stdout).toContain('is ready at')
+      expect(results[1]?.stdout).toContain('already running')
+      const firstState = JSON.parse(await readFile(join(state, 'server.json'), 'utf8')) as { logOffset: number }
+      expect(firstState.logOffset).toBe(Buffer.byteLength(stale))
+      expect(await collaborationBrowserUrl(logPath, origin, firstState.logOffset))
+        .toBe(`${origin}/?token=first-generation#agentharness=collaboration`)
+      const { logOffset: _offset, ...legacyState } = firstState
+      await writeFile(join(state, 'server.json'), JSON.stringify(legacyState))
+      const legacy = await run('legacy', 'start').closed
+      expect(legacy).toMatchObject({ code: 1, signal: null, error: undefined })
+      expect(legacy.stderr).toContain('restart AgentHarness')
+      entered = Promise.withResolvers<import('node:http').ServerResponse>()
+      const restart = run('restart', 'restart')
+      const secondControl = await entered.promise
+      expect(await restart.blocked).toBe('waiting')
+      secondControl.write('second-generation\n')
+      expect(await restart.closed).toMatchObject({ code: 0, signal: null, error: undefined, stderr: '' })
+      expect(await collaborationBrowserUrl(logPath, origin, 0))
+        .toBe(`${origin}/?token=second-generation#agentharness=collaboration`)
+    } finally {
+      for (const { child } of commands) if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+      await Promise.all(commands.map(command => command.closed))
+      const stopped = spawnSync(process.execPath, [join(portable, 'agentharness.mjs'), 'stop'], { env, encoding: 'utf8' })
+      server.closeAllConnections()
+      expect(stopped.error).toBeUndefined()
+      expect(stopped.signal).toBeNull()
+      expect(stopped.status).toBe(0)
+    }
+  })
+
   it('detects private LAN addresses and rejects path traversal', async () => {
     expect(detectLanAddress({
       lo0: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '', internal: true, cidr: '127.0.0.1/8' }],
@@ -385,7 +524,7 @@ describe('AgentHarness LAN release server and installed command', () => {
       'const index = args.findIndex(value => value === \'--port\')',
       'const port = Number(index === -1 ? 3080 : args[index + 1])',
       `const server = createServer((_request, response) => { response.statusCode = ${String(httpStatus)}; response.end('ready') })`,
-      'server.listen(port, \'127.0.0.1\')',
+      'server.listen(port, \'127.0.0.1\', () => console.log(`dsh web: http://127.0.0.1:${port}/?token=fixture-launch-token`))',
       'const close = () => server.close(() => process.exit(0))',
       'process.on(\'SIGINT\', close)',
       'process.on(\'SIGTERM\', close)',
@@ -483,7 +622,7 @@ describe('AgentHarness LAN release server and installed command', () => {
       '  if (request.url === \'/open-page\') return',
       '  response.end(\'ready\')',
       '})',
-      'server.listen(port, \'127.0.0.1\')',
+      'server.listen(port, \'127.0.0.1\', () => console.log(`dsh web: http://127.0.0.1:${port}/?token=fixture-launch-token`))',
       'process.on(\'SIGTERM\', () => { server.close() })',
       '',
     ].join('\n'))

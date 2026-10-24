@@ -173,26 +173,41 @@ async function openBrowser(url, environment) {
   child.unref()
 }
 
-/** Read the authenticated Web URL from the installed runtime log and select the AgentHarness first screen. */
-export async function collaborationBrowserUrl(logPath, origin) {
+function authenticatedBrowserUrl(log, origin) {
   let authenticated
-  const found = await waitFor(async () => {
-    const log = await readFile(logPath, 'utf8').catch(error => {
-      if (error?.code === 'ENOENT') return ''
-      throw error
-    })
-    const match = /dsh web: (https?:\/\/[^\s]+)/u.exec(log)
-    if (match?.[1] === undefined) return false
-    const candidate = new URL(match[1])
-    if (candidate.origin !== origin || !candidate.searchParams.get('token')) return false
+  for (const match of log.matchAll(/dsh web: (https?:\/\/[^\s]+)/gu)) {
+    let candidate
+    try { candidate = new URL(match[1]) } catch { continue } // Runtime logs may contain incomplete or malformed output.
+    if (candidate.origin !== origin || !candidate.searchParams.get('token')) continue
     authenticated = candidate
-    return true
-  }, 5_000)
-  if (!found || authenticated === undefined) {
-    throw new Error('the AgentHarness Web server did not print an authenticated browser URL; inspect the runtime log')
   }
+  if (authenticated === undefined) return undefined
   authenticated.hash = 'agentharness=collaboration'
   return authenticated.href
+}
+
+function requireLogOffset(offset) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error('runtime state has no valid startup log offset; restart AgentHarness before reusing it')
+  }
+  return offset
+}
+
+async function runtimeOutput(logPath, logOffset) {
+  const log = await readFile(logPath).catch(error => {
+    if (error?.code === 'ENOENT') return Buffer.alloc(0)
+    throw error
+  })
+  return log.subarray(logOffset).toString('utf8')
+}
+
+/** Read the latest authenticated Web URL after an explicit byte offset; the caller owns startup waiting. */
+export async function collaborationBrowserUrl(logPath, origin, logOffset) {
+  const authenticated = authenticatedBrowserUrl(await runtimeOutput(logPath, requireLogOffset(logOffset)), origin)
+  if (authenticated === undefined) {
+    throw new Error('the AgentHarness Web server did not print an authenticated browser URL; inspect the runtime log')
+  }
+  return authenticated
 }
 
 async function startRuntime(args, environment) {
@@ -205,11 +220,20 @@ async function startRuntime(args, environment) {
     if (!isOwnedProcess(runtimeState)) {
       throw new Error(`process ${runtimeState.pid} does not match the recorded AgentHarness entry; refusing to reuse it`)
     }
-    if (runtimeState.version === version && runtimeState.port === port && await endpointReady(port)) {
-      process.stdout.write(`AgentHarness ${version} is already running at ${url}\n`)
-      if (environment.AGENTHARNESS_NO_OPEN !== '1') {
-        await openBrowser(await collaborationBrowserUrl(runtimeState.logPath, url), environment)
+    if (runtimeState.version === version && runtimeState.port === port) {
+      const offset = requireLogOffset(runtimeState.logOffset)
+      let browserUrl
+      const ready = await waitFor(async () => {
+        if (!processExists(runtimeState.pid)) return true
+        if (!isOwnedProcess(runtimeState) || !await endpointReady(port)) return false
+        browserUrl = authenticatedBrowserUrl(await runtimeOutput(runtimeState.logPath, offset), url)
+        return browserUrl !== undefined
+      }, STARTUP_TIMEOUT_MS)
+      if (!ready || browserUrl === undefined || !isOwnedProcess(runtimeState) || !await endpointReady(port)) {
+        throw new Error(`runtime state names process ${runtimeState.pid}, but its startup has not completed; inspect before replacing it`)
       }
+      process.stdout.write(`AgentHarness ${version} is already running at ${url}\n`)
+      await openBrowser(browserUrl, environment)
       return
     }
     if (!await endpointReady(runtimeState.port)) {
@@ -260,14 +284,18 @@ async function startRuntime(args, environment) {
     version,
     startedAt: new Date().toISOString(),
     logPath,
+    logOffset,
     processGroup: process.platform !== 'win32',
   }, null, 2)}\n`, { mode: 0o600 })
 
+  let browserUrl
   const ready = await waitFor(async () => {
     if (exitResult !== undefined) return true
-    return isOwnedProcess({ pid: child.pid, entry: join(root, 'start.mjs') }) && await endpointReady(port)
+    if (!isOwnedProcess({ pid: child.pid, entry: join(root, 'start.mjs') }) || !await endpointReady(port)) return false
+    browserUrl = authenticatedBrowserUrl(await runtimeOutput(logPath, logOffset), url)
+    return browserUrl !== undefined
   }, STARTUP_TIMEOUT_MS)
-  if (!ready || exitResult !== undefined || !await endpointReady(port)) {
+  if (!ready || exitResult !== undefined || browserUrl === undefined || !await endpointReady(port)) {
     const reason = exitResult === undefined
       ? `did not become ready within ${STARTUP_TIMEOUT_MS / 1000}s at ${url}`
       : `exited before readiness (${exitResult})`
@@ -279,9 +307,7 @@ async function startRuntime(args, environment) {
     throw new Error(`AgentHarness ${reason}; inspect ${logPath}${output === '' ? '' : `\nStartup output:\n${output}`}`)
   }
   process.stdout.write(`AgentHarness ${version} is ready at ${url}\nLogs: ${logPath}\n`)
-  if (environment.AGENTHARNESS_NO_OPEN !== '1') {
-    await openBrowser(await collaborationBrowserUrl(logPath, url), environment)
-  }
+  await openBrowser(browserUrl, environment)
 }
 
 /** Render copy-ready MCP setup that uses the portable bundled Node runtime. */
@@ -374,8 +400,10 @@ async function printStatus(environment) {
     process.exitCode = 1
     return
   }
+  const offset = requireLogOffset(state.logOffset)
   const ready = isOwnedProcess(state) && await endpointReady(state.port)
-  process.stdout.write(`AgentHarness ${state.version} process ${state.pid}: ${ready ? `ready at ${state.url}` : 'running without a ready Web endpoint'}\n`)
+    && authenticatedBrowserUrl(await runtimeOutput(state.logPath, offset), state.url) !== undefined
+  process.stdout.write(`AgentHarness ${state.version} process ${state.pid}: ${ready ? `ready at ${state.url}` : 'running without completed startup'}\n`)
   const setup = await loadMcpSetup()
   if (setup !== undefined) {
     const clients = await setup.listMcpClients(mcpSetupOptions(commandRoot(environment), environment))

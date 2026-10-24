@@ -7,7 +7,6 @@ import type { FileHandle } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { tryLockExclusive } from '@deepseek-ai/node-addon-system/flock'
-import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from './index.ts'
 
@@ -69,7 +68,6 @@ function missing(error: unknown): boolean {
 }
 
 function assertPrivate(info: { mode: number; uid: number }, mode: number): void {
-  if (process.platform === 'win32') return
   if ((info.mode & 0o777) !== mode || info.uid !== process.getuid?.()) {
     throw new LocalConnectionAccessError('descriptor-invalid')
   }
@@ -103,36 +101,26 @@ async function readBoundedUtf8(
 }
 
 /**
- * Publish the current Host capability after application readiness and remove it on disposal.
+ * Publish the current Host capability during plugin initialization and remove it on disposal.
  * Uses the composing frontend's existing Connection index authorization; registers no routes.
- * @param ctx - Host context with Connection, WebServer, and dsh launcher lifecycle services.
+ * The composing plugin must await ready before its activation completes.
+ * @param ctx - owning Host context with Connection and a listening WebServer.
  * @param config - leased descriptor path in an owner-only directory.
  * @param label - feature name used in lifecycle diagnostics; must not contain credentials.
- * @returns the generation consumers may bind to their own Remote requests.
+ * @returns the request generation and the promise of its atomic descriptor publication.
  */
 export function publishLocalConnectionDescriptor(
   ctx: Context, config: LocalConnectionDescriptorConfig, label: string,
-): { readonly generation: string } {
+): { readonly generation: string; readonly ready: Promise<void> } {
   if (process.platform === 'win32') throw new LocalConnectionAccessError('platform-unsupported')
   if (!isAbsolute(config.descriptorPath)) throw new Error(`${label} descriptorPath must be absolute`)
-  const ready = ctx.get('appReady')
-  const exit = ctx.get('appExit')
-  if (ready === undefined || exit === undefined) throw new Error(`${label} requires the dsh application lifecycle`)
   const generation = randomUUID()
   const lifetime = new AbortController()
   let publication = Promise.resolve()
   let lease: FileHandle | undefined
-  ctx.effect(() => ready.onReady(() => {
-    publication = publish().catch((error: unknown) => {
-      if (lifetime.signal.aborted) return
-      ctx.logger.error('%s could not publish its private connection descriptor: %s', label,
-        error instanceof LocalConnectionAccessError ? error.code : 'publication-failed')
-      exit(1)
-    })
-  }), `${label}: descriptor readiness`)
   ctx.effect(() => async () => {
     lifetime.abort()
-    await publication
+    await publication.catch(() => {}) // The activation caller owns publication failure; cleanup still releases its lease.
     if (lease === undefined) return
     try {
       let current: unknown
@@ -145,6 +133,11 @@ export function publishLocalConnectionDescriptor(
       await lease.close()
     }
   }, `${label}: descriptor disposal`)
+  publication = publish().catch((error: unknown) => {
+    const code = error instanceof LocalConnectionAccessError ? error.code : 'publication-failed'
+    throw new Error(`${label} could not publish its private connection descriptor: ${code}`)
+  })
+  void publication.catch(() => {}) // Constructor failure may dispose this owner before Service.init awaits publication.
   async function publish(): Promise<void> {
     const directory = dirname(config.descriptorPath)
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -179,7 +172,7 @@ export function publishLocalConnectionDescriptor(
       try { await unlink(temporary) } catch (error) { if (!missing(error)) throw error }
     }
   }
-  return Object.freeze({ generation })
+  return Object.freeze({ generation, ready: publication })
 }
 
 async function readDescriptor(config: LocalConnectionAuthenticationConfig, signal: AbortSignal): Promise<LocalConnectionDescriptor> {

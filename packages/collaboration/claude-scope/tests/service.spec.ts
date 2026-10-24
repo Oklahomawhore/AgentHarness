@@ -77,7 +77,7 @@ async function apiScenario(host: Awaited<ReturnType<typeof boot>>) {
 }
 
 // The descriptor/Connection/launcher chain has its own real-process integration suite.
-vi.mock('../src/transport.ts', () => ({ createClaudeScopeDescriptor: () => ({ generation: 'test-generation' }) }))
+vi.mock('../src/transport.ts', () => ({ createClaudeScopeDescriptor: () => ({ generation: 'test-generation', ready: Promise.resolve() }) }))
 
 // Promise timers keep Node's internal clock; use the controlled global clock only in timer-specific cases.
 vi.mock('node:timers/promises', async (importOriginal) => {

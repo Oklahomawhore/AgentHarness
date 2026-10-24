@@ -3934,9 +3934,9 @@ export interface WebRuntimeConfig {
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
 export interface Config {
-  /** Permit default-browser handoff after the Loader tree settles; an SSH launch suppresses it. */
+  /** Permit default-browser handoff after successful startup; an SSH launch suppresses it. */
   openBrowser: boolean
-  /** Print the URL line on activation; a non-interactive layer can turn it off. */
+  /** Print the URL line after successful startup; a non-interactive layer can turn it off. */
   printUrl: boolean
   /**
    * Register the model-visible surface context (the `app:web-surface` prompt
@@ -3950,7 +3950,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/bundle/web-app/src/index.ts:44`](../packages/bundle/web-app/src/index.ts)
+来源：[`packages/bundle/web-app/src/index.ts:45`](../packages/bundle/web-app/src/index.ts)
 
 <a id="deepseek-aidsh-web-fetch-http"></a>
 

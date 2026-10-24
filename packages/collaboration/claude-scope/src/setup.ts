@@ -273,7 +273,7 @@ async function mutate(
 }
 
 /**
- * Install seven owned hook groups after preparing their complete shared dsh profile.
+ * Install the owned project hook groups after preparing their complete shared dsh profile.
  * Writes use cooperative file locks and atomic replacement; interrupted profile creation can resume.
  * Cancellation is checked before each write; an atomic replacement already started may commit.
  * The caller must await settlement before completing disposal; committed settings stay durable.

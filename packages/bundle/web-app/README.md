@@ -92,7 +92,7 @@ A patch replaces the targeted row's whole `config`, so each web row restates eve
 
 ### Readiness
 
-The URL line and browser handoff are readiness signals: supervisors RPC as soon as they observe the line, and a browser requests the page as soon as it opens, so both run only after the Loader tree settles and Connection authentication is available — or immediately in a hand-built tree without a Loader. A tree disposed mid-boot announces nothing.
+The URL line and browser handoff wait for the launcher's `appReady` signal, after the Loader tree and launcher setup succeed. An embedding host without `appReady` uses Loader settlement, or announces immediately when it also has no Loader. Disposal cancels a pending announcement. This signal confirms HTTP/RPC startup; it does not await asynchronous work started by other readiness listeners.
 
 ### LAN trust sampling
 

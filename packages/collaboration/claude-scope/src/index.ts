@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { PROFILE_TEMPLATES, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-cmdline'
@@ -119,7 +119,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
 
   private readonly lifetime = new AbortController()
   private readonly ready: Promise<ScopeDomain>
-  private readonly descriptor: { readonly generation: string }
+  private readonly descriptor: ReturnType<typeof createClaudeScopeDescriptor>
   private tail: Promise<unknown> = Promise.resolve()
   private readonly changes = new Map<ClaudeScopeSessionKey, number>()
   private readonly operations = new Set<Promise<unknown>>()
@@ -184,6 +184,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
       const opened = await opening.catch(() => undefined) // A failed open owns no domain handle.
       await opened?.close()
     }, 'claude-scope: durable state and in-flight operations')
+  }
+
+  async [Service.init](): Promise<void> {
+    await this.descriptor.ready
   }
 
   /**

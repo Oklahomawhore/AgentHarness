@@ -102,6 +102,8 @@ Independent reads negotiate the owner projection allowance after reserving compl
 
 All limits are required. `maxContextBytes` bounds complete UTF-8 text, including adapter and backend framing, and cannot exceed 10000. Session, lease, and projection retention is bounded and fails when capacity is exhausted; `maxLeases` is shared by Task and independent capture. `maxObservationBytes` bounds transferable proposal text and, together with the owner's contribution limit, the complete attributed sample. `maxRequestBytes` bounds stdin, descriptor reads, and the serialized RPC request; `maxResponseBytes` bounds the RPC response and final Hook JSON including its newline. The command deadline covers readiness through completed output. Failure emits no projection, writes a categorized diagnostic to stderr, and exits with code 1; Claude owns whether its event continues. Private descriptor publication and token exchange use Connection’s [local-access helpers](../../client/connection/README.md#browser-authentication-and-request-trust); the command preserves their generation and safe failure categories.
 
+The Host plugin's activation waits for atomic descriptor publication; failure rejects startup. Durable state recovery begins after launcher readiness; Remote methods await recovery before accessing durable state.
+
 Setup paths and launcher arguments are explicit deployment inputs, with no PATH lookup or package-manager launch. The Web composition uses its current Node executable, CLI arguments, working directory, and Harness home. Hook timeout must exceed the command deadline and may not exceed 60 seconds. `maxSettingsBytes` bounds each configuration read and complete write; setup cannot take ownership of a shipped or reserved application profile.
 
 
