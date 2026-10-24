@@ -116,6 +116,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
     readonly fileTools?: false
     readonly sessionPersistence?: false
     readonly maxLeases?: number
+    readonly maxSessions?: number
     readonly maxObservationBytes?: number
     readonly invitationLifetimeMs?: number
     readonly permissionDefaults?: NativeContributionConfig['permissionDefaults']
@@ -193,7 +194,7 @@ export async function createHost(network: TestNetwork, role: 'owner' | 'source' 
         { name: 'subprocess' }, { name: 'shell-env', config: { dshHome: join(root, 'home') } },
         { name: 'bash', config: { timeoutMs: 5000 } }, { name: 'tool-bash' },
       ]),
-      { name: 'contribution', config: { maxSessions: 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25,
+      { name: 'contribution', config: { maxSessions: options.maxSessions ?? 100, maxLeases: options.maxLeases ?? 1000, maxObservationBytes: options.maxObservationBytes ?? 65536, contributionPollIntervalMs: 25,
         ...(options.permissionDefaults === undefined ? {} : { permissionDefaults: options.permissionDefaults }) } },
     ] : []),
     ...(role === 'receiver' || options.receive === true ? [{ name: 'recipient', config: { maxContextBytes: options.maxContextBytes ?? 16000,
