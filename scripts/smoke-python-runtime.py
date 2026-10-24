@@ -1121,7 +1121,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-dual-contribution": "scope-dual-contribution-command-outcome-evidence-r2",
         "scope-group-join": "scope-group-join-command-outcome-evidence-r3",
         "scope-joint-automatic": "scope-joint-automatic-command-outcome-evidence-r2",
-        "scope-local-joint": "scope-local-joint-command-outcome-evidence-r3",
+        "scope-local-joint": "scope-local-joint-recovery-admission-r4",
         "scope-native-contribution": "scope-native-contribution-reported-fairness-r4",
         "scope-owner-idle": "scope-owner-idle-command-outcome-evidence-r2",
         "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",
@@ -1364,7 +1364,9 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                 if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
                     raise AssertionError("group join changed the expected B workspace result")
         elif scenario == "scope-local-joint":
-            result = local_joint_snapshot_result(records, turns, observed, json.loads((home / "local-joint-audit.json").read_text()))
+            audit = json.loads((home / "local-joint-audit.json").read_text())
+            result = local_joint_snapshot_result(records, turns, observed, audit)
+            result["recoveryAdmission"] = local_joint_recovery_result(records, audit["recovery"])
             expected_workspace = repository / "snapshots/sdk" / scenario / "workspace.expected"
             for expected_file in expected_workspace.rglob("*"):
                 if expected_file.is_file() and (root / expected_file.relative_to(expected_workspace)).read_bytes() != expected_file.read_bytes():
@@ -3082,6 +3084,40 @@ def local_joint_snapshot_result(
         "finalMode": final["mode"], "usedBudget": final["usedBudget"], "originalAuthorityEvents": len(authority),
         "retainedOriginalTask": True, "restoredNewLocalInterval": True, "remoteFactsAfterLeave": [],
     }
+
+
+def local_joint_recovery_result(
+    records: list[dict[str, object]], recovery: dict[str, object],
+) -> dict[str, object]:
+    """Match the original ordinary claim and fresh local projection to the request held across departure."""
+    request = recovery["request"]
+    if (recovery["abortedBeforeRelease"] is not True or
+            recovery["freshTaskRevision"] <= recovery["capturedTaskRevision"] or
+            (request["turn"], request["step"], request["ordinal"]) != (6, 1, 9)):
+        raise AssertionError("joint departure must interrupt the stale local read before the ninth request")
+    message_id = recovery["messageId"]
+    messages = [event for event in records if event.get("type") == "user/message" and event["data"]["id"] == message_id]
+    insertions = [message for event in records if event.get("type") == "agent/inbox/spliced"
+                  for message in event["data"]["inserted"] if message["id"] == message_id]
+    if (len(messages) != 1 or len(insertions) != 1 or insertions[0] != messages[0]["data"] or
+            messages[0]["data"]["source"]["kind"] != "user" or
+            request["messageOccurrences"] != 1 or request["pendingOccurrences"] != 0):
+        raise AssertionError("the ordinary claim must enter and dispatch once without another queued copy")
+    steps = [event["data"] for event in records if event.get("type") == "step/start"]
+    if len(steps) != 10 or steps[8] != {"turn": 6, "step": 1}:
+        raise AssertionError("local recovery must continue the existing turn without another model request")
+    context = next(event["data"] for event in records if event.get("seq") == request["localContextSeq"])
+    source = context["source"]
+    projection = source["projection"]
+    if (source["kind"] != "development-task-context" or source["form"] != "snapshot" or source["version"] != 3 or
+            projection != request["localProjection"] or projection["taskRevision"] < recovery["freshTaskRevision"] or
+            "LOCAL_AFTER_RECOVERY_CHANGE" not in projection["text"] or
+            {"kind": "publication", "taskId": projection["taskId"], "revision": projection["taskRevision"],
+             "publicationId": recovery["publicationId"]} not in projection["selectedSources"]):
+        raise AssertionError("the actual resumed request must retain the freshly published local fact and its source")
+    return {"turn": 6, "step": 1, "requestOrdinal": 9, "totalRequests": len(steps),
+            "originalClaimOccurrences": len(messages), "inboxInsertions": len(insertions),
+            "abortedBeforeRelease": True, "freshLocalFact": True, "pendingClaimOccurrences": 0}
 
 
 def group_join_snapshot_result(

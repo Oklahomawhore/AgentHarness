@@ -15,11 +15,12 @@ const { developmentAgentParticipantId } = await load('@deepseek-ai/dsh-developme
 /** Loader identity. */
 export const name = 'scope-local-joint-snapshot'
 /** Services supplied by the supported SDK profile and this scenario patch. */
-export const inject = ['agents', 'scopeAgentContext', 'scopeAgentContributions', 'scopeAccess', 'developmentTasks', 'developmentRooms', 'sessionProjections', 'llm']
+export const inject = ['agents', 'scopeAgentContext', 'scopeAgentContributions', 'scopeAccess', 'developmentTasks', 'developmentRooms', 'developmentTaskContextBackend', 'sessionProjections', 'llm']
 const localPolicy = { goal: 'Maintain my local client responsibility.', activationLimit: 4, maxStepsPerTurn: 2, minIntervalMs: 0 }
 const jointPolicy = { goal: 'Update my client when the shared API changes.', activationLimit: 3, maxStepsPerTurn: 2, minIntervalMs: 0 }
 const api = version => `export const API_VERSION = 'REMOTE_API_V${version}';\n`
 const client = version => `export const CLIENT_VERSION = 'CLIENT_V${version}';\n`
+const recoveredFact = 'LOCAL_AFTER_RECOVERY_CHANGE: finish my original client responsibility after leaving the shared scope.'
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const contexts = messages => messages.filter(message => ['development-task-context', 'scope-agent-context'].includes(message.source.kind))
 const reply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
@@ -87,6 +88,7 @@ export async function apply(ctx) {
   let initialApi
   let correction
   let remoteEndedRevision
+  let recovery
   const pending = new Set()
   const own = promise => {
     pending.add(promise)
@@ -118,7 +120,7 @@ export async function apply(ctx) {
       correction = own(writeApi(2))
     }
   })
-  ctx.on('agent/pre-step', async ({ agent, turn, step }, next) => {
+  ctx.on('agent/pre-step', async ({ agent, turn, step, messages }, next) => {
     activeAgent = agent
     currentTurn = turn
     currentStep = step
@@ -187,19 +189,77 @@ export async function apply(ctx) {
       assert.equal(requests, 8)
       assert.equal(state().usedBudget, 3)
       assert.equal(state().pendingActivation, null)
-      await ctx.scopeAgentContributions.leaveJoin({ agentId: agent.id, expectedCapture: remoteCapture.selection })
-      await waitUntil('joint departure', async () => (await ctx.scopeAgentContributions.status({ agentId: agent.id })).capture === null
-        && state().binding?.kind === 'local-task')
-      const restored = state()
-      assert.equal(restored.binding.id, jointBinding.retainedLocal.bindingId)
-      assert.deepEqual(restored.binding.target, jointBinding.target)
-      assert.deepEqual(restored.automatic, localPolicy)
-      assert.equal(restored.mode, 'paused')
-      assert.equal(restored.usedBudget, 3)
-      assert.equal(restored.pendingActivation, null)
-      assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.selection.captureId, localCapture.selection.captureId)
-      await writeApi(3)
-      remoteEndedRevision = owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).revision
+      const ordinary = messages.filter(message => message.source.kind === 'user')
+      assert.equal(ordinary.length, 1)
+      const entered = Promise.withResolvers()
+      const release = Promise.withResolvers()
+      const access = ctx.scopeAccess
+      const backend = ctx.developmentTaskContextBackend
+      const retrieve = access.retrieveWithinBudget
+      const compute = backend.compute
+      let unavailable = false
+      let recoverySignal
+      let restoredMethods = false
+      const restore = () => {
+        entered.resolve()
+        release.resolve()
+        if (restoredMethods) return
+        restoredMethods = true
+        access.retrieveWithinBudget = retrieve
+        backend.compute = compute
+      }
+      ctx.effect(() => restore)
+      access.retrieveWithinBudget = async (input, signal) => {
+        if (!unavailable && input.subscriptionId === jointBinding.subscriptionId) {
+          unavailable = true
+          return { status: 'unavailable' }
+        }
+        return retrieve.call(access, input, signal)
+      }
+      backend.compute = async input => {
+        if (unavailable && recoverySignal === undefined && input.view.task.id === task.id && input.maxContextBytes > 4000) {
+          recoverySignal = input.signal
+          recovery = { messageId: ordinary[0].id, capturedTaskRevision: input.view.task.revision }
+          entered.resolve()
+          await release.promise
+        }
+        return compute.call(backend, input)
+      }
+      const admission = next()
+      const settled = admission.then(value => ({ value }), error => ({ error }))
+      try {
+        await Promise.race([entered.promise, settled.then(result => {
+          if ('error' in result) throw result.error
+          throw new Error('local recovery admission completed before its compute barrier')
+        })])
+        lifetime.signal.throwIfAborted()
+        assert.equal(requests, 8)
+        await ctx.scopeAgentContributions.leaveJoin({ agentId: agent.id, expectedCapture: remoteCapture.selection })
+        await waitUntil('joint departure', async () => (await ctx.scopeAgentContributions.status({ agentId: agent.id })).capture === null
+          && state().binding?.kind === 'local-task')
+        assert.equal(recoverySignal.aborted, true)
+        recovery.abortedBeforeRelease = true
+        const restored = state()
+        assert.equal(restored.binding.id, jointBinding.retainedLocal.bindingId)
+        assert.deepEqual(restored.binding.target, jointBinding.target)
+        assert.deepEqual(restored.automatic, localPolicy)
+        assert.equal(restored.mode, 'paused')
+        assert.equal(restored.usedBudget, 3)
+        assert.equal(restored.pendingActivation, null)
+        assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.selection.captureId, localCapture.selection.captureId)
+        const fresh = await ctx.developmentTasks.publishContext({ taskId: task.id, participantId: 'joint-client-human', text: recoveredFact })
+        recovery.publicationId = fresh.context.find(item => item.text === recoveredFact).id
+        recovery.freshTaskRevision = fresh.revision
+        assert.ok(recovery.freshTaskRevision > recovery.capturedTaskRevision)
+        await writeApi(3)
+        remoteEndedRevision = owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).revision
+        assert.equal(requests, 8)
+      } finally {
+        restore()
+        await settled
+      }
+      assertAssignment()
+      return admission
     } else if (turn === 6 && step === 2) {
       await waitUntil('final local publication', () => localReports().length === 4)
       assert.equal(await readFile(join(root, 'final.ts'), 'utf8'), 'export const LOCAL_FINAL = true;\n')
@@ -208,7 +268,7 @@ export async function apply(ctx) {
       const localStatus = await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })
       await writeFile(join(process.cwd(), '.dsh/local-joint-audit.json'), JSON.stringify({
         state: state(), originalLocalCapture: localCapture.selection, localCapture: localStatus.capture.selection,
-        localCaptureCollecting: localStatus.capture.collecting, localAssignment: localStatus.assignment,
+        localCaptureCollecting: localStatus.capture.collecting, localAssignment: localStatus.assignment, recovery,
       }))
     }
     assertAssignment()
@@ -237,10 +297,26 @@ export async function apply(ctx) {
     } else if (currentTurn === 6) {
       assert.equal(remote.source.form, 'withdrawn')
       assert.ok(visible.every(message => !/REMOTE_API_V[123]/.test(body(message))))
+      assert.ok(body(local).includes(recoveredFact))
+      assert.ok(local.source.projection.taskRevision >= recovery.freshTaskRevision)
+      assert.ok(local.source.projection.selectedSources.some(source => source.kind === 'publication'
+        && source.taskId === task.id && source.revision === local.source.projection.taskRevision
+        && source.publicationId === recovery.publicationId))
+      assert.equal(options.messages.filter(message => message.id === recovery.messageId).length, 1)
+      assert.ok(![...activeAgent.inbox.nextTurn, ...activeAgent.inbox.nextStep].some(message => message.id === recovery.messageId))
       assert.deepEqual(state().automatic, localPolicy)
       assert.equal(state().mode, 'paused')
     } else assert.equal(remote, undefined)
     const events = activeAgent.session.snapshotEvents()
+    if (currentTurn === 6) {
+      assert.equal(events.filter(event => event.type === 'user/message' && event.data.id === recovery.messageId).length, 1)
+      if (currentStep === 1) {
+        assert.equal(requests, 9)
+        recovery.request = { turn: currentTurn, step: currentStep, ordinal: requests,
+          localContextSeq: events.findLast(event => event.type === 'user/message' && event.data.id === local.id).seq,
+          localProjection: local.source.projection, messageOccurrences: 1, pendingOccurrences: 0 }
+      }
+    }
     if (currentTurn === 2 || currentTurn === 4 || currentTurn === 5) {
       const exact = events.findLast(event => event.type === 'scope-agent-context/request')
       assert.equal(exact.data.turn, currentTurn)

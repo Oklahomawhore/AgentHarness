@@ -256,6 +256,79 @@ it('rechecks remote revocation after a slow local compute and preserves fresh lo
   expect((await f.status()).localTask).toEqual(f.target)
 })
 
+it.each(['remote departure', 'route replacement'] as const)('reads current facts for the original user request when %s interrupts local recovery', async (change) => {
+  const f = await fixture(8000, false, true)
+  const bound = await f.bind()
+  await f.run()
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockResolvedValueOnce({ status: 'unavailable' })
+  const entered = barrier(), release = barrier()
+  const compute = f.local.backend.compute.bind(f.local.backend)
+  let recoverySignal: AbortSignal | undefined
+  vi.spyOn(f.local.backend, 'compute').mockImplementation(async (input) => {
+    if (recoverySignal === undefined && input.maxContextBytes > 4000) {
+      recoverySignal = input.signal
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return await compute(input)
+  })
+  const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep this local work after remote departure' }] })
+  f.agent.followup(original)
+  await entered.promise
+  if (change === 'remote departure') {
+    await f.ctx.scopeAgentContext.leave({ agentId: f.agent.id, expectedBindingId: bound.binding!.id })
+  } else {
+    await f.ctx.scopeAgentContext.updateRoute({ agentId: f.agent.id, expectedBindingId: bound.binding!.id,
+      expectedReadStateSeq: (await f.status()).readStateSeq,
+      ownerAddress: f.invitation.ownerAddress.replace('/tcp/1/', '/tcp/2/') })
+  }
+  expect(recoverySignal?.aborted).toBe(true)
+  await f.local.tasks.publishContext({ taskId: f.task.id, participantId: f.local.participantId, text: 'LOCAL_AFTER_RECOVERY_CHANGE' })
+  release.resolve(undefined)
+  await f.agent.whenIdle()
+  expect(f.adapter.requests).toHaveLength(2)
+  const request = f.adapter.requests[1]!
+  expect(texts(request).join('\n')).toContain('LOCAL_AFTER_RECOVERY_CHANGE')
+  if (change === 'remote departure') expect(texts(request).join('\n')).not.toContain('REMOTE_INITIAL')
+  else expect(texts(request).join('\n')).toContain('REMOTE_INITIAL')
+  expect(request.messages.filter(message => message.id === original.id)).toHaveLength(1)
+  expect(f.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(1)
+  expect([...f.agent.inbox.nextTurn, ...f.agent.inbox.nextStep].some(message => message.id === original.id)).toBe(false)
+})
+
+it('retains the undispatched user claim once when the scope consumer is disposed during local recovery', async () => {
+  const f = await fixture()
+  await f.bind()
+  await f.run()
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockResolvedValueOnce({ status: 'unavailable' })
+  const entered = barrier(), release = barrier(), aborted = barrier()
+  const compute = f.local.backend.compute.bind(f.local.backend)
+  let recovering = false
+  vi.spyOn(f.local.backend, 'compute').mockImplementation(async (input) => {
+    if (!recovering && input.maxContextBytes > 4000) {
+      recovering = true
+      input.signal.addEventListener('abort', () => { aborted.resolve(undefined) }, { once: true })
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return await compute(input)
+  })
+  const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Retain my work when the scope consumer is removed' }] })
+  f.agent.followup(original)
+  await entered.promise
+  const entry = [...f.ctx.loader.entries()].find(value => value.options.name === 'cordis:fixture-combined')!
+  const disposing = entry.fiber!.dispose()
+  await aborted.promise
+  expect(f.ctx.agents.get(f.agent.id)).toBe(f.agent)
+  expect(f.ctx.developmentTaskContextAdmission.signal.aborted).toBe(false)
+  release.resolve(undefined)
+  await disposing
+  await f.agent.whenIdle()
+  expect(f.adapter.requests).toHaveLength(1)
+  expect([...f.agent.inbox.nextTurn, ...f.agent.inbox.nextStep].filter(message => message.id === original.id)).toEqual([original])
+  expect(f.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(0)
+})
+
 it('rejects implicit local selection and a stale local epoch without replacing the assignment', async () => {
   const f = await fixture()
   await expect(f.ctx.scopeAgentContext.bind({ agentId: f.agent.id, expectedBindingId: null,
