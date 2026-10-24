@@ -192,8 +192,18 @@ jobs:
         shell: pwsh
         run: node scripts/agentharness-pack-portable.mjs --skip-build --target win32-x64 --out "${{ runner.temp }}\agentharness-portable\win32-x64"
 
-      - name: Start the loopback release server
+      # This step owns the release process until downloads, checks, and cleanup finish.
+      - name: Install and verify the published Windows runtime
         shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}\agentharness-user-win
+          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
+          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
+          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
+          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
+          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
+          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
+          AGENTHARNESS_NO_OPEN: '1'
         run: |
           $Arguments = @(
             'scripts/agentharness-serve-lan-release.mjs',
@@ -204,79 +214,57 @@ jobs:
             '--advertise-host', '127.0.0.1',
             '--token', $env:AGENTHARNESS_RELEASE_TOKEN
           )
+          $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
+          $Failures = [System.Collections.Generic.List[System.Exception]]::new()
           $Release = Start-Process node -ArgumentList $Arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput '${{ runner.temp }}\agentharness-release-win.log' -RedirectStandardError '${{ runner.temp }}\agentharness-release-win.err.log'
-          Set-Content -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid' -Value $Release.Id
-          for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
+          try {
+            $Ready = $false
+            for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
+              if ($Release.HasExited) { throw 'Windows release server exited before readiness' }
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Out-Null
+                $Ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $Ready) { throw 'Windows release server did not become ready' }
+            New-Item -ItemType Directory -Force -Path "$env:HOME\.cursor" | Out-Null
+            Set-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Value '{}'
+            $OriginalCursorHash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash
+            Invoke-RestMethod "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Invoke-Expression
+            & $Command status
+            if ($LASTEXITCODE -ne 0) { throw 'status failed' }
+            & $Command restart
+            if ($LASTEXITCODE -ne 0) { throw 'restart failed' }
+            & $Command status
+            if ($LASTEXITCODE -ne 0) { throw 'status after restart failed' }
+            $Guide = & $Command mcp-guide | Out-String
+            if ($LASTEXITCODE -ne 0) { throw 'mcp-guide failed' }
+            if (-not $Guide.Contains('MCP setup is unsupported on Windows')) { throw 'MCP guide does not report unsupported Windows authentication' }
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash -ne $OriginalCursorHash) { throw 'Unsupported MCP setup changed Cursor configuration' }
+          } catch {
+            $Failures.Add($_.Exception)
+          } finally {
             try {
-              Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Out-Null
-              exit 0
+              if (Test-Path -LiteralPath $Command) {
+                & $Command stop
+                if ($LASTEXITCODE -ne 0) { throw 'runtime cleanup failed' }
+              }
             } catch {
-              Start-Sleep -Seconds 1
+              $Failures.Add($_.Exception)
+            }
+            try {
+              if (-not $Release.HasExited) { $Release.Kill() }
+              if (-not $Release.WaitForExit(10000)) { throw 'release server did not exit' }
+            } catch {
+              $Failures.Add($_.Exception)
+            } finally {
+              $Release.Dispose()
             }
           }
-          throw 'Windows release server did not become ready'
-
-      - name: Install through the published PowerShell command
-        shell: pwsh
-        env:
-          HOME: ${{ runner.temp }}\agentharness-user-win
-          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
-          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
-          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
-          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
-          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
-          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
-          AGENTHARNESS_NO_OPEN: '1'
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:HOME\.cursor" | Out-Null
-          Set-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Value '{}'
-          (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash | Set-Content -LiteralPath '${{ runner.temp }}\agentharness-cursor-win.sha256'
-          Invoke-RestMethod "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Invoke-Expression
-
-      - name: Verify installed runtime and unsupported MCP guidance
-        shell: pwsh
-        env:
-          HOME: ${{ runner.temp }}\agentharness-user-win
-          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
-          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
-          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
-          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
-          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
-          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
-          AGENTHARNESS_NO_OPEN: '1'
-        run: |
-          $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
-          & $Command status
-          if ($LASTEXITCODE -ne 0) { throw 'status failed' }
-          & $Command restart
-          if ($LASTEXITCODE -ne 0) { throw 'restart failed' }
-          & $Command status
-          if ($LASTEXITCODE -ne 0) { throw 'status after restart failed' }
-          $Guide = & $Command mcp-guide | Out-String
-          if ($LASTEXITCODE -ne 0) { throw 'mcp-guide failed' }
-          if (-not $Guide.Contains('MCP setup is unsupported on Windows')) { throw 'MCP guide does not report unsupported Windows authentication' }
-          $OriginalCursorHash = Get-Content -LiteralPath '${{ runner.temp }}\agentharness-cursor-win.sha256'
-          if ((Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash -ne $OriginalCursorHash) { throw 'Unsupported MCP setup changed Cursor configuration' }
-
-      - name: Stop Windows acceptance services
-        if: always()
-        shell: pwsh
-        env:
-          HOME: ${{ runner.temp }}\agentharness-user-win
-          LOCALAPPDATA: ${{ runner.temp }}\agentharness-local-win
-          DSH_HOME: ${{ runner.temp }}\agentharness-home-win
-          AGENTHARNESS_INSTALL_ROOT: ${{ runner.temp }}\agentharness-data-win\agentharness
-          AGENTHARNESS_RUNTIME_DIR: ${{ runner.temp }}\agentharness-state-win
-          AGENTHARNESS_BIN_DIR: ${{ runner.temp }}\agentharness-bin-win
-          AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
-          AGENTHARNESS_NO_OPEN: '1'
-        run: |
-          $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
-          if (Test-Path -LiteralPath $Command) { & $Command stop }
-          if (Test-Path -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid') {
-            $ReleasePid = [int](Get-Content -LiteralPath '${{ runner.temp }}\agentharness-release-win.pid')
-            Stop-Process -Id $ReleasePid -Force -ErrorAction SilentlyContinue
-          }
+          if ($Failures.Count -gt 0) { throw [System.AggregateException]::new('Windows portable acceptance failed', $Failures) }
 
       - uses: actions/upload-artifact@v4
         if: failure()
