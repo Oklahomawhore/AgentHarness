@@ -27,26 +27,15 @@ The following JSON contains authorized Task publications, explicitly permitted n
 const SUFFIX = '\n</development-task-context>'
 
 function modelPublication(publication: DevelopmentTaskContextPublication) {
-  const local = publication.localToolObservation
-  if (local !== undefined && publication.text.endsWith(`\n${JSON.stringify(local)}`)) {
-    const { localToolObservation: _local, ...withoutMirror } = publication
-    return withoutMirror
+  // The complete report remains byte-for-byte in text, including its trust warning.
+  for (const key of ['localToolObservation', 'localTurnOutcome', 'peerTurnOutcome', 'peerStopReport', 'peerToolObservation'] as const) {
+    const observation = publication[key]
+    if (observation !== undefined && publication.text.endsWith(`\n${JSON.stringify(observation)}`)) {
+      const { [key]: _observation, ...withoutMirror } = publication
+      return withoutMirror
+    }
   }
-  const localOutcome = publication.localTurnOutcome
-  if (localOutcome !== undefined && publication.text.endsWith(`\n${JSON.stringify(localOutcome)}`)) {
-    const { localTurnOutcome: _outcome, ...withoutMirror } = publication
-    return withoutMirror
-  }
-  const peerOutcome = publication.peerTurnOutcome
-  if (peerOutcome !== undefined && publication.text.endsWith(`\n${JSON.stringify(peerOutcome)}`)) {
-    const { peerTurnOutcome: _outcome, ...withoutMirror } = publication
-    return withoutMirror
-  }
-  const tool = publication.peerToolObservation
-  if (tool === undefined || !publication.text.endsWith(`\n${JSON.stringify(tool)}`)) return publication
-  // The complete observation remains byte-for-byte in text, including the report's trust warning.
-  const { peerToolObservation: _tool, ...withoutMirror } = publication
-  return withoutMirror
+  return publication
 }
 
 interface PublicationCandidate {
@@ -173,9 +162,11 @@ export function projectTaskContext(input: DevelopmentTaskContextInput, mode: 'or
       const observation = first.publication.peerToolObservation ?? first.publication.localToolObservation
       const answer = first.publication.peerTurnOutcome ?? first.publication.localTurnOutcome
       return { value: group, source: first.sourceGroup, publishedAt: group.publishedAt,
-        kind: group.terminal ? 'terminal' as const : observation?.kind === 'command-observation' ? 'command' as const
-          : answer !== undefined ? 'completed-answer' as const
-            : observation?.kind === 'tool-observation' ? 'file' as const : 'other' as const }
+        kind: group.terminal ? 'terminal' as const
+          : observation?.kind === 'command-observation' || observation?.kind === 'claude-command-observation' ? 'command' as const
+            : answer !== undefined ? 'completed-answer' as const
+              : first.publication.peerStopReport !== undefined ? 'stop-report' as const
+                : observation?.kind === 'tool-observation' ? 'file' as const : 'other' as const }
     }), admit)
   } else {
     for (const group of groups.sort((left, right) =>

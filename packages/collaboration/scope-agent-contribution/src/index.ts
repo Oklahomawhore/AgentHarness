@@ -1572,11 +1572,13 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const completions = this.sources[role].completed.get(id)
         if (completions !== undefined) for (const [seq, completion] of completions) {
           try {
-            const retained = completion.kind === 'turn' ? await this.finishTurn(completion)
-              : await this.finish(completion.pending, completion.event, completion.failed)
-            if (this.sources[role].completed.get(id) === completions) completions.delete(seq)
+            const retained = await (completion.kind === 'turn' ? this.finishTurn(completion)
+              : this.finish(completion.pending, completion.event, completion.failed))
+            completions.delete(seq)
             if (retained && (this.sources[role].collectionIssues.get(id) !== 'retention-limit'
-              || this.retainedSamples(domain) < this.config.maxLeases)) this.sources[role].collectionIssues.delete(id)
+              || this.retainedSamples(domain) + this.pendingReservations() < this.config.maxLeases)) {
+              this.sources[role].collectionIssues.delete(id)
+            }
             this.notify(domain, id)
           } catch (error) {
             if (aborted()) return

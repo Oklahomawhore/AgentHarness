@@ -19,7 +19,8 @@ import type {
 const hookSchema = z.object({
   session_id: z.string().min(1), hook_event_name: z.string().min(1), cwd: z.string().optional(), agent_id: z.string().optional(),
   tool_use_id: z.string().optional(), tool_name: z.string().optional(), tool_input: z.unknown().optional(),
-  tool_response: z.unknown().optional(), error: z.string().optional(),
+  tool_response: z.unknown().optional(), error: z.string().optional(), is_interrupt: z.boolean().optional(),
+  prompt_id: z.string().optional(), last_assistant_message: z.string().optional(), stop_hook_active: z.boolean().optional(),
 })
 const writeSchema = z.strictObject({ file_path: z.string().min(1), content: z.string() })
 const editSchema = z.strictObject({
@@ -30,11 +31,11 @@ const bashSchema = z.strictObject({
   run_in_background: z.boolean().optional(), dangerouslyDisableSandbox: z.boolean().optional(),
 })
 const knownEvents = new Set<ClaudeScopeHookEvent>([
-  'SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd',
+  'SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'Stop', 'StopFailure', 'SessionEnd',
 ])
 
 /**
- * Parse identity and supported event fields without retaining conversation payloads.
+ * Parse supported event fields, including Stop reports, without retaining prompts or transcript paths.
  * @param value - decoded external Hook JSON; its full byte bound belongs to the ingress.
  * @returns a main-session event or ignored event; throws for malformed identity or tool fields.
  */
@@ -42,24 +43,26 @@ export function parseClaudeScopeHook(value: unknown): ClaudeScopeHookInput {
   const parsed = hookSchema.parse(value)
   const event = knownEvents.has(parsed.hook_event_name as ClaudeScopeHookEvent)
     ? parsed.hook_event_name as ClaudeScopeHookEvent : 'ignored'
-  const toolEvent = event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure'
-  let tool: ClaudeScopeHookTool | undefined
-  if (toolEvent) {
+  const identity = {
+    sessionId: parsed.session_id,
+    ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
+    ...(parsed.agent_id === undefined ? {} : { agentId: parsed.agent_id }),
+    ...(parsed.prompt_id === undefined ? {} : { promptId: parsed.prompt_id }),
+    ...(event !== 'Stop' || parsed.last_assistant_message === undefined || parsed.stop_hook_active === undefined
+      ? {} : { stop: { text: parsed.last_assistant_message, active: parsed.stop_hook_active } }),
+  }
+  if (event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure') {
     if (!parsed.tool_use_id || !parsed.tool_name || parsed.tool_input === undefined) {
       throw new Error('claude-scope: tool hook requires tool_use_id, tool_name, and tool_input')
     }
-    tool = {
+    return { ...identity, event, tool: {
       id: parsed.tool_use_id, name: parsed.tool_name, input: parsed.tool_input,
       ...(parsed.tool_response === undefined ? {} : { response: parsed.tool_response }),
       ...(parsed.error === undefined ? {} : { error: parsed.error }),
-    }
+      ...(parsed.is_interrupt === undefined ? {} : { isInterrupt: parsed.is_interrupt }),
+    } }
   }
-  return {
-    sessionId: parsed.session_id, event,
-    ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
-    ...(parsed.agent_id === undefined ? {} : { agentId: parsed.agent_id }),
-    ...(tool === undefined ? {} : { tool }),
-  }
+  return { ...identity, event }
 }
 
 function omitted(reason: string): ClaudeScopeOmission { return { kind: 'omitted', reason } }
@@ -104,7 +107,7 @@ function prepared(toolName: ClaudeScopePreparedInput['toolName'], input: object,
  * @returns a normalized argument digest, or undefined for unsupported input.
  */
 export function claudeScopeToolArgumentDigest(tool: ClaudeScopeHookTool): string | undefined {
-  const schema = tool.name === 'Write' ? writeSchema : tool.name === 'Edit' ? editSchema : undefined
+  const schema = tool.name === 'Write' ? writeSchema : tool.name === 'Edit' ? editSchema : tool.name === 'Bash' ? bashSchema : undefined
   if (schema === undefined) return undefined
   const parsed = schema.safeParse(tool.input)
   return parsed.success ? createHash('sha256').update(JSON.stringify([tool.name, parsed.data])).digest('hex') : undefined
@@ -143,6 +146,7 @@ export async function authorizeClaudeScopeTool(
       const parsed = bashSchema.safeParse(tool.input)
       if (!parsed.success) return omitted('unsupported-tool-input')
       if (parsed.data.run_in_background === true) return omitted('background-tool')
+      if (parsed.data.dangerouslyDisableSandbox === true) return omitted('sandbox-bypass-tool')
       if (!policy.bashCommands.includes(parsed.data.command)) return omitted('command-outside-grant')
       const path = await scopedPath(cwd, policy)
       if (path === undefined) return omitted('cwd-outside-grant')
@@ -173,14 +177,14 @@ export function renderClaudeScopeObservation(
   const omissions: string[] = []
   const candidates: [string, string | number | boolean][] = []
   if (failure) {
-    if (input.tool?.error === undefined) omissions.push('unsupported-error-output')
+    if (input.tool.error === undefined) omissions.push('unsupported-error-output')
     else candidates.push(['error', input.tool.error])
   } else {
     for (const [key, value] of [['content', content], ['oldString', oldString], ['newString', newString]] as const) {
       if (value !== undefined) candidates.push([key, value])
     }
     if (authorized.toolName === 'Bash') {
-      const response = z.object({ stdout: z.string(), stderr: z.string(), interrupted: z.boolean() }).safeParse(input.tool?.response)
+      const response = z.object({ stdout: z.string(), stderr: z.string(), interrupted: z.boolean() }).safeParse(input.tool.response)
       if (response.success) candidates.push(['stdout', response.data.stdout], ['stderr', response.data.stderr], ['interrupted', response.data.interrupted])
       else omissions.push('unsupported-tool-response')
     }
@@ -218,8 +222,7 @@ export function renderClaudeScopeToolContribution(
   if (input.event !== 'PostToolUse' && input.event !== 'PostToolUseFailure') return omitted('not-tool-completion')
   if (authorized.toolName !== 'Write' && authorized.toolName !== 'Edit') return omitted('unsupported-contribution-tool')
   const { rootIndex, path, replaceAll } = authorized.fields
-  if (typeof rootIndex !== 'number' || typeof path !== 'string'
-    || (authorized.toolName === 'Edit' && typeof replaceAll !== 'boolean')) return omitted('unsupported-tool-input')
+  if (authorized.toolName === 'Edit' && typeof replaceAll !== 'boolean') return omitted('unsupported-tool-input')
   const failure = input.event === 'PostToolUseFailure'
   type Field = DevelopmentTaskToolObservationResult['omissions'][number]
   const body: Field[] = authorized.toolName === 'Write' ? ['content'] : ['oldString', 'newString']
@@ -227,7 +230,7 @@ export function renderClaudeScopeToolContribution(
   const values: Record<Field, string | undefined> = { content: undefined, oldString: undefined, newString: undefined, error: undefined }
   const candidates: [Field, string][] = []
   if (failure) {
-    if (input.tool?.error !== undefined) { candidates.push(['error', input.tool.error]); omissions.push('error') }
+    if (input.tool.error !== undefined) { candidates.push(['error', input.tool.error]); omissions.push('error') }
   } else {
     for (const field of body) {
       const value = authorized.fields[field]

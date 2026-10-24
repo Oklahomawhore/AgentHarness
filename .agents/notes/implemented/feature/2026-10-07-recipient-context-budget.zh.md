@@ -33,3 +33,5 @@ Status: implemented
 不同配置容量可以传递有界且有用的事实，无需人工选择上下文。这不保证完整覆盖、模型理解，也不保证针对遗漏事实的行动成功。原生消费者要求 peer 支持有界协议；已有持久投影仍按原义读取，不重写任何 Session 代际。
 
 [预算访问测试](../../../../packages/collaboration/scope-access/tests/budget-read.spec.ts)负责提议额度与无效响应；[组合准入测试](../../../../packages/collaboration/scope-agent-context/tests/composite-context.spec.ts)负责本地职责和完整字节计算。正式 profile 的 SDK 及浏览器场景负责实际请求和文件效果证据。跨设备加入、被动接收覆盖展示及真实模型协作质量仍需分别验证。
+
+[大历史编码读取用例](../../../../packages/collaboration/scope-access/tests/encoded-read.spec.ts) 在各自的 setup 中准备完整接纳历史。准备与读取断言分别使用既有 hook 和测试预算；样本数、wire 上限和完整来源归属保持不变。

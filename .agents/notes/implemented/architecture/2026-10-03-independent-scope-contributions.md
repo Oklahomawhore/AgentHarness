@@ -36,4 +36,8 @@ The independent workflow automatically contributes bounded source observations a
 
 Committed Task generations and existing SQLite tables retain their identities. New peer publications have canonical serialization for context hashes and restore. Ending a grant removes current injected evidence; it cannot retract bytes already sent, erase historical requests, or prove that a model has forgotten them.
 
+[Publication reconstruction checks](../../../../packages/collaboration/development-task/tests/publication-projection.spec.ts) compare copied publications with their original samples, preserving absent fields, failure evidence and optional artifact identifiers. Independently parsed permissions and reports must agree before receipt derivation; terminal notices cannot become samples. Observation selection retains the greatest sequence even when older publications arrive later.
+
+[Contribution lifecycle checks](../../../../packages/collaboration/scope-access/tests/contribution-lifecycle.spec.ts) cover denied or expired approval, concurrently retained or ended grants, complete inventory response budgets, request/reply correlation, caller cancellation, inbound capacity, and expiry persistence failure during disposal.
+
 The client-safe Task DTO entry loads Cordis types before declaring its event extensions. A type-only empty export survives declaration emit and is erased from JavaScript; an empty type import does not preserve that ordering in declaration consumers. The NodeNext artifact check compiles a separate DTO-first consumer so broader service imports cannot hide missing Context extensions.

@@ -249,14 +249,17 @@ const recordSchema: z.ZodType<NativeSourceRecord> = z.union([legacyRecord,
   }
   const seen = new Set<number>()
   try {
-    if (record.capture === null && record.samples.length !== 0) throw new Error('samples have no source permission')
+    const capture = record.capture
+    if (capture === null) {
+      if (record.samples.length !== 0) throw new Error('samples have no source permission')
+      return
+    }
     for (const sample of record.samples) {
-      if (record.capture === null) throw new Error('sample has no capture')
-      validateNativeSample(record.agentId, sample, record.capture)
+      validateNativeSample(record.agentId, sample, capture)
       if (seen.has(sample.sample.sequence)) throw new Error('sample sequence is duplicated')
       seen.add(sample.sample.sequence)
     }
-    const plan = record.capture?.initialization?.plan
+    const plan = capture.initialization?.plan
     if (plan != null
       && record.samples.filter(item => 'kind' in item.sample.result && item.sample.result.version === 2).length !== plan.sources.length) {
       throw new Error('initialization plan lacks its complete original outbox')

@@ -142,9 +142,11 @@ const recordSchema: z.ZodType<LocalSourceRecord> = z.union([
   const capture = record.capture
   const seen = new Set<number>()
   try {
-    if (capture === null && record.samples.length !== 0) throw new Error('local samples have no capture')
+    if (capture === null) {
+      if (record.samples.length !== 0) throw new Error('local samples have no capture')
+      return
+    }
     for (const item of record.samples) {
-      if (capture === null) throw new Error('local sample has no capture')
       if (item.turnProof !== undefined) {
         const id = turnOutcomeId('local', record.agentId, capture.grant, item.turnProof)
         const source = capture.grant.source

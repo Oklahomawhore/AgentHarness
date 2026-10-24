@@ -37,7 +37,7 @@ export interface ScopeJoint {
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 
 /** Strict new consent; a legacy record never acquires joint receiving by normalization. */
-export const jointSchema: z.ZodType<ScopeJoint> = z.object({
+const jointRecord = z.object({
   id: z.string().min(1).transform(value => value as ClaudeScopeJointId),
   proposal: peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes' && value.source.kind !== 'native-work'),
   entry: contributionEntrySchema.refine(value => value.sourceKind !== 'completed-turn-outcomes' && value.sourceKind !== 'native-work'), limits: contributionLimitsSchema,
@@ -75,3 +75,10 @@ export const jointSchema: z.ZodType<ScopeJoint> = z.object({
     context.addIssue({ code: 'custom', message: 'joint consent, original capture, and selected permissions disagree' })
   }
 })
+
+/** Session generation 2 does not acquire later Claude-work consent. */
+export const jointSchema: z.ZodType<ScopeJoint> = jointRecord.refine(value => value.proposal.source.kind !== 'claude-work'
+  && value.entry.sourceKind !== 'claude-work' && value.contributionInvitation?.grant.source.kind !== 'claude-work')
+
+/** Generation 3 retains explicit Claude-work consent with the same joint associations. */
+export const workJointSchema: z.ZodType<ScopeJoint> = jointRecord

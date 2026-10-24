@@ -61,6 +61,22 @@ async function storedLocal(owner: TestHost, id: string) {
   return nativeLocalContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
 
+it('rejects restored local samples whose permission, execution or admitted receipt was substituted', async () => {
+  const { owner, a } = await fixture()
+  await run(owner, a, [toolCallResponse('local-receipt-proof', 'write', { file_path: 'receipt.txt', content: 'ORIGINAL' })])
+  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.pendingSamples).toBe(0)
+  const row = await storedLocal(owner, a.id)
+  const sample = row.samples[0]
+  if (sample?.receipt === undefined || sample.turnProof !== undefined) throw new Error('Missing admitted local tool sample')
+  const schema = nativeLocalContributionDomain.tables.sessions.valueSchema
+  expect(schema.safeParse(row).success).toBe(true)
+  expect(schema.safeParse({ ...row, capture: null }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, captureGeneration: 'different-generation' }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, captureId: 'different-capture' } }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, sourceId: '0'.repeat(64) } }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, payloadDigest: '0'.repeat(64) } }] }).success).toBe(false)
+})
+
 describe('owner-local native source with an independently authorized remote Agent', () => {
   it.each(['native', 'ptc'] as const)('exchanges real %s work in both directions and withdraws only the stopped local capture', async (mode) => {
     const { owner, remote, a, b, task, capture } = await fixture(mode)

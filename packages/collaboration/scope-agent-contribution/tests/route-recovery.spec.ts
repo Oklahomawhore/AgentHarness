@@ -28,7 +28,8 @@ async function stored(source: TestHost, id: SessionId) {
   return nativeContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
 
-async function fixture(approve = true, joint = false) {
+async function fixture(approve = true, joint = false,
+  sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' = 'tool-observations') {
   const network = new TestNetwork()
   const owner = await createHost(network, 'owner', 'native', { ownerLocal: true,
     peerId: '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy' as ScopePeerId })
@@ -49,13 +50,16 @@ async function fixture(approve = true, joint = false) {
     return await request(target, ...args)
   }
   vi.spyOn(source.transport, 'request').mockImplementation(routedRequest)
-  const entry = (await owner.ctx.scopeAccess.createContributionEntry({ sourceKind: 'tool-observations', taskId: task.id,
+  const entry = (await owner.ctx.scopeAccess.createContributionEntry({ sourceKind, taskId: task.id,
     ownerAddress: address, expiresAt: Date.now() + 50_000, ...(joint ? { participation: 'join' as const } : {}) })).entry
   const limits = { expiresAt: Date.now() + 50_000, maxSamples: 16, maxSampleBytes: 8192 }
   const read = joint ? await source.ctx.scopeAgentContext.status({ agentId: agent.id }) : undefined
   if (read !== undefined && read.eligibility !== 'eligible') throw new Error('Source is not eligible for reading')
+  const permission = sourceKind === 'tool-observations' ? { roots: [allowed], tools: ['write', 'edit'] as ('write' | 'edit')[] }
+    : sourceKind === 'completed-turn-outcomes' ? { sourceKind }
+      : { sourceKind, roots: [], tools: [], commands: [], completedTurns: true }
   const requested = await source.ctx.scopeAgentContributions.request({ agentId: agent.id, expectedCapture: null,
-    entry, roots: [allowed], tools: ['write', 'edit'], limits,
+    entry, ...permission, limits,
     ...(read === undefined ? {} : { receive: { expectedReadStateSeq: read.readStateSeq } }) })
   if (requested.capture === null) throw new Error('Missing source capture')
   const selection = requested.capture.selection
@@ -81,6 +85,29 @@ async function fixture(approve = true, joint = false) {
   return { network, owner, source, task, agent, allowed, entry, limits, selection, originalAddress, status,
     changeRoute, recover, routedRequest }
 }
+
+const receivingSources = ['tool-observations', 'completed-turn-outcomes', 'native-work'] as const
+it.each(receivingSources)('restores %s receiving continuations only with matching route and departure intent', async (sourceKind) => {
+  const f = await fixture(false, true, sourceKind)
+  const row = await stored(f.source, f.agent.id)
+  const capture = row.capture
+  if (capture?.receiving === undefined) throw new Error('Missing joint consent')
+  const receiving = { ...capture.receiving, intent: 'cancel-pending' as const, leaveAdopted: false }
+  const continuation = { proposal: capture.proposal, entry: capture.entry, limits: capture.limits, receiving }
+  const detached = { ...row, capture: null, samples: [], receivingContinuation: continuation }
+  const schema = nativeContributionDomain.tables.sessions.valueSchema
+  expect(schema.safeParse(detached).success).toBe(true)
+  expect(schema.safeParse({ ...row, receivingContinuation: continuation }).success).toBe(false)
+  expect(schema.safeParse({ ...row, capture: { ...capture, routeRevision: 1 } }).success).toBe(false)
+  const mismatchedRoute = { ownerAddress: capture.entry.ownerAddress + '/other', expectedReadStateSeq: receiving.expectedReadStateSeq }
+  expect(schema.safeParse({ ...row, capture: { ...capture,
+    receiving: { ...receiving, routeRecovery: mismatchedRoute } } }).success).toBe(false)
+  for (const changed of [
+    { ...continuation, entry: { ...continuation.entry, kind: 'contribution-entry' } },
+    { ...continuation, receiving: { ...receiving, intent: 'adopt' } },
+    { ...continuation, receiving: { ...receiving, routeRecovery: mismatchedRoute } },
+  ]) expect(schema.safeParse({ ...detached, receivingContinuation: changed }).success).toBe(false)
+})
 
 it('retries an already admitted report through the new route without a second publication or changed permission', async () => {
   const f = await fixture()

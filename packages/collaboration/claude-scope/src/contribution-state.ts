@@ -59,7 +59,9 @@ const contributionRecord = z.object({
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((value, context) => {
   const source = value.source
-  const allowed = 'kind' in source ? value.policy.roots.length > 0 && value.policy.roots.every(isAbsolute)
+  const allowed = 'kind' in source ? value.policy.roots.every(isAbsolute)
+    && (value.policy.roots.length > 0 || (source.kind === 'claude-work' && source.tools.length === 0 && source.commands.length === 0))
+    && (source.kind !== 'claude-work' || source.commands.every(command => command.rootIndex < value.policy.roots.length))
     : isAbsolute(source.filePath) && value.policy.roots.some((root) => {
       const suffix = relative(root, source.filePath)
       return isAbsolute(root) && suffix !== '' && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`)
@@ -76,13 +78,16 @@ const contributionRecord = z.object({
 
 /** Historical rows retain their original single-entry parser. */
 export const contributionSchema: z.ZodType<ScopeContribution> = contributionRecord.superRefine((value, context) => {
-  if (value.application?.entry.kind === 'scope-group-entry') {
+  if (('kind' in value.source && value.source.kind === 'claude-work') || value.application?.entry.kind === 'scope-group-entry') {
     context.addIssue({ code: 'custom', message: 'legacy contribution does not support reusable joint entries' })
   }
 })
 
 /** Group entries require the containing version-2 Session's separately validated consent. */
-export const jointContributionSchema: z.ZodType<ScopeContribution> = contributionRecord
+export const jointContributionSchema: z.ZodType<ScopeContribution> = contributionRecord.refine(value => !('kind' in value.source) || value.source.kind !== 'claude-work')
+
+/** Session generation 3 explicitly accepts Claude command and Stop-report consent. */
+export const workContributionSchema: z.ZodType<ScopeContribution> = contributionRecord
 
 /** Complete original sample is parsed without manufacturing a Task binding or node identity. */
 export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.object({

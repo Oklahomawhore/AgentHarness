@@ -215,7 +215,7 @@ function activationWithdrawal({ publication }: WithdrawalNotice) {
   }
 }
 
-/** Projects OpenAPI artifacts; unsupported current completed replies block recipient-evidence delivery. */
+/** Projects OpenAPI artifacts; unsupported current answer reports block recipient-evidence delivery. */
 export default class FactsDevelopmentTaskContextBackend extends DevelopmentTaskContextBackend {
   static Config = Config
   readonly identity: { readonly id: string; readonly revision: string }
@@ -249,7 +249,7 @@ export default class FactsDevelopmentTaskContextBackend extends DevelopmentTaskC
         const typed = publicationObservation(publication)
         if (isTerminalPublication(publication)) notices.push({ source, publication })
         else if (typed === undefined) {
-          const outcome = publication.peerTurnOutcome ?? publication.localTurnOutcome
+          const outcome = publication.peerTurnOutcome ?? publication.localTurnOutcome ?? publication.peerStopReport
           const reason = publicationInterval(publication) !== undefined && ended.has(publicationInterval(publication)) ? 'withdrawn'
             : outcome !== undefined && isSelfPublished(publication, input.recipient) ? 'self-published' : 'unsupported'
           excluded.push({ source, reason })

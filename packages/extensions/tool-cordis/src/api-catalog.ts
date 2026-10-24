@@ -5095,7 +5095,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ClaudeScopeContributionSource',
-    declaration: 'export type ClaudeScopeContributionSource = ClaudeScopeOpenApiSource | {\n    readonly kind: \'tool-observations\';\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n};',
+    declaration: 'export type ClaudeScopeContributionSource = ClaudeScopeOpenApiSource | {\n    readonly kind: \'tool-observations\';\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n} | {\n    readonly kind: \'claude-work\';\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n    readonly commands: readonly {\n        readonly command: string;\n        readonly rootIndex: number;\n    }[];\n    readonly stopReports: boolean;\n};',
   },
   {
     name: 'ClaudeScopeHookOutput',
@@ -5650,6 +5650,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DevelopmentTaskCheckoutResult {\n    readonly assignment: DevelopmentTaskAssignment;\n    readonly context: DevelopmentTaskContextView;\n    readonly runtime: {\n        readonly targetJoined: boolean;\n        readonly previousLeft: boolean;\n        readonly warnings: readonly string[];\n    };\n}',
   },
   {
+    name: 'DevelopmentTaskClaudeCommandObservationResult',
+    declaration: 'export interface DevelopmentTaskClaudeCommandObservationResult {\n    readonly kind: \'claude-command-observation\';\n    readonly version: 7;\n    readonly tool: \'Bash\';\n    readonly hookEvent: \'PostToolUse\' | \'PostToolUseFailure\';\n    readonly fields: {\n        readonly rootIndex: number;\n        readonly command: string;\n        readonly stdout?: string;\n        readonly stderr?: string;\n        readonly interrupted?: boolean;\n        readonly error?: string;\n    };\n    readonly omissions: readonly (\'stdout\' | \'stderr\' | \'error\' | \'unsupported-tool-response\')[];\n}',
+  },
+  {
+    name: 'DevelopmentTaskClaudeStopReportResult',
+    declaration: 'export interface DevelopmentTaskClaudeStopReportResult {\n    readonly kind: \'claude-stop-report\';\n    readonly version: 7;\n    readonly text: string;\n    readonly sha256: string;\n    readonly stopHookActive: boolean;\n}',
+  },
+  {
+    name: 'DevelopmentTaskClaudeWorkSource',
+    declaration: 'export interface DevelopmentTaskClaudeWorkSource {\n    readonly kind: \'claude-work\';\n    readonly version: 7;\n    readonly name: string;\n    readonly tools: readonly (\'Write\' | \'Edit\')[];\n    readonly commands: readonly DevelopmentTaskCommandSelector[];\n    readonly stopReports: boolean;\n}',
+  },
+  {
     name: 'DevelopmentTaskClearRequest',
     declaration: 'export interface DevelopmentTaskClearRequest {\n    readonly bindingId: DevelopmentTaskBindingId;\n    readonly participantId: DevelopmentParticipantId;\n    readonly expectedBindingEpoch?: {\n        readonly nodeId: DevelopmentNodeId;\n        readonly seq: number;\n    };\n}',
   },
@@ -5723,7 +5735,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContextPublication',
-    declaration: 'export type DevelopmentTaskContextPublication = {\n    readonly id: string;\n    readonly text: string;\n    readonly uri?: string;\n    readonly publishedAt: number;\n} & ({\n    readonly publishedBy: DevelopmentParticipantId;\n    readonly observation?: DevelopmentTaskOpenApiObservation;\n    readonly observedIntervalId?: DevelopmentTaskObservedIntervalId;\n    readonly observedIntervalEnded?: true;\n    readonly peerContribution?: never;\n    readonly peerObservation?: never;\n    readonly peerToolObservation?: never;\n    readonly peerTurnOutcome?: never;\n    readonly localContribution?: never;\n    readonly localToolObservation?: never;\n    readonly localTurnOutcome?: never;\n} | {\n    readonly publishedBy?: never;\n    readonly observation?: never;\n    readonly observedIntervalId?: never;\n    readonly observedIntervalEnded?: never;\n    readonly peerContribution: DevelopmentTaskPeerContributionMetadata;\n    readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation;\n    readonly peerToolObservation?: DevelopmentTaskPeerToolObservation;\n    readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome;\n    readonly localContribution?: never;\n    readonly localToolObservation?: never;\n    readonly localTurnOutcome?: never;\n} | {\n    readonly publishedBy: DevelopmentParticipantId;\n    readonly observation?: never;\n    readonly observedIntervalId?: never;\n    readonly observedIntervalEnded?: never;\n    readonly peerContribution?: never;\n    readonly peerObservation?: never;\n    readonly p /* …truncated — full shape in source */',
+    declaration: 'export type DevelopmentTaskContextPublication = {\n    readonly id: string;\n    readonly text: string;\n    readonly uri?: string;\n    readonly publishedAt: number;\n} & ({\n    readonly publishedBy: DevelopmentParticipantId;\n    readonly observation?: DevelopmentTaskOpenApiObservation;\n    readonly observedIntervalId?: DevelopmentTaskObservedIntervalId;\n    readonly observedIntervalEnded?: true;\n    readonly peerContribution?: never;\n    readonly peerObservation?: never;\n    readonly peerToolObservation?: never;\n    readonly peerTurnOutcome?: never;\n    readonly peerStopReport?: never;\n    readonly localContribution?: never;\n    readonly localToolObservation?: never;\n    readonly localTurnOutcome?: never;\n} | {\n    readonly publishedBy?: never;\n    readonly observation?: never;\n    readonly observedIntervalId?: never;\n    readonly observedIntervalEnded?: never;\n    readonly peerContribution: DevelopmentTaskPeerContributionMetadata;\n    readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation;\n    readonly peerToolObservation?: DevelopmentTaskPeerToolObservation;\n    readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome;\n    readonly peerStopReport?: DevelopmentTaskPeerStopReport;\n    readonly localContribution?: never;\n    readonly localToolObservation?: never;\n    readonly localTurnOutcome?: never;\n} | {\n    readonly publishedBy: DevelopmentParticipantId;\n    readonly observation?: never;\n    readonly observedIntervalId?: never;\n    readonly observedIntervalEnded?:  /* …truncated — full shape in source */',
   },
   {
     name: 'DevelopmentTaskContextSourceRef',
@@ -5747,7 +5759,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContributionSource',
-    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource;',
+    declaration: 'export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource | DevelopmentTaskClaudeWorkSource;',
   },
   {
     name: 'DevelopmentTaskCreateRequest',
@@ -5939,7 +5951,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskPeerContributionObservationResult',
-    declaration: 'export type DevelopmentTaskPeerContributionObservationResult = DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult;',
+    declaration: 'export type DevelopmentTaskPeerContributionObservationResult = DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult | DevelopmentTaskClaudeStopReportResult;',
   },
   {
     name: 'DevelopmentTaskPeerContributionReceipt',
@@ -5958,12 +5970,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type DevelopmentTaskPeerOpenApiObservation = Omit<DevelopmentTaskOpenApiObservationIdentity, \'grantId\'> & DevelopmentTaskOpenApiObservationResult & {\n    readonly grantId: DevelopmentTaskContributionGrantId;\n    readonly observerPeerId: ScopePeerId;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly capture: {\n        readonly id: DevelopmentTaskCaptureId;\n        readonly generation: DevelopmentTaskCaptureGeneration;\n    };\n};',
   },
   {
+    name: 'DevelopmentTaskPeerStopReport',
+    declaration: 'export type DevelopmentTaskPeerStopReport = DevelopmentTaskClaudeStopReportResult & {\n    readonly sourceName: string;\n    readonly grantId: DevelopmentTaskContributionGrantId;\n    readonly sequence: number;\n    readonly observerPeerId: ScopePeerId;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly capture: {\n        readonly id: DevelopmentTaskCaptureId;\n        readonly generation: DevelopmentTaskCaptureGeneration;\n    };\n};',
+  },
+  {
     name: 'DevelopmentTaskPeerToolObservation',
     declaration: 'export type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResult & {\n    readonly sourceName: string;\n    readonly grantId: DevelopmentTaskContributionGrantId;\n    readonly sequence: number;\n    readonly observerPeerId: ScopePeerId;\n    readonly sourceId: DevelopmentTaskObservedSourceId;\n    readonly capture: {\n        readonly id: DevelopmentTaskCaptureId;\n        readonly generation: DevelopmentTaskCaptureGeneration;\n    };\n};',
   },
   {
     name: 'DevelopmentTaskPeerToolObservationResult',
-    declaration: 'export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskLocalToolObservationResult | DevelopmentTaskRecordedToolObservationResult;',
+    declaration: 'export type DevelopmentTaskPeerToolObservationResult = DevelopmentTaskLocalToolObservationResult | DevelopmentTaskRecordedToolObservationResult | DevelopmentTaskClaudeCommandObservationResult;',
   },
   {
     name: 'DevelopmentTaskPeerTurnOutcome',
@@ -7351,7 +7367,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionEntryRequest',
-    declaration: 'export interface ScopeContributionEntryRequest {\n    readonly participation?: \'join\' | \'contribution\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\';\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n}',
+    declaration: 'export interface ScopeContributionEntryRequest {\n    readonly participation?: \'join\' | \'contribution\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\' | \'claude-work\';\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n}',
   },
   {
     name: 'ScopeContributionEntryResult',
@@ -7371,7 +7387,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionInvitation',
-    declaration: 'export interface ScopeContributionInvitation {\n    readonly version: 1;\n    readonly kind: \'openapi-contribution\' | \'tool-contribution\' | \'turn-contribution\' | \'native-work-contribution\';\n    readonly ownerAddress: string;\n    readonly grant: DevelopmentTaskPeerContributionGrant;\n}',
+    declaration: 'export interface ScopeContributionInvitation {\n    readonly version: 1;\n    readonly kind: \'openapi-contribution\' | \'tool-contribution\' | \'turn-contribution\' | \'native-work-contribution\' | \'claude-work-contribution\';\n    readonly ownerAddress: string;\n    readonly grant: DevelopmentTaskPeerContributionGrant;\n}',
   },
   {
     name: 'ScopeContributionLimits',
@@ -7399,7 +7415,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeContributionTransfer',
-    declaration: 'export type ScopeContributionTransfer = {\n    readonly version: 1;\n    readonly kind: \'openapi-contribution-request\' | \'tool-contribution-request\' | \'turn-contribution-request\' | \'native-work-contribution-request\';\n    readonly proposal: ScopeContributionProposal;\n} | ScopeContributionInvitation | ScopeContributionEntry;',
+    declaration: 'export type ScopeContributionTransfer = {\n    readonly version: 1;\n    readonly kind: \'openapi-contribution-request\' | \'tool-contribution-request\' | \'turn-contribution-request\' | \'native-work-contribution-request\' | \'claude-work-contribution-request\';\n    readonly proposal: ScopeContributionProposal;\n} | ScopeContributionInvitation | ScopeContributionEntry;',
   },
   {
     name: 'Scoped',
@@ -7439,11 +7455,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeGroupEntry',
-    declaration: 'export interface ScopeGroupEntry {\n    readonly version: 2;\n    readonly kind: \'scope-group-entry\';\n    readonly sourceKind: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\';\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+    declaration: 'export interface ScopeGroupEntry {\n    readonly version: 2;\n    readonly kind: \'scope-group-entry\';\n    readonly sourceKind: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\' | \'claude-work\';\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
   },
   {
     name: 'ScopeGroupEntryRequest',
-    declaration: 'export interface ScopeGroupEntryRequest {\n    readonly sourceKind?: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\';\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
+    declaration: 'export interface ScopeGroupEntryRequest {\n    readonly sourceKind?: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\' | \'claude-work\';\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n    readonly maxMembers: number;\n}',
   },
   {
     name: 'ScopeGroupEntryResult',
@@ -7499,7 +7515,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScopeSingleContributionEntry',
-    declaration: 'export type ScopeSingleContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\';\n});',
+    declaration: 'export type ScopeSingleContributionEntry = {\n    readonly version: 1;\n    readonly entryId: ScopeContributionEntryId;\n    readonly taskId: DevelopmentTaskId;\n    readonly ownerPeerId: ScopePeerId;\n    readonly ownerAddress: string;\n    readonly expiresAt: number;\n} & ({\n    readonly kind: \'openapi-contribution-entry\';\n    readonly sourceKind?: never;\n} | {\n    readonly kind: \'contribution-entry\';\n    readonly sourceKind: \'openapi\' | \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\' | \'claude-work\';\n} | {\n    readonly kind: \'scope-join-entry\';\n    readonly sourceKind: \'tool-observations\' | \'completed-turn-outcomes\' | \'native-work\' | \'claude-work\';\n});',
   },
   {
     name: 'ScopeSubscription',

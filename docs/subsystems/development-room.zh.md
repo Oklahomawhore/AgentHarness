@@ -207,7 +207,7 @@ interface ClaudeScopeSessionSummary {
 /** Main-session events participating in capture or request-time delivery. */
 type ClaudeScopeHookEvent =
   | 'SessionStart' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
-  | 'UserPromptSubmit' | 'PostToolBatch' | 'SessionEnd' | 'ignored'
+  | 'UserPromptSubmit' | 'PostToolBatch' | 'Stop' | 'StopFailure' | 'SessionEnd' | 'ignored'
 ```
 
 ```ts type-equiv
@@ -218,18 +218,22 @@ interface ClaudeScopeHookTool {
   readonly input: unknown
   readonly response?: unknown
   readonly error?: string
+  readonly isInterrupt?: boolean
 }
 ```
 
 ```ts type-equiv
-/** Hook identity with prompt, transcript, and batch payloads deliberately absent. */
-interface ClaudeScopeHookInput {
+/** Parsed Hook identity and sampled Stop text; tool events require their parsed tool fields. */
+type ClaudeScopeHookInput = {
   readonly sessionId: string
-  readonly event: ClaudeScopeHookEvent
   readonly cwd?: string
   readonly agentId?: string
-  readonly tool?: ClaudeScopeHookTool
-}
+  readonly promptId?: string
+  readonly stop?: { readonly text: string; readonly active: boolean }
+} & {
+  [Event in ClaudeScopeHookEvent]: { readonly event: Event } & (Event extends 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
+    ? { readonly tool: ClaudeScopeHookTool } : { readonly tool?: never })
+}[ClaudeScopeHookEvent]
 ```
 
 ```ts type-equiv
@@ -238,7 +242,7 @@ interface ClaudeScopePreparedInput {
   readonly kind: 'eligible'
   readonly inputDigest: string
   readonly toolName: 'Edit' | 'Write' | 'Bash'
-  readonly fields: Readonly<Record<string, string | number | boolean>>
+  readonly fields: Readonly<Record<string, string | number | boolean>> & { readonly rootIndex: number; readonly path: string }
 }
 ```
 
@@ -374,7 +378,7 @@ type ScopeSession = {
   readonly readRevision?: undefined
   readonly joint?: undefined
 } | {
-  readonly version: 2
+  readonly version: 2 | 3
   readonly readRevision: number
   readonly joint?: ScopeJoint | undefined
 })
@@ -536,6 +540,7 @@ type DevelopmentTaskContextPublication = {
     readonly peerObservation?: never
     readonly peerToolObservation?: never
     readonly peerTurnOutcome?: never
+    readonly peerStopReport?: never
     readonly localContribution?: never
     readonly localToolObservation?: never
     readonly localTurnOutcome?: never
@@ -549,6 +554,7 @@ type DevelopmentTaskContextPublication = {
     readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation
     readonly peerToolObservation?: DevelopmentTaskPeerToolObservation
     readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome
+    readonly peerStopReport?: DevelopmentTaskPeerStopReport
     readonly localContribution?: never
     readonly localToolObservation?: never
     readonly localTurnOutcome?: never
@@ -562,6 +568,7 @@ type DevelopmentTaskContextPublication = {
     readonly peerObservation?: never
     readonly peerToolObservation?: never
     readonly peerTurnOutcome?: never
+    readonly peerStopReport?: never
     readonly localContribution: DevelopmentTaskLocalContributionMetadata
     readonly localToolObservation?: DevelopmentTaskLocalToolObservation
     readonly localTurnOutcome?: DevelopmentTaskLocalTurnOutcome
@@ -1837,7 +1844,7 @@ interface DevelopmentTaskNativeWorkSource {
 type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
-  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
+  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource | DevelopmentTaskClaudeWorkSource
 ```
 
 ```ts type-equiv
@@ -2277,7 +2284,7 @@ type ScopeContributionProposal = Pick<DevelopmentTaskPeerContributionGrant,
 ```ts type-equiv
 /** Versioned text representations that an authenticated local UI can preview before granting permission. */
 type ScopeContributionTransfer =
-  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request' | 'native-work-contribution-request'; readonly proposal: ScopeContributionProposal }
+  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request' | 'native-work-contribution-request' | 'claude-work-contribution-request'; readonly proposal: ScopeContributionProposal }
   | ScopeContributionInvitation
   | ScopeContributionEntry
 ```
@@ -2344,7 +2351,7 @@ type ScopeContributionManagementErrorCode =
 /** Separate write invitation; a read invitation cannot be promoted into contribution authority. */
 interface ScopeContributionInvitation {
   readonly version: 1
-  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution' | 'native-work-contribution'
+  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution' | 'native-work-contribution' | 'claude-work-contribution'
   readonly ownerAddress: string
   readonly grant: DevelopmentTaskPeerContributionGrant
 }
@@ -2410,8 +2417,8 @@ type ScopeSingleContributionEntry = {
   readonly expiresAt: number
 } & (
   | { readonly kind: 'openapi-contribution-entry'; readonly sourceKind?: never }
-  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' }
-  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' }
+  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work' }
+  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work' }
 )
 ```
 
@@ -2420,7 +2427,7 @@ type ScopeSingleContributionEntry = {
 interface ScopeGroupEntry {
   readonly version: 2
   readonly kind: 'scope-group-entry'
-  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
+  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
   readonly ownerPeerId: ScopePeerId
@@ -2440,7 +2447,7 @@ type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
 /** Explicitly create a reusable entry for one owned Root Task. */
 interface ScopeGroupEntryRequest {
   /** Omission resolves to tool observations; completed-turn sharing must be selected explicitly. */
-  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
+  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2591,7 +2598,7 @@ interface ScopeContributionApplication {
 interface ScopeContributionEntryRequest {
   /** Join offers separately approved passive Root Task reading; omission requests contribution only. */
   readonly participation?: 'join' | 'contribution'
-  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work'
+  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -2830,6 +2837,7 @@ type DevelopmentTaskLocalToolObservationResult =
 type DevelopmentTaskPeerToolObservationResult =
   | DevelopmentTaskLocalToolObservationResult
   | DevelopmentTaskRecordedToolObservationResult
+  | DevelopmentTaskClaudeCommandObservationResult
 ```
 
 ```ts type-equiv
@@ -2849,6 +2857,11 @@ type DevelopmentTaskPeerToolObservation = DevelopmentTaskPeerToolObservationResu
 type ClaudeScopeContributionSource = ClaudeScopeOpenApiSource | {
   readonly kind: 'tool-observations'
   readonly tools: readonly ('Write' | 'Edit')[]
+} | {
+  readonly kind: 'claude-work'
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly { readonly command: string; readonly rootIndex: number }[]
+  readonly stopReports: boolean
 }
 ```
 
@@ -4545,6 +4558,64 @@ Types: [SessionId](core.zh.md)
 Source: [`packages/collaboration/scope-agent-contribution/src/types.ts`](../../packages/collaboration/scope-agent-contribution/src/types.ts)
 <!-- END GENERATED cordis-surface -->
 
+## Claude 工作来源类型
+
+这些类型区分原始 Claude 报告与原生执行、完整轮次证据。[Task 来源规则](../../packages/collaboration/development-task/README.zh.md#independent-peer-contributions)定义准入和归属。
+
+```ts type-equiv
+/** Explicit Claude Hook reports sharing one capture and cumulative sample allowance. */
+interface DevelopmentTaskClaudeWorkSource {
+  readonly kind: 'claude-work'
+  readonly version: 7
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly stopReports: boolean
+}
+```
+
+```ts type-equiv
+/** Original foreground Bash Hook fields; the event does not establish a process exit code. */
+interface DevelopmentTaskClaudeCommandObservationResult {
+  readonly kind: 'claude-command-observation'
+  readonly version: 7
+  readonly tool: 'Bash'
+  readonly hookEvent: 'PostToolUse' | 'PostToolUseFailure'
+  readonly fields: {
+    readonly rootIndex: number
+    readonly command: string
+    readonly stdout?: string
+    readonly stderr?: string
+    readonly interrupted?: boolean
+    readonly error?: string
+  }
+  readonly omissions: readonly ('stdout' | 'stderr' | 'error' | 'unsupported-tool-response')[]
+}
+```
+
+```ts type-equiv
+/** Complete official last-assistant-message text at Stop; it does not prove that the turn ended. */
+interface DevelopmentTaskClaudeStopReportResult {
+  readonly kind: 'claude-stop-report'
+  readonly version: 7
+  readonly text: string
+  readonly sha256: string
+  readonly stopHookActive: boolean
+}
+```
+
+```ts type-equiv
+/** Owner-attributed Claude Stop report, separate from native completed-turn evidence. */
+type DevelopmentTaskPeerStopReport = DevelopmentTaskClaudeStopReportResult & {
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly sequence: number
+  readonly observerPeerId: ScopePeerId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+}
+```
+
 ## 完整最终答复来源类型
 
 ```ts type-equiv
@@ -4575,7 +4646,7 @@ type DevelopmentTaskLocalContributionObservationResult =
 ```ts type-equiv
 /** Peer samples retain tool variants and independently permitted completed-turn reports. */
 type DevelopmentTaskPeerContributionObservationResult =
-  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult | DevelopmentTaskClaudeStopReportResult
 ```
 
 ```ts type-equiv

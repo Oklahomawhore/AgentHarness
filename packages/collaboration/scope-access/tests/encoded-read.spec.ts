@@ -1,6 +1,6 @@
 /** Exact historical coverage crosses bounded wire responses without replacing current facts. */
 import { createHash, randomUUID } from 'node:crypto'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { contributionProposalSchema } from '../src/contribution-schema.ts'
 import * as codec from '../src/read-codec.ts'
@@ -43,9 +43,11 @@ async function fixture(count: number, maxResponseBytes = 60000, maxDecodedRespon
   return { a, b, task, approval, invitation, subscription, target, wire }
 }
 
-it.each([{ count: 500, bytes: 60000 }, { count: 1997, bytes: 240000 }])(
-  'delivers all $count source references within a $bytes-byte wire budget', async ({ count, bytes }) => {
-    const f = await fixture(count, bytes)
+describe.each([{ count: 500, bytes: 60000 }, { count: 1997, bytes: 240000 }])('history with $count reports', ({ count, bytes }) => {
+  let f: Awaited<ReturnType<typeof fixture>>
+  beforeEach(async () => { f = await fixture(count, bytes) })
+
+  it(`delivers all ${count} source references within a ${bytes}-byte wire budget`, async () => {
     const legacy = { ...f.wire(), version: 3 }
     const { maxResponseBytes: _wire, maxDecodedResponseBytes: _decoded, ...old } = legacy
     await expect(f.b.transport.request(f.target, '/agentharness/scope-read/3', old, signal())).rejects.toThrow('response exceeds budget')
@@ -69,8 +71,8 @@ it.each([{ count: 500, bytes: 60000 }, { count: 1997, bytes: 240000 }])(
       .flatMap(item => item.kind === 'publication' ? [item.publicationId] : [])
     expect(new Set(ids)).toEqual(new Set(f.a.tasks.contextView(f.task.id).task.context.map(item => item.id)))
     expect(saved(f.a).get(result.projection.projectionId)).toEqual(saved(f.b).get(result.projection.projectionId))
-  },
-)
+  })
+})
 
 it('honors recipient decoded and encoded limits before retaining any projection', async () => {
   const f = await fixture(20)

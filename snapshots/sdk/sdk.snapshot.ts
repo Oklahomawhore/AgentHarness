@@ -129,6 +129,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'scope-claude-work': {
+    expectedFinalResponse: 'The Claude reports are withdrawn; original review history remains.',
+  },
   'scope-native-work': {
     expectedFinalResponse: 'All contributions from the combined permission are withdrawn.',
   },

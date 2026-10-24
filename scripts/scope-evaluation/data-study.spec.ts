@@ -21,6 +21,16 @@ describe('ordinary Agent study registration', () => {
     expect(parsed.ordinary.credentialsPath).toBe('/nonexistent/selected-credentials.yaml')
   })
 
+  it.each(['ordinary', 'semantic'] as const)('bounds serialized output observations independently of token limits for %s', (role) => {
+    const input = { ...config, [role]: { ...config[role], maxOutputBytes: 262144 } }
+    const parsed = parseDataStudyConfig(input, 'live')
+    expect(parsed[role]).toEqual({ ...config[role], maxOutputBytes: 262144 })
+    const other = role === 'ordinary' ? 'semantic' : 'ordinary'
+    expect(parsed[other]).toEqual(config[other])
+    expect(() => parseDataStudyConfig({ ...input, [role]: { ...input[role], maxOutputBytes: 262145 } }, 'live'))
+      .toThrow()
+  })
+
   it('requires explicit direct networking or one named proxy reference, including lowercase environment names', () => {
     const ordinary = { ...route, network: { kind: 'env-proxy', urlEnv: 'https_proxy' } }
     expect(parseDataStudyConfig({ ...config, ordinary }, 'live').ordinary.network).toEqual(ordinary.network)

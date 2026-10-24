@@ -4,12 +4,12 @@
 export interface ReportedSelectionGroup<T> {
   readonly value: T
   readonly source: string
-  readonly kind: 'terminal' | 'command' | 'completed-answer' | 'file' | 'other'
+  readonly kind: 'terminal' | 'command' | 'completed-answer' | 'stop-report' | 'file' | 'other'
   readonly publishedAt: number
 }
 
 /**
- * Prioritize withdrawals, then current commands and completed answers across sources, command file progress, and remaining groups.
+ * Prioritize withdrawals, then current commands and answer reports across sources, command file progress, and remaining groups.
  * An oversized group is skipped atomically; each source yields after one successful admission or exhausting its queue.
  * @param groups - Complete eligible groups in captured source order; source keys separate frozen snapshots and authorizations.
  * @param admit - Try the full rendered group against the actual budget, retaining it only on success.
@@ -43,7 +43,7 @@ export function selectReportedGroups<T>(groups: readonly ReportedSelectionGroup<
     while (buckets.some(queue => queue.length > 0)) for (const queue of buckets) visit(queue)
   }
   for (const group of ordered) if (group.kind === 'terminal') attempt(group)
-  roundRobin(queues(ordered.filter(group => group.kind === 'command' || group.kind === 'completed-answer')))
+  roundRobin(queues(ordered.filter(group => group.kind === 'command' || group.kind === 'completed-answer' || group.kind === 'stop-report')))
   for (const queue of queues(ordered.filter(group => group.kind === 'file' && acceptedCommands.has(group.source)))) visit(queue)
   roundRobin(queues(ordered.filter(group => pending.has(group))))
 }

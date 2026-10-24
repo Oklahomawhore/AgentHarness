@@ -71,6 +71,7 @@ it('captures two completed user answers without files and retains exact durable 
   await turn(f, 'PRODUCT_DECISION_TWO')
   await expect.poll(() => f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.filter(item => item.localTurnOutcome).length)
     .toBe(2)
+  await expect.poll(async () => (await row(f)).samples.filter(sample => sample.receipt !== undefined).length).toBe(2)
   const stored = await row(f)
   expect(stored.version).toBe(2)
   expect(stored.samples).toHaveLength(2)

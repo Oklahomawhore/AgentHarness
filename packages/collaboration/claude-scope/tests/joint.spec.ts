@@ -37,12 +37,12 @@ async function fixture() {
   const capture: ScopeContribution = { proposal, policy: { roots: ['/work'], bashCommands: [], revision: 'files-1' },
     source: { kind: 'tool-observations', tools: ['Write'] }, state: 'prepared', sequence: 0,
     application: { entry, limits, state: 'waiting' } }
-  const original: ScopeSession = { sessionKey: 'external-session' as ScopeSession['sessionKey'], sessionId: 'claude-session',
+  const original: ScopeSession & { readonly contribution: ScopeContribution } = { sessionKey: 'external-session' as ScopeSession['sessionKey'], sessionId: 'claude-session',
     participantId: 'external-participant' as ScopeSession['participantId'], bindingId: 'external-binding' as ScopeSession['bindingId'],
     observedAt: 1, ended: false, contribution: capture }
   const request = { sessionKey: original.sessionKey, expectedCapture: null, roots: ['/work'], source: capture.source,
     entry, limits, receive: { expectedReadRevision: 0 } }
-  const prepared = prepareJoint(original, request, capture)
+  const prepared = prepareJoint(original, request)
   if (prepared.version !== 2) throw new Error('Joint preparation did not retain a version-2 record')
   await source.access.applyContribution({ entry, proposal, limits }, signal())
   const member = (await owner.access.groupApplications({ entryId: entry.entryId })).entries[0]
@@ -57,7 +57,7 @@ async function fixture() {
   const joint = selected.joint
   const plan = selected.joint.subscription
   const activeCapture: ScopeContribution = { ...capture, application: undefined, state: 'active', invitation: approval.invitation }
-  const session: Extract<ScopeSession, { readonly version: 2 }> = { ...selected, contribution: activeCapture }
+  const session: Extract<ScopeSession, { readonly version: 2 | 3 }> = { ...selected, contribution: activeCapture }
   const domain = await source.ctx.storageDomain.open(claudeScopeDomainSpec)
   source.ctx.effect(() => () => domain.close())
   const sessions = domain.table('sessions')
@@ -123,9 +123,9 @@ it('requires the original read consent for application retries and permits a new
         joint: { ...f.joint, state, intent: 'adopt' as const } }, f.request)
     }).not.toThrow()
   }
-  expect(prepareJoint(f.prepared, f.request, f.capture)).toBe(f.prepared)
+  expect(prepareJoint(f.prepared, f.request)).toBe(f.prepared)
   const { receive: _receive, ...contributionOnly } = f.request
-  expect(prepareJoint(f.original, contributionOnly, f.capture)).toBe(f.original)
+  expect(prepareJoint(f.original, contributionOnly)).toBe(f.original)
 })
 
 it('rejects an unrelated owner read permission and does not revise a selected read grant on a delayed response', async () => {

@@ -75,6 +75,8 @@ export type {
   DevelopmentTaskCompletedTurnObservationSource, DevelopmentTaskCompletedTurnObservationResult,
   DevelopmentTaskLocalContributionObservationResult, DevelopmentTaskPeerContributionObservationResult,
   DevelopmentTaskLocalTurnOutcome, DevelopmentTaskPeerTurnOutcome,
+  DevelopmentTaskClaudeWorkSource, DevelopmentTaskClaudeCommandObservationResult, DevelopmentTaskClaudeStopReportResult,
+  DevelopmentTaskPeerStopReport,
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContribution,
   DevelopmentTaskLocalContributionReceipt, DevelopmentTaskLocalContributionRequest, DevelopmentTaskLocalContributionResult,
   DevelopmentTaskEndLocalContributionRequest, DevelopmentTaskLocalContributionAdmissionReceipt,
@@ -1341,7 +1343,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
         this.peerTerminalBounds(item.grant, task.context.filter(publication =>
           publication.peerContribution?.grant.grantId === item.grant.grantId
           && (publication.peerObservation !== undefined || publication.peerToolObservation !== undefined
-            || publication.peerTurnOutcome !== undefined)).at(-1))
+            || publication.peerTurnOutcome !== undefined || publication.peerStopReport !== undefined)).at(-1))
       }
       for (const item of task.localContributions.values()) if (item.state === 'active') this.localGrantBounds(this.parseLocalGrant(item.grant))
       const reserved = this.retirementReservations(task)
@@ -1634,7 +1636,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
           endReceipt: this.peerReceipt(entry, grant), ...(previous === undefined ? {} : { openReceipt: previous.openReceipt }),
         }))
         const latest = task.context.filter(item => item.peerContribution?.grant.grantId === grant.grantId
-          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined || item.peerTurnOutcome !== undefined)).at(-1)
+          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined
+            || item.peerTurnOutcome !== undefined || item.peerStopReport !== undefined)).at(-1)
         return { ...task, contributions, context: [...task.context,
           ...peerWithdrawals(grant, latest, entry.change.reason, entry.at).map(freezePublication)], events: [...task.events] }
       }
@@ -1712,7 +1715,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   ): void {
     const metadata = publication.peerContribution
     if (metadata === undefined || metadata.ended !== undefined || publication.peerObservation?.state === 'revoked'
-      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined && publication.peerTurnOutcome === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
+      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined && publication.peerTurnOutcome === undefined && publication.peerStopReport === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
     const parsed = peerContributionRequestSchema.safeParse(peerPublicationRequest(publication))
     if (!parsed.success) throw new DevelopmentTaskError('peer sample does not match its permitted source and tools', code)
     const sample = parsed.data
@@ -1722,9 +1725,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
       throw new DevelopmentTaskError('peer publication does not match current owner authorization', code)
     }
     const samples = task.context.filter(item => item.peerContribution?.grant.grantId === sample.grant.grantId
-      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined || item.peerTurnOutcome !== undefined))
+      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined
+        || item.peerTurnOutcome !== undefined || item.peerStopReport !== undefined))
     if (samples.length >= sample.grant.maxSamples) throw new DevelopmentTaskError('peer contribution sample capacity reached', 'LIMIT_EXCEEDED')
-    const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation ?? samples.at(-1)?.peerTurnOutcome
+    const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation
+      ?? samples.at(-1)?.peerTurnOutcome ?? samples.at(-1)?.peerStopReport
     if (!Number.isSafeInteger(sample.sequence) || sample.sequence < 1 || sample.sequence >= Number.MAX_SAFE_INTEGER
       || (previous !== undefined && sample.sequence <= previous.sequence)
       || task.context.some(item => item.id === publication.id)) {

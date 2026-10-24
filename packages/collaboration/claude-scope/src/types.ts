@@ -107,6 +107,11 @@ export interface ClaudeScopeReceiveRequest {
 export type ClaudeScopeContributionSource = ClaudeScopeOpenApiSource | {
   readonly kind: 'tool-observations'
   readonly tools: readonly ('Write' | 'Edit')[]
+} | {
+  readonly kind: 'claude-work'
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly { readonly command: string; readonly rootIndex: number }[]
+  readonly stopReports: boolean
 }
 
 /** Authorize local collection for a known session before requesting remote contribution permission. */
@@ -268,7 +273,7 @@ export interface ClaudeScopeSessionSummary {
 /** Main-session events participating in capture or request-time delivery. */
 export type ClaudeScopeHookEvent =
   | 'SessionStart' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
-  | 'UserPromptSubmit' | 'PostToolBatch' | 'SessionEnd' | 'ignored'
+  | 'UserPromptSubmit' | 'PostToolBatch' | 'Stop' | 'StopFailure' | 'SessionEnd' | 'ignored'
 
 /** Tool input requiring authorization and supported-field parsing before collection. */
 export interface ClaudeScopeHookTool {
@@ -277,23 +282,27 @@ export interface ClaudeScopeHookTool {
   readonly input: unknown
   readonly response?: unknown
   readonly error?: string
+  readonly isInterrupt?: boolean
 }
 
-/** Hook identity with prompt, transcript, and batch payloads deliberately absent. */
-export interface ClaudeScopeHookInput {
+/** Parsed Hook identity and sampled Stop text; tool events require their parsed tool fields. */
+export type ClaudeScopeHookInput = {
   readonly sessionId: string
-  readonly event: ClaudeScopeHookEvent
   readonly cwd?: string
   readonly agentId?: string
-  readonly tool?: ClaudeScopeHookTool
-}
+  readonly promptId?: string
+  readonly stop?: { readonly text: string; readonly active: boolean }
+} & {
+  [Event in ClaudeScopeHookEvent]: { readonly event: Event } & (Event extends 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
+    ? { readonly tool: ClaudeScopeHookTool } : { readonly tool?: never })
+}[ClaudeScopeHookEvent]
 
 /** Supported fields retained without reading the underlying file or conversation. */
 export interface ClaudeScopePreparedInput {
   readonly kind: 'eligible'
   readonly inputDigest: string
   readonly toolName: 'Edit' | 'Write' | 'Bash'
-  readonly fields: Readonly<Record<string, string | number | boolean>>
+  readonly fields: Readonly<Record<string, string | number | boolean>> & { readonly rootIndex: number; readonly path: string }
 }
 
 /** Collection was skipped without changing the tool's own permission decision. */

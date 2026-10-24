@@ -1,13 +1,17 @@
 /** Explicit historical initialization uses only one current capture's persisted tool completions. */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, parse, relative } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { Session } from '@deepseek-ai/dsh-session'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { ToolFsMutation } from '@deepseek-ai/dsh-tool-fs'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import type { ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
 import { nativeContributionDomain, nativeDigest } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
-import { recordedProof, recordedReport } from '../src/initialization.ts'
+import { initializationPlanDigest, initializationSchema, pendingInitialization, recordedProof, recordedReport } from '../src/initialization.ts'
+import { nativeToolPath, nativeToolReport } from '../src/capture.ts'
 import type { ScopeAgentContributionRequest } from '../src/types.ts'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
@@ -459,4 +463,126 @@ it('accounts for complete historical proof and wire bytes when multibyte content
   expect(Buffer.byteLength(JSON.stringify({ version: 2, requestId: '00000000-0000-0000-0000-000000000000',
     op: 'sample', invitation: capture.invitation, sample: sample.sample }), 'utf8')).toBeLessThanOrEqual(budget)
   expect(record.sample.result).toMatchObject({ version: 2, omissions: ['content'] })
+})
+
+it('rejects altered frozen coverage, source order and missing historical outbox rows on restoration', async () => {
+  const f = await fixture()
+  await f.write('HISTORY_ONE')
+  await f.write('HISTORY_TWO')
+  await expect.poll(() => f.localRow().samples.length).toBe(2)
+  const remote = await f.begin()
+  await remote.approve()
+  await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(2)
+  const row = f.remoteRow()
+  const capture = row.capture
+  const initialization = capture?.initialization
+  if (capture === null || initialization?.plan === null || initialization?.plan === undefined || initialization.cutoff === null) {
+    throw new Error('Missing frozen initialization')
+  }
+  const { plan, cutoff, request, coverage } = initialization
+  const first = plan.sources[0]
+  const sample = row.samples[0]
+  if (first === undefined || sample === undefined || sample.turnProof !== undefined
+    || !('kind' in sample.sample.result) || sample.sample.result.version !== 2) throw new Error('Missing historical sample')
+  for (const changed of [
+    { ...initialization, coverage: { ...coverage, unconfirmed: coverage.recorded + 1 } },
+    { ...initialization, state: 'pending' },
+    { ...initialization, cutoff: null },
+    { ...initialization, reason: 'capacity' },
+    { ...initialization, coverage: { ...coverage, selected: 1, omitted: 1 } },
+    { ...initialization, plan: { ...plan, digest: '0'.repeat(64) } },
+  ]) expect(initializationSchema.safeParse(changed).success).toBe(false)
+  for (const sources of [
+    [first, first],
+    [...plan.sources].reverse(),
+    [{ ...first, resultSeq: first.callSeq }, ...plan.sources.slice(1)],
+    [{ ...first, sourceSequence: cutoff.localSequence + 1 }, ...plan.sources.slice(1)],
+  ]) {
+    expect(initializationSchema.safeParse({ ...initialization, plan: {
+      sources, digest: initializationPlanDigest(request, cutoff, sources),
+    } }).success).toBe(false)
+  }
+  const schema = nativeContributionDomain.tables.sessions.valueSchema
+  expect(schema.safeParse({ ...row, samples: row.samples.slice(1) }).success).toBe(false)
+  expect(schema.safeParse({ ...row, capture: { ...capture, initialization: pendingInitialization(request) } }).success).toBe(false)
+  expect(schema.safeParse({ ...row, capture: null }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, captureGeneration: 'another-capture' }, ...row.samples.slice(1)] }).success).toBe(false)
+  const { origin: _origin, ...original } = sample.sample.result
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: undefined,
+    sample: { ...sample.sample, result: { ...original, version: 1 } } }, ...row.samples.slice(1)] }).success).toBe(false)
+  expect(schema.safeParse(row).success).toBe(true)
+})
+
+it.each(['native', 'ptc'] as const)('rejects %s recorded completions when durable dispatch evidence no longer matches', async (mode) => {
+  const f = await fixture({ mode })
+  await f.write('REPLAY_PROOF', 'ORIGINAL')
+  await expect.poll(() => f.localRow().samples.length).toBe(1)
+  const sample = f.localRow().samples[0]
+  if (sample === undefined || sample.turnProof !== undefined) throw new Error('Missing recorded tool sample')
+  const events = f.agent.session.snapshotEvents()
+  const proofFrom = (change: (event: (typeof events)[number]) => (typeof events)[number]) => {
+    const replay = Session.create(f.agent.id, events.map(change), f.agent.session.header)
+    return recordedProof(replay, sample)
+  }
+  expect(proofFrom(event => event)).toBeDefined()
+  expect(proofFrom((event) => {
+    if (event.seq !== sample.callSeq) return event
+    if (event.type === 'tool/call') return { ...event, data: { ...event.data, callId: ToolCallId('unrelated-call') } }
+    if (event.type === 'tool/ptc-dispatch-start') return { ...event, data: { ...event.data, subCallId: ToolCallId('unrelated-call') } }
+    return event
+  })).toBeUndefined()
+  expect(proofFrom((event) => {
+    if (event.seq !== sample.callSeq) return event
+    if (event.type === 'tool/call') return { ...event, data: { ...event.data, arguments: '{' } }
+    if (event.type === 'tool/ptc-dispatch-start') return { ...event, data: { ...event.data, arguments: { content: 'SUBSTITUTED' } } }
+    return event
+  })).toBeUndefined()
+  const settlement = f.agent.session.eventAt(sample.resultSeq)
+  if (settlement === undefined) throw new Error('Missing original settlement')
+  expect(recordedProof(f.agent.session, { ...sample, callSeq: sample.resultSeq,
+    resultSeq: sample.resultSeq })).toBeUndefined()
+  const wrongStart = events.find(event => event.seq > 0 && event.seq < sample.resultSeq
+    && event.type !== 'tool/call' && event.type !== 'tool/ptc-dispatch-start')
+  if (wrongStart === undefined) throw new Error('Missing original non-dispatch event')
+  expect(recordedProof(f.agent.session, { ...sample, callSeq: wrongStart.seq })).toBeUndefined()
+})
+
+it('omits whole Edit fields in historical reports at UTF-8 byte limits without truncation', () => {
+  const origin = { kind: 'recorded-local-tools' as const, planDigest: '1'.repeat(64), executionDigest: '2'.repeat(64) }
+  const original = { kind: 'tool-observation' as const, version: 1 as const, tool: 'Edit' as const, reportedStatus: 'success' as const,
+    fields: { rootIndex: 0, path: 'edit.txt', oldString: '旧'.repeat(200), newString: '新'.repeat(400), replaceAll: false }, omissions: [] }
+  const oldOnly = recordedReport(original, 1, origin, value => Buffer.byteLength(JSON.stringify(value), 'utf8') < 1100)
+  expect(oldOnly).toMatchObject({ fields: { oldString: original.fields.oldString }, omissions: ['newString'] })
+  expect(oldOnly?.fields).not.toHaveProperty('newString')
+  const neither = recordedReport(original, 1, origin, value => Buffer.byteLength(JSON.stringify(value), 'utf8') < 500)
+  expect(neither).toMatchObject({ omissions: ['newString', 'oldString'] })
+  expect(neither?.fields).not.toHaveProperty('oldString')
+  expect(recordedReport({ kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+    fields: { rootIndex: 0, path: 'write.txt', content: 'WHOLE_FIELD' }, omissions: [] }, 1, origin, () => false)).toBeUndefined()
+  expect(recordedReport({ kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure',
+    fields: { rootIndex: 0, path: 'failure.txt', error: 'FAILED' }, omissions: ['content'] }, 1, origin, () => false)).toBeUndefined()
+  expect(recordedReport({ ...original, fields: { rootIndex: 0, path: 'edit.txt', replaceAll: false },
+    omissions: ['oldString', 'newString'] }, 1, origin, () => false)).toBeUndefined()
+})
+
+it('keeps native mutation fields whole and resolves relative paths from an actual filesystem volume root', async () => {
+  const f = await fixture()
+  const mutations: ToolFsMutation[] = []
+  const off = f.agent.ctx.on('tool-fs/mutation-start', (mutation) => { mutations.push(mutation) })
+  try {
+    await f.write('MULTIBYTE_CAPTURE', '旧'.repeat(200), '中文 name.txt')
+    await run(f.source, f.agent, [toolCallResponse('budget-edit', 'edit', {
+      file_path: '中文 name.txt', old_string: '旧'.repeat(200), new_string: '新'.repeat(400),
+    })])
+  } finally { off() }
+  const mutation = mutations.find(item => item.tool === 'edit')
+  if (mutation === undefined) throw new Error('Missing native Edit mutation')
+  const fs = mutation.filesystem
+  const volume = await fs.resolve(parse(f.source.workspace).root)
+  expect(nativeToolPath(fs, [volume], mutation.target)).toEqual({ rootIndex: 0,
+    path: relative(parse(f.source.workspace).root, fs.processPath(mutation.target)).split('\\').join('/') })
+  const report = nativeToolReport(mutation, { rootIndex: 0, path: '中文 name.txt' }, false,
+    value => Buffer.byteLength(JSON.stringify(value), 'utf8') < 1000)
+  expect(report).toMatchObject({ fields: { oldString: '旧'.repeat(200) }, omissions: ['newString'] })
+  expect(report?.fields).not.toHaveProperty('newString')
 })

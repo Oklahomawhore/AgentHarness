@@ -65,7 +65,7 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 
 ## 独立 peer 贡献
 
-已认证的 Host facade 为本地 Root Task、贡献者 PeerId、capture 代际及精确来源许可调用 `openPeerContribution`：来源可以是一个 OpenAPI 操作、明确的文件／命令观察许可，完整最终答复许可，或明确组合的原生来源选择。Grant 限制有效期、样本数和完整样本字节。它不授予本地采集、Task 读取、Room membership 或任意发布权限。来源适配器单独授权采集，transport 提供已认证 peer。Peer publication 记录 `peerContribution`，以及 OpenAPI 的 `peerObservation`、有序的 `peerToolObservation` 或 `peerTurnOutcome`，不虚构 participant 或 Mesh node。解析公开 capture 申请不会建立授权。
+已认证的 Host facade 为本地 Root Task、贡献者 PeerId、capture 代际及精确来源许可调用 `openPeerContribution`：来源可以是一个 OpenAPI 操作、明确的文件／命令观察许可、完整最终答复许可，或组合的原生或 Claude 来源选择。Grant 限制有效期、样本数和完整样本字节。它不授予本地采集、Task 读取、Room membership 或任意发布权限。来源适配器单独授权采集，transport 提供已认证 peer。Peer publication 记录 `peerContribution`，以及 OpenAPI 的 `peerObservation`、有序的 `peerToolObservation`、`peerTurnOutcome` 或 `peerStopReport`，不虚构 participant 或 Mesh node。解析公开 capture 申请不会建立授权。
 
 批准、样本准入和终结共用 Task owner 队列与事件日志。`admitPeerContribution` 派生来源归属及规范报告正文；OpenAPI 来源还获得逻辑工件身份。新样本必须在该 grant 内递增序号；重复不消耗额度。即使终结或降低新准入字节上限后，精确样本和终结重试仍返回原 receipt，不触发新的到期写入。更改内容或授权会被拒绝。Receipt 包含原事件种类、revision、来源身份和完整 payload digest；它证明持久准入，不证明工具执行、文件真实性、模型交付或内容真相。
 
@@ -80,6 +80,8 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 `completed-turn-outcomes` 第 5 版许可带有匹配 SHA-256 摘要的完整最终答复报告。本地与同伴准入保留 `localTurnOutcome` 或 `peerTurnOutcome`、原贡献授权及单调样本序号。完整结果参与收据身份与不可变块校验。这些内容是具有归属的 Agent 报告，不是所有者批准的事实；完全相同的重试保持幂等，结束原许可会撤回其当前报告。
 
 `native-work` 第 6 版在同一采集、序号和总样本额度内，组合明确选择的 Write/Edit 工具、精确命令及完整最终答复。任何非空类别组合均有效；未选类别不获得许可。完成文件披露必须选择文件工具。准入保留各自第 1、3、4、5 版结果，拒绝历史初始化。每个所选类别均参与收据身份、不可变复制、恢复及终结撤回。更改类别需要新的授权；现有工具或答复许可不能隐式扩张。
+
+`claude-work` 第 7 版在同一采集和样本额度内，单独授权 Write/Edit、精确 Bash 命令及完整 Stop 报告的任意非空选择。文件报告保留第 1 版；`claude-command-observation` 保留 Hook 原始 stdout、stderr、interrupted 或 error 字段，并记录整字段省略。Hook 事件不证明进程退出码。`claude-stop-report` 与 `peerStopReport` 保留完整的助手报告正文、SHA-256 摘要及 `stopHookActive`，不证明该轮已经结束。公开元数据不包含 Claude prompt 或 Session 标识。原生准入拒绝这些来源与结果，旧授权也不能许可它们。所有所选报告均参与收据身份、不可变复制、恢复及撤回。
 
 `endPeerContribution` 允许来源退出或 owner 撤权。它记录一个终结事件，派生撤回证据和通知，并拒绝后续激活或新采样。即使 grant 尚无采样，也在 `maxEventsPerTask` 内预留该事件；先于批准到达的 end 留下永久 tombstone。历史采样与继承快照保持原样。`expirePeerContributions` 在同一队列中终结任意 origin 的本地所有 Task 的到期授权；facade 还在启动时核对到期状态。采样字节上限约束新准入；恢复保留历史字节，并拒绝无法终结活跃 grant 的容量配置。
 

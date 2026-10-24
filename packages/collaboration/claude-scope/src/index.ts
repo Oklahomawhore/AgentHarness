@@ -29,6 +29,7 @@ import { flushArtifactSamples, prepareArtifactSamples, revokeArtifactSamples } f
 import { resolveOpenApiSources } from './openapi.ts'
 import { receivedScopeProjection, remainingReceiveContextBytes } from './receive.ts'
 import { IndependentContribution } from './contribution.ts'
+import { retainedLeaseCount } from './work-capture.ts'
 import { advanceReadSelection, nextReadRevision, ownsJointCapture, ownsJointRead, jointNeedsWork, recoverJointRoute, reconcileJoint } from './joint.ts'
 import { computeScopeProjection, scopeDigest, withdrawnScopeProjection } from './projection.ts'
 import { claudeScopeDomainSpec, type ScopeGrant, type ScopeProjection, type ScopeSession, type ScopeToolLease } from './state.ts'
@@ -395,7 +396,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
     return this.enqueue(async (current) => {
       const session = this.requireSession(current, request.sessionKey)
       const joint = session.joint
-      if (session.version !== 2 || joint?.id !== request.jointId) throw new RemoteError('claude-scope/source-conflict',
+      if (session.version === undefined || joint?.id !== request.jointId) throw new RemoteError('claude-scope/source-conflict',
         'The selected joint operation has changed', { sessionKey: request.sessionKey })
       const ownRead = ownsJointRead(session, joint)
       const capture = ownsJointCapture(session.contribution, joint) ? session.contribution : undefined
@@ -600,8 +601,9 @@ export default class ClaudeScopeService extends TypertRemoteService {
     const domain = await this.ready
     operationSignal.throwIfAborted()
     const key = scopeDigest([this.installationId, input.sessionId]) as ClaudeScopeSessionKey
+    this.contribution.noticePrompt(key, input, domain.table('sessions').get(key)?.contribution)
     const contributionSignal = domain.table('sessions').get(key)?.contribution === undefined
-      ? undefined : this.contribution.captureSignal(key)
+      ? undefined : this.contribution.captureSignal(key, input.event === 'Stop' || input.event === 'UserPromptSubmit')
     if (input.event === 'SessionEnd') {
       this.invalidate(key)
       this.contribution.invalidate(key)
@@ -620,16 +622,23 @@ export default class ClaudeScopeService extends TypertRemoteService {
     })
     operationSignal.throwIfAborted()
     if (input.event === 'UserPromptSubmit' || input.event === 'PostToolBatch') {
+      let sampled: ClaudeScopeHookResult | undefined
+      if (input.event === 'UserPromptSubmit' && session.contribution !== undefined && 'kind' in session.contribution.source
+        && session.contribution.source.kind === 'claude-work' && contributionSignal !== undefined) {
+        sampled = await this.enqueue(() => this.contribution.capture(domain, input, key,
+          AbortSignal.any([operationSignal, contributionSignal])))
+      }
       const projection = await this.project(domain, key, operationSignal)
       operationSignal.throwIfAborted()
-      if (projection === undefined) return omitted('session-not-joined')
+      if (projection === undefined) return sampled ?? omitted('session-not-joined')
       return {
         output: { hookSpecificOutput: { hookEventName: input.event, additionalContext: projection.text } },
         receipt: { status: projection.kind === 'withdrawal' || projection.kind === 'suspended' ? 'withdrawn' : 'projected',
           ...(projection.kind === 'suspended' && projection.receive !== undefined ? { reason: projection.receive.status } : {}), projectionId: projection.projectionId },
       }
     }
-    if (input.event === 'PreToolUse' || input.event === 'PostToolUse' || input.event === 'PostToolUseFailure') {
+    if (input.event === 'PreToolUse' || input.event === 'PostToolUse' || input.event === 'PostToolUseFailure'
+      || input.event === 'Stop' || input.event === 'StopFailure') {
       const change = this.changes.get(key)
       try {
         return await this.enqueue(async () => this.capture(domain, input, session.sessionKey, change, operationSignal, contributionSignal))
@@ -643,6 +652,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (domain.global.get().installationId === null) await domain.global.set({ installationId })
     this.lifetime.signal.throwIfAborted()
     this.installationId = installationId
+    for (const [, lease] of domain.table('work_leases').entries()) {
+      const session = domain.table('sessions').get(lease.sessionKey)
+      if (session?.version !== 3 || session.contribution === undefined) throw new Error('claude-scope: work lease has no generation-3 local permit')
+    }
     for (const [, lease] of domain.table('contribution_leases').entries()) {
       if (domain.table('sessions').get(lease.sessionKey)?.contribution === undefined) {
         throw new Error('claude-scope: stored contribution lease has no local permit')
@@ -902,7 +915,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
   }
 
   private async capture(
-    domain: ScopeDomain, input: ClaudeScopeHookInput, key: ClaudeScopeSessionKey, change: number | undefined, signal: AbortSignal,
+    domain: ScopeDomain, input: Parameters<IndependentContribution['capture']>[1], key: ClaudeScopeSessionKey, change: number | undefined, signal: AbortSignal,
     contributionSignal?: AbortSignal,
   ): Promise<ClaudeScopeHookResult> {
     signal.throwIfAborted()
@@ -951,7 +964,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (input.event === 'PreToolUse') {
       if (retained !== undefined && !sameLease(retained, lease)) return omitted('tool-lease-conflict')
       if (retained === undefined) {
-        if (leases.size + domain.table('contribution_leases').size >= this.config.maxLeases) return omitted('tool-lease-limit')
+        if (retainedLeaseCount(domain) >= this.config.maxLeases) return omitted('tool-lease-limit')
         await leases.put(leaseKey, lease)
       }
       signal.throwIfAborted()
@@ -965,7 +978,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
     ]) as DevelopmentTaskObservedSourceId
     const observation = renderClaudeScopeObservation(input, prepared, sourceId, this.config.maxObservationBytes)
     if (observation.kind === 'omitted') return omitted(observation.reason)
-    if (input.event !== 'PostToolUse' && input.event !== 'PostToolUseFailure') return omitted('not-tool-completion')
     const terminal = { event: input.event, textDigest: scopeDigest([observation.text]) }
     if (retained.terminal !== undefined
       && (retained.terminal.event !== terminal.event || retained.terminal.textDigest !== terminal.textDigest)) {

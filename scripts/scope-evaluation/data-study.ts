@@ -19,6 +19,7 @@ export interface DataModelRoute {
   readonly maxCalls: number
   readonly maxInputBytes: number
   readonly maxOutputTokens: number
+  /** Maximum cumulative serialized stream-chunk bytes, including framing and repeated block content. */
   readonly maxOutputBytes: number
   readonly timeoutMs: number
 }
@@ -85,7 +86,7 @@ const routeSchema = z.object({
   endpoint: z.url(), apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
   credentialsPath: z.string().refine(isAbsolute).nullable(),
   maxCalls: z.number().int().min(1).max(12), maxInputBytes: z.number().int().min(1024).max(262144),
-  maxOutputTokens: z.number().int().min(128).max(4096), maxOutputBytes: z.number().int().min(1024).max(65536),
+  maxOutputTokens: z.number().int().min(128).max(4096), maxOutputBytes: z.number().int().min(1024).max(262144),
   timeoutMs: z.number().int().min(1000).max(120000),
 }).strict()
 const configurationSchema = z.object({ ordinary: routeSchema, semantic: routeSchema,

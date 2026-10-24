@@ -1,6 +1,7 @@
 /** Joint source consent preserves independent reading and optional finite local automatic work. */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -709,27 +710,58 @@ describe('joint native receiving and contribution consent', () => {
     const { source, owner, task, b, bystander, capture, approve, status, ownerAddress, request } = await fixture()
     await approve()
     await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+    const selected = (await status()).capture
+    if (selected?.invitation == null || selected.receiving === null) throw new Error('Missing exact active joint selection')
+    const invitation = selected.invitation
+    const receiving = selected.receiving
     const nextEntry = await owner.ctx.scopeAccess.createContributionEntry({ sourceKind: 'tool-observations', taskId: task.id,
       ownerAddress, expiresAt: request.limits.expiresAt })
     const second = await source.ctx.scopeAgentContributions.request({ agentId: bystander.id, expectedCapture: null,
       entry: nextEntry.entry, roots: [source.workspace], tools: ['write'], limits: request.limits })
     if (second.capture === null) throw new Error('Missing second capture')
     const held = barrier()
+    const endEntered = barrier()
+    const endReturned = barrier()
+    let cancellationReturned = false
     const original = source.ctx.scopeAgentContext.cancelJoinRead.bind(source.ctx.scopeAgentContext)
     vi.spyOn(source.ctx.scopeAgentContext, 'cancelJoinRead').mockImplementation(async (...args) => {
+      if (args[0].agentId !== b.id || args[0].adoptionId !== receiving.adoptionId) return await original(...args)
+      expect(args[0].leaveAdopted).toBe(true)
       await held.wait()
-      return await original(...args)
+      const result = await original(...args)
+      cancellationReturned = true
+      return result
+    })
+    const originalEnd = source.ctx.scopeAccess.endContribution.bind(source.ctx.scopeAccess)
+    vi.spyOn(source.ctx.scopeAccess, 'endContribution').mockImplementation(async (...args) => {
+      if (!isDeepStrictEqual(args[0].invitation, invitation)) return await originalEnd(...args)
+      await endEntered.wait()
+      const result = await originalEnd(...args)
+      expect(result.status).toBe('ended')
+      await endReturned.wait()
+      return result
     })
     await source.ctx.scopeAgentContributions.leaveJoin({ agentId: b.id, expectedCapture: capture.selection })
-    await held.entered
+    await Promise.all([held.entered, endEntered.entered])
+    expect((await status()).capture?.state).toBe('ending')
+    expect(cancellationReturned).toBe(false)
+    endEntered.release()
+    await endReturned.entered
+    expect((await status()).capture?.state).toBe('ending')
+    expect(cancellationReturned).toBe(false)
+    endReturned.release()
     await expect.poll(async () => (await status()).capture).toBeNull()
     expect((await status()).receivingContinuation?.intent).toBe('leave')
+    expect((await status()).receivingContinuation?.receiving.adoptionId).toBe(receiving.adoptionId)
+    expect(cancellationReturned).toBe(false)
     await source.ctx.scopeAgentContributions.stop({ agentId: bystander.id, expectedCapture: second.capture.selection })
     await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: bystander.id })).capture).toBeNull()
     expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).not.toBeNull()
+    expect(cancellationReturned).toBe(false)
     held.release()
     await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
     expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).toBeNull()
+    expect(cancellationReturned).toBe(true)
   })
 
   it('cancels pending detached reading before a late adoption can execute and rejects replacement permission', async () => {

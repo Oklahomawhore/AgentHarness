@@ -84,7 +84,7 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
         omitted.push({ source, reason: 'self-published' }); continue
       }
       const tool = publication.peerToolObservation ?? publication.localToolObservation
-      if (tool?.kind === 'command-observation') {
+      if (tool?.kind === 'command-observation' || tool?.kind === 'claude-command-observation') {
         selected.push(source)
         mandatory.push({ source, basis: historical ? 'frozen-parent-snapshot' : 'current-task-as-reported',
           kind: 'command-evidence', publication })
@@ -92,6 +92,8 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
       }
       const outcome = publication.peerTurnOutcome ?? publication.localTurnOutcome
       const { text: _outcomeText, ...outcomeMetadata } = outcome ?? { text: '' }
+      const stopReport = publication.peerStopReport
+      const { text: _stopText, ...stopMetadata } = stopReport ?? { text: '' }
       const local = publication.localContribution?.grant
       const grant = publication.peerContribution?.grant
       sources.push({ sourceId: semanticDigest(source), source, body: publication.text,
@@ -101,12 +103,14 @@ export function prepareSemanticInput(input: DevelopmentTaskContextInput): Semant
           ...(grant === undefined ? {} : { authorization: { ownerPeerId: grant.ownerPeerId,
             contributorPeerId: grant.contributorPeerId, grantId: grant.grantId, generation: grant.generation,
             captureId: grant.captureId, captureGeneration: grant.captureGeneration,
-            ...(grant.source.kind === 'native-work' ? { source: grant.source } : {}) } }),
+            ...(grant.source.kind === 'native-work' || grant.source.kind === 'claude-work' ? { source: grant.source } : {}) } }),
           ...(local === undefined ? {} : { localAuthorization: { taskId: local.taskId, participantId: local.participantId,
             bindingId: local.bindingId, expectedBindingEpoch: local.expectedBindingEpoch, captureId: local.captureId,
             captureGeneration: local.captureGeneration, source: local.source } }),
           ...(outcome === undefined ? {} : { turnOutcome: { ...outcomeMetadata, source: grant?.source ?? local?.source,
             meaning: 'Complete Agent-reported output; not owner-approved facts or independently verified evidence.' } }),
+          ...(stopReport === undefined ? {} : { stopReport: { ...stopMetadata, source: grant?.source,
+            meaning: 'Complete text reported by the Claude Stop hook; the turn may continue. Not owner-approved or independently verified.' } }),
           ...(tool === undefined ? {} : { tool: tool.tool, reportedStatus: tool.reportedStatus,
             ...(tool.version === 2 ? { observationOrigin: { ...tool.origin,
               meaning: 'Previously recorded tool attempt; not re-executed or checked against the current file.' } } : {}),

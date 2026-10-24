@@ -4,6 +4,7 @@ import {
   peerContributionGrantSchema, peerContributionProposalSchema, legacyPeerContributionSampleSchema,
   recordedPeerContributionSampleSchema, completedFilePeerContributionSampleSchema, commandPeerContributionSampleSchema,
   completedTurnPeerContributionSampleSchema, nativeWorkPeerContributionSampleSchema,
+  claudeWorkPeerContributionSampleSchema,
   peerContributionReceiptSchema,
   peerContributionAdmissionReceiptSchema, peerContributionPayloadDigest, peerContributionPublicationId,
 } from '@deepseek-ai/dsh-development-task/schema'
@@ -22,14 +23,15 @@ import type {
  * @returns the corresponding invitation kind without adding permissions.
  */
 export function contributionKind(source: DevelopmentTaskContributionSource): ScopeContributionInvitation['kind'] {
-  return source.kind === 'native-work' ? 'native-work-contribution'
-    : source.kind === 'completed-turn-outcomes' ? 'turn-contribution'
-      : source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution'
+  return source.kind === 'claude-work' ? 'claude-work-contribution'
+    : source.kind === 'native-work' ? 'native-work-contribution'
+      : source.kind === 'completed-turn-outcomes' ? 'turn-contribution'
+        : source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution'
 }
 
 /** Write invitations carry their own discriminator and never inherit read-invitation authority. */
 export const contributionInvitationSchema: z.ZodType<ScopeContributionInvitation> = z.object({
-  version: z.literal(1), kind: z.enum(['openapi-contribution', 'tool-contribution', 'turn-contribution', 'native-work-contribution']),
+  version: z.literal(1), kind: z.enum(['openapi-contribution', 'tool-contribution', 'turn-contribution', 'native-work-contribution', 'claude-work-contribution']),
   ownerAddress: z.string().min(1).max(2048), grant: peerContributionGrantSchema,
 }).strict().refine(value => value.kind === contributionKind(value.grant.source))
 
@@ -43,14 +45,14 @@ const entryFields = {
 /** Single-capture application entrance; legacy entries permit only OpenAPI sources. */
 export const singleContributionEntrySchema: z.ZodType<ScopeSingleContributionEntry> = z.discriminatedUnion('kind', [
   z.strictObject({ ...entryFields, kind: z.literal('openapi-contribution-entry') }),
-  z.strictObject({ ...entryFields, kind: z.literal('contribution-entry'), sourceKind: z.enum(['openapi', 'tool-observations', 'completed-turn-outcomes', 'native-work']) }),
-  z.strictObject({ ...entryFields, kind: z.literal('scope-join-entry'), sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work']) }),
+  z.strictObject({ ...entryFields, kind: z.literal('contribution-entry'), sourceKind: z.enum(['openapi', 'tool-observations', 'completed-turn-outcomes', 'native-work', 'claude-work']) }),
+  z.strictObject({ ...entryFields, kind: z.literal('scope-join-entry'), sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work', 'claude-work']) }),
 ]).transform(value => ({ ...value, entryId: value.entryId as ScopeContributionEntry['entryId'],
   taskId: value.taskId as ScopeContributionEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeContributionEntry['ownerPeerId'] }))
 
 /** Explicit version-two group entrance; legacy single-capture parsers never accept it. */
 export const groupEntrySchema: z.ZodType<ScopeGroupEntry> = z.strictObject({
-  ...entryFields, version: z.literal(2), kind: z.literal('scope-group-entry'), sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work']),
+  ...entryFields, version: z.literal(2), kind: z.literal('scope-group-entry'), sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work', 'claude-work']),
   maxMembers: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 }).transform(value => ({ ...value, entryId: value.entryId as ScopeGroupEntry['entryId'],
   taskId: value.taskId as ScopeGroupEntry['taskId'], ownerPeerId: value.ownerPeerId as ScopeGroupEntry['ownerPeerId'] }))
@@ -67,7 +69,7 @@ export const contributionLimitsSchema: z.ZodType<ScopeContributionLimits> = z.ob
 }).strict()
 
 const transferSchema: z.ZodType<ScopeContributionTransfer> = z.union([
-  z.object({ version: z.literal(1), kind: z.enum(['openapi-contribution-request', 'tool-contribution-request', 'turn-contribution-request', 'native-work-contribution-request']), proposal: contributionProposalSchema }).strict()
+  z.object({ version: z.literal(1), kind: z.enum(['openapi-contribution-request', 'tool-contribution-request', 'turn-contribution-request', 'native-work-contribution-request', 'claude-work-contribution-request']), proposal: contributionProposalSchema }).strict()
     .refine(value => value.kind === `${contributionKind(value.proposal.source)}-request`),
   contributionInvitationSchema, contributionEntrySchema,
 ])
@@ -136,6 +138,7 @@ export const contributionSubmitSchema: z.ZodType<ScopeContributionSubmitResult> 
 export const contributionEndSchema: z.ZodType<ScopeContributionEndResult> = z.union([ended, failure])
 
 const legacyInvitation = contributionInvitationSchema.refine(value => value.grant.source.kind !== 'native-work'
+  && value.grant.source.kind !== 'claude-work'
   && value.grant.source.kind !== 'completed-turn-outcomes'
   && (value.grant.source.kind !== 'tool-observations' || value.grant.source.version !== 4))
 const request = z.object({ version: z.literal(1), requestId: z.uuid(), invitation: legacyInvitation }).strict()
@@ -186,6 +189,16 @@ export const nativeWorkContributionRequestSchema = z.discriminatedUnion('op', [
   nativeWorkRequest.extend({ op: z.literal('end') }),
 ])
 
+const claudeWorkRequest = request.extend({ version: z.literal(7),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind === 'claude-work'),
+})
+/** Version-seven operations preserve Claude permission even when the sample is a version-one file report. */
+export const claudeWorkContributionRequestSchema = z.discriminatedUnion('op', [
+  claudeWorkRequest.extend({ op: z.literal('status') }),
+  claudeWorkRequest.extend({ op: z.literal('sample'), sample: claudeWorkPeerContributionSampleSchema }),
+  claudeWorkRequest.extend({ op: z.literal('end') }),
+])
+
 const response = z.object({ version: z.literal(1), requestId: z.uuid() }).strict()
 /** A response is correlated to the operation as well as the unique request identifier. */
 export const contributionResponseSchema = z.discriminatedUnion('op', [
@@ -223,6 +236,13 @@ export const nativeWorkContributionResponseSchema = z.discriminatedUnion('op', [
   response.extend({ version: z.literal(6), op: z.literal('status'), result: contributionStatusSchema }),
   response.extend({ version: z.literal(6), op: z.literal('sample'), result: contributionSubmitSchema }),
   response.extend({ version: z.literal(6), op: z.literal('end'), result: contributionEndSchema }),
+])
+
+/** Version-seven replies correlate each operation under the original Claude work permission. */
+export const claudeWorkContributionResponseSchema = z.discriminatedUnion('op', [
+  response.extend({ version: z.literal(7), op: z.literal('status'), result: contributionStatusSchema }),
+  response.extend({ version: z.literal(7), op: z.literal('sample'), result: contributionSubmitSchema }),
+  response.extend({ version: z.literal(7), op: z.literal('end'), result: contributionEndSchema }),
 ])
 
 /**

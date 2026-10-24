@@ -11,6 +11,8 @@ import type { ScopeContribution } from './contribution-state.ts'
 import type { ScopeJoint } from './joint-state.ts'
 import type { ClaudeScopeJointId, ClaudeScopeRequestContributionRequest, ClaudeScopeRecoverJointRequest, ClaudeScopeSessionKey } from './types.ts'
 
+type CapturingSession = ScopeSession & { readonly contribution: ScopeContribution }
+
 /** Serialized local records; external subscription operations run outside this queue. */
 export type JointQueue = <T>(operation: (domain: ScopeDomain) => T | Promise<T>) => Promise<T>
 
@@ -48,9 +50,9 @@ export function ownsJointRead(session: ScopeSession, joint: ScopeJoint): boolean
  * @param session - record before the explicit local action.
  * @returns a versioned record with old joint adoption stopped; no remote call occurs.
  */
-export function advanceReadSelection(session: ScopeSession): Extract<ScopeSession, { readonly version: 2 }> {
+export function advanceReadSelection(session: ScopeSession): Extract<ScopeSession, { readonly version: 2 | 3 }> {
   const joint = session.joint
-  return { ...session, version: 2, readRevision: nextReadRevision(session), ...(joint === undefined ? {} : {
+  return { ...session, version: session.version === 3 ? 3 : 2, readRevision: nextReadRevision(session), ...(joint === undefined ? {} : {
     joint: { ...joint, intent: 'leave' as const, state: 'superseded' as const, cleanupPending: joint.subscription !== undefined },
   }) }
 }
@@ -79,11 +81,10 @@ export function validateJointRequest(session: ScopeSession, request: ClaudeScope
 /** Allocate a joint identity together with its original application; no receiving authority is inferred.
  * @param session - prepared capture record.
  * @param request - validated original application consent.
- * @param capture - prepared capture selected by the caller under the mutation queue.
  * @returns versioned session ready for one atomic application write.
  */
-export function prepareJoint(session: ScopeSession, request: ClaudeScopeRequestContributionRequest,
-  capture: ScopeContribution): ScopeSession {
+export function prepareJoint(session: CapturingSession, request: ClaudeScopeRequestContributionRequest): CapturingSession {
+  const capture = session.contribution
   if (request.receive === undefined) return session
   if (session.joint !== undefined && ownsJointCapture(capture, session.joint) && capture.application !== undefined) {
     const previous = session.joint
@@ -91,7 +92,7 @@ export function prepareJoint(session: ScopeSession, request: ClaudeScopeRequestC
       : recoverJointRoute(session, { sessionKey: session.sessionKey, jointId: previous.id,
         expectedReadRevision: session.readRevision, ownerAddress: request.entry.ownerAddress })
   }
-  return { ...session, version: 2, readRevision: session.readRevision ?? 0, joint: {
+  return { ...session, version: session.version === 3 ? 3 : 2, readRevision: session.readRevision ?? 0, joint: {
     id: randomUUID() as ClaudeScopeJointId, proposal: capture.proposal, entry: request.entry, limits: request.limits,
     expectedReadRevision: request.receive.expectedReadRevision, authorizedReadRevision: request.receive.expectedReadRevision,
     state: 'waiting', intent: 'adopt', ready: false, cleanupPending: false, routeRevision: 0, routePending: false,
@@ -148,11 +149,19 @@ export function jointNeedsWork(session: ScopeSession | undefined):
     && (joint.ready || (ownsJointCapture(session?.contribution, joint) && session?.contribution?.state === 'active'))
 }
 
+/** Retain the selected contribution while updating its joint route.
+ * @param session - current joint selection with its contribution retained.
+ * @param request - current management revision and replacement address.
+ * @returns updated session retaining that complete contribution.
+ */
+export function recoverJointRoute(session: CapturingSession, request: ClaudeScopeRecoverJointRequest): CapturingSession
+
 /** Retain one complete route update without widening any grant or reviving contribution.
  * @param session - exact current joint selection.
  * @param request - current management revision and replacement address.
  * @returns a single durable intent for both receiving and contribution recovery.
  */
+export function recoverJointRoute(session: ScopeSession, request: ClaudeScopeRecoverJointRequest): ScopeSession
 export function recoverJointRoute(session: ScopeSession, request: ClaudeScopeRecoverJointRequest): ScopeSession {
   if (session.joint === undefined || session.joint.id !== request.jointId) throw conflict(session)
   const joint = session.joint
@@ -169,7 +178,7 @@ export function recoverJointRoute(session: ScopeSession, request: ClaudeScopeRec
   if (!Number.isSafeInteger(routeRevision)) throw new Error('claude-scope: route revision exhausted')
   const capture = session.contribution
   const ownCapture = ownsJointCapture(capture, joint) ? capture : undefined
-  return { ...session, version: 2, readRevision: revision,
+  return { ...session, version: session.version === 3 ? 3 : 2, readRevision: revision,
     ...(ownCapture === undefined ? {} : { contribution: { ...ownCapture,
       ...(ownCapture.application === undefined ? {} : { application: { ...ownCapture.application,
         entry: { ...ownCapture.application.entry, ownerAddress: request.ownerAddress } } }),
@@ -208,7 +217,7 @@ export async function reconcileJoint(ctx: Context, enqueue: JointQueue, key: Cla
     if (existing !== undefined) await access.leave({ subscriptionId: plan.id })
     await enqueue(async (domain) => {
       const session = domain.table('sessions').get(key)
-      if (session?.version !== 2 || session.joint?.id !== joint.id || session.joint.intent === 'adopt') return
+      if (session?.version === undefined || session.joint?.id !== joint.id || session.joint.intent === 'adopt') return
       await domain.table('sessions').put(key, { ...session, joint: { ...session.joint, cleanupPending: false,
         state: session.joint.state === 'superseded' ? 'superseded' as const : 'ended' as const } })
       ctx.emit('claude-scope/session-changed', key)
@@ -221,7 +230,7 @@ export async function reconcileJoint(ctx: Context, enqueue: JointQueue, key: Cla
     if (existing !== undefined) await access.leave({ subscriptionId: plan.id })
     await enqueue(async (domain) => {
       const session = domain.table('sessions').get(key)
-      if (session?.version !== 2 || session.joint?.id !== joint.id || session.joint.routeRevision !== joint.routeRevision) return
+      if (session?.version === undefined || session.joint?.id !== joint.id || session.joint.routeRevision !== joint.routeRevision) return
       await domain.table('sessions').put(key, { ...session, joint: { ...session.joint, state: 'ended' as const, routePending: false } })
       ctx.emit('claude-scope/session-changed', key)
     })
@@ -233,7 +242,7 @@ export async function reconcileJoint(ctx: Context, enqueue: JointQueue, key: Cla
   const adopted = await enqueue(async (domain) => {
     const session = domain.table('sessions').get(key)
     const current = session?.joint
-    if (session?.version !== 2 || current?.id !== joint.id || current.intent !== 'adopt'
+    if (session?.version === undefined || current?.id !== joint.id || current.intent !== 'adopt'
       || current.routeRevision !== joint.routeRevision || session.ended || signal.aborted) return false
     const alreadyOwned = ownsJointRead(session, current)
     if ((!alreadyOwned && (session.receive !== undefined || session.readRevision !== current.authorizedReadRevision))
@@ -248,7 +257,7 @@ export async function reconcileJoint(ctx: Context, enqueue: JointQueue, key: Cla
       taskId: read.taskId, ownerPeerId: read.ownerPeerId, grantId: read.grantId,
       grantGeneration: read.generation, expiresAt: read.expiresAt, status: alreadyOwned && session.receive !== undefined ? session.receive.status : 'pending' }
     const revision = alreadyOwned ? session.readRevision : nextReadRevision(session)
-    await domain.table('sessions').put(key, { ...session, version: 2, readRevision: revision, receive,
+    await domain.table('sessions').put(key, { ...session, version: session.version === 3 ? 3 : 2, readRevision: revision, receive,
       joint: { ...current, state: 'active', ready: true, adoptedReadRevision: revision, authorizedReadRevision: revision, routePending: false,
         ...(current.routeRequest === undefined ? {} : { routeRequest: { ...current.routeRequest, appliedReadRevision: revision } }) } })
     ctx.emit('claude-scope/session-changed', key)

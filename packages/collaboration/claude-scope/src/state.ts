@@ -17,8 +17,9 @@ import type { ScopeSubscriptionId, ScopeGeneration, ScopeGrantId } from '@deepse
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
 import type { ClaudeScopeOpenApiSource, ClaudeScopePolicy, ClaudeScopeSessionKey, ClaudeScopeReceiveStatus } from './types.ts'
-import { jointSchema, type ScopeJoint } from './joint-state.ts'
-import { contributionSchema, jointContributionSchema, contributionLeaseSchema, type ScopeContribution, type ScopeContributionLease } from './contribution-state.ts'
+import { jointSchema, workJointSchema, type ScopeJoint } from './joint-state.ts'
+import { contributionSchema, jointContributionSchema, workContributionSchema, contributionLeaseSchema, type ScopeContribution, type ScopeContributionLease } from './contribution-state.ts'
+import { workLeaseSchema, type ScopeWorkLease } from './work-state.ts'
 
 /** Local recipient interval and the exact independently granted scope. */
 export interface ScopeReceive {
@@ -94,7 +95,7 @@ export type ScopeSession = {
   readonly readRevision?: undefined
   readonly joint?: undefined
 } | {
-  readonly version: 2
+  readonly version: 2 | 3
   readonly readRevision: number
   readonly joint?: ScopeJoint | undefined
 })
@@ -201,10 +202,12 @@ const legacySessionSchema = z.object({
   }).strict().optional(),
   sharingIssue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict()
-const sessionSchema: z.ZodType<ScopeSession> = z.union([legacySessionSchema, legacySessionSchema.extend({
+const jointSessionSchema = legacySessionSchema.extend({
   version: z.literal(2), readRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   joint: jointSchema.optional(), contribution: jointContributionSchema.optional(),
-}).strict().superRefine((session, context) => {
+}).strict()
+
+function validateSessionJoint(session: ScopeSession, context: z.RefinementCtx): void {
   const joint = session.joint
   const capture = session.contribution
   if ((capture?.application?.entry.kind === 'scope-group-entry' && joint === undefined)
@@ -226,7 +229,11 @@ const sessionSchema: z.ZodType<ScopeSession> = z.union([legacySessionSchema, leg
           || session.receive.expiresAt !== joint.subscription.invitation.expiresAt))))) {
     context.addIssue({ code: 'custom', message: 'joint operation does not belong to its retained Session selection' })
   }
-})])
+}
+const sessionSchema: z.ZodType<ScopeSession> = z.union([legacySessionSchema, jointSessionSchema.superRefine(validateSessionJoint),
+  jointSessionSchema.extend({ version: z.literal(3), contribution: workContributionSchema.optional(), joint: workJointSchema.optional() })
+    .strict().superRefine(validateSessionJoint),
+])
 const leaseSchema: z.ZodType<ScopeToolLease> = z.object({
   sessionKey,
   toolUseId: z.string().min(1),
@@ -296,6 +303,7 @@ export const claudeScopeDomainSpec = defineDomain({
     projections: domainTable<string, ScopeProjection>(projectionSchema),
     artifacts: domainTable<DevelopmentTaskArtifactGrantId, ScopeArtifactChain>(artifactChain),
     contribution_leases: domainTable<string, ScopeContributionLease>(contributionLeaseSchema),
+    work_leases: domainTable<string, ScopeWorkLease>(workLeaseSchema),
   },
 })
 

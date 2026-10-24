@@ -36,4 +36,8 @@ Grant 到期、owner 撤销和贡献者离开均产生终结 Task 事件并撤�
 
 已提交的 Task 代际和既有 SQLite 表保留身份。新 Peer publication 使用规范序列化，支持上下文 hash 与恢复。终结 grant 会移除当前注入的证据，但不能撤回已经发出的字节、抹除历史请求，或证明模型已经遗忘它们。
 
+[Publication 重建检查](../../../../packages/collaboration/development-task/tests/publication-projection.spec.ts)将复制后的 publication 与原始样本比较，保留缺省字段、失败证据与可选工件标识。分别解析的许可与报告必须匹配，才能推导 receipt；终结通知不能变成样本。即使旧 publication 较晚到达，观察选择仍保留最大的序号。
+
+[贡献生命周期检查](../../../../packages/collaboration/scope-access/tests/contribution-lifecycle.spec.ts)覆盖拒绝或过期审批、并发保留或终结 grant、完整 inventory 响应预算、请求与回复关联、调用方取消、入站容量，以及 dispose 期间到期状态的持久化失败。
+
 客户端安全的 Task DTO 入口在声明事件扩展前加载 Cordis 类型。仅类型的空 export 保留在声明产物中并从 JavaScript 擦除；空的 type import 无法为声明消费者保留该顺序。NodeNext 产物检查独立编译先导入 DTO 的消费者，防止更广的服务导入掩盖 Context 扩展缺失。

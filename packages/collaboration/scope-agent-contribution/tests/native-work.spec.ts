@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
@@ -20,6 +20,7 @@ const hosts: TestHost[] = []
 const releases: (() => unknown)[] = []
 afterEach(async () => {
   const released = await Promise.allSettled(releases.splice(0).reverse().map(async release => release()))
+  vi.restoreAllMocks()
   const closed = await Promise.allSettled(hosts.splice(0).reverse().map(host => host.close()))
   const failures = [...released, ...closed].filter(result => result.status === 'rejected').map((result): unknown => result.reason)
   if (failures.length > 0) throw new AggregateError(failures, 'native work fixture cleanup failed')
@@ -204,6 +205,35 @@ it.each(['samples', 'retention'] as const)('shares one cumulative %s allowance a
   expect((await f.status()).capture?.collectionIssue).toBe(bound === 'samples' ? 'sample-limit' : 'retention-limit')
   expect(f.publications().some(item => item.localTurnOutcome !== undefined)).toBe(false)
   expect(f.agent.session.deriveMessages().at(-1)?.content).toEqual([{ type: 'text', text: 'RELEASE_HELD_BY_CUSTOMER' }])
+})
+
+it('retains the shared retention warning while already reserved file and command completions settle', async () => {
+  const f = await fixture('local', { maxLeases: 3 })
+  const records = f.source.ctx.storageDomain.get('scope_agent_local_contributions')?.table('sessions')
+  if (records === undefined) throw new Error('Missing native local records')
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  const put = records.put.bind(records)
+  let held = false
+  vi.spyOn(records, 'put').mockImplementation(async (id, value) => {
+    await put(id, value)
+    const saved = nativeLocalContributionDomain.tables.sessions.valueSchema.parse(value)
+    if (!held && saved.capture?.sequence === 1) {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+  })
+  const turn = work(f, operations())
+  releases.push(async () => { await turn })
+  await entered.promise
+  await turn
+  expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
+  release.resolve(undefined)
+  await expect.poll(async () => (await row(f)).samples.filter(item => item.receipt !== undefined).length).toBe(3)
+  expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
+  expect(f.publications().some(item => item.localTurnOutcome !== undefined)).toBe(false)
 })
 
 it('rejects upgrading old durable rows or changing categories within an active capture', async () => {

@@ -47,6 +47,14 @@ describe('authorized original Claude tool observations', () => {
     expect(() => parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'PreToolUse', tool_name: 'Write' })).toThrow('requires')
   })
 
+  it('retains native prompt association and complete Stop text without reading or keeping transcript paths', () => {
+    expect(parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'Stop', prompt_id: 'prompt-native',
+      stop_hook_active: true, last_assistant_message: '  完整答复🙂\n', transcript_path: '/forbidden/transcript' }))
+      .toEqual({ sessionId: 'one', event: 'Stop', promptId: 'prompt-native', stop: { text: '  完整答复🙂\n', active: true } })
+    expect(parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'StopFailure', prompt_id: 'prompt-native',
+      last_assistant_message: 'API error', error: 'invalid_request' })).toEqual({ sessionId: 'one', event: 'StopFailure', promptId: 'prompt-native' })
+  })
+
   it('allows new descendants and rejects prefix siblings, relative paths, and unsupported input fields', async () => {
     const { root, outside, policy } = await fixture()
     const accepted = await writeInput(root, policy, 'original source')

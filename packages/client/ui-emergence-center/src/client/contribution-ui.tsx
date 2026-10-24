@@ -68,7 +68,12 @@ export function ContributionGrantSummary({ grant, t }: PropsLocale<'emergenceCen
 export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceCenter'> & { source: ScopeContributionInvitation['grant']['source'] }) {
   return <>
     <dt>{t('contribution.sourceName')}</dt><dd>{source.name}</dd>
-    {source.kind === 'tool-observations' || source.kind === 'native-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t(source.kind === 'native-work' ? 'native.work.source' : 'contribution.toolObservations')}</dd>
+    {source.kind === 'claude-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('claude.work.source')}</dd>
+      <dt>{t('contribution.tools')}</dt><dd>{source.tools.length === 0 ? t('claude.work.notSelected') : source.tools.join(', ')}</dd>
+      <dt>{t('claude.work.commands')}</dt><dd>{source.commands.length === 0 ? t('claude.work.notSelected') : <NativeCommandSummary commands={source.commands} t={t} />}</dd>
+      <dt>{t('claude.work.stopReports')}</dt><dd>{t(source.stopReports ? 'claude.work.selected' : 'claude.work.notSelected')}</dd>
+      {source.stopReports && <><dt>{t('claude.work.reportScope')}</dt><dd>{t('claude.work.stopHint')}</dd></>}
+    </> : source.kind === 'tool-observations' || source.kind === 'native-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t(source.kind === 'native-work' ? 'native.work.source' : 'contribution.toolObservations')}</dd>
       <dt>{t('contribution.tools')}</dt><dd>{source.kind === 'native-work' && source.tools.length === 0
         ? t('native.work.notSelected') : source.tools.join(', ')}</dd>
       {(source.version === 4 || source.version === 6) && <><dt>{t('native.commands.scope')}</dt><dd>

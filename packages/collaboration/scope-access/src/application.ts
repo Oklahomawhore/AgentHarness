@@ -43,7 +43,7 @@ interface Owner {
   readonly track: <T>(operation: Promise<T>) => Promise<T>
 }
 const createSchema = z.object({ participation: z.enum(['join', 'contribution']).optional(),
-  sourceKind: z.enum(['openapi', 'tool-observations', 'completed-turn-outcomes', 'native-work']), taskId: z.string().min(1).max(256), ownerAddress: z.string().min(1).max(2048),
+  sourceKind: z.enum(['openapi', 'tool-observations', 'completed-turn-outcomes', 'native-work', 'claude-work']), taskId: z.string().min(1).max(256), ownerAddress: z.string().min(1).max(2048),
   expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()
   .refine(value => value.participation !== 'join' || value.sourceKind !== 'openapi')
 const selectionSchema = z.object({ entryId: z.uuid(), applicationId: z.uuid().optional(),
@@ -51,7 +51,7 @@ const selectionSchema = z.object({ entryId: z.uuid(), applicationId: z.uuid().op
 const approvalSchema = selectionSchema.extend({ expectedProposal: contributionProposalSchema, limits: contributionLimitsSchema,
   read: z.object({ responsibility: z.string().trim().min(1).max(1024) }).strict().optional(),
   ownerAddress: z.string().min(1).max(2048) })
-const groupCreateSchema = z.object({ sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work']).optional(), taskId: createSchema.shape.taskId, ownerAddress: createSchema.shape.ownerAddress,
+const groupCreateSchema = z.object({ sourceKind: z.enum(['tool-observations', 'completed-turn-outcomes', 'native-work', 'claude-work']).optional(), taskId: createSchema.shape.taskId, ownerAddress: createSchema.shape.ownerAddress,
   expiresAt: createSchema.shape.expiresAt, maxMembers: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()
 const groupSelectionSchema = z.object({ entryId: z.uuid() }).strict()
 const recoverSchema = z.object({ entryId: z.uuid(), ownerAddress: z.string().min(1).max(2048) }).strict()

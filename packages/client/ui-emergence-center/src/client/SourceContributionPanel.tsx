@@ -12,6 +12,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContributionEntry } from './contribution-directory.ts'
 import { contributionErrorKey, ContributionGrantSummary, ContributionSourceSummary, ContributionTransferText } from './contribution-ui.tsx'
 import { ClaudeJointControls } from './ClaudeJointControls.tsx'
+import { ClaudeWorkPermission, claudeWorkSource, emptyClaudeWork } from './ClaudeWorkPermission.tsx'
 import css from './ClaudeScopePanel.module.css'
 
 function sameInvitation(left: ScopeContributionInvitation, right: ScopeContributionInvitation): boolean {
@@ -22,14 +23,18 @@ function sameInvitation(left: ScopeContributionInvitation, right: ScopeContribut
     && a.ownerPeerId === b.ownerPeerId && a.contributorPeerId === b.contributorPeerId
     && a.captureId === b.captureId && a.captureGeneration === b.captureGeneration
     && a.source.name === b.source.name
-    && (a.source.kind === 'tool-observations' ? b.source.kind === 'tool-observations'
+    && (a.source.kind === 'claude-work' ? b.source.kind === 'claude-work'
+      && a.source.stopReports === b.source.stopReports
+      && JSON.stringify(a.source.tools) === JSON.stringify(b.source.tools)
+      && JSON.stringify(a.source.commands) === JSON.stringify(b.source.commands)
+      : a.source.kind === 'tool-observations' ? b.source.kind === 'tool-observations'
       && a.source.version === b.source.version && a.source.initialization === b.source.initialization
       && a.source.fileContent === b.source.fileContent
       && JSON.stringify(a.source.version === 4 ? a.source.commands.map(item => [item.command, item.rootIndex]) : null)
         === JSON.stringify(b.source.version === 4 ? b.source.commands.map(item => [item.command, item.rootIndex]) : null)
       && a.source.tools.length === b.source.tools.length
       && a.source.tools.every(tool => b.source.kind === 'tool-observations' && b.source.tools.includes(tool))
-      : a.source.kind === undefined && b.source.kind === undefined
+        : a.source.kind === undefined && b.source.kind === undefined
         && a.source.method === b.source.method && a.source.path === b.source.path)
     && a.expiresAt === b.expiresAt && a.maxSamples === b.maxSamples && a.maxSampleBytes === b.maxSampleBytes
 }
@@ -60,7 +65,8 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
   const id = useId()
   const previewRevision = useRef(0)
   const [roots, setRoots] = useState(session.cwd ?? '')
-  const [sourceKind, setSourceKind] = useState<'tool-observations' | 'openapi'>('tool-observations')
+  const [sourceKind, setSourceKind] = useState<'tool-observations' | 'claude-work' | 'openapi'>('tool-observations')
+  const [work, setWork] = useState(emptyClaudeWork)
   const [filePath, setFilePath] = useState('')
   const [name, setName] = useState('')
   const [method, setMethod] = useState<'post' | 'put' | 'patch'>('post')
@@ -97,9 +103,14 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
   const ending = selected.contributionState === 'withdrawal-pending'
   const application = capture?.application
   const invitation = preview ?? capture?.invitation ?? undefined
-  const parsedRoots = [...new Set(roots.split('\n').map(value => value.trim()).filter(Boolean))]
+  const enteredRoots = roots.split('\n').map(value => value.trim()).filter(Boolean)
+  const parsedRoots = sourceKind === 'claude-work' && work.commands.enabled ? enteredRoots : [...new Set(enteredRoots)]
   const permissionValid = [hours, samples, bytes].every(value => Number.isSafeInteger(Number(value)) && Number(value) > 0)
-  const sourceValid = parsedRoots.length > 0 && (sourceKind === 'tool-observations' || !!filePath.trim() && !!name.trim() && !!path.trim())
+  const source: ClaudeScopeContributionSource | null = sourceKind === 'claude-work' ? claudeWorkSource(work, parsedRoots)
+    : sourceKind === 'tool-observations' ? { kind: 'tool-observations', tools: ['Write', 'Edit'] }
+      : { name: name.trim(), filePath: filePath.trim(), method, path: path.trim() }
+  const sourceValid = source !== null && (sourceKind === 'claude-work' || parsedRoots.length > 0
+    && (sourceKind === 'tool-observations' || !!filePath.trim() && !!name.trim() && !!path.trim()))
   const jointEntry = applicationEntry?.kind === 'scope-join-entry' || applicationEntry?.kind === 'scope-group-entry'
   const joint = selected.joint
   const jointOwnsCapture = joint !== undefined && capture != null
@@ -110,12 +121,9 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
     && (joint === undefined || !joint.cleanupPending && (joint.state === 'ended' || joint.state === 'superseded'))
   const readConfirmed = readConsent !== null && readConsent.entry === applicationEntry
     && readConsent.revision === selected.readRevision && canReceive
-  const collectionKey = JSON.stringify([applicationEntry, parsedRoots, hours, samples, bytes])
+  const collectionKey = JSON.stringify([applicationEntry, parsedRoots, source, hours, samples, bytes])
   const collectionConfirmed = collectionConsent === collectionKey
   const jointConfirmed = !jointEntry || (readConfirmed && collectionConfirmed)
-  const source: ClaudeScopeContributionSource = sourceKind === 'tool-observations'
-    ? { kind: 'tool-observations', tools: ['Write', 'Edit'] }
-    : { name: name.trim(), filePath: filePath.trim(), method, path: path.trim() }
   const verifyApplication = async (): Promise<void> => {
     const revision = ++previewRevision.current
     setPreviewing(true); setInvalid(false); setApplicationEntry(undefined); setReadConsent(null); setCollectionConsent(null)
@@ -135,6 +143,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
         }
         setApplicationEntry(result)
         setSourceKind(selectedSource)
+        setWork(emptyClaudeWork())
       }
       else setInvalid(true)
     } catch { if (revision === previewRevision.current) setInvalid(true) }
@@ -146,7 +155,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
     try {
       const result = await previewContributionText(text)
       if (revision !== previewRevision.current) return
-      if (result.kind === 'openapi-contribution' || result.kind === 'tool-contribution') setPreview(result)
+      if (result.kind === 'openapi-contribution' || result.kind === 'tool-contribution' || result.kind === 'claude-work-contribution') setPreview(result)
       else setInvalid(true)
     } catch { if (revision === previewRevision.current) setInvalid(true) }
     finally { if (revision === previewRevision.current) setPreviewing(false) }
@@ -164,7 +173,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
       session={selected} joint={joint} ready={!busy} leave={leaveJointContribution} recover={recoverJointContribution} t={t} />}
     {capture === null && !pendingJoin && !selected.ended && selected.taskId === undefined && selected.sharingState !== 'withdrawal-pending' && <form className={css.form} onSubmit={(event) => {
       event.preventDefault()
-      if (applicationEntry === undefined || !permissionValid || !sourceValid || !jointConfirmed) return
+      if (applicationEntry === undefined || source === null || !permissionValid || !sourceValid || !jointConfirmed) return
       void requestContribution({ sessionKey: session.sessionKey, expectedCapture: null, roots: parsedRoots,
         source, entry: applicationEntry,
         ...(jointEntry && readConsent !== null ? { receive: { expectedReadRevision: readConsent.revision } } : {}),
@@ -181,8 +190,11 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
         <dt>{t('contribution.task')}</dt><dd>{applicationEntry.taskId}</dd>
         <dt>{t('contribution.application.entryExpires')}</dt><dd>{new Date(applicationEntry.expiresAt).toLocaleString()}</dd>
       </dl>}
-      <label className={css.field} htmlFor={`${id}-source-kind`}>{t('contribution.sourceKind')}<select id={`${id}-source-kind`} value={sourceKind} disabled={busy || applicationEntry !== undefined} onChange={(event) => { setSourceKind(event.target.value as typeof sourceKind) }}>
-        <option value="tool-observations">{t('contribution.toolObservations')}</option><option value="openapi">{t('contribution.openApi')}</option>
+      <label className={css.field} htmlFor={`${id}-source-kind`}>{t('contribution.sourceKind')}<select id={`${id}-source-kind`} value={sourceKind} disabled={busy || applicationEntry !== undefined} onChange={(event) => {
+        setSourceKind(event.target.value as typeof sourceKind); setWork(emptyClaudeWork()); setCollectionConsent(null)
+      }}>
+        <option value="tool-observations">{t('contribution.toolObservations')}</option>
+        <option value="claude-work">{t('claude.work.source')}</option><option value="openapi">{t('contribution.openApi')}</option>
       </select></label>
       {sourceKind === 'openapi' && <>
         <label className={css.field} htmlFor={`${id}-file`}>{t('contribution.file')}<Input id={`${id}-file`} required value={filePath} disabled={busy} onChange={(event) => { setFilePath(event.target.value) }} /></label>
@@ -190,11 +202,15 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
         <label className={css.field} htmlFor={`${id}-method`}>{t('contribution.method')}<select id={`${id}-method`} value={method} disabled={busy} onChange={(event) => { setMethod(event.target.value as typeof method) }}>{(['post', 'put', 'patch'] as const).map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>
         <label className={css.field} htmlFor={`${id}-path`}>{t('contribution.apiPath')}<Input id={`${id}-path`} required value={path} disabled={busy} onChange={(event) => { setPath(event.target.value) }} /></label>
       </>}
-      <label className={css.field} htmlFor={`${id}-roots`}>{t('contribution.roots')}<textarea id={`${id}-roots`} required rows={2} value={roots} disabled={busy} onChange={(event) => { setRoots(event.target.value) }} /></label>
-      <p className={css.hint}>{t(sourceKind === 'tool-observations' ? 'contribution.toolPermit' : 'contribution.localPermit')}</p>
-      <label className={css.field} htmlFor={`${id}-hours`}>{t('contribution.hours')}<Input id={`${id}-hours`} type="number" min="1" value={hours} disabled={busy} onChange={(event) => { setHours(event.target.value) }} /></label>
-      <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" value={samples} disabled={busy} onChange={(event) => { setSamples(event.target.value) }} /></label>
-      <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" value={bytes} disabled={busy} onChange={(event) => { setBytes(event.target.value) }} /></label>
+      <label className={css.field} htmlFor={`${id}-roots`}>{t('contribution.roots')}<textarea id={`${id}-roots`}
+        required={sourceKind !== 'claude-work' || work.write || work.edit || work.commands.enabled}
+        rows={2} value={roots} disabled={busy} onChange={(event) => { setRoots(event.target.value); setCollectionConsent(null) }} /></label>
+      {sourceKind === 'claude-work' ? <ClaudeWorkPermission id={id} draft={work} roots={parsedRoots} disabled={busy}
+        change={(draft) => { setWork(draft); setCollectionConsent(null) }} t={t} />
+        : <p className={css.hint}>{t(sourceKind === 'tool-observations' ? 'contribution.toolPermit' : 'contribution.localPermit')}</p>}
+      <label className={css.field} htmlFor={`${id}-hours`}>{t('contribution.hours')}<Input id={`${id}-hours`} type="number" min="1" value={hours} disabled={busy} onChange={(event) => { setHours(event.target.value); setCollectionConsent(null) }} /></label>
+      <label className={css.field} htmlFor={`${id}-samples`}>{t('contribution.maxSamples')}<Input id={`${id}-samples`} type="number" min="1" value={samples} disabled={busy} onChange={(event) => { setSamples(event.target.value); setCollectionConsent(null) }} /></label>
+      <label className={css.field} htmlFor={`${id}-bytes`}>{t('contribution.maxBytes')}<Input id={`${id}-bytes`} type="number" min="1" value={bytes} disabled={busy} onChange={(event) => { setBytes(event.target.value); setCollectionConsent(null) }} /></label>
       {jointEntry ? <div data-claude-joint-consent className={css.form}>
         <p className={css.hint}>{t('claude.joint.hint')}</p>
         {!canReceive && <p role="status" className={css.notice}>{t('claude.joint.conflict')}</p>}
@@ -202,14 +218,15 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
           onChange={(event) => { setReadConsent(event.target.checked
             ? { entry: applicationEntry, revision: selected.readRevision } : null) }} />{t('claude.joint.readConsent')}</label>
         <label className={css.description}><input type="checkbox" checked={collectionConfirmed} disabled={busy}
-          onChange={(event) => { setCollectionConsent(event.target.checked ? collectionKey : null) }} />{t('claude.joint.collectionConsent')}</label>
-      </div> : <p className={css.hint}>{t('contribution.application.consent')}</p>}
+          onChange={(event) => { setCollectionConsent(event.target.checked ? collectionKey : null) }} />{t(sourceKind === 'claude-work' ? 'claude.work.consent' : 'claude.joint.collectionConsent')}</label>
+      </div> : <p className={css.hint}>{t(sourceKind === 'claude-work' ? 'claude.work.applicationConsent' : 'contribution.application.consent')}</p>}
       <Button type="submit" disabled={busy || previewing || applicationEntry === undefined || !permissionValid || !sourceValid || !jointConfirmed}>
         {t(jointEntry ? 'claude.joint.request' : 'contribution.application.request')}
       </Button>
       {!jointEntry && <details data-contribution-manual-source><summary>{t('contribution.application.manual')}</summary>
         <p className={css.hint}>{t('contribution.application.manualHint')}</p>
         <Button type="button" variant="outline" disabled={busy || !sourceValid} onClick={() => {
+          if (source === null || !sourceValid) return
           void prepareContribution({ sessionKey: session.sessionKey, expectedCapture: null, roots: parsedRoots,
             source })
         }}>{t('contribution.prepare')}</Button>

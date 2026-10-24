@@ -147,6 +147,42 @@ export interface DevelopmentTaskNativeWorkSource {
   readonly initialization?: never
 }
 
+/** Explicit Claude Hook reports sharing one capture and cumulative sample allowance. */
+export interface DevelopmentTaskClaudeWorkSource {
+  readonly kind: 'claude-work'
+  readonly version: 7
+  readonly name: string
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly DevelopmentTaskCommandSelector[]
+  readonly stopReports: boolean
+}
+
+/** Original foreground Bash Hook fields; the event does not establish a process exit code. */
+export interface DevelopmentTaskClaudeCommandObservationResult {
+  readonly kind: 'claude-command-observation'
+  readonly version: 7
+  readonly tool: 'Bash'
+  readonly hookEvent: 'PostToolUse' | 'PostToolUseFailure'
+  readonly fields: {
+    readonly rootIndex: number
+    readonly command: string
+    readonly stdout?: string
+    readonly stderr?: string
+    readonly interrupted?: boolean
+    readonly error?: string
+  }
+  readonly omissions: readonly ('stdout' | 'stderr' | 'error' | 'unsupported-tool-response')[]
+}
+
+/** Complete official last-assistant-message text at Stop; it does not prove that the turn ended. */
+export interface DevelopmentTaskClaudeStopReportResult {
+  readonly kind: 'claude-stop-report'
+  readonly version: 7
+  readonly text: string
+  readonly sha256: string
+  readonly stopHookActive: boolean
+}
+
 /** A complete Agent report; its digest verifies text integrity, not owner approval or factual accuracy. */
 export interface DevelopmentTaskCompletedTurnObservationResult {
   readonly kind: 'completed-turn-outcome'
@@ -159,7 +195,7 @@ export interface DevelopmentTaskCompletedTurnObservationResult {
 export type DevelopmentTaskContributionSource = DevelopmentTaskOpenApiContributionSource
   | DevelopmentTaskToolObservationSource | DevelopmentTaskRecordedToolObservationSource
   | DevelopmentTaskCompletedFileToolObservationSource | DevelopmentTaskCommandToolObservationSource
-  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource
+  | DevelopmentTaskCompletedTurnObservationSource | DevelopmentTaskNativeWorkSource | DevelopmentTaskClaudeWorkSource
 
 /** Bounded tool report; omitted text is explicit and never establishes current file contents. */
 export type DevelopmentTaskToolObservationResult = {
@@ -244,6 +280,7 @@ export type DevelopmentTaskLocalToolObservationResult =
 export type DevelopmentTaskPeerToolObservationResult =
   | DevelopmentTaskLocalToolObservationResult
   | DevelopmentTaskRecordedToolObservationResult
+  | DevelopmentTaskClaudeCommandObservationResult
 
 /** Locally admitted samples retain distinct tool and completed-turn permissions. */
 export type DevelopmentTaskLocalContributionObservationResult =
@@ -251,7 +288,7 @@ export type DevelopmentTaskLocalContributionObservationResult =
 
 /** Peer samples retain tool variants and independently permitted completed-turn reports. */
 export type DevelopmentTaskPeerContributionObservationResult =
-  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult
+  | DevelopmentTaskPeerToolObservationResult | DevelopmentTaskCompletedTurnObservationResult | DevelopmentTaskClaudeStopReportResult
 
 /** Identity of one owner-local capture interval; it is never a transport peer identity. */
 export type DevelopmentTaskLocalContributionId = Branded<'DevelopmentTaskLocalContributionId'>
@@ -437,6 +474,16 @@ export type DevelopmentTaskPeerTurnOutcome = DevelopmentTaskCompletedTurnObserva
   readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
 }
 
+/** Owner-attributed Claude Stop report, separate from native completed-turn evidence. */
+export type DevelopmentTaskPeerStopReport = DevelopmentTaskClaudeStopReportResult & {
+  readonly sourceName: string
+  readonly grantId: DevelopmentTaskContributionGrantId
+  readonly sequence: number
+  readonly observerPeerId: ScopePeerId
+  readonly sourceId: DevelopmentTaskObservedSourceId
+  readonly capture: { readonly id: DevelopmentTaskCaptureId; readonly generation: DevelopmentTaskCaptureGeneration }
+}
+
 /** Owner-stamped peer provenance; ended appears only on the canonical terminal notice. */
 export interface DevelopmentTaskPeerContributionMetadata {
   readonly version: 1
@@ -460,6 +507,7 @@ export type DevelopmentTaskContextPublication = {
     readonly peerObservation?: never
     readonly peerToolObservation?: never
     readonly peerTurnOutcome?: never
+    readonly peerStopReport?: never
     readonly localContribution?: never
     readonly localToolObservation?: never
     readonly localTurnOutcome?: never
@@ -473,6 +521,7 @@ export type DevelopmentTaskContextPublication = {
     readonly peerObservation?: DevelopmentTaskPeerOpenApiObservation
     readonly peerToolObservation?: DevelopmentTaskPeerToolObservation
     readonly peerTurnOutcome?: DevelopmentTaskPeerTurnOutcome
+    readonly peerStopReport?: DevelopmentTaskPeerStopReport
     readonly localContribution?: never
     readonly localToolObservation?: never
     readonly localTurnOutcome?: never
@@ -486,6 +535,7 @@ export type DevelopmentTaskContextPublication = {
     readonly peerObservation?: never
     readonly peerToolObservation?: never
     readonly peerTurnOutcome?: never
+    readonly peerStopReport?: never
     readonly localContribution: DevelopmentTaskLocalContributionMetadata
     readonly localToolObservation?: DevelopmentTaskLocalToolObservation
     readonly localTurnOutcome?: DevelopmentTaskLocalTurnOutcome

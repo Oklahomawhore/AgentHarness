@@ -45,7 +45,7 @@ const local: DevelopmentTaskLocalContributionGrant = {
   expiresAt: peer.expiresAt, maxSamples: peer.maxSamples, maxSampleBytes: peer.maxSampleBytes,
 }
 
-function report(mode: Mode, sequence: number, result: DevelopmentTaskPeerToolObservationResult,
+function report(mode: Mode, sequence: number, result: Extract<DevelopmentTaskPeerToolObservationResult, { kind: 'tool-observation' }>,
   capture = 'first'): DevelopmentTaskContextPublication {
   const id = `${mode}-${capture}-${sequence}`
   const sourceId = brandString<DevelopmentTaskObservedSourceId>(createHash('sha256').update(id).digest('hex'))

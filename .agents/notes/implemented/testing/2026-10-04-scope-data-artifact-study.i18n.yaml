@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-10-04-scope-data-artifact-study.md
-2026-10-04-scope-data-artifact-study.md: 76f4f927485a323fa73c8b75cee9030c8ec4c3d9
-2026-10-04-scope-data-artifact-study.zh.md: 1cff796286d9c536bf6adf7130ac82e2d9237144
+2026-10-04-scope-data-artifact-study.md: 9ef3bd20a42bea810619a837cb782f2d64317efb
+2026-10-04-scope-data-artifact-study.zh.md: 779d7130c8671007aca7e30318e0b641dd1924e7

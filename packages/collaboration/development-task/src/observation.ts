@@ -55,6 +55,8 @@ export function freezePublication(publication: DevelopmentTaskContextPublication
       }),
       ...(publication.peerTurnOutcome === undefined ? {} : { peerTurnOutcome: Object.freeze({ ...publication.peerTurnOutcome,
         capture: Object.freeze({ ...publication.peerTurnOutcome.capture }) }) }),
+      ...(publication.peerStopReport === undefined ? {} : { peerStopReport: Object.freeze({ ...publication.peerStopReport,
+        capture: Object.freeze({ ...publication.peerStopReport.capture }) }) }),
       ...(tool === undefined ? {} : { peerToolObservation: tool.kind === 'command-observation'
         ? Object.freeze({ ...freezeCommandResult(tool), sourceName: tool.sourceName, grantId: tool.grantId, sequence: tool.sequence,
           observerPeerId: tool.observerPeerId, sourceId: tool.sourceId, capture: Object.freeze({ ...tool.capture }) })

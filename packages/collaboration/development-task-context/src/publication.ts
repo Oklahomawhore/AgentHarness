@@ -72,9 +72,10 @@ export function publicationToolHistory(context: readonly DevelopmentTaskContextP
     const tool = publication.peerToolObservation ?? publication.localToolObservation
     const source = publication.peerContribution?.grant.source ?? publication.localContribution?.grant.source
     const interval = publicationInterval(publication)
-    if (tool === undefined || (source?.kind !== 'tool-observations' && source?.kind !== 'native-work') || interval === undefined
+    if (tool === undefined || (source?.kind !== 'tool-observations' && source?.kind !== 'native-work'
+      && source?.kind !== 'claude-work') || interval === undefined
       || isTerminalPublication(publication)) return undefined
-    if (tool.kind === 'command-observation') {
+    if (tool.kind === 'command-observation' || tool.kind === 'claude-command-observation') {
       const chain = JSON.stringify([interval, source.name, 'command', tool.fields.rootIndex, tool.fields.command])
       checkpoints.set(chain, Math.max(checkpoints.get(chain) ?? 0, tool.sequence))
       return { chain, sequence: tool.sequence }
@@ -105,7 +106,8 @@ export function isSelfPublished(publication: DevelopmentTaskContextPublication,
   if (isTerminalPublication(publication)) return false
   if (publication.publishedBy === recipient.participantId) return true
   const grant = publication.peerContribution?.grant
-  return (publication.peerToolObservation !== undefined || publication.peerTurnOutcome !== undefined)
+  return (publication.peerToolObservation !== undefined || publication.peerTurnOutcome !== undefined
+    || publication.peerStopReport !== undefined)
     && grant !== undefined && recipient.peerCapture !== undefined
     && peerContributionInterval(grant) === peerContributionInterval(recipient.peerCapture)
 }

@@ -24,7 +24,8 @@ export class ClaudeScopeSetupError extends Error {
 }
 
 const MARKER = '# agentharness-claude-scope:v1'
-const EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd'] as const
+const LEGACY_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd'] as const
+const EVENTS = [...LEGACY_EVENTS, 'Stop', 'StopFailure'] as const
 const TOOL_EVENTS = new Set<string>(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'])
 type JsonObject = Record<string, unknown>
 interface Target {
@@ -143,6 +144,7 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
   if (document.hooks !== undefined && !object(document.hooks)) fail('configuration-invalid')
   const hooks = new Map<string, JsonObject[]>()
   let owned = 0
+  const ownedEvents = new Set<string>()
   for (const [event, entries] of Object.entries(document.hooks ?? {})) {
     if (!Array.isArray(entries)) fail('configuration-invalid')
     const groups: JsonObject[] = []
@@ -153,6 +155,7 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
       if (entry.hooks.some(hook => typeof hook.command === 'string' && hook.command.includes(MARKER))) {
         if (!EVENTS.some(candidate => candidate === event) || !isDeepStrictEqual(entry, group(target, event, options))) fail('configuration-conflict')
         eventOwned++
+        ownedEvents.add(event)
       }
       groups.push(entry)
     }
@@ -160,7 +163,8 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
     owned += eventOwned
     hooks.set(event, groups)
   }
-  if (owned !== 0 && owned !== EVENTS.length) fail('configuration-conflict')
+  if (owned !== 0 && owned !== EVENTS.length
+    && !(owned === LEGACY_EVENTS.length && LEGACY_EVENTS.every(event => ownedEvents.has(event)))) fail('configuration-conflict')
   return { text, document, hooks, owned }
 }
 
@@ -233,7 +237,8 @@ async function mutate(
       for (const event of EVENTS) {
         const previous = hooks.get(event) ?? []
         const entries = install
-          ? current.owned === 0 ? [...previous, group(selected, event, options)] : [...previous]
+          ? previous.some(entry => isDeepStrictEqual(entry, group(selected, event, options)))
+            ? [...previous] : [...previous, group(selected, event, options)]
           : previous.filter(entry => !isDeepStrictEqual(entry, group(selected, event, options)))
         if (entries.length === 0) hooks.delete(event)
         else hooks.set(event, entries)

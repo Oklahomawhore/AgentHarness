@@ -40,6 +40,8 @@ Use the repository's supported Node runtime and built public packages. Supply an
 
 Every route also selects `network: { "kind": "direct" }` or `{ "kind": "env-proxy", "urlEnv": "https_proxy" }`. Proxy mode resolves only that environment reference at execution, requires Node support for `--use-env-proxy`, and leaves localhost coordination direct. Missing or invalid proxy settings fail before Hosts or model reservations start; proxy values are never registered. Calibration requires direct mode.
 
+Each route requires `maxOutputBytes` between 1024 and 262144. It bounds cumulative serialized stream-chunk bytes, including JSON framing and repeated block content, independently of requested output tokens. Small deltas can exhaust this limit with little text. Increasing the accepted range changes no registered value or spending authorization; completion is not guaranteed, and an interrupted response without usage still blocks subsequent dispatches.
+
 Registration freezes the service declaration, endpoint and requested model in the manifest. Include that manifest when sharing results: the adapter records usage and completion but does not preserve the successful response’s upstream model identity. A requested model name therefore does not verify a gateway’s actual upstream model.
 
 Run from the checkout root. The result directory must not exist:

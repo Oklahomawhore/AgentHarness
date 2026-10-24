@@ -451,6 +451,44 @@ it('restores an independent contribution end-before-open tombstone and its origi
   expect(storedTaskRows()).toEqual(before)
 })
 
+it('reopens exact Claude command and Stop reports without changing legacy rows or permission', async () => {
+  const first = await boot(86_400_000, 'node-a', 8192)
+  const human = participant('claude-owner')
+  await first.developmentRooms.announce({ id: human, kind: 'human', displayName: 'Claude owner' })
+  const target = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Original Claude reports', scope: 'Selected work', createdBy: human })
+  await first.developmentTasks.publishContext({ taskId: target.id, participantId: human, text: 'Existing ordinary context' })
+  const legacy = storedTaskRows()
+  const grant = peerContributionGrantSchema.parse({ version: 1, taskId: target.id, grantId: 'claude-grant', generation: 'generation',
+    ownerPeerId: 'owner', contributorPeerId: 'source', captureId: 'capture', captureGeneration: 'capture-generation',
+    source: { kind: 'claude-work', version: 7, name: 'Claude reports', tools: [], commands: [{ command: 'verify', rootIndex: 0 }], stopReports: true },
+    expiresAt: Date.now() + 60000, maxSamples: 2, maxSampleBytes: 8192 })
+  await first.developmentTasks.openPeerContribution(grant)
+  const command = peerContributionRequestSchema.parse({ grant, sourceId: '1'.repeat(64), sequence: 1,
+    result: { kind: 'claude-command-observation', version: 7, tool: 'Bash', hookEvent: 'PostToolUse',
+      fields: { rootIndex: 0, command: 'verify', stdout: 'original stdout', stderr: '', interrupted: false }, omissions: [] } })
+  await first.developmentTasks.admitPeerContribution(command, grant.contributorPeerId)
+  const text = 'Complete official Stop message🙂\r\n'
+  const stop = peerContributionRequestSchema.parse({ grant, sourceId: '2'.repeat(64), sequence: 2,
+    result: { kind: 'claude-stop-report', version: 7, text, sha256: createHash('sha256').update(text).digest('hex'), stopHookActive: false } })
+  const admitted = await first.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)
+  const frozen = await first.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: target.id, revision: admitted.receipt.revision } },
+    objective: 'Frozen original reports', scope: 'History', createdBy: human })
+  const before = storedTaskRows()
+  await close(first)
+  const second = await boot(86_400_000, 'node-a', 8192)
+  expect(storedTaskRows()).toEqual(before)
+  expect((await second.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)).receipt).toEqual(admitted.receipt)
+  expect(second.developmentTasks.contextView(frozen.id).inherited?.sources[0]?.context.at(-1)?.peerStopReport?.text).toBe(text)
+  await second.developmentTasks.endPeerContribution({ grant, reason: 'left' }, grant.contributorPeerId)
+  const ended = storedTaskRows()
+  for (const row of legacy.events) expect(ended.events).toContainEqual(row)
+  await close(second)
+  const third = await boot(86_400_000, 'node-a', 8192)
+  expect(storedTaskRows()).toEqual(ended)
+  expect(ended.unit).toEqual({ version: 1 })
+  expect((await third.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)).receipt).toEqual(admitted.receipt)
+  expect(third.developmentTasks.contextView(target.id).task.context.at(-1)?.peerContribution?.ended).toBe('left')
+})
 
 it('returns committed sample and terminal receipts after restarting with a lower new-admission byte limit', async () => {
   const first = await boot()

@@ -399,7 +399,7 @@ export interface ClaudeScopeSetupConfig {
 }
 ```
 
-Source: [`packages/collaboration/claude-scope/src/index.ts:66`](../packages/collaboration/claude-scope/src/index.ts)
+Source: [`packages/collaboration/claude-scope/src/index.ts:67`](../packages/collaboration/claude-scope/src/index.ts)
 
 <a id="deepseek-aidsh-claude-scopecommand"></a>
 
@@ -816,7 +816,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task/src/index.ts:147`](../packages/collaboration/development-task/src/index.ts)
+Source: [`packages/collaboration/development-task/src/index.ts:149`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
