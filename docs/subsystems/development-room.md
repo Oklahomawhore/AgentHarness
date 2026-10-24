@@ -4760,7 +4760,10 @@ interface ScopeAgentTurnContributionPermission {
 ```
 
 ```ts type-equiv
-/** One explicit permission for selected file operations, exact commands and completed answers from the same Session. */
+/**
+ * One explicit permission for selected file operations, exact commands and completed answers from the same Session.
+ * Unknown native file tool selections are rejected before consent is retained.
+ */
 interface ScopeAgentNativeWorkContributionPermission {
   readonly sourceKind: 'native-work'
   readonly roots: string[]

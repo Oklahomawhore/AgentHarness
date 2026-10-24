@@ -88,6 +88,8 @@ it.each(['local', 'remote'] as const)('rejects mixed %s permission fields throug
   const before = await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })
   const events = f.agent.session.snapshotEvents()
   for (const request of [
+    ...[['delete'], ['Write'], ['Edit'], [null], [1], [{}], ['write', 'delete'], null, 'write', {}]
+      .map(tools => ({ ...native, roots: [f.source.workspace], tools, completedTurns: false })),
     ...['unknown-source', null, 1].map(sourceKind => ({ ...common, sourceKind,
       roots: [f.source.workspace], tools: ['write'], ...role === 'remote' ? { entry: f.remote.entry } : {} })),
     { ...native, initialization: {} },

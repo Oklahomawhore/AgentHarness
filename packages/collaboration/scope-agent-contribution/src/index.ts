@@ -820,6 +820,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     return false
   }
   private nativePermission(id: SessionId, request: ScopeAgentNativeWorkContributionPermission): DevelopmentTaskNativeWorkSource {
+    if (!Array.isArray(request.tools) || request.tools.some(tool => !['write', 'edit'].includes(tool))) {
+      throw this.invalid(id, 'Native work file tools must be write or edit')
+    }
     const source = nativeWorkSourceSchema.parse({ kind: 'native-work', version: 6, name: 'session-work',
       tools: request.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'), commands: request.commands,
       completedTurns: request.completedTurns, ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) })

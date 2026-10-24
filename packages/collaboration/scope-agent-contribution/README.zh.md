@@ -83,7 +83,7 @@ Agent 卸载会停止两份采集，并分别保留终结工作直到各所有�
 
 `request.sourceKind` 与 `requestLocal.sourceKind` 可以显式选择 `completed-turn-outcomes`。该来源不要求 Session 工作目录、文件系统服务或文件工具；roots、tools、commands、file-content 和 initialization 字段会被拒绝。它只分享持久授权与在线激活均生效后、正常完成回合最后一条助手答复的完整可见文本。原始 next-turn inbox 领取必须包含一条 user 通道输入；取消领取、追加输入、托管自动响应、失败或中断结尾以及授权前开始的回合均被排除。user 通道标签标识运行时来源，不代表独立认证的人类。答复可能引用私有输入，因此需要单独同意披露最终答复。推理、原始用户消息和工具记录不直接复制。过大的答复整条省略，不以截断文本冒充完整成功。
 
-选择 `sourceKind: 'native-work'` 可在同一原 Session 中组合明确获准的文件操作、精确命令和完整答复。两种申请方法均要求填写 `roots`、`tools`、`commands` 和 `completedTurns`，且至少选择一类。文件操作或命令要求根目录；仅答复的组合使用空数组，不需要文件系统。缺少所需 provider 时会在保留授权前拒绝申请。`sourceKind` 省略时选择 `tool-observations`，未知值会被拒绝。完整文件内容仍需 `fileContent`，不接受已记录历史初始化。所有所选类别共用一份授权、序列、样本额度、保留额度和 outbox。完整答复的来源检查同样适用于组合许可。状态保留完整类别选择。更改任一类别须先停止采集；既有工具或答复授权不会被隐式升级。
+选择 `sourceKind: 'native-work'` 可在同一原 Session 中组合明确获准的文件操作、精确命令和完整答复。两种申请方法均要求填写 `roots`、`tools`、`commands` 和 `completedTurns`，且至少选择一类。文件操作或命令要求根目录；仅答复的组合使用空数组，不需要文件系统。缺少所需 provider 时会在保留授权前拒绝申请。`sourceKind` 省略时选择 `tool-observations`，未知值会被拒绝。原生文件工具只接受 `write` 和 `edit`；未知名称在转换为报告名称前即被拒绝。完整文件内容仍需 `fileContent`，不接受已记录历史初始化。所有所选类别共用一份授权、序列、样本额度、保留额度和 outbox。完整答复的来源检查同样适用于组合许可。状态保留完整类别选择。更改任一类别须先停止采集；既有工具或答复授权不会被隐式升级。
 
 Session 检查点与不可变 outbox 先于提交。仅在来源本机保留的证明绑定原激活水位、输入、最终答复、回合结尾及正文摘要，这些坐标不外传。重试复用同一样本。异步持久化后重新检查停止、到期、本地采集的 Task 绑定变化和运行时替换。恢复的采集会终结，不扫描历史回合或重新启动采集。每份本地或远端采集只选择一种来源；更换须先结束该许可。[完整答复决策](../../../.agents/notes/implemented/feature/2026-10-14-completed-answer-contributions.zh.md)。
 
