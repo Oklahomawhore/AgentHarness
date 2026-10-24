@@ -14,7 +14,9 @@ Status: implemented
 
 [根目录](../../../../package.json)、[CLI](../../../../apps/cli/package.json) 和 [Web](../../../../apps/web/package.json) 清单以工作区现有的版本范围声明 `zod` 开发依赖。锁文件直接记录每个所属包。[便携版验收](../../../../.github/workflows/agentharness-portable.yml) 将 Windows 构建与打包拆成连续的独立步骤，使编译失败阻止打包。
 
-Linux 浏览器验收通过已有便携版命令辅助函数取得认证 URL，只报告 origin。特意设置的 CodeBuddy 同名冲突必须显示冲突及接入指引；消息缺失会使验收失败。MCP 流程加载安装器生成的 Cursor 配置，包括其私有描述文件与 Harness home。打包 smoke 从不含源码的便携目录启动 MCP 检查，避免子进程继承源码检出的 dotenv 查找位置。Windows 检查运行时重启和状态、明确的 MCP 不支持指引，以及 Cursor 配置未变。每条 Windows 验证命令都会在下一条命令替换退出码之前检查原生退出码。
+每个声明的便携目标都有原生验收任务。Linux 与 macOS 共用 runner/target 矩阵；打包命令接收该确切目标，发布服务器选择对应归档。原生 runner 不匹配时，打包会失败，不会提供另一个架构的产物。矩阵中的失败保留其他目标继续执行，诊断产物名称包含目标，避免上传冲突。[GitHub runner 参考](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)说明各个固定标签的原生架构。
+
+POSIX 浏览器验收通过已有便携版命令辅助函数取得认证 URL，只报告 origin。特意设置的 CodeBuddy 同名冲突必须显示冲突及接入指引；消息缺失会使验收失败。MCP 流程加载安装器生成的 Cursor 配置，包括其私有描述文件与 Harness home。打包 smoke 从不含源码的便携目录启动 MCP 检查，避免子进程继承源码检出的 dotenv 查找位置。Windows 检查运行时重启和状态、明确的 MCP 不支持指引，以及 Cursor 配置未变。每条 Windows 验证命令都会在下一条命令替换退出码之前检查原生退出码。
 
 浏览器检查从取得资源起持续负责其清理，并等待全部清理完成。清理失败时保留此前的验收失败，不替换其诊断。
 
@@ -30,4 +32,4 @@ Linux 浏览器验收通过已有便携版命令辅助函数取得认证 URL，�
 
 这些声明支持开发脚本和测试，不会把 schema 验证加入两个应用的运行时依赖清单。干净的冻结安装与 Host 构建仍是验证路径；包源码依赖检查并不扫描全部根目录脚本或应用测试。构建成功之后，安装、浏览器及 MCP 验收才能分别证明各自结果。
 
-Linux 从已安装的便携版产物验证经过认证的浏览器和 MCP 流程。Windows 验证安装与运行时管理，不验证 MCP 连通性或浏览器交互。两个任务都不证明跨设备可达、付费模型行为或人工沟通减少。本地源码级检查不能代替针对最终 commit 的工作流执行。
+Linux 与 macOS 从已安装的便携版产物验证经过认证的浏览器和 MCP 流程。Windows 验证安装与运行时管理，不验证 MCP 连通性或浏览器交互。这些任务不证明跨设备可达、付费模型行为或人工沟通减少。本地源码级检查不能代替针对最终 commit 的工作流执行。

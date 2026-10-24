@@ -12,8 +12,20 @@ concurrency:
 
 jobs:
   browser-installer-mcp:
-    name: Browser, installer, and MCP
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.target }} browser, installer, and MCP
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
     timeout-minutes: 35
     env:
       CI: 'true'
@@ -39,6 +51,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify native target coverage
+        run: pnpm exec vitest run scripts/tests/agentharness-portable-targets.spec.ts
+
       - name: Verify public npm bootstrap and source export
         run: pnpm run test:agentharness-public
 
@@ -54,12 +69,12 @@ jobs:
         run: pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/emergence-center.e2e.ts
 
       - name: Pack the source-free portable runtime
-        run: node scripts/agentharness-pack-portable.mjs --skip-build --out "${{ runner.temp }}/agentharness-portable/linux-x64"
+        run: node scripts/agentharness-pack-portable.mjs --skip-build --target "${{ matrix.target }}" --out "${{ runner.temp }}/agentharness-portable/${{ matrix.target }}"
 
       - name: Start the loopback release server
         run: |
           node scripts/agentharness-serve-lan-release.mjs \
-            --artifact "${{ runner.temp }}/agentharness-portable/agentharness-linux-x64.tgz" \
+            --artifact "${{ runner.temp }}/agentharness-portable/agentharness-${{ matrix.target }}.tgz" \
             --out "${{ runner.temp }}/agentharness-release" \
             --port "$AGENTHARNESS_RELEASE_PORT" \
             --host 127.0.0.1 \
@@ -136,7 +151,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: agentharness-portable-acceptance-diagnostics
+          name: agentharness-portable-${{ matrix.target }}-diagnostics
           path: |
             ${{ runner.temp }}/agentharness-portable-browser.png
             ${{ runner.temp }}/agentharness-release-server.log
@@ -179,6 +194,10 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: pnpm install --frozen-lockfile
+
+      - name: Verify native target coverage
+        shell: pwsh
+        run: pnpm exec vitest run scripts/tests/agentharness-portable-targets.spec.ts
 
       - name: Install Chromium
         shell: pwsh
