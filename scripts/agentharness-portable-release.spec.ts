@@ -122,6 +122,59 @@ async function runShell(command: string, env: NodeJS.ProcessEnv): Promise<{ stat
 }
 
 describe('AgentHarness portable release staging', () => {
+  // Match the Windows coverage lane's process-case budget; the child owns its earlier deadline.
+  it.skipIf(process.platform !== 'win32')('PowerShell archive paths accept tar roots and reject escapes', () => {
+    const cases = [
+      { member: '.', rejected: false },
+      { member: './', rejected: false },
+      { member: './runtime/node.exe', rejected: false },
+      { member: 'lib/.cache/file.js', rejected: false },
+      { member: 'lib/..cache/file.js', rejected: false },
+      { member: 'lib/file..js', rejected: false },
+      { member: '目录/文件.js', rejected: false },
+      { member: '..', rejected: true },
+      { member: '../outside', rejected: true },
+      { member: './lib/../../outside', rejected: true },
+      { member: 'lib/..', rejected: true },
+      { member: 'lib\\..\\outside', rejected: true },
+      { member: '/outside', rejected: true },
+      { member: '\\outside', rejected: true },
+      { member: 'C:\\outside', rejected: true },
+      { member: 'C:outside', rejected: true },
+      { member: '\\\\server\\share', rejected: true },
+    ]
+    const installer = renderPowerShellInstallScript({
+      baseUrl: 'https://downloads.example.test/agentharness', version: '1.2.3',
+      artifacts: { 'win32-x64': { file: 'agentharness-win32-x64.tgz', sha256: 'c'.repeat(64), size: 42 } },
+    })
+    const start = installer.indexOf('  foreach ($Member in $Members) {')
+    const end = installer.indexOf('  $Payload = ', start)
+    expect(start).toBeGreaterThan(0)
+    expect(end).toBeGreaterThan(start)
+    const encoded = Buffer.from(JSON.stringify(cases)).toString('base64')
+    const script = [
+      '$ErrorActionPreference = "Stop"',
+      '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+      `$Cases = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json`,
+      '$Results = foreach ($Case in $Cases) {',
+      '  $Members = @($Case.member)',
+      '  $Rejected = $false',
+      '  try {',
+      installer.slice(start, end),
+      '  } catch {',
+      '    if ($_.Exception.Message -ne "archive contains an unsafe path: $($Case.member)") { throw }',
+      '    $Rejected = $true',
+      '  }',
+      '  [pscustomobject]@{ member = $Case.member; rejected = $Rejected }',
+      '}',
+      'ConvertTo-Json -InputObject @($Results) -Compress',
+    ].join('\n')
+    const output = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8', timeout: 30_000,
+    })
+    expect(JSON.parse(output) as unknown).toEqual(cases)
+  }, 90_000)
+
   it('accepts HTTPS and explicit private LAN HTTP only', () => {
     expect(validateReleaseBaseUrl('https://downloads.example.test/agentharness/')).toBe('https://downloads.example.test/agentharness')
     expect(validateReleaseBaseUrl('http://192.168.8.4:4177/token')).toBe('http://192.168.8.4:4177/token')

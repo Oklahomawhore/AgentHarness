@@ -188,6 +188,10 @@ jobs:
         shell: pwsh
         run: pnpm run build
 
+      - name: Verify PowerShell archive paths
+        shell: pwsh
+        run: pnpm exec vitest run scripts/agentharness-portable-release.spec.ts -t "PowerShell archive paths" --maxWorkers=1
+
       - name: Pack the Windows x64 runtime
         shell: pwsh
         run: node scripts/agentharness-pack-portable.mjs --skip-build --target win32-x64 --out "${{ runner.temp }}\agentharness-portable\win32-x64"
