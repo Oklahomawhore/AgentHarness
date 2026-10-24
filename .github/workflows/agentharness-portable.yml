@@ -21,6 +21,7 @@ jobs:
       AGENTHARNESS_ACCEPTANCE_PORT: '33080'
       AGENTHARNESS_RELEASE_PORT: '43177'
       AGENTHARNESS_RELEASE_TOKEN: ci-portable-accept
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
     steps:
       - uses: actions/checkout@v6
 
@@ -151,6 +152,7 @@ jobs:
       AGENTHARNESS_ACCEPTANCE_PORT: '33081'
       AGENTHARNESS_RELEASE_PORT: '43178'
       AGENTHARNESS_RELEASE_TOKEN: ci-portable-win
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
     steps:
       - uses: actions/checkout@v6
 
@@ -172,6 +174,10 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        shell: pwsh
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium
 
       - name: Build shipped artifacts
         shell: pwsh
