@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { nativeContributionDomain } from '../src/state.ts'
+import { nativeLocalContributionDomain } from '../src/local-state.ts'
+import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
@@ -24,11 +26,11 @@ afterEach(async () => {
   if (failures.length > 0) throw new AggregateError(failures, 'native recovery fixture cleanup failed')
 })
 
-async function fixture(maxSamples = 16) {
+async function fixture(maxSamples = 16, ownerLocal = false) {
   const network = new TestNetwork()
   const owner = await createHost(network, 'owner')
   hosts.push(owner)
-  const source = await createHost(network, 'source')
+  const source = await createHost(network, 'source', 'native', { ownerLocal })
   hosts.push(source)
   const task = await rootTask(owner)
   const agent = await source.createAgent('durability-recovery-source')
@@ -90,8 +92,8 @@ async function assertRetainedEvidence(source: TestHost, agent: Agent, count: num
   return record
 }
 
-async function blockSourceCommit(source: TestHost, backupName: string) {
-  const path = join(source.root, 'domains/scope_agent_contributions.json')
+async function blockSourceCommit(source: TestHost, backupName: string, domain = nativeContributionDomain.name) {
+  const path = join(source.root, 'domains', `${domain}.json`)
   const backup = join(source.root, 'domains', backupName)
   await rename(path, backup)
   let restored = false
@@ -108,6 +110,55 @@ async function blockSourceCommit(source: TestHost, backupName: string) {
 }
 
 describe('native completion durability recovery', () => {
+  it.each(['local', 'remote'] as const)('retries a failed %s stop without waiting for report work or permission expiry', async (role) => {
+    const { source, agent, selection } = await fixture(16, role === 'local')
+    let selected = selection
+    if (role === 'local') {
+      const task = await rootTask(source)
+      const participantId = developmentAgentParticipantId(agent.id)
+      await expect.poll(() => source.ctx.developmentRooms.list().participants.some(item => item.id === participantId)).toBe(true)
+      await source.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      const assignment = (await source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).assignment
+      if (assignment === null) throw new Error('Missing local assignment')
+      const status = await source.ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null,
+        ...assignment, roots: [source.workspace], tools: ['write'],
+        limits: { expiresAt: Date.now() + 50000, maxSamples: 8, maxSampleBytes: 8192 } })
+      if (status.capture === null) throw new Error('Missing local permission')
+      selected = status.capture.selection
+    }
+    const status = () => role === 'local' ? source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })
+      : source.ctx.scopeAgentContributions.status({ agentId: agent.id })
+    await expect.poll(async () => (await status()).capture?.collecting).toBe(true)
+    expect((await status()).capture?.pendingSamples).toBe(0)
+    const definition = role === 'local' ? nativeLocalContributionDomain : nativeContributionDomain
+    const records = source.ctx.storageDomain.get(definition.name)?.table('sessions')
+    if (records === undefined) throw new Error('Missing source domain')
+    const put = records.put.bind(records)
+    const blocked = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    restores.push(() => { release.resolve(undefined) })
+    const writing = vi.spyOn(records, 'put').mockImplementation(async (key, value) => {
+      try { await put(key, value) }
+      catch (error) {
+        const row = definition.tables.sessions.valueSchema.parse(value)
+        if (key === agent.id && row.capture?.issue !== undefined) {
+          blocked.resolve(undefined)
+          await release.promise
+        }
+        throw error
+      }
+    })
+    restores.push(() => { writing.mockRestore() })
+    const { restore } = await blockSourceCommit(source, 'before-empty-stop.json', definition.name)
+    const stopping = role === 'local' ? source.ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: selected })
+      : source.ctx.scopeAgentContributions.stop({ agentId: agent.id, expectedCapture: selected })
+    await expect(stopping).rejects.toThrow()
+    await blocked.promise
+    await restore()
+    release.resolve(undefined)
+    await expect.poll(async () => (await status()).capture).toBeNull()
+  })
+
   it('shows an exhausted sample allowance after delivering the final admitted observation', async () => {
     const { owner, source, task, agent } = await fixture(1)
     await writeFiles(source, agent, ['final-allowed.txt'])
@@ -258,16 +309,32 @@ describe('native completion durability recovery', () => {
     expect((await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.collectionIssue).toBeNull()
   })
 
-  it('recovers the original durable sample when owner delivery and both issue commits fail', async () => {
-    const { network, owner, source, task, agent, allowed } = await fixture()
+  it.each([
+    { action: 'recover', outcome: 'delivers the original durable sample once' },
+    { action: 'stop', outcome: 'withdraws without retrying the original durable sample' },
+    { action: 'stop-save-fails', outcome: 'retains withdrawal when saving the stop fails' },
+  ] as const)('$outcome when owner delivery and both issue commits fail', async ({ action }) => {
+    const { network, owner, source, task, agent, allowed, selection } = await fixture()
+    const logger = source.ctx.logger
+    const originalSignal = Promise.withResolvers<AbortSignal>()
+    const contribute = source.ctx.scopeAccess.contribute.bind(source.ctx.scopeAccess)
+    // Observe the source generation before scope-access adds its independent request deadline.
+    const sending = vi.spyOn(source.ctx.scopeAccess, 'contribute').mockImplementation((request, signal) => {
+      if (request.invitation.grant.captureId === selection.captureId) originalSignal.resolve(signal)
+      return contribute(request, signal)
+    })
+    restores.push(() => { sending.mockRestore() })
     const requested = Promise.withResolvers<undefined>()
     const deliver = Promise.withResolvers<undefined>()
     const sampleRequests: unknown[] = []
+    const nextOperation = Promise.withResolvers<string>()
     const beforeRequest = source.transport.beforeRequest
     restores.push(() => { source.transport.beforeRequest = beforeRequest; deliver.resolve(undefined) })
     source.transport.beforeRequest = async (protocol, payload) => {
       await beforeRequest?.(protocol, payload)
-      if (typeof payload !== 'object' || payload === null || !('op' in payload) || payload.op !== 'sample') return
+      if (typeof payload !== 'object' || payload === null || !('op' in payload) || typeof payload.op !== 'string') return
+      if (sampleRequests.length > 0) nextOperation.resolve(payload.op)
+      if (payload.op !== 'sample') return
       sampleRequests.push(structuredClone(payload))
       if (sampleRequests.length === 1) {
         requested.resolve(undefined)
@@ -321,6 +388,43 @@ describe('native completion durability recovery', () => {
     expect(owner.ctx.developmentTasks.get({ taskId: task.id })).toEqual(ownerBefore)
     expect(sampleRequests).toHaveLength(1)
 
+    if (action !== 'recover') {
+      const generation = await originalSignal.promise
+      expect(generation.aborted).toBe(false)
+      const aborted = Promise.withResolvers<undefined>()
+      const onAbort = () => { aborted.resolve(undefined) }
+      generation.addEventListener('abort', onAbort, { once: true })
+      restores.push(() => { generation.removeEventListener('abort', onAbort) })
+      const stopping = Promise.allSettled([source.ctx.scopeAgentContributions.stop({ agentId: agent.id, expectedCapture: selection })])
+      await aborted.promise
+      expect(nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(agent.id))).toEqual(original)
+      if (action === 'stop') {
+        await restore()
+        network.peers.set(owner.peerId, ownerTransport)
+      }
+      recover.resolve(undefined)
+      if (action === 'stop') expect(await stopping).toMatchObject([{ status: 'fulfilled', value: { agentId: agent.id } }])
+      else {
+        expect(await stopping).toMatchObject([{ status: 'rejected' }])
+        await restore()
+        network.peers.set(owner.peerId, ownerTransport)
+      }
+      expect(await nextOperation.promise).toBe('end')
+      await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture).toBeNull()
+      expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.map(item => item.peerContribution))
+        .toEqual([{ version: 1, grant: original.capture?.invitation?.grant, ended: 'left' }])
+      expect(owner.ctx.developmentTasks.peerContributions({ taskId: task.id })).toMatchObject([{ state: 'ended', reason: 'left' }])
+      expect(await source.readEvents(agent)).toEqual(events)
+      await source.close()
+      hosts.splice(hosts.indexOf(source), 1)
+      expect(sampleRequests).toHaveLength(1)
+      expect(source.adapter.requests).toHaveLength(modelRequests)
+      if (action === 'stop') expect(logger.buffer.filter(message => message.type === 'error' && message.args[0]
+        === 'scope-agent-contribution: reconciliation issue awaits storage: %s')).toEqual([])
+      expect(network.peers.has(source.peerId)).toBe(false)
+      await expect(stat(source.root)).rejects.toMatchObject({ code: 'ENOENT' })
+      return
+    }
     await restore()
     network.peers.set(owner.peerId, ownerTransport)
     recover.resolve(undefined)
@@ -340,6 +444,8 @@ describe('native completion durability recovery', () => {
     expect(await source.readEvents(agent)).toEqual(events)
     expect(source.adapter.requests).toHaveLength(modelRequests)
     expect(recovered.capture?.issue).toBeUndefined()
+    expect(logger.buffer.some(message => message.type === 'error' && message.args[0]
+      === 'scope-agent-contribution: reconciliation issue awaits storage: %s')).toBe(true)
     expect([...source.exitCodes, ...owner.exitCodes]).toEqual([])
   })
 })

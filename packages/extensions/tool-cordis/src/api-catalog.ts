@@ -2446,7 +2446,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'stop\') stop(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>',
-        description: 'Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.',
+        description: 'Stop only remote collection immediately; local capture remains active. Failed writes reject with active-worker cleanup pending.',
         parameters: [{ name: 'request', description: 'exact displayed capture, including for an inactive source Session.' }],
         returns: 'durable sharing termination and pending-read cancellation; already adopted reading is retained.',
       },
@@ -2458,7 +2458,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'stopLocal\') stopLocal(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentLocalContributionStatus>',
-        description: 'Stop only the selected owner-local capture and withdraw its reports from the original Task.',
+        description: 'Stop the selected owner-local capture and withdraw its reports. Failed writes reject with active-worker cleanup pending.',
         parameters: [{ name: 'request', description: 'exact displayed local capture, including for an inactive source Session.' }],
         returns: 'durable local termination; unrelated remote sharing and receiving remain unchanged.',
       },

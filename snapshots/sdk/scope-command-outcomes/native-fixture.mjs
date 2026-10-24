@@ -1,6 +1,6 @@
 /** Shipped SDK receiving of typed outcomes from real, explicitly authorized foreground Bash calls. */
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout } from 'node:timers/promises'
@@ -118,7 +118,45 @@ export async function apply(ctx) {
         await readFile(new URL('./source-workspace.expected/verify.sh', import.meta.url), 'utf8'))
     } else {
       assert.equal(turn, 3)
-      await owner.ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: capture.selection })
+      const path = join(owner.root, 'domains/scope_agent_local_contributions.json')
+      const backup = `${path}.before-stop`
+      const records = owner.ctx.storageDomain.get('scope_agent_local_contributions').table('sessions')
+      const originalPut = records.put
+      const put = originalPut.bind(records)
+      const release = Promise.withResolvers()
+      let blocked = false
+      let restored = false
+      const restore = async () => {
+        if (restored) return
+        await rm(path, { recursive: true, force: true })
+        await rename(backup, path)
+        restored = true
+      }
+      await rename(path, backup)
+      ctx.effect(() => async () => {
+        records.put = originalPut
+        try { await restore() } finally { release.resolve() }
+      })
+      records.put = async (key, value) => {
+        try { return await put(key, value) }
+        catch (error) {
+          if (key === agent.id && value.capture?.issue !== undefined) {
+            blocked = true
+            await release.promise
+          }
+          throw error
+        }
+      }
+      await mkdir(path)
+      try {
+        assert.equal((await owner.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.pendingSamples, 0)
+        await assert.rejects(owner.ctx.scopeAgentContributions.stopLocal({ agentId: agent.id, expectedCapture: capture.selection }))
+        await wait('failed withdrawal checkpoint', () => blocked)
+      } finally {
+        try { await restore() } finally { release.resolve() }
+      }
+      await wait('automatic withdrawal recovery', async () =>
+        (await owner.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture === null)
       await wait('original command capture withdrawal', () => owner.ctx.developmentTasks.get({ taskId: task.id }).context
         .some(item => item.localContribution?.ended !== undefined))
     }

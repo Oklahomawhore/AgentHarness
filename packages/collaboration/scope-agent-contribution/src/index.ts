@@ -620,7 +620,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   /**
-   * Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.
+   * Stop only remote collection immediately; local capture remains active. Failed writes reject with active-worker cleanup pending.
    * @param request - exact displayed capture, including for an inactive source Session.
    * @returns durable sharing termination and pending-read cancellation; already adopted reading is retained.
    */
@@ -658,7 +658,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   /**
-   * Stop only the selected owner-local capture and withdraw its reports from the original Task.
+   * Stop the selected owner-local capture and withdraw its reports. Failed writes reject with active-worker cleanup pending.
    * @param request - exact displayed local capture, including for an inactive source Session.
    * @returns durable local termination; unrelated remote sharing and receiving remain unchanged.
    */
@@ -1597,8 +1597,18 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           }
         }
         try {
-          if (role === 'remote') this.scheduleReceiving(id, signal)
           signal.throwIfAborted()
+          if (role === 'remote') {
+            await this.enqueue(async (current) => {
+              signal.throwIfAborted()
+              const capture = current.table('sessions').get(id)?.capture
+              if (capture != null && capture.state !== 'ending' && !this.sources.remote.runtimes.has(id)) {
+                await this.markEnding(current, id, role)
+              }
+            })
+            signal.throwIfAborted()
+            this.scheduleReceiving(id, signal)
+          }
           if (role === 'local') await this.reconcileLocal(id, signal)
           else if (store.current().capture?.application !== undefined) {
             await this.controller.pollApplication(operation => this.enqueue(current => operation(this.store(current, id))), signal)
@@ -1630,7 +1640,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         const receivingWork = !('grant' in capture) && capture.receiving !== undefined
           && (capture.receiving.state === 'adopting' || capture.receiving.state === 'failed' || capture.receiving.routeRecovery !== undefined
             || this.automaticReceiverChanged(id, capture.receiving))
-        const work = completionFailed || localWork || receivingWork
+        const work = completionFailed || !this.sources[role].runtimes.has(id) || localWork || receivingWork
           || (role === 'remote' && this.controller.needsWork(store)) || (this.sources[role].completed.get(id)?.size ?? 0) > 0
         if (!work && capture.state !== 'active') return
         const untilExpiry = Math.max(1, ('grant' in capture ? capture.grant.expiresAt : capture.invitation?.grant.expiresAt ?? Date.now()) - Date.now())

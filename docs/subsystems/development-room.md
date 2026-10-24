@@ -4135,7 +4135,7 @@ Actual native execution observations become durable original reports, then the e
 @Remote('recoverRoute') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>
 
 /**
- * Stop only remote collection immediately and retain owner cancellation until it is confirmed; local capture remains active.
+ * Stop only remote collection immediately; local capture remains active. Failed writes reject with active-worker cleanup pending.
  * @param request - exact displayed capture, including for an inactive source Session.
  * @returns durable sharing termination and pending-read cancellation; already adopted reading is retained.
  */
@@ -4149,7 +4149,7 @@ Actual native execution observations become durable original reports, then the e
 @Remote('leaveJoin') leaveJoin(request: ScopeAgentContributionStopRequest): Promise<ScopeAgentContributionStatus>
 
 /**
- * Stop only the selected owner-local capture and withdraw its reports from the original Task.
+ * Stop the selected owner-local capture and withdraw its reports. Failed writes reject with active-worker cleanup pending.
  * @param request - exact displayed local capture, including for an inactive source Session.
  * @returns durable local termination; unrelated remote sharing and receiving remain unchanged.
  */
