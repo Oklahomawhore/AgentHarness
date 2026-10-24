@@ -1,7 +1,9 @@
 /** Native management requests follow actual mounted providers and independently terminated owner authority. */
 import { afterEach, expect, it } from 'vitest'
+import Gateway from '@deepseek-ai/dsh-api-gateway'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
+import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
@@ -49,12 +51,65 @@ async function fixture(files = true, receive = false) {
 
 it.each(['local', 'remote'] as const)('rejects %s file permission when the original Agent has no filesystem provider', async (role) => {
   const f = await fixture(false)
+  const requests: string[] = []
+  f.source.transport.beforeRequest = async (protocol) => { requests.push(protocol) }
+  const applications = await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })
   expect(f.agent.ctx.get('fs')).toBeUndefined()
   const request = role === 'local' ? f.source.ctx.scopeAgentContributions.requestLocal(f.local)
     : f.source.ctx.scopeAgentContributions.request(f.remote)
-  await expect(request).rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+  await expect(request).rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission',
+    message: 'The selected Agent has no filesystem provider' })
   expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture).toBeNull()
   expect((await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
+  expect(requests).toEqual([])
+  expect(await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).toEqual(applications)
+  expect(f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-opened')).toEqual([])
+})
+
+it.each(['local', 'remote'] as const)('rejects mixed %s permission fields through SRC dispatch before retaining consent', async (role) => {
+  const f = await fixture()
+  await f.source.ctx.plugin(TypertRegistry)
+  await f.source.ctx.plugin(Gateway)
+  const limits = f.remote.limits
+  const nativeEntry = (await f.owner.ctx.scopeAccess.createContributionEntry({ taskId: f.task.id,
+    sourceKind: 'native-work', ownerAddress: f.ownerAddress, expiresAt: limits.expiresAt })).entry
+  const turnEntry = (await f.owner.ctx.scopeAccess.createContributionEntry({ taskId: f.task.id,
+    sourceKind: 'completed-turn-outcomes', ownerAddress: f.ownerAddress, expiresAt: limits.expiresAt })).entry
+  const method = role === 'local' ? 'requestLocal' : 'request'
+  expect(f.source.ctx.typert.local.get(`scopeAgentContributions/${method}`)).toBeUndefined()
+  const common = { agentId: f.agent.id, expectedCapture: null, limits,
+    ...role === 'local' ? f.assignment : {} }
+  const native = { ...common, sourceKind: 'native-work', roots: [], tools: [], commands: [], completedTurns: true,
+    ...role === 'remote' ? { entry: nativeEntry } : {} }
+  const turn = { ...common, sourceKind: 'completed-turn-outcomes',
+    ...role === 'remote' ? { entry: turnEntry } : {} }
+  const invoke = (request: unknown) => f.source.ctx.typertGateway.invoke({ namespace: 'scopeAgentContributions', method,
+    args: { request: JSON.parse(JSON.stringify(request)) as unknown } })
+  const before = await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })
+  const events = f.agent.session.snapshotEvents()
+  for (const request of [
+    ...['unknown-source', null, 1].map(sourceKind => ({ ...common, sourceKind,
+      roots: [f.source.workspace], tools: ['write'], ...role === 'remote' ? { entry: f.remote.entry } : {} })),
+    { ...native, initialization: {} },
+    ...['roots', 'tools', 'commands', 'fileContent', 'initialization', 'completedTurns'].map(key => ({ ...turn,
+      [key]: key === 'fileContent' ? 'completed-native-file' : key === 'initialization' ? {} : key === 'completedTurns' ? false : [] })),
+  ]) {
+    await expect(invoke(request)).rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+    expect(await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).toMatchObject({ capture: null, revision: 0 })
+    expect(await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).toMatchObject({ capture: null, revision: 0 })
+    expect(await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).toEqual(before)
+    expect(f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-opened')).toEqual([])
+    expect(f.agent.session.snapshotEvents()).toEqual(events)
+  }
+  await expect(invoke(native)).resolves.toMatchObject({ agentId: f.agent.id, capture: {
+    ...role === 'local' ? { grant: { source: { kind: 'native-work' } } } : { proposal: { source: { kind: 'native-work' } } },
+  } })
+  if (role === 'local') {
+    await expect.poll(() => f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-opened').length).toBe(1)
+  } else {
+    await expect.poll(async () => (await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries
+      .find(item => item.entry.entryId === nativeEntry.entryId)?.proposal?.source.kind).toBe('native-work')
+  }
 })
 
 it.each(['local', 'remote'] as const)('rejects %s command permission after its real shell provider is unmounted', async (role) => {

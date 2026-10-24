@@ -308,7 +308,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         this.sources[role].runtimes.clear(); this.sources[role].pending.clear(); this.sources[role].completed.clear()
       }
       await Promise.allSettled([...this.operations])
-      await this.tail.catch(() => {}) // Each queued caller observes its own failure.
+      await this.tail
       await this.ready.catch(() => {}) // Initialization failures remain visible to management callers.
       const domain = await opening.catch(() => undefined) // A failed open owns no domain handle.
       const local = await localOpening.catch(() => undefined) // A failed open owns no local handle.
@@ -414,8 +414,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
-      for (const path of permission.roots) {
-        if (filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      if (filesystem !== undefined) for (const path of permission.roots) {
         const cwd = agent.session.header.cwd
         const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
         signal.throwIfAborted()
@@ -727,8 +726,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
       const roots: FsTarget[] = []
-      for (const path of permission.roots) {
-        if (filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
+      if (filesystem !== undefined) for (const path of permission.roots) {
         const cwd = agent.session.header.cwd
         const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
         signal.throwIfAborted()
@@ -809,6 +807,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private outcomePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest): boolean {
+    if (request.sourceKind !== undefined
+      && !['tool-observations', 'completed-turn-outcomes', 'native-work'].includes(request.sourceKind)) {
+      throw this.invalid(id, 'The contribution source kind is invalid')
+    }
     if (request.sourceKind === 'completed-turn-outcomes') {
       if (['roots', 'tools', 'commands', 'fileContent', 'initialization', 'completedTurns'].some(key => Object.hasOwn(request, key))) {
         throw this.invalid(id, 'Completed-answer sharing cannot include file or historical permissions')
