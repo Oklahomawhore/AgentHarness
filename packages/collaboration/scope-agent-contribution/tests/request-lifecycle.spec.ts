@@ -66,6 +66,40 @@ it.each(['local', 'remote'] as const)('rejects %s file permission when the origi
   expect(f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-opened')).toEqual([])
 })
 
+it.each((['local', 'remote'] as const).flatMap(role => (['tool-observations', 'native-work'] as const)
+  .flatMap(sourceKind => (['roots', 'tools'] as const).map(field => ({ role, sourceKind, field })))))(
+  'rejects malformed $field selections for $role $sourceKind through SRC dispatch', async ({ role, sourceKind, field }) => {
+    const f = await fixture()
+    await f.source.ctx.plugin(TypertRegistry)
+    await f.source.ctx.plugin(Gateway)
+    const entry = sourceKind === 'tool-observations' ? f.remote.entry
+      : (await f.owner.ctx.scopeAccess.createContributionEntry({ taskId: f.task.id, sourceKind,
+        ownerAddress: f.ownerAddress, expiresAt: f.remote.limits.expiresAt })).entry
+    const method = role === 'local' ? 'requestLocal' : 'request'
+    expect(f.source.ctx.typert.local.get(`scopeAgentContributions/${method}`)).toBeUndefined()
+    const permission = { agentId: f.agent.id, expectedCapture: null, limits: f.remote.limits, sourceKind,
+      roots: [f.source.workspace], tools: ['write'], ...sourceKind === 'native-work' ? { commands: [], completedTurns: false } : {},
+      ...role === 'local' ? f.assignment : { entry } }
+    const invoke = (request: unknown) => f.source.ctx.typertGateway.invoke({ namespace: 'scopeAgentContributions', method,
+      args: { request: JSON.parse(JSON.stringify(request)) as unknown } })
+    const applications = await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })
+    const events = f.agent.session.snapshotEvents()
+    for (const value of field === 'roots' ? ['./', null, 1, {}, [null], [1], [{}], ['./', 1]]
+      : ['readwrite-edit', null, 1, {}, ['readwrite'], ['write', 'unknown']]) {
+      await expect(invoke({ ...permission, [field]: value })).rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+      expect(await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).toMatchObject({ capture: null, revision: 0 })
+      expect(await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).toMatchObject({ capture: null, revision: 0 })
+      expect(await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).toEqual(applications)
+      expect(f.source.ctx.developmentTasks.log().filter(item => item.change.kind === 'local-contribution-opened')).toEqual([])
+      expect(f.agent.session.snapshotEvents()).toEqual(events)
+    }
+    const filesystem = f.agent.ctx.get('fs')
+    if (filesystem === undefined) throw new Error('Missing fixture filesystem')
+    const expected = filesystem.processPath(await filesystem.resolve('./', { cwd: f.source.workspace }))
+    await expect(invoke({ ...permission, roots: ['./'] })).resolves.toMatchObject({ capture: { roots: [expected], tools: ['write'] } })
+  },
+)
+
 it.each(['local', 'remote'] as const)('rejects mixed %s permission fields through SRC dispatch before retaining consent', async (role) => {
   const f = await fixture()
   await f.source.ctx.plugin(TypertRegistry)

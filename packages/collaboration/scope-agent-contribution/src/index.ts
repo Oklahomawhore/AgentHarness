@@ -372,8 +372,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
+    this.validatePermission(agent.id, request)
     const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
-    const outcome = this.outcomePermission(agent.id, request) || native?.completedTurns === true
+    const outcome = request.sourceKind === 'completed-turn-outcomes' || native?.completedTurns === true
     const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
       ? { roots: [], tools: [] } : request
     const commands = native === undefined ? this.permissionCommands(agent.id, permission)
@@ -709,8 +710,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     this.assertExpected(domain, agent.id, role, request.expectedCapture)
     this.requireLocalEligible(agent, request)
     const limits = contributionLimitsSchema.parse(request.limits)
+    this.validatePermission(agent.id, request)
     const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
-    const outcome = this.outcomePermission(agent.id, request) || native?.completedTurns === true
+    const outcome = request.sourceKind === 'completed-turn-outcomes' || native?.completedTurns === true
     const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
       ? { roots: [], tools: [] } : request
     const commands = native === undefined ? this.permissionCommands(agent.id, permission)
@@ -806,7 +808,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
   }
 
-  private outcomePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest): boolean {
+  private validatePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest): void {
     if (request.sourceKind !== undefined
       && !['tool-observations', 'completed-turn-outcomes', 'native-work'].includes(request.sourceKind)) {
       throw this.invalid(id, 'The contribution source kind is invalid')
@@ -815,14 +817,14 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (['roots', 'tools', 'commands', 'fileContent', 'initialization', 'completedTurns'].some(key => Object.hasOwn(request, key))) {
         throw this.invalid(id, 'Completed-answer sharing cannot include file or historical permissions')
       }
-      return true
+      return
     }
-    return false
+    if (!Array.isArray(request.roots) || request.roots.some((root: unknown) => typeof root !== 'string')
+      || !Array.isArray(request.tools) || request.tools.some(tool => !['write', 'edit'].includes(tool))) {
+      throw this.invalid(id, 'File sharing requires directory and tool arrays; file tools must be write or edit')
+    }
   }
   private nativePermission(id: SessionId, request: ScopeAgentNativeWorkContributionPermission): DevelopmentTaskNativeWorkSource {
-    if (!Array.isArray(request.tools) || request.tools.some(tool => !['write', 'edit'].includes(tool))) {
-      throw this.invalid(id, 'Native work file tools must be write or edit')
-    }
     const source = nativeWorkSourceSchema.parse({ kind: 'native-work', version: 6, name: 'session-work',
       tools: request.tools.map(tool => tool === 'write' ? 'Write' : 'Edit'), commands: request.commands,
       completedTurns: request.completedTurns, ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) })

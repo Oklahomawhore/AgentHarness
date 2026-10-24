@@ -38,7 +38,7 @@ export interface ScopeAgentContributionRequestBase {
   }
 }
 
-/** Explicit native file and command selection; omitted sourceKind preserves existing tool requests. */
+/** Explicit native file and command permission; roots and tools require arrays. Omitted sourceKind selects tool observations. */
 export interface ScopeAgentToolContributionPermission {
   readonly sourceKind?: 'tool-observations'
   readonly roots: string[]
@@ -61,7 +61,7 @@ export interface ScopeAgentTurnContributionPermission {
 
 /**
  * One explicit permission for selected file operations, exact commands and completed answers from the same Session.
- * Unknown native file tool selections are rejected before consent is retained.
+ * Roots and tools require arrays; unknown file tool selections are rejected before consent is retained.
  */
 export interface ScopeAgentNativeWorkContributionPermission {
   readonly sourceKind: 'native-work'

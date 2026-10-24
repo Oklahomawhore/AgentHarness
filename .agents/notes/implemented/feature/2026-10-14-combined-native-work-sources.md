@@ -10,7 +10,7 @@ A person's existing Agent commonly changes files, runs a check and explains the 
 
 ## Decision
 
-The [native collector](../../../../packages/collaboration/scope-agent-contribution/README.md) accepts a distinct version-6 native-work source. File operations, exact foreground commands and complete final answers are explicit selections in one application. At least one category is selected; approval binds every selection. Existing permissions retain their original meanings and acquire no combined authority. Both local and peer management reject unknown `sourceKind` values and unrecognized native file tools before retaining consent; omitting the field keeps the declared tool-observation selection. Final answers can quote private user inputs, so their disclosure remains a separate choice within the form.
+The [native collector](../../../../packages/collaboration/scope-agent-contribution/README.md) accepts a distinct version-6 native-work source. File operations, exact foreground commands and complete final answers are explicit selections in one application. At least one category is selected; approval binds every selection. Existing permissions retain their original meanings and acquire no combined authority. Both local and peer management require file-source roots to be string arrays and tools to be arrays of declared names. Validation precedes directory resolution, capture replacement and consent retention. Unknown `sourceKind` values are rejected; omitting the field keeps the declared tool-observation selection. Final answers can quote private user inputs, so their disclosure remains a separate choice within the form.
 
 One capture per Session and local/remote role owns the grant, monotonic sequence, cumulative sample allowance, retained leases and durable outbox. File, command and answer samples retain their existing evidence types and original provider or turn provenance. Each sample must match a selected category. Stop, expiry or revocation terminates every category in that capture while preserving independent read permission. Failed persistence retains bounded retryable work; cold restoration terminates disclosure. A capacity rejection remains visible while retained samples and unfinished reservations together fill the allowance, including when an earlier completion finishes saving.
 
@@ -26,7 +26,7 @@ Historical initialization, changing categories during an active capture and conc
 
 **Infer the answer from files, or include it under file consent.** Tool observations do not contain a person's complete explanation. Answers can disclose private material beyond the authorized file operations.
 
-**Rely on generated request codecs.** Strict dispatch validates source kinds, but development SRC dispatch can reach the same management methods without those codecs. An unknown kind cannot establish a recognized consent choice, so the collector rejects it.
+**Rely on generated request codecs.** Strict dispatch validates source kinds and array fields, but development SRC dispatch can reach the same management methods without those codecs. These calls require the original selection arrays: string iteration or substring searches can introduce directories or tools that the caller did not select.
 
 ## Consequences
 
