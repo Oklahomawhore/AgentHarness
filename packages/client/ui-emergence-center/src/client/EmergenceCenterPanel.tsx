@@ -129,7 +129,7 @@ export function EmergenceCenterPanel({
   useTasks,
   useMcpClients,
   useClaudeScopes,
-  useSourceContributions, useOwnerContributions,
+  useSourceContributions, useOwnerContributions, useScopeAccess,
   useObservedScopes,
   initialProfile,
   setProfile,
@@ -161,6 +161,7 @@ export function EmergenceCenterPanel({
   const claudeScopes = useClaudeScopes(value => value)
   const sourceContributions = useSourceContributions(value => value)
   const ownerContributions = useOwnerContributions(value => value)
+  const scopeAccess = useScopeAccess(value => value.inventory)
   const emptyContext = claudeScopes.sessions.some(session => session.receiveSubscriptionId !== undefined)
     ? t('panel.receivingContext') : t('panel.emptyContext')
   const observedScopes = useObservedScopes(value => value)
@@ -482,7 +483,7 @@ export function EmergenceCenterPanel({
             approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
             approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
             previewContributionText={previewContributionText} t={t} />
-          <ScopeAccessPanel sessions={claudeScopes} refreshSessions={refreshClaudeScopes}
+          <ScopeAccessPanel sessions={claudeScopes} entry={scopeAccess}
             {...(selectedTask?.ownerNodeId === participants.nodeId && selectedTask?.origin.kind === 'root' ? { taskId: selectedTask.id } : {})}
             readScopeAccess={readScopeAccess} inviteScope={inviteScope} revokeScope={revokeScope}
             receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive} t={t} />

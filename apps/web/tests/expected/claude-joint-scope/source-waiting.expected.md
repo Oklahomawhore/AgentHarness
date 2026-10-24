@@ -1,14 +1,14 @@
 - region "自动贡献工作变化":
   - heading "自动贡献工作变化" [level=3]
   - button "重新读取贡献"
-  - paragraph: 为这个会话授权采集目录。所有者批准后，目录内正常 Write/Edit 的变化会自动贡献；无需逐个指定文件。也可选择单个 OpenAPI 操作。
+  - paragraph: 选择这个原会话允许贡献的内容、目录和限额。所有者批准后，获准的未来结果自动贡献，无需逐条发布；也可选择单个 OpenAPI 操作。
   - status: 等待所有者批准；批准后自动启用
   - region "此次协作的共享上下文":
     - heading "此次协作的共享上下文" [level=3]
-    - status: 等待所有者批准读取与文件贡献。
+    - status: 等待所有者批准读取与所选贡献。
     - paragraph: 上下文会在下一次支持的 Hook 中准备。不会唤醒 Claude 或启动模型；连接状态不代表模型已接收或理解。
     - button "退出此次协作"
-    - paragraph: 停止这次文件贡献与其创建的读取，保留原 Claude 会话及后来独立建立的读取。
+    - paragraph: 停止这次授权的贡献与其创建的读取，保留原 Claude 会话及后来独立建立的读取。
     - group: 更新所有者连接地址
   - term: 来源名称
   - definition: session-work

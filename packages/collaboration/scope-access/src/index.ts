@@ -245,6 +245,7 @@ export default class ScopeAccessService extends TypertRemoteService {
       this.rootView(invitation.taskId)
       if (this.readGrantIds(domain).size >= this.config.maxGrants) throw new Error('scope-access: grant capacity reached')
       await domain.table('grants').put(invitation.grantId, { invitation, state: 'active' })
+      this.ctx.emit('scope-access/contribution-application-changed', { taskId: invitation.taskId })
       return invitation
     })
   }
@@ -259,7 +260,10 @@ export default class ScopeAccessService extends TypertRemoteService {
     await this.enqueue(async (domain) => {
       const grant = domain.table('grants').get(request.grantId)
       if (grant === undefined) throw new Error('scope-access: unknown local grant')
-      if (grant.state === 'active') await domain.table('grants').put(request.grantId, { ...grant, state: 'revoked' })
+      if (grant.state === 'active') {
+        await domain.table('grants').put(request.grantId, { ...grant, state: 'revoked' })
+        this.ctx.emit('scope-access/contribution-application-changed', { taskId: grant.invitation.taskId })
+      }
       for (const waiter of this.ownerWaits.values()) if (waiter.grantId === request.grantId) waiter.wake()
     })
   }
@@ -1044,6 +1048,7 @@ export default class ScopeAccessService extends TypertRemoteService {
       const grant: ScopeReadGrant = { invitation, state: terminal ? 'revoked' : 'active' }
       try { await domain.table('grants').put(invitation.grantId, grant) }
       catch { throw new RemoteError('scope-contribution/unavailable', 'The read authorization could not be persisted.', {}) }
+      this.ctx.emit('scope-access/contribution-application-changed', { taskId: invitation.taskId })
       if (terminal) for (const waiter of this.ownerWaits.values()) if (waiter.grantId === invitation.grantId) waiter.wake()
       return grant
     })

@@ -92,7 +92,7 @@ async function proveMcp(portableRoot, configuration, environment, expectExisting
   const result = await promisify(execFile)(process.execPath, [
     resolve(import.meta.dirname, '../../../scripts/agentharness-portable-live-e2e.mjs'),
     '--root', portableRoot, '--config', configuration, ...expectExisting ? ['--expect-existing'] : [],
-  ], { env: environment, timeout: 60_000, maxBuffer: 1024 * 1024 })
+  ], { cwd: portableRoot, env: environment, timeout: 60_000, maxBuffer: 1024 * 1024 })
   const proof = JSON.parse(result.stdout)
   assert(proof.contextInherited === true && proof.independentBindings.length === 2, 'portable MCP proof was incomplete')
   if (expectExisting) assert(proof.restoredTasksBeforeCreate > 0, 'MCP task state did not survive Host restart')

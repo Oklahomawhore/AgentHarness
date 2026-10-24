@@ -6,13 +6,17 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { collaborationBrowserUrl } from './agentharness-portable-command.mjs'
 
 function option(name, fallback) {
   const index = process.argv.indexOf(name)
   return index < 0 ? fallback : process.argv[index + 1]
 }
 
-const url = option('--url', 'http://127.0.0.1:3080')
+const origin = option('--origin')
+const runtimeLog = option('--runtime-log')
+if (origin === undefined || runtimeLog === undefined) throw new Error('--origin and --runtime-log must identify the installed runtime')
+const url = await collaborationBrowserUrl(runtimeLog, origin)
 const screenshot = option('--screenshot', '/tmp/agentharness-emergence-center-live.png')
 const expectMcpGuidance = process.argv.includes('--expect-mcp-guidance')
 const playwrightRoot = await realpath(join(
@@ -20,14 +24,10 @@ const playwrightRoot = await realpath(join(
 ))
 const { chromium } = await import(pathToFileURL(join(playwrightRoot, 'index.mjs')).href)
 const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
-const workspace = await mkdtemp(join(tmpdir(), 'agentharness-portable-browser-workspace-'))
-const consoleErrors = []
-page.on('console', (message) => {
-  if (message.type() === 'error') consoleErrors.push(message.text())
-})
+let workspace
+const failures = []
 
-async function completeOnboarding() {
+async function completeOnboarding(page) {
   const firstDialog = page.locator('[role="dialog"]').first()
   await firstDialog.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined)
   for (let step = 0; step < 2; step += 1) {
@@ -48,13 +48,20 @@ async function completeOnboarding() {
 }
 
 try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  workspace = await mkdtemp(join(tmpdir(), 'agentharness-portable-browser-workspace-'))
+  const consoleErrors = []
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
   await page.goto(url, { waitUntil: 'load' })
   await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-  await completeOnboarding()
+  await completeOnboarding(page)
+  await page.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
 
-  const workspaceReason = page.getByText('请先选择或添加工作区，之后即可使用命令并发送消息。', { exact: true })
-  await workspaceReason.waitFor({ timeout: 15_000 })
-  await page.getByRole('textbox', { name: '选择工作区' }).click()
+  const workspaceChooser = page.getByRole('button', { name: '选择工作区', exact: true })
+  await workspaceChooser.waitFor({ timeout: 15_000 })
+  await workspaceChooser.click()
   const directoryDialog = page.getByRole('dialog', { name: '选择工作区目录' })
   await directoryDialog.waitFor({ timeout: 10_000 })
   await directoryDialog.getByRole('button', { name: '编辑路径' }).click()
@@ -84,7 +91,7 @@ try {
   await panel.getByRole('button', { name: '新建任务', exact: true }).click()
   assert.equal(await panel.getByRole('button', { name: '新建独立任务', exact: true }).count(), 1)
   await panel.getByRole('button', { name: '新建独立任务', exact: true }).click()
-  const form = panel.locator('form')
+  const form = panel.locator('form').filter({ has: page.getByLabel('Task 名称', { exact: true }) })
   await form.getByLabel('Task 名称').fill('安装包共享上下文验收')
   await form.getByLabel('初始共享上下文').fill('验证身份、任务创建、上下文发布和 Session 连接指引。')
   const submit = form.getByRole('button', { name: '创建任务' })
@@ -116,13 +123,15 @@ try {
   assert(graphNodeBox !== null)
   assert(graphNodeBox.width >= 160)
   if (expectMcpGuidance) {
-    await agentHub.getByText(/agentharness mcp-guide/u).first().waitFor({ timeout: 15_000 }).catch(() => undefined)
+    const conflict = agentHub.locator('article').filter({ has: page.getByText('CodeBuddy', { exact: true }) })
+    await conflict.getByText('同名冲突', { exact: true }).waitFor({ timeout: 15_000 })
+    await conflict.getByText(/agentharness mcp-guide/u).waitFor({ timeout: 15_000 })
   }
   assert.equal(await page.getByRole('alert').count(), 0)
   await page.screenshot({ path: screenshot, fullPage: true })
 
   process.stdout.write(`${JSON.stringify({
-    url,
+    origin,
     collapsedTriggerWidth: triggerBox.width,
     badgeWidth: badgeBox.width,
     badgeInsideTrigger: true,
@@ -137,9 +146,17 @@ try {
     screenshot,
   }, null, 2)}\n`)
   assert.deepEqual(consoleErrors, [])
+} catch (error) {
+  failures.push(error)
+  throw error
 } finally {
-  await Promise.all([
-    browser.close(),
-    rm(workspace, { recursive: true, force: true }),
-  ])
+  const cleanup = [browser.close()]
+  if (workspace !== undefined) cleanup.push(rm(workspace, { recursive: true, force: true }))
+  const results = await Promise.allSettled(cleanup)
+  const cleanupFailures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError([...failures, ...cleanupFailures], failures.length > 0
+      ? 'Portable browser acceptance and cleanup failed'
+      : 'Portable browser cleanup failed')
+  }
 }

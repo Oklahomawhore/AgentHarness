@@ -7,6 +7,8 @@
 - combobox "贡献来源":
   - option "授权目录内的 Write/Edit" [selected]
   - option "正常完成的最终答复"
+  - option "同一会话的文件、命令与最终答复"
+  - option "原 Claude 会话的文件、命令与答复报告"
 - text: 累计申请名额
 - spinbutton "累计申请名额": "2"
 - paragraph: 每个新申请都会占用一个名额；拒绝、取消或到期后也不返还。此数值还受 Host 的总申请容量限制。

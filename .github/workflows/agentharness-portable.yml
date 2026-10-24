@@ -99,12 +99,13 @@ jobs:
         run: |
           "${{ runner.temp }}/agentharness-bin/agentharness" status
           node scripts/agentharness-portable-browser-e2e.mjs \
-            --url "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \
+            --origin "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \
+            --runtime-log "$AGENTHARNESS_RUNTIME_DIR/server.log" \
             --screenshot "${{ runner.temp }}/agentharness-portable-browser.png" \
             --expect-mcp-guidance
           node scripts/agentharness-portable-live-e2e.mjs \
             --root "${{ runner.temp }}/agentharness-data/agentharness/current" \
-            --url "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \
+            --config "$HOME/.cursor/mcp.json" \
             --expect-existing
           "${{ runner.temp }}/agentharness-bin/agentharness" restart
           "${{ runner.temp }}/agentharness-bin/agentharness" status
@@ -141,7 +142,7 @@ jobs:
           retention-days: 7
 
   windows-installer-mcp:
-    name: Windows installer, runtime, and MCP
+    name: Windows installer, runtime, and unsupported MCP guidance
     runs-on: windows-2025
     timeout-minutes: 35
     env:
@@ -172,11 +173,13 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
-      - name: Build and pack the Windows x64 runtime
+      - name: Build shipped artifacts
         shell: pwsh
-        run: |
-          pnpm run build
-          node scripts/agentharness-pack-portable.mjs --skip-build --target win32-x64 --out "${{ runner.temp }}\agentharness-portable\win32-x64"
+        run: pnpm run build
+
+      - name: Pack the Windows x64 runtime
+        shell: pwsh
+        run: node scripts/agentharness-pack-portable.mjs --skip-build --target win32-x64 --out "${{ runner.temp }}\agentharness-portable\win32-x64"
 
       - name: Start the loopback release server
         shell: pwsh
@@ -216,9 +219,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "$env:HOME\.cursor" | Out-Null
           Set-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Value '{}'
+          (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash | Set-Content -LiteralPath '${{ runner.temp }}\agentharness-cursor-win.sha256'
           Invoke-RestMethod "http://127.0.0.1:$env:AGENTHARNESS_RELEASE_PORT/$env:AGENTHARNESS_RELEASE_TOKEN/install.ps1" | Invoke-Expression
 
-      - name: Verify installed runtime and MCP journey
+      - name: Verify installed runtime and unsupported MCP guidance
         shell: pwsh
         env:
           HOME: ${{ runner.temp }}\agentharness-user-win
@@ -233,15 +237,15 @@ jobs:
           $Command = '${{ runner.temp }}\agentharness-bin-win\agentharness.cmd'
           & $Command status
           if ($LASTEXITCODE -ne 0) { throw 'status failed' }
-          node scripts/agentharness-portable-live-e2e.mjs --root '${{ runner.temp }}\agentharness-data-win\agentharness\current' --url "http://127.0.0.1:$env:AGENTHARNESS_ACCEPTANCE_PORT" --expect-existing
           & $Command restart
           if ($LASTEXITCODE -ne 0) { throw 'restart failed' }
           & $Command status
           if ($LASTEXITCODE -ne 0) { throw 'status after restart failed' }
           $Guide = & $Command mcp-guide | Out-String
-          if (-not $Guide.Contains('agentharness_task_list')) { throw 'MCP guide does not name agentharness_task_list' }
-          $Cursor = Get-Content -LiteralPath "$env:HOME\.cursor\mcp.json" -Raw | ConvertFrom-Json
-          if (-not $Cursor.mcpServers.'agentharness') { throw 'Cursor MCP configuration was not installed' }
+          if ($LASTEXITCODE -ne 0) { throw 'mcp-guide failed' }
+          if (-not $Guide.Contains('MCP setup is unsupported on Windows')) { throw 'MCP guide does not report unsupported Windows authentication' }
+          $OriginalCursorHash = Get-Content -LiteralPath '${{ runner.temp }}\agentharness-cursor-win.sha256'
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath "$env:HOME\.cursor\mcp.json").Hash -ne $OriginalCursorHash) { throw 'Unsupported MCP setup changed Cursor configuration' }
 
       - name: Stop Windows acceptance services
         if: always()

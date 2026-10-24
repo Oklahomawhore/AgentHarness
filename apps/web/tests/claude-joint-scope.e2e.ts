@@ -231,7 +231,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: Claude joins a reusable 
     expect(await source.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).isEnabled()).toBe(false)
     await source.getByRole('checkbox', { name: CLAUDE_COLLECTION, exact: true }).check()
     await source.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
-    await source.getByText('等待所有者批准读取与文件贡献。', { exact: true }).waitFor()
+    await source.getByText('等待所有者批准读取与所选贡献。', { exact: true }).waitFor()
     const pending = await claude.scaffold.ctx.claudeScope.contributionDetail({ sessionKey: observed.sessionKey })
     if (pending.capture?.application == null || pending.session.joint === undefined) throw new Error('Joint application not retained')
     expect(pending.session.joint.expectedReadRevision).toBe(observed.readRevision)

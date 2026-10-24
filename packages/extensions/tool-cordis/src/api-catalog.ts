@@ -4547,7 +4547,7 @@ export const EVENT_API: readonly EventApiEntry[] = [
     signature: '\'scope-access/contribution-application-changed\'(selection: { readonly taskId: DevelopmentTaskId }): void',
     summary: 'A durable application or associated Task authorization changed.',
     description: 'A durable application or associated Task authorization changed.',
-    parameters: [{ name: 'selection', description: 'local Task whose application inventory must be reread.' }],
+    parameters: [{ name: 'selection', description: 'local Task whose application and read-grant inventories must be reread.' }],
   },
   {
     name: 'scope-agent-contribution/changed',

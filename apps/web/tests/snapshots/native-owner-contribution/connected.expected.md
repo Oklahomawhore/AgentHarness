@@ -15,6 +15,7 @@
 - combobox "贡献来源":
   - option "授权目录内的 Write/Edit" [selected]
   - option "正常完成的最终答复"
+  - option "同一会话的文件、命令与最终答复"
 - button "使用当前工作区建议"
 - paragraph: 按当前会话工作目录、可用文件工具和本机配置生成可编辑草稿。请核对目录、操作和额度；此操作不会申请或授予权限。
 - text: 允许采集的目录

@@ -446,7 +446,7 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
      * A durable application or associated Task authorization changed.
-     * @param selection - local Task whose application inventory must be reread.
+     * @param selection - local Task whose application and read-grant inventories must be reread.
      * @mode emit
      */
     'scope-access/contribution-application-changed'(selection: { readonly taskId: DevelopmentTaskId }): void

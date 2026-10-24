@@ -18,6 +18,8 @@
   - combobox "贡献来源":
     - option "授权目录内的 Write/Edit" [selected]
     - option "正常完成的最终答复"
+    - option "同一会话的文件、命令与最终答复"
+    - option "原 Claude 会话的文件、命令与答复报告"
   - text: 申请入口有效期（小时）
   - spinbutton "申请入口有效期（小时）"
   - paragraph: 此入口只供一个现有会话申请加入。对方一次确认读取和文件范围，你再一次批准两项权限；入口本身不授予权限。

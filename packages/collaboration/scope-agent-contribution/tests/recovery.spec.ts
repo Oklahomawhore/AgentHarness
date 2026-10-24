@@ -1,11 +1,11 @@
 /** Actual file-tool completions survive failed durability checkpoints without another source action. */
-import { mkdir, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { nativeContributionDomain } from '../src/state.ts'
@@ -15,8 +15,13 @@ import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixture
 const hosts: TestHost[] = []
 const restores: (() => void | Promise<void>)[] = []
 afterEach(async () => {
-  for (const restore of restores.splice(0).reverse()) await restore()
-  await Promise.all(hosts.splice(0).reverse().map(host => host.close()))
+  const failures: unknown[] = []
+  for (const restore of restores.splice(0).reverse()) {
+    try { await restore() } catch (error) { failures.push(error) }
+  }
+  const closed = await Promise.allSettled(hosts.splice(0).reverse().map(host => host.close()))
+  for (const result of closed) if (result.status === 'rejected') failures.push(result.reason)
+  if (failures.length > 0) throw new AggregateError(failures, 'native recovery fixture cleanup failed')
 })
 
 async function fixture(maxSamples = 16) {
@@ -83,6 +88,23 @@ async function assertRetainedEvidence(source: TestHost, agent: Agent, count: num
       event: { kind: 'context-published' } })
   }
   return record
+}
+
+async function blockSourceCommit(source: TestHost, backupName: string) {
+  const path = join(source.root, 'domains/scope_agent_contributions.json')
+  const backup = join(source.root, 'domains', backupName)
+  await rename(path, backup)
+  let restored = false
+  const restore = async () => {
+    if (restored) return
+    await rm(path, { recursive: true, force: true })
+    await rename(backup, path)
+    restored = true
+  }
+  restores.push(restore)
+  // A directory cannot be atomically replaced by the backend's JSON file rename on supported platforms.
+  await mkdir(path)
+  return { path, backup, restore }
 }
 
 describe('native completion durability recovery', () => {
@@ -216,19 +238,7 @@ describe('native completion durability recovery', () => {
 
   it('retries an actual atomic outbox write failure using the original completed tool and sequence', async () => {
     const { owner, source, task, agent, allowed } = await fixture()
-    const path = join(source.root, 'domains/scope_agent_contributions.json')
-    const backup = join(source.root, 'domains/source-before-controlled-failure.json')
-    await rename(path, backup)
-    let restored = false
-    const restore = async () => {
-      if (restored) return
-      await rm(path, { recursive: true, force: true })
-      await rename(backup, path)
-      restored = true
-    }
-    restores.push(restore)
-    // A directory cannot be atomically replaced by the backend's JSON file rename on supported platforms.
-    await mkdir(path)
+    const { restore } = await blockSourceCommit(source, 'source-before-controlled-failure.json')
     await writeFiles(source, agent, ['outbox.txt'])
     await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.collectionIssue)
       .toBe('durability-failed')
@@ -246,5 +256,90 @@ describe('native completion durability recovery', () => {
     expect(source.adapter.requests).toHaveLength(requests)
     expect(agent.session.snapshotEvents()).toEqual(events)
     expect((await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.collectionIssue).toBeNull()
+  })
+
+  it('recovers the original durable sample when owner delivery and both issue commits fail', async () => {
+    const { network, owner, source, task, agent, allowed } = await fixture()
+    const requested = Promise.withResolvers<undefined>()
+    const deliver = Promise.withResolvers<undefined>()
+    const sampleRequests: unknown[] = []
+    const beforeRequest = source.transport.beforeRequest
+    restores.push(() => { source.transport.beforeRequest = beforeRequest; deliver.resolve(undefined) })
+    source.transport.beforeRequest = async (protocol, payload) => {
+      await beforeRequest?.(protocol, payload)
+      if (typeof payload !== 'object' || payload === null || !('op' in payload) || payload.op !== 'sample') return
+      sampleRequests.push(structuredClone(payload))
+      if (sampleRequests.length === 1) {
+        requested.resolve(undefined)
+        await deliver.promise
+      }
+    }
+    await writeFiles(source, agent, ['retained-before-delivery.txt'])
+    await requested.promise
+    const original = await storedSource(source, agent)
+    expect(original.capture?.sequence).toBe(1)
+    expect(original.samples).toHaveLength(1)
+    expect(original.samples[0]?.receipt).toBeUndefined()
+    expect(await source.ctx.sessions.flush(agent.session)).toBe(true)
+    const events = await source.readEvents(agent)
+    const modelRequests = source.adapter.requests.length
+    const ownerBefore = structuredClone(owner.ctx.developmentTasks.get({ taskId: task.id }))
+    const records = source.ctx.storageDomain.get(nativeContributionDomain.name)?.table('sessions')
+    if (records === undefined) throw new Error('Source domain missing')
+    const put = records.put.bind(records)
+    const failedIssues: string[] = []
+    const rejected = Promise.withResolvers<undefined>()
+    const recover = Promise.withResolvers<undefined>()
+    restores.push(() => { recover.resolve(undefined) })
+    const observed = vi.spyOn(records, 'put').mockImplementation(async (key, value) => {
+      try { await put(key, value) }
+      catch (error) {
+        const row = nativeContributionDomain.tables.sessions.valueSchema.parse(value)
+        if (key === agent.id && row.capture?.issue !== undefined) {
+          failedIssues.push(row.capture.issue)
+          if (failedIssues.length === 2) {
+            rejected.resolve(undefined)
+            await recover.promise
+          }
+        }
+        throw error
+      }
+    })
+    restores.push(() => { observed.mockRestore() })
+    const disk = await readFile(join(source.root, 'domains/scope_agent_contributions.json'))
+    const { path, backup, restore } = await blockSourceCommit(source, 'source-before-delivery-failure.json')
+    const ownerTransport = network.peers.get(owner.peerId)
+    if (ownerTransport === undefined) throw new Error('Owner transport missing')
+    restores.push(() => { network.peers.set(owner.peerId, ownerTransport) })
+    network.peers.delete(owner.peerId)
+    deliver.resolve(undefined)
+    await rejected.promise
+    expect(failedIssues).toEqual(['owner-unavailable', 'rejected'])
+    expect((await stat(path)).isDirectory()).toBe(true)
+    expect(await readFile(backup)).toEqual(disk)
+    expect(nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(agent.id))).toEqual(original)
+    expect(owner.ctx.developmentTasks.get({ taskId: task.id })).toEqual(ownerBefore)
+    expect(sampleRequests).toHaveLength(1)
+
+    await restore()
+    network.peers.set(owner.peerId, ownerTransport)
+    recover.resolve(undefined)
+    await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.pendingSamples).toBe(0)
+    const recovered = await assertRetainedEvidence(source, agent, 1)
+    const retained = recovered.samples[0]
+    if (retained === undefined) throw new Error('Recovered sample missing')
+    const { receipt, ...withoutReceipt } = retained
+    expect(withoutReceipt).toEqual(original.samples[0])
+    const published = owner.ctx.developmentTasks.get({ taskId: task.id })
+    expect(published.context).toHaveLength(1)
+    expect(published.context[0]?.id).toBe(receipt?.publicationId)
+    expect(published.revision).toBe(ownerBefore.revision + 1)
+    expect(sampleRequests.length).toBeGreaterThanOrEqual(2)
+    for (const request of sampleRequests) expect(request).toMatchObject({ op: 'sample', sample: retained.sample })
+    expect(await readFile(join(allowed, 'retained-before-delivery.txt'), 'utf8')).toContain('retained-before-delivery.txt')
+    expect(await source.readEvents(agent)).toEqual(events)
+    expect(source.adapter.requests).toHaveLength(modelRequests)
+    expect(recovered.capture?.issue).toBeUndefined()
+    expect([...source.exitCodes, ...owner.exitCodes]).toEqual([])
   })
 })

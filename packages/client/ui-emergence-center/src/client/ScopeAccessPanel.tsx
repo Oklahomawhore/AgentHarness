@@ -1,6 +1,6 @@
 /** Device-bound invitations and explicit read-only recipient selection. */
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type {
   ScopeAccessIdentity, ScopeAccessList, ScopeInvitation, ScopeInviteRequest, ScopeGrantId,
   ScopePeerId, ClaudeScopeReceiveRequest, ClaudeScopeLeaveRequest, ClaudeScopeSessionSummary,
@@ -9,23 +9,30 @@ import type {
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeScopeState } from './claude-scopes.ts'
+import type { ContributionEntry } from './contribution-directory.ts'
 import css from './ClaudeScopePanel.module.css'
 import { ScopeOwnerAddress, resolveOwnerAddress } from './ScopeOwnerAddress.tsx'
 
-/** Local authenticated management actions; no peer may call these methods. */
+/** Last confirmed local identity and independent reading permissions. */
+export interface ScopeAccessValue {
+  readonly identity: ScopeAccessIdentity
+  readonly access: ScopeAccessList
+}
+
+/** Local authenticated management; undefined results retain directory errors for reconciliation. */
 export interface ScopeAccessActions {
-  readonly readScopeAccess: () => Promise<{ identity: ScopeAccessIdentity; access: ScopeAccessList }>
-  readonly inviteScope: (request: ScopeInviteRequest) => Promise<ScopeInvitation>
+  readonly readScopeAccess: () => void
+  readonly inviteScope: (request: ScopeInviteRequest) => Promise<ScopeInvitation | undefined>
   readonly revokeScope: (request: { grantId: ScopeGrantId }) => Promise<void>
-  readonly receiveClaudeScope: (request: ClaudeScopeReceiveRequest) => Promise<ClaudeScopeSessionSummary>
-  readonly stopClaudeReceive: (request: ClaudeScopeLeaveRequest) => Promise<ClaudeScopeSessionSummary>
+  readonly receiveClaudeScope: (request: ClaudeScopeReceiveRequest) => Promise<ClaudeScopeSessionSummary | undefined>
+  readonly stopClaudeReceive: (request: ClaudeScopeLeaveRequest) => Promise<ClaudeScopeSessionSummary | undefined>
 }
 
 /** Owner selection is absent unless the focused Task is a locally owned root. */
 export interface ScopeAccessPanelProps extends ScopeAccessActions, PropsLocale<'emergenceCenter'> {
   readonly taskId?: DevelopmentTaskId
+  readonly entry: ContributionEntry<ScopeAccessValue> | undefined
   readonly sessions: ClaudeScopeState
-  readonly refreshSessions: () => void
 }
 
 /**
@@ -33,17 +40,12 @@ export interface ScopeAccessPanelProps extends ScopeAccessActions, PropsLocale<'
  * @param props - local management methods, selected owner Task, and observed recipients.
  * @returns invitation controls independent of local Task replication.
  */
-export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeAccess, inviteScope,
+export function ScopeAccessPanel({ taskId, entry, sessions, readScopeAccess, inviteScope,
   revokeScope, receiveClaudeScope, stopClaudeReceive, t }: ScopeAccessPanelProps) {
   const id = useId()
   const generation = useRef(0)
   const taskGeneration = useRef(0)
-  const inventoryRequest = useRef(0)
-  const [data, setData] = useState<Awaited<ReturnType<ScopeAccessActions['readScopeAccess']>>>()
   const [error, setError] = useState(false)
-  const [inventoryError, setInventoryError] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [recipient, setRecipient] = useState('')
   const [address, setAddress] = useState<string>()
   const [responsibility, setResponsibility] = useState('')
@@ -51,39 +53,20 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
   const [created, setCreated] = useState<ScopeInvitation>()
   const [invitation, setInvitation] = useState('')
   const [sessionKey, setSessionKey] = useState<ClaudeScopeSessionKey>()
-  const loadInventory = useCallback(async (current: number, initializeAddress = false): Promise<void> => {
-    const request = ++inventoryRequest.current
-    const eligible = (): boolean => current === generation.current && request === inventoryRequest.current
-    setLoading(true); setInventoryError(false)
-    try {
-      const value = await readScopeAccess()
-      if (!eligible()) return
-      setData(value)
-      if (initializeAddress) setAddress(undefined)
-    } catch { if (eligible()) setInventoryError(true) }
-    finally { if (eligible()) setLoading(false) }
-  }, [readScopeAccess])
   useEffect(() => {
-    const current = ++generation.current
-    setBusy(false); setData(undefined)
-    void loadInventory(current, true)
+    readScopeAccess()
     return () => { generation.current += 1 }
-  }, [loadInventory])
+  }, [readScopeAccess])
   useEffect(() => { taskGeneration.current += 1; setCreated(undefined) }, [taskId])
   const act = async (operation: () => Promise<void>): Promise<void> => {
     const current = generation.current
-    inventoryRequest.current += 1
-    setLoading(false)
-    setBusy(true); setError(false)
-    try {
-      try { await operation() }
-      finally { if (current === generation.current) refreshSessions() }
-      if (current === generation.current) await loadInventory(current)
-    } catch { if (current === generation.current) setError(true) }
-    finally { if (current === generation.current) setBusy(false) }
+    setError(false)
+    try { await operation() }
+    catch { if (current === generation.current) setError(true) }
   }
+  const data = entry?.value
   const currentAddress = resolveOwnerAddress(data?.identity.addresses ?? [], address)
-  const pending = busy || loading
+  const pending = entry?.pending === true || entry?.status !== 'ready'
   const chosen = sessions.sessions.find(item => item.sessionKey === sessionKey)
   const selectable = chosen !== undefined && !chosen.ended && chosen.taskId === undefined
     && chosen.receiveSubscriptionId === undefined && chosen.sharingState !== 'withdrawal-pending'
@@ -136,8 +119,8 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
       void act(async () => {
         // The generated Remote validator checks the complete invitation before the Host acts.
         const parsed = JSON.parse(invitation) as ScopeInvitation
-        await receiveClaudeScope({ sessionKey: chosen.sessionKey, invitation: parsed })
-        setInvitation('')
+        const received = await receiveClaudeScope({ sessionKey: chosen.sessionKey, invitation: parsed })
+        if (received !== undefined) setInvitation('')
       })
     }}>
       <label className={css.field} htmlFor={`${id}-invitation`}>{t('access.paste')}
@@ -161,10 +144,10 @@ export function ScopeAccessPanel({ taskId, sessions, refreshSessions, readScopeA
         <Button disabled={pending} onClick={() => { void act(async () => { await stopClaudeReceive({ sessionKey: item.sessionKey }) }) }}>{t('access.stop')}</Button>
       </div>
     </div>)}
-    {error && <p className={css.error} role="alert">{t('access.failed')}</p>}
-    {inventoryError && <div>
+    {(error || entry?.status === 'ready' && entry.error !== undefined) && <p className={css.error} role="alert">{t('access.failed')}</p>}
+    {entry?.status === 'error' && <div>
       <p className={css.error} role="alert">{t('access.loadFailed')}</p>
-      <Button disabled={pending} onClick={() => { void loadInventory(generation.current, data === undefined) }}>{t('access.retry')}</Button>
+      <Button disabled={entry.pending} onClick={readScopeAccess}>{t('access.retry')}</Button>
     </div>}
   </details>
 }

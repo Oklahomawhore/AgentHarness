@@ -20,6 +20,7 @@ import type { NativeContributionActions } from './NativeContributionPanel.tsx'
 import { createMcpClientSetupDirectory } from './mcp-clients.ts'
 import { createContributionDirectory } from './contribution-directory.ts'
 import { readOwnerContributions, type OwnerContributionValue } from './owner-contributions.ts'
+import type { ScopeAccessValue } from './ScopeAccessPanel.tsx'
 import { createClaudeScopeDirectory } from './claude-scopes.ts'
 import { createObservedScopeDirectory } from './observed-scopes.ts'
 import { createParticipantDirectory } from './participant-directory.ts'
@@ -142,6 +143,14 @@ export function apply(ctx: Context): void {
     }, taskId, previous),
     (error) => { console.error('[ui-emergence-center] owner contribution management failed:', error) },
   )
+  const scopeAccess = createContributionDirectory<'inventory', ScopeAccessValue>(async () => {
+    const [identity, access] = await Promise.all([ctx.remote.scopeAccess.identity(), ctx.remote.scopeAccess.list()])
+    return { identity: unwrap(identity), access: unwrap(access) }
+  }, (error) => { console.error('[ui-emergence-center] read permission management failed:', error) })
+  const mutateScopeAccess = <T>(operation: () => Promise<T>): Promise<T | undefined> => scopeAccess.mutate('inventory', async () => {
+    try { return await operation() }
+    finally { claudeScopes.refresh() }
+  })
 
   const observedScopes = createObservedScopeDirectory({
     candidates: async request => unwrap(await ctx.remote.developmentTasks.observedCandidates(request)),
@@ -168,14 +177,15 @@ export function apply(ctx: Context): void {
   )
   ctx.effect(() => ctx.remote.$on('scope-access/contribution-application-changed', ({ taskId }) => {
     ownerContributions.invalidate(taskId)
+    scopeAccess.invalidate('inventory')
   }), 'ui-emergence-center: online application changes')
   ctx.effect(() => ctx.remote.$on('claude-scope/session-changed', (sessionKey) => {
     sourceContributions.invalidate(sessionKey)
     claudeScopes.refresh()
   }), 'ui-emergence-center: source permission changes')
-  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset() })
+  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset(); scopeAccess.reset() })
   ctx.effect(() => () => participants.dispose(), 'ui-emergence-center: human lease')
-  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose() }, 'ui-emergence-center: contribution management')
+  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose(); scopeAccess.dispose() }, 'ui-emergence-center: contribution management')
   ctx.effect(() => () => { claudeScopes.dispose() }, 'ui-emergence-center: Claude session directory')
 
   ctx.effect(() => () => { observedScopes.dispose() }, 'ui-emergence-center: remote observation directory')
@@ -212,7 +222,7 @@ export function apply(ctx: Context): void {
     order: 34,
     locale: NS,
     inject: (): EmergenceCenterPanelFace => ({
-      hooks: { participants, tasks, mcpClients, claudeScopes, observedScopes, sourceContributions, ownerContributions },
+      hooks: { participants, tasks, mcpClients, claudeScopes, observedScopes, sourceContributions, ownerContributions, scopeAccess },
       initialProfile,
       setProfile: async (profile) => {
         await participants.setProfile(profile)
@@ -300,14 +310,11 @@ export function apply(ctx: Context): void {
       revokeContribution: async (request) => {
         await ownerContributions.mutate(request.grant.taskId, async () => unwrap(await ctx.remote.scopeAccess.revokeContribution(request)))
       },
-      readScopeAccess: async () => {
-        const [identity, access] = await Promise.all([ctx.remote.scopeAccess.identity(), ctx.remote.scopeAccess.list()])
-        return { identity: unwrap(identity), access: unwrap(access) }
-      },
-      inviteScope: async request => unwrap(await ctx.remote.scopeAccess.invite(request)),
-      revokeScope: async (request) => { unwrap(await ctx.remote.scopeAccess.revoke(request)) },
-      receiveClaudeScope: async request => unwrap(await ctx.remote.claudeScope.receive(request)),
-      stopClaudeReceive: async request => unwrap(await ctx.remote.claudeScope.receiveLeave(request)),
+      readScopeAccess: () => { void scopeAccess.refresh('inventory') },
+      inviteScope: request => mutateScopeAccess(async () => unwrap(await ctx.remote.scopeAccess.invite(request))),
+      revokeScope: async (request) => { await mutateScopeAccess(async () => { unwrap(await ctx.remote.scopeAccess.revoke(request)) }) },
+      receiveClaudeScope: request => mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receive(request))),
+      stopClaudeReceive: request => mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receiveLeave(request))),
       approveObservedScope: request => observedScopes.approve(request),
       endObservedScope: request => observedScopes.end(request),
       refreshObservedScopes: () => { observedScopes.refresh() },

@@ -381,6 +381,13 @@ function nodeCompatSmokeGates(options: { cliSmoke?: boolean } = {}): Gate[] {
       'run',
       'apps/cli/tests/source-launch.compat.spec.ts',
     ], { label: 'dsh source-launch smoke' }),
+    pnpmExec('dev-web-config-smoke', [
+      'vitest',
+      'run',
+      'scripts/dev-web.spec.ts',
+      '-t',
+      'loads TypeScript root',
+    ], { label: 'Web development config smoke' }),
     pnpmExec('vitest-jsdom-smoke', [
       'vitest',
       'run',

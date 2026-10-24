@@ -261,6 +261,39 @@ it('keeps a failed freeze selection fixed and reserves its leases while later lo
   expect(f.remoteRow().samples.length + f.localRow().samples.length).toBe(3)
 })
 
+it('reports unavailable historical initialization when real local evidence fills the retained allowance', async () => {
+  const f = await fixture({ maxLeases: 1 })
+  await f.write('RETAINED_LOCAL_HISTORY')
+  await expect.poll(() => f.localRow().samples[0]?.receipt).toBeDefined()
+  const original = structuredClone(f.localRow())
+  expect(original.samples).toHaveLength(1)
+  expect(original.capture?.sequence).toBe(1)
+  expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).initialization)
+    .toMatchObject({ eligible: true, recordedSamples: 1, unconfirmedSamples: 0 })
+  const events = await f.source.readEvents(f.agent)
+  const requests = f.source.adapter.requests.length
+  const sampleRequests: unknown[] = []
+  const beforeRequest = f.source.transport.beforeRequest
+  releases.push(() => { f.source.transport.beforeRequest = beforeRequest })
+  f.source.transport.beforeRequest = async (protocol, payload) => {
+    await beforeRequest?.(protocol, payload)
+    if (typeof payload === 'object' && payload !== null && 'op' in payload && payload.op === 'sample') {
+      sampleRequests.push(structuredClone(payload))
+    }
+  }
+  const remote = await f.begin()
+  await remote.approve()
+  expect((await f.status()).capture?.initialization).toMatchObject({ state: 'unavailable', reason: 'capacity',
+    coverage: { recorded: 1, selected: 0, omitted: 1, unconfirmed: 0, acknowledged: 0 } })
+  expect(f.remoteRow()).toMatchObject({ capture: { sequence: 0 }, samples: [] })
+  expect(sampleRequests).toEqual([])
+  expect(f.reports()).toEqual([])
+  expect(f.localRow()).toEqual(original)
+  expect(await readFile(join(f.source.workspace, 'RETAINED_LOCAL_HISTORY.txt'), 'utf8')).toBe('RETAINED_LOCAL_HISTORY')
+  expect(await f.source.readEvents(f.agent)).toEqual(events)
+  expect(f.source.adapter.requests).toHaveLength(requests)
+})
+
 it('trims complete original fields including failure error without recovering omitted text', () => {
   const origin = { kind: 'recorded-local-tools' as const, planDigest: '1'.repeat(64), executionDigest: '2'.repeat(64) }
   const report = recordedReport({ kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure',

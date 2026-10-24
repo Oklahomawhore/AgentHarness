@@ -24,6 +24,34 @@ async function joined(overrides: Partial<Config> = {}) {
 const signal = (): AbortSignal => new AbortController().signal
 const projections = (pool: MemoryMediaPool) => pool.media.get('scope_access')!.tables.get('projections') ?? new Map<string, unknown>()
 
+it('notifies owner inventories only after read grants durably change', async () => {
+  const a = await host('grant-owner')
+  const task = await a.createTask()
+  const identity = await a.access.identity()
+  const observed: unknown[] = []
+  const changed = vi.fn((selection: { readonly taskId: DevelopmentTaskId }) => {
+    expect(selection.taskId).toBe(task.id)
+    observed.push([...a.pool.media.get('scope_access')!.tables.get('grants')!.values()])
+  })
+  a.ctx.on('scope-access/contribution-application-changed', changed)
+  const request = { taskId: task.id, recipientPeerId: peer('grant-recipient'),
+    ownerAddress: identity.addresses[0]!, expiresAt: Date.now() + 50_000, responsibility: 'frontend' }
+  a.pool.failNextWrites = 1
+  await expect(a.access.invite(request)).rejects.toThrow('injected write failure')
+  expect(changed).not.toHaveBeenCalled()
+
+  const invitation = await a.access.invite(request)
+  expect(changed).toHaveBeenCalledTimes(1)
+  expect(observed).toEqual([[{ invitation, state: 'active' }]])
+  a.pool.failNextWrites = 1
+  await expect(a.access.revoke({ grantId: invitation.grantId })).rejects.toThrow('injected write failure')
+  expect(changed).toHaveBeenCalledTimes(1)
+  await a.access.revoke({ grantId: invitation.grantId })
+  await a.access.revoke({ grantId: invitation.grantId })
+  expect(changed).toHaveBeenCalledTimes(2)
+  expect(observed).toEqual([[{ invitation, state: 'active' }], [{ invitation, state: 'revoked' }]])
+})
+
 it('reads only an invited Root Task and persists exact text on both Hosts before returning', async () => {
   const { a, b, task, invitation, subscription } = await joined()
   await a.createTask('PRIVATE-CANARY')
