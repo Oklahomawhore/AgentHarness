@@ -141,7 +141,7 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
 
     await writeFile(sourcePath, updatedSource)
     await page.getByText(newText, { exact: true }).waitFor({ timeout: 30_000 })
-    expect(await readFile(emittedLocalePath, 'utf8')).toContain(newText)
+    await expect.poll(() => readFile(emittedLocalePath, 'utf8'), { timeout: 30_000 }).toContain(newText)
     expect(await page.evaluate(() => (window as Window & { __dshHmrPageIdentity?: string }).__dshHmrPageIdentity))
       .toBe(pageIdentity)
     expect(pageErrors).toEqual([])

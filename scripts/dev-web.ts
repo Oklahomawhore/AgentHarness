@@ -6,12 +6,11 @@
  * triggers reloads; this script is merely the convenient way to keep them all
  * rebuilt on source change.
  *
- * Three stages, because the compile shell links built lib products rather than
- * sources: `tsc -b tsconfig.client.json` emits `lib/types` (the tsdown lib
- * entries are that emit, not `src`), tsdown bundles `lib/index.js` and
- * `lib/client.js`, and `vite build` rewrites `apps/web/dist`, which `dsh web`
- * serves. A missing stage does not fail — it silently shows the previous
- * artifact, so an edit appears to do nothing.
+ * `tsc -b tsconfig.client.json` emits `lib/types` for package library entries.
+ * tsdown bundles those entries and watches client-plugin sources directly in
+ * development; `vite build` rewrites `apps/web/dist`, which `dsh web` serves.
+ * These watchers complete independently: a browser hot update can precede the
+ * corresponding TypeScript file output.
  *
  * MUST NOT run concurrently with `pnpm run build`: both write the same
  * `lib/` and `apps/web/dist/` trees.
