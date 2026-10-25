@@ -3,6 +3,7 @@ scenario: scope-mixed-source
 profile: sdk
 composition: sdk-scope-mixed-source
 recording: authored
+writer: separate
 header:
   class: scope-mixed-source
   pin: true

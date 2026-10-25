@@ -28,6 +28,8 @@ The [detached-launch tests](../../../../packages/host/open-in-app/tests/launch-d
 
 The [LSP backpressure test](../../../../packages/lsp/lsp-stdio/tests/instance.spec.ts) preserves the real paused-reader fixture and large native pipe write. Before accepting the abort error, it verifies that the pending write callback settled and the captured subprocess completed; `instance.dead` alone can be true as soon as disposal starts.
 
+The [combined native work](../../../../snapshots/sdk/scope-native-work/README.md) and [mixed-source](../../../../snapshots/sdk/scope-mixed-source/README.md) SDK fixtures await owner receipts before dependent source requests or independent-source publication. Agent idleness does not establish remote report application. Separate current-writer oracles preserve immutable replay inputs and retain complete publication, grant, source-identity, and omission comparisons; Python owns matching receipt-ordered outputs.
+
 ### Built-client import classification
 
 The [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts) starts its erasable TypeScript driver under plain Node, so transitive imports use built package exports. A tsx hook redirects those imports to source and can create a second native module instance; it cannot serve as the built-import oracle. Koffi imports without that hook and has no exemption. The sweep admits its three listed Client bundles only when Node reports `ERR_UNKNOWN_FILE_EXTENSION` for an existing regular stylesheet under a Client package’s built `lib/` directory. A transitive dependency can supply the first failing stylesheet, so import order cannot select one fixed asset path. Source paths, missing files, other errors, and unexpectedly successful exempt imports fail. Private repository-shaped fixtures own their assets; scoped resolve/load hooks replace only the selected bundle, leaving shared build artifacts unchanged.
@@ -42,4 +44,4 @@ The [Node import sweep](../../../../packages/experimental/webworker-runtime/test
 
 ## Consequences
 
-Each fixture owns its clocks, barriers, callbacks, processes, and temporary paths. Controlled observations supplement real worker, subprocess, browser, and persistence paths. Product behavior, production timing, benchmark budgets, CI scheduling, and recorded expectations remain unchanged.
+Each fixture owns its clocks, barriers, callbacks, processes, and temporary paths. Controlled observations supplement real worker, subprocess, browser, and persistence paths. Product behavior, production timing, benchmark budgets, and CI scheduling remain unchanged. Recorded outputs retain complete comparisons.

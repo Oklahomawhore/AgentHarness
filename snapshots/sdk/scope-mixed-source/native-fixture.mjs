@@ -166,6 +166,7 @@ export async function apply(ctx) {
       await run(commandHost, commandAgent, [...commands.map((command, index) => toolReply(`check-${index}`, 'bash', {
         command, description: 'Run a permitted implementation check', timeoutMs: 10000,
       })), textReply('Implementation checks completed.')])
+      await until('eight command owner receipts before the independent answer', () => currentReports().length === 8)
       await run(answerHost, answerAgent, [textReply(answer)])
       await until('eight commands and one completed answer', () => currentReports().length === 9)
       const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id, ownerAddress,

@@ -3,6 +3,7 @@ scenario: scope-native-work
 profile: sdk
 composition: sdk-scope-native-work
 recording: authored
+writer: separate
 header:
   class: scope-native-work
   pin: true

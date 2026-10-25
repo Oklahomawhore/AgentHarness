@@ -1126,6 +1126,8 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-group-join": "scope-group-join-snapshot-reminder-r4",
         "scope-joint-automatic": "scope-joint-automatic-snapshot-reminder-r3",
         "scope-local-joint": "scope-local-joint-snapshot-reminder-r5",
+        "scope-native-work": "scope-native-work-receipt-order",
+        "scope-mixed-source": "scope-mixed-source-receipt-order",
         "scope-native-contribution": "scope-native-contribution-reported-fairness-r4",
         "scope-owner-idle": "scope-owner-idle-snapshot-reminder-r3",
         "scope-owner-participation": "scope-owner-participation-command-outcome-evidence-r2",

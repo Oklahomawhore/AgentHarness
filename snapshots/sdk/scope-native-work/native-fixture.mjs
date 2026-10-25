@@ -84,6 +84,12 @@ export async function apply(ctx) {
     const events = structuredClone(sourceAgent.session.snapshotEvents())
     const messages = structuredClone(options.messages)
     assert.deepEqual(Session.create(sourceAgent.id, structuredClone(events), sourceAgent.session.header).deriveMessages(), messages)
+    const shared = messages.find(message => message.source.kind === 'scope-agent-context')
+    if (shared !== undefined) {
+      assert.equal(shared.source.form, 'snapshot')
+      assert.equal(shared.source.projection.taskRevision, ctx.developmentTasks.get({ taskId: shared.source.projection.taskId }).revision,
+        'native-work fixture: source request precedes owner receipts')
+    }
     sourceRequestEvidence.push({ messages, events, header: structuredClone(sourceAgent.session.header) })
     return next()
   })
@@ -141,6 +147,14 @@ export async function apply(ctx) {
   const requestEvidence = []
   let requestAttempt = 0
   const reports = () => ctx.developmentTasks.get({ taskId: task.id }).context
+  // Owner receipts fix the source request revisions and the coordinates retained in its turn proofs.
+  source.ctx.on('agent/pre-step', async ({ agent, turn, step }, next) => {
+    if (agent === sourceAgent) {
+      const expected = turn === 2 ? [0, 1, 1, 2, 3][step - 1] : turn === 3 ? [4, 5][step - 1] : 0
+      if (expected > 0) await until('source report receipt before its next request', () => reports().length === expected)
+    }
+    return await next()
+  }, { prepend: true })
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     receiver = agent
     if (turn === 1) {
