@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/collaboration/development-mesh-websocket/README.md
-README.md: 89b82080d42395ef54a2e83b00b7e363db2dbdc1
-README.zh.md: 50c3f7da5d07c3ad16fce36de07bcd341c969086
+README.md: 0e93874c96f03c4f9aceb50ee8fff58ca98db9a1
+README.zh.md: 96be13a4fdda2c3ec6621a602de44b244675ea17

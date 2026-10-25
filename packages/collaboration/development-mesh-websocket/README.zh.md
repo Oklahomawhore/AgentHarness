@@ -24,6 +24,8 @@ kind: "package-reference"
 
 显式 peer 与经过认证的 IPv4 multicast 发现可以并存。较小 node id 负责拨号，重连采用有界退避，channel heads 在重连后续传缺失增量。相同事件标识出现不同内容时，该 peer 会进入 conflict 状态，后续数据不再被接受。Command timeout 与复制相互独立。
 
+发现功能要求成功绑定 socket 并加入组播。首次及后续 datagram 发送失败均记录告警，监听与已配置的公告周期继续运行。本地成功启动不代表已发现 peer 或已送达报文。无效的公告字节上限仍会使启动失败。
+
 序列化或字节上限检查拒绝的 frame 不消耗连接序号。被拒绝的 frame 不会让后续有界流量因序号不连续而被拒绝。当错误响应符合字节上限时，过大的命令结果仍能以错误回复送达。
 
 认证提供节点身份与消息完整性，不提供加密。局域网 HTTP release 下载与 Mesh payload 仍可能被被动监听。
