@@ -1,7 +1,7 @@
 /** Real foreground outcomes enter the existing durable local and peer contribution paths. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -17,17 +17,31 @@ import { createHost, requestText, rootTask, run, TestNetwork, type TestHost } fr
 const hosts: TestHost[] = []
 const releases: (() => void)[] = []
 const pending: Promise<unknown>[] = []
+let cleanup = { phase: 'not-started', hosts: [] as { peerId: string; state: string }[] }
 function own<T>(work: Promise<T>): Promise<T> {
   pending.push(Promise.allSettled([work]))
   return work
 }
 afterEach(async () => {
+  const state = { phase: 'releasing-barriers', hosts: [] as { peerId: string; state: string }[] }
+  cleanup = state
   for (const release of releases.splice(0).reverse()) release()
+  state.phase = 'awaiting-pending-work'
   await Promise.all(pending.splice(0))
+  state.phase = 'restoring-mocks'
   vi.restoreAllMocks()
-  const results = await Promise.allSettled(hosts.splice(0).reverse().map(host => host.close()))
+  state.phase = 'closing-hosts'
+  const results = await Promise.allSettled(hosts.splice(0).reverse().map((host) => {
+    const row = { peerId: String(host.peerId), state: 'pending' }
+    state.hosts.push(row)
+    const closing = host.close()
+    void closing.then(() => { row.state = 'closed' }, () => { row.state = 'rejected' })
+    return closing
+  }))
+  state.phase = 'host-results'
   const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : [])
   if (errors.length !== 0) throw new AggregateError(errors, 'Command contribution fixture cleanup failed')
+  state.phase = 'complete'
 })
 
 type Role = 'local' | 'peer'
@@ -260,15 +274,42 @@ it('keeps local command permission immutable and rejects invalid directory selec
 })
 
 it.each(['local', 'peer'] as const)('reports an actual %s timeout independently of exit status', async (role) => {
+  let stage = 'creating-hosts'
+  const ranges: (() => unknown)[] = []
+  const restore: (() => void)[] = []
+  cleanup = { phase: 'not-started', hosts: [] }
+  onTestFailed(() => { console.error('Command contribution timeout lifecycle', JSON.stringify({
+    role, stage, cleanup, processes: ranges.map(snapshot => snapshot()),
+  })) })
+  onTestFinished(() => { for (const undo of restore.reverse()) undo() })
   const timedCommand = 'sleep 5'
   const f = await fixture(role, { commands: [{ command: timedCommand, rootIndex: 0 }] })
+  const spawn = f.source.ctx.subprocess.spawn.bind(f.source.ctx.subprocess)
+  const observed = vi.spyOn(f.source.ctx.subprocess, 'spawn').mockImplementation((spec) => {
+    const handle = spawn(spec)
+    let result: unknown = 'pending'
+    void handle.done.then((value) => { result = value }, (error: unknown) => { result = { error: String(error) } })
+    // oxlint-disable-next-line typescript/unbound-method -- invoked with .call(handle) and restored exactly.
+    const originalWait = handle.waitForExit
+    const waiting = vi.fn<typeof handle.waitForExit>(signal => originalWait.call(handle, signal))
+    handle.waitForExit = waiting
+    restore.push(() => { handle.waitForExit = originalWait })
+    ranges.push(() => ({ result, signalAborted: spec.signal?.aborted,
+      rangeCalls: waiting.mock.calls.length, rangeResults: waiting.mock.settledResults.map(value => value.type) }))
+    return handle
+  })
+  restore.push(() => { observed.mockRestore() })
+  stage = 'running-command'
   await run(f.source, f.agent, [toolCallResponse('timed-command', 'bash', {
     command: timedCommand, timeoutMs: 20, description: 'Run the permitted command with a finite executor deadline.',
   })])
+  stage = 'waiting-for-report'
   await expect.poll(() => f.reports().length).toBe(1)
   expect(f.reports()[0]?.observation).toMatchObject({ state: 'completed', timedOut: true, aborted: false, timeoutMs: 20 })
+  stage = 'reading-durable-result'
   const row = await retained(f)
   expect(row.samples[0]?.sample.result).toMatchObject({ state: 'completed', timedOut: true })
+  stage = 'complete'
 })
 
 it('makes insufficient command attribution capacity visible without publishing invented evidence', async () => {

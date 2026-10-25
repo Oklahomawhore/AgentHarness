@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, TestRunner, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFailed, onTestFinished, TestRunner, vi } from 'vitest'
 import DevWorkbenchService from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import type { DevWorkbenchEntryId } from '../src/types.ts'
@@ -11,13 +11,17 @@ import type { DevWorkbenchEntryId } from '../src/types.ts'
 const contexts: Context[] = []
 const servers: Server[] = []
 const id = (value: string): DevWorkbenchEntryId => value as DevWorkbenchEntryId
+let cleanupPhase = 'not-started'
 
 afterEach(async () => {
+  cleanupPhase = 'disposing-contexts'
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  cleanupPhase = 'closing-servers'
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.closeAllConnections()
     server.close((error) => { if (error === undefined) resolve(); else reject(error) })
   })))
+  cleanupPhase = 'complete'
 })
 
 function config(args: string[], readiness?: Config['entries'][string]['readiness']): Config {
@@ -218,6 +222,13 @@ describe('DevWorkbenchService', () => {
   })
 
   it('aborts an in-flight readiness request before stopping the process tree', async () => {
+    let stage = 'starting-server'
+    cleanupPhase = 'not-started'
+    const processes: (() => unknown)[] = []
+    const restore: (() => void)[] = []
+    onTestFailed(() => { console.error('Dev workbench readiness lifecycle', JSON.stringify({ stage, cleanupPhase,
+      processes: processes.map(snapshot => snapshot()) })) })
+    onTestFinished(() => { for (const undo of restore.reverse()) undo() })
     let requestStarted!: () => void
     const startedRequest = new Promise<void>((resolve) => { requestStarted = resolve })
     const server = createServer(() => { requestStarted() })
@@ -228,17 +239,41 @@ describe('DevWorkbenchService', () => {
     })
     const address = server.address()
     if (address === null || typeof address === 'string') throw new Error('fixture server has no TCP address')
-    const { service } = await bench(['-e', 'setInterval(() => {}, 1000)'], {
+    stage = 'creating-workbench'
+    const { ctx, service } = await bench(['-e', 'setInterval(() => {}, 1000)'], {
       url: `http://127.0.0.1:${String(address.port)}/pending`,
       acceptedStatusCodes: [200],
       intervalMs: 10,
       requestTimeoutMs: 10_000,
       warnAfterMs: 10_000,
     })
+    const spawn = ctx.subprocess.spawn.bind(ctx.subprocess)
+    const observed = vi.spyOn(ctx.subprocess, 'spawn').mockImplementation((spec) => {
+      const handle = spawn(spec)
+      // oxlint-disable-next-line typescript/unbound-method -- invoked with .call(handle) and restored exactly.
+      const originalWait = handle.waitForExit
+      // oxlint-disable-next-line typescript/unbound-method -- invoked with .call(handle) and restored exactly.
+      const originalTerminate = handle.terminate
+      let terminateCalls = 0
+      const waiting = vi.fn<typeof handle.waitForExit>(signal => originalWait.call(handle, signal))
+      handle.waitForExit = waiting
+      handle.terminate = () => { terminateCalls += 1; originalTerminate.call(handle) }
+      restore.push(() => { handle.waitForExit = originalWait; handle.terminate = originalTerminate })
+      let done: unknown = 'pending'
+      void handle.done.then((outcome) => { done = outcome }, (error: unknown) => { done = { error: String(error) } })
+      processes.push(() => ({ done, terminateCalls, rangeCalls: waiting.mock.calls.length,
+        rangeResults: waiting.mock.settledResults.map(result => result.type), signalAborted: spec.signal?.aborted }))
+      return handle
+    })
+    restore.push(() => { observed.mockRestore() })
 
+    stage = 'starting-process'
     await service.start(id('fixture'))
+    stage = 'waiting-for-readiness-request'
     await startedRequest
+    stage = 'stopping-process'
     await expect(service.stop(id('fixture'))).resolves.toMatchObject({ phase: 'stopped' })
+    stage = 'complete'
   })
 
   it('fails loud on unknown entries and invalid self-contained config', async () => {

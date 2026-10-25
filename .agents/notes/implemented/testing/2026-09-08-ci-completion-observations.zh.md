@@ -30,6 +30,10 @@ Status: implemented
 
 [复合原生工作](../../../../snapshots/sdk/scope-native-work/README.zh.md)和[混合来源](../../../../snapshots/sdk/scope-mixed-source/README.zh.md) SDK 夹具在后续来源请求或独立来源发布前等待所有者回执。Agent 空闲不表示远端报告已被应用。独立的当前 writer 预期保留不可变的重放输入，并完整比较 publication、grant、来源身份和省略信息；Python 拥有对应的回执顺序输出。
 
+[Headless 默认参数夹具](../../../../apps/cli/tests/profiles/headless/tests/headless.expected.e2e.ts)在接受请求后立即写入第一条 SSE 注释，并在写入前注册关闭清理。后续注释保留原有间隔，完整流时长超过配置的空闲超时。严格的请求数与默认参数断言区分正常保活与主请求超时后伴随标题生成而发生的重试。
+
+命令超时与开发预览夹具仅在失败时报告正在等待的清理阶段，以及直接命令和受管范围的结束状态。观测代码转发原始 Promise，并在清理后恢复。
+
 ### 已构建 Client 的导入分类
 
 [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts)通过普通 Node 启动只含可擦除语法的 TypeScript 驱动，使传递导入使用已构建的包导出。tsx hook 会将这些导入重定向到源码，并可能创建第二份原生模块实例，不能充当构建产物导入的判定器。不使用该 hook 时 Koffi 可以导入，不再有豁免。检查只有在 Node 针对 Client 包已构建 `lib/` 目录中现存的普通样式表文件报告 `ERR_UNKNOWN_FILE_EXTENSION` 时，才接受列表中的三个 Client bundle。首先失败的样式表可以来自传递依赖，因此不能用导入顺序选定一个固定资源路径。源码路径、不存在的文件、其他错误以及意外成功的豁免导入都会失败。各隔离夹具持有自己的仓库目录结构和资源；限定范围的 resolve/load hook 只替换选中的 bundle，不修改共享构建产物。

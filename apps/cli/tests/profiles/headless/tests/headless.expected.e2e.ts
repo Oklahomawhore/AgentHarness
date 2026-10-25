@@ -91,6 +91,7 @@ async function deepseekDefaultsServer(options: { waitForTitleRequest?: boolean }
       requests.push(JSON.parse(body) as JsonObject)
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       let keepAlives = 3
+      let timer: ReturnType<typeof setTimeout> | undefined
       const write = (): void => {
         // One-shot teardown may cancel background title work after the main response.
         if (keepAlives-- > 0
@@ -106,8 +107,8 @@ async function deepseekDefaultsServer(options: { waitForTitleRequest?: boolean }
           '',
         ].join('\n\n'))
       }
-      let timer = setTimeout(write, 60)
       response.once('close', () => { clearTimeout(timer) })
+      write()
     })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -468,7 +469,7 @@ describe('headless stream-json snapshots', () => {
       })
 
       expect(result.stderr).toBe('')
-      expect(server.requests).toHaveLength(2)
+      expect(server.requests, result.stdout).toHaveLength(2)
       const agentRequest = server.requests.find(request => request.max_tokens === 256_000)
       const titleRequest = server.requests.find(request => request.max_tokens === 64)
       expect(agentRequest?.reasoning_effort).toBe('low')
