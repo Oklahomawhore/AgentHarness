@@ -1,7 +1,7 @@
 name: Release (Python)
 
-# A PR labeled python-release-dry-run or a manual run with publish=false builds
-# and validates the complete release without registry credentials. Publication
+# A manual run with publish=false builds and validates the complete release
+# without registry credentials. Publication
 # is accepted only from a manual run on the matching python-v* tag when the
 # private publisher-repository identity and public-PyPI switch are configured.
 'on':
@@ -26,11 +26,10 @@ concurrency:
 
 jobs:
   build:
-    name: Build four wheels
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'python-release-dry-run'
+    name: Build six wheels
     uses: ./.github/workflows/build-exe-for-python-sdk.yml
     with:
-      targets: node24-linux-x64,node24-linux-arm64,node24-macos-arm64
+      targets: node24-linux-x64,node24-linux-arm64,node24-macos-arm64,node24-macos-x64,node24-win-x64
       release: true
 
   python-compat:
@@ -69,9 +68,15 @@ jobs:
           PY
 
       - name: Install and run the published entry path
+        env:
+          VERSION: ${{ steps.compatibility-version.outputs.version }}
         run: |
-          python -m pip install --find-links dist "deepseek-harness-sdk==${{ steps.compatibility-version.outputs.version }}"
-          python scripts/smoke-python-runtime.py --scenario sdk-default
+          venv="$(mktemp -d "$RUNNER_TEMP/dsh-python-compat.XXXXXX")"
+          consumer="$(mktemp -d "$RUNNER_TEMP/dsh-python-consumer.XXXXXX")"
+          python -m venv "$venv"
+          "$venv/bin/python" -m pip install "$GITHUB_WORKSPACE/dist/deepseek_harness_sdk-$VERSION-py3-none-any.whl" "$GITHUB_WORKSPACE/dist/deepseek_harness_runtime_bin-$VERSION-py3-none-manylinux_2_28_x86_64.whl"
+          cd "$consumer"
+          env -u PYTHONPATH -u DSH_RUNTIME_MODE "$venv/bin/python" "$GITHUB_WORKSPACE/scripts/smoke-python-runtime.py" --scenario sdk-default --installed-wheel
 
   validate:
     name: Validate release candidate
@@ -142,23 +147,23 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          set -euo pipefail
-          expected="$(mktemp)"
-          actual="$(mktemp)"
-          printf '%s\n' \
-            "deepseek_harness_runtime_bin-$VERSION-py3-none-macosx_14_0_arm64.whl" \
-            "deepseek_harness_runtime_bin-$VERSION-py3-none-manylinux_2_28_aarch64.whl" \
-            "deepseek_harness_runtime_bin-$VERSION-py3-none-manylinux_2_28_x86_64.whl" \
-            "deepseek_harness_sdk-$VERSION-py3-none-any.whl" > "$expected"
-          find dist -maxdepth 1 -type f -name '*.whl' -exec basename {} \; | sort > "$actual"
-          diff -u "$expected" "$actual"
-          while IFS= read -r wheel; do
-            size="$(stat -c '%s' "dist/$wheel")"
-            [ "$size" -lt 100000000 ] || {
-              echo "::error::$wheel is $size bytes; public PyPI accepts at most 100000000 bytes by default."
-              exit 1
-            }
-          done < "$actual"
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          platforms = json.loads(Path("python/sdk-runtime/platforms.json").read_text())
+          expected = {f"deepseek_harness_runtime_bin-{version}-py3-none-{value['tag']}.whl" for value in platforms.values()}
+          expected.add(f"deepseek_harness_sdk-{version}-py3-none-any.whl")
+          actual = {wheel.name for wheel in Path("dist").glob("*.whl")}
+          if actual != expected:
+              raise SystemExit(f"Wheel inventory differs: missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
+          for name in sorted(actual):
+              size = (Path("dist") / name).stat().st_size
+              if size >= 100000000:
+                  raise SystemExit(f"{name} is {size} bytes; the default PyPI limit is 100000000 bytes")
+          PYTHON
 
       - name: Validate package metadata
         run: |

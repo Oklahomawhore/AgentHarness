@@ -1,6 +1,7 @@
 # Agent Note: Isolated Node compatibility jobs on self-hosted Linux
 
 Status: implemented
+Archived: 2026-10-25
 
 English | [中文](2026-09-06-node-compatibility-selfhosted.zh.md)
 

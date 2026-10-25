@@ -1,6 +1,7 @@
 # Agent Note: 在持久化 Linux 运行器上执行受信任的发布演练
 
 Status: implemented
+Archived: 2026-10-25
 
 [English](2026-09-06-release-rehearsal-selfhosted.md) | 中文
 

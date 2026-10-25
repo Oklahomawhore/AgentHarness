@@ -68,7 +68,7 @@ git tag -a v1.2.3 <verified-main-commit-sha> -m "AgentHarness v1.2.3"
 git push origin v1.2.3
 ```
 
-The ancestry command must succeed before tagging. The tag push starts a new release in the [AgentHarness release workflow](../.github/workflows/agentharness-release.yml); branch pushes and pull requests do not. Never move or reuse a published tag. The workflow retains its manual repair path for existing Release assets. The [release guide](public-release.md) owns artifact and npm publication details. Existing upstream CI workflows retain their configured triggers; this branch policy adds no release-matrix CI for branch pushes or pull requests.
+The ancestry command must succeed before tagging. The tag push starts a new release in the [AgentHarness release workflow](../.github/workflows/agentharness-release.yml); branch pushes and pull requests do not. Never move or reuse a published tag. The workflow retains its manual repair path for existing Release assets. The [release guide](public-release.md) owns artifact and npm publication details. Keyless CI validates pull requests and main pushes; publication remains owned by the tag or manual release workflows.
 
 AgentHarness currently maintains one development line. Supporting an older version independently would require a separate maintenance policy and a release-guard change: the current guard rejects commits outside `main`. The [single-main decision](../.agents/notes/implemented/process/2026-09-26-agentharness-single-main-development.md) records this scope and its trade-offs.
 
@@ -153,7 +153,7 @@ Contributors can opt into the comprehensive local gate set with `pnpm run check:
 
 The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. Required benchmarks run separately on standard GitHub-hosted Linux; the [benchmark runner decision](../.agents/notes/implemented/testing/2026-09-06-standard-hosted-benchmark-runner.md) owns routing and the job timeout. The separate real-API workflow runs `pnpm run test:e2e` with its configured worker bound. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
 
-The credential-free dsh dependency-layout and dsh/vendor pack rehearsals use the existing Linux self-hosted pool only when `DSH_CI_FAILOVER_LINUX=selfhosted` and the event is a trusted master push or same-repository, non-fork, non-Dependabot pull request. All other cases, including manual dispatch, use `ubuntu-24.04`; manual publication stays hosted. See the [release rehearsal runner decision](../.agents/notes/implemented/process/2026-09-06-release-rehearsal-selfhosted.md) for persistent-store isolation and fallback limits.
+AgentHarness uses standard GitHub-hosted runners for automatic validation. Native Windows and all five standalone runtime targets contribute to the required verdict; model-account calls and publication remain outside CI. The [hosted CI decision](../.agents/notes/implemented/process/2026-10-25-agentharness-hosted-ci.md) owns this deployment choice. Separate release workflows retain their own artifact and wheel validation requirements.
 
 ### Daily commands
 

@@ -1,6 +1,7 @@
 # Agent Note: trusted release rehearsals on persistent Linux runners
 
 Status: implemented
+Archived: 2026-10-25
 
 English | [中文](2026-09-06-release-rehearsal-selfhosted.zh.md)
 
