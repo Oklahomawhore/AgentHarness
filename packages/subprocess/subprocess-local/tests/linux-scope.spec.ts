@@ -199,6 +199,35 @@ describe('Linux native capability selection', () => {
 })
 
 describe('Linux scope establishment and quiescence', () => {
+  it.each([missingUnit(), unloadedUnit()])('keeps ownership when bootstrap consumption overlaps an absent-unit query: %j', async (missingState) => {
+    const firstQuery = Promise.withResolvers<ReturnType<typeof missingUnit>>()
+    const freshQuery = Promise.withResolvers<ReturnType<typeof activeUnit>>()
+    const rechecked = Promise.withResolvers<undefined>()
+    const query = vi.fn()
+      .mockReturnValueOnce(firstQuery.promise)
+      .mockImplementationOnce(async () => { rechecked.resolve(undefined); return await freshQuery.promise })
+    const launched = launch(query, { sleep: async () => {} })
+    const waiting = launched.result.owner.waitForExit()
+    try {
+      expect(query).toHaveBeenCalledOnce()
+      consumeLinuxLaunchRequest(launched.requestPath)
+      firstQuery.resolve(missingState)
+      expect(await Promise.race([
+        waiting.then(() => 'empty'),
+        rechecked.promise.then(() => 'rechecked'),
+      ])).toBe('rechecked')
+      launched.result.owner.signal('SIGKILL')
+      expect(launched.spawnSync).toHaveBeenCalledWith('/bin/systemctl', expect.arrayContaining(['--signal=SIGKILL']), expect.anything())
+    } finally {
+      firstQuery.resolve(missingState)
+      freshQuery.resolve(activeUnit('inactive'))
+      await waiting
+      launched.child.exit(0, null)
+      await launched.result.direct
+      launched.result.owner.cleanup?.()
+    }
+  })
+
   it('does not mistake pre-establishment unit absence for quiescence and settles an empty range after cancellation', async () => {
     const { child, result, requestPath, spawnSync } = launch(async () => missingUnit())
     const waiting = result.owner.waitForExit()

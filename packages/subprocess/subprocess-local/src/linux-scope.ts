@@ -241,8 +241,10 @@ class SystemdScopeOwner implements BoundProcessOwner {
     }
   }
 
-  private absentUnit(): boolean {
+  private absentUnit(queryStartedPending: boolean): boolean {
     this.observeRequestConsumption()
+    // Absence sampled before request consumption cannot prove the later scope empty.
+    if (queryStartedPending && this.establishment === 'established') return true
     if (this.establishment === 'established') return false
     if (!this.direct.running() && existsSync(this.files.requestPath)) {
       return false
@@ -275,6 +277,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
 
   private async rangeActive(): Promise<boolean> {
     this.observeRequestConsumption()
+    const queryStartedPending = this.establishment === 'pending'
     const result = await this.query(this.systemctl, [
       '--user',
       'show',
@@ -285,7 +288,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
     const output = `${result.stdout}\n${result.stderr}`
     if (result.status === 0) {
       const { loadState, activeState } = this.parseUnitState(result.stdout)
-      if (loadState === 'not-found' && activeState === 'inactive') return this.absentUnit()
+      if (loadState === 'not-found' && activeState === 'inactive') return this.absentUnit(queryStartedPending)
       if (loadState !== 'loaded') {
         throw new Error(
           `systemctl returned unknown state for ${this.unit}: ${JSON.stringify({ loadState, activeState })}`,
@@ -303,7 +306,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
       if (result.error !== undefined) throw result.error
       throw new Error(`systemctl could not read ${this.unit}: ${output.trim() || `exit ${String(result.status)}`}`)
     }
-    return this.absentUnit()
+    return this.absentUnit(queryStartedPending)
   }
 
   private wakeObservation(): void {
