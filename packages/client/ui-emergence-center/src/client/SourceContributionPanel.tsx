@@ -282,6 +282,7 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
     </>}
     {selected.contributionIssue !== undefined && <p role="status" className={css.notice}>{t(`claude.issue.${selected.contributionIssue}`)}</p>}
     {invalid && <p role="alert" className={css.error}>{t('contribution.error.text')}</p>}
-    {entry?.error !== undefined && <p role="alert" className={css.error}>{t(contributionErrorKey(entry.error))}</p>}
+    {entry?.error !== undefined && (entry.error !== 'contribution/unknown-outcome' || !entry.pending)
+      && <p role="alert" className={css.error}>{t(contributionErrorKey(entry.error))}</p>}
   </section>
 }

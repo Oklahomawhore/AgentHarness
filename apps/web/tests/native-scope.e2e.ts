@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-scope-access'
 import { compareOrRefreshGolden, captureStableAria, assertFixtureInventory,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh, saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
+import { assertNativeNumberFieldsFit } from './native-entry-support.ts'
 
 const MODE = webSnapshotMode()
 const SNAPSHOTS = join(import.meta.dirname, 'snapshots/native-scope')
@@ -52,6 +53,7 @@ async function layouts(page: Page, stage: string): Promise<void> {
     }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await assertNativeNumberFieldsFit(panel)
     if (directory !== undefined) {
       await page.screenshot({ path: join(directory, `${stage}-${String(viewport.width)}.png`), fullPage: true })
       if (stage === 'budget' && viewport.width === NARROW.width) {

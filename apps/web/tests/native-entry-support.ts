@@ -1,5 +1,5 @@
 /** Main Session entry interaction shared by native collaboration browser cases. */
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { expect } from 'vitest'
 
 /**
@@ -13,4 +13,22 @@ export async function verifyNativeContributionEntry(page: Page, text: string): P
   expect(await input.isVisible()).toBe(true)
   await input.fill(text)
   await panel.locator('[data-native-contribution]').getByRole('button', { name: '验证连接', exact: true }).click()
+}
+
+/**
+ * Check numeric control frames against their labels independently of panel padding and native input metrics.
+ * @param panel - visible collaboration panel whose numeric fields must fit their assigned columns.
+ */
+export async function assertNativeNumberFieldsFit(panel: Locator): Promise<void> {
+  const overflowing = await panel.locator('input[type="number"]').evaluateAll(inputs => inputs.flatMap((input) => {
+    if (input.getClientRects().length === 0) return []
+    const label = input.closest('label')
+    const frame = input.parentElement
+    if (label === null || frame === null) throw new Error('Expected a labeled numeric field')
+    const bounds = frame.getBoundingClientRect()
+    const labelBounds = label.getBoundingClientRect()
+    return bounds.left < labelBounds.left || bounds.right > labelBounds.right
+      ? [{ id: input.id, left: bounds.left, right: bounds.right, labelLeft: labelBounds.left, labelRight: labelBounds.right }] : []
+  }))
+  expect(overflowing).toEqual([])
 }

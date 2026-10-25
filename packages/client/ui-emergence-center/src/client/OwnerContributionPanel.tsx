@@ -125,6 +125,7 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
       {entry?.status === 'ready' && entry.value?.inventory.entries.length === 0 && <p className={css.empty}>{t('contribution.noGrants')}</p>}
     </>}
     {invalid && <p role="alert" className={css.error}>{t('contribution.error.text')}</p>}
-    {entry?.error !== undefined && <p role="alert" className={css.error}>{t(contributionErrorKey(entry.error))}</p>}
+    {entry?.error !== undefined && (entry.error !== 'contribution/unknown-outcome' || !entry.pending)
+      && <p role="alert" className={css.error}>{t(contributionErrorKey(entry.error))}</p>}
   </details>
 }

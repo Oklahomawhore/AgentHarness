@@ -217,6 +217,21 @@ describe('collaboration network card', () => {
     expect(screen.getByRole('status').textContent).toBe(zh.scopeNetworkSaved)
     expect(screen.getByRole('button', { name: `${zh.expand}: ${zh.scopeNetworkTitle}` })).toBeTruthy()
     expect(screen.queryByRole('spinbutton')).toBeNull()
+    act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [...lan] } }) })
+    expect(screen.getByRole('status').textContent).toBe(zh.scopeNetworkSaved)
+    expect(subject.host.mutate).toHaveBeenCalledTimes(1)
+    act(() => { subject.host.publish({ revision: 5, value: { listenAddresses: [...lan] } }) })
+    expect(screen.queryByText(zh.scopeNetworkSaved)).toBeNull()
+    subject.controller.dispose()
+  })
+
+  it('clears confirmation when a namespace replacement changes listeners at the same revision', async () => {
+    const subject = bench()
+    chooseLan(subject)
+    subject.face.save()
+    await vi.waitFor(() => { expect(subject.state().saved).toBe(true) })
+    subject.host.publish({ revision: 4, value: { listenAddresses: [...local] } })
+    expect(subject.state()).toMatchObject({ mode: 'local', saved: false })
     subject.controller.dispose()
   })
 

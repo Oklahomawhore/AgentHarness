@@ -1,5 +1,5 @@
 /** Existing native Sessions exchange authorized file work while retaining each destination’s permissions. */
-import { verifyNativeContributionEntry } from './native-entry-support.ts'
+import { assertNativeNumberFieldsFit, verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -93,6 +93,7 @@ async function captureStage(page: Page, workspace: string, stage: string,
     }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(await page.locator(PANEL).evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await assertNativeNumberFieldsFit(page.locator(PANEL))
     if (shots !== undefined) await page.screenshot({ path: join(shots, `${snapshots === SNAPSHOTS ? '' : 'join-automatic-'}${stage}-${String(viewport.width)}.png`), fullPage: true })
     if (viewport === MOBILE) {
       const last = page.locator(PANEL).getByRole('button').last()
