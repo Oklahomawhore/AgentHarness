@@ -26,6 +26,8 @@ The shared budget validator supplies CLI arguments and the root configuration's 
 
 Same-directory Session recovery fixtures transfer cleanup ownership to the restored Host. The retired Host cannot remove that directory while the restored Session still owns file handles or pending persistence. Recovery into a separate copied directory retains independent cleanup owners; this fixture ownership does not require filesystem-removal retries or a production teardown change.
 
+Process-table traversal visits each numeric PID at most once and excludes the gate root. It uses an independent queue and enqueues children individually, so cyclic parent records and wide child lists cannot alias the source rows or exceed the JavaScript argument limit. Numeric ancestry sampling does not establish process birth identity. Focused tests retain breadth-first ordering and cover duplicate rows, cycles, and wide tables.
+
 ## Alternatives considered
 
 Restoring the imported triggers alone leaves private labels without runners and references to absent workflows. Recreating the upstream persistent infrastructure adds a deployment and trust model that this repository does not operate. Dropping tests or making native validation nonblocking would hide release failures rather than provide portable evidence.

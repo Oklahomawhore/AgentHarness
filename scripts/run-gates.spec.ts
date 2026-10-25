@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi, type MockInstance } from 'vitest'
 import {
   cliGateOptions,
+  collectDescendants,
   defaultConcurrency,
   formatGateResultReason,
   gatesForMode,
@@ -927,6 +928,30 @@ describe('process-table parsing', () => {
 
   it('drops blank and malformed lines', () => {
     expect(parsePidPpidLines('  123   1\n\ncommand not found\n999 abc\n')).toEqual([[123, 1]])
+  })
+})
+
+describe('process-table descendants', () => {
+  it('retains breadth-first row order without duplicate PIDs or unrelated processes', () => {
+    expect(collectDescendants(100, [[302, 201], [201, 100], [202, 100], [201, 100], [303, 202], [999, 998]]))
+      .toEqual([201, 202, 302, 303])
+  })
+
+  it.each([
+    [[100, 100], [201, 100], [302, 201]],
+    [[100, 201], [201, 100], [302, 201]],
+  ] satisfies Array<Array<[number, number]>>)('excludes the root and visits reused-PID cycles once: %j', (...rows) => {
+    expect(collectDescendants(100, rows)).toEqual([201, 302])
+  })
+
+  it('walks a wide process table without spreading children as call arguments', () => {
+    const children = Array.from({ length: 200_000 }, (_, index): [number, number] => [index + 1000, 500])
+    expect(collectDescendants(100, [[500, 100], ...children]))
+      .toEqual([500, ...children.map(([pid]) => pid)])
+  })
+
+  it('returns no descendants for a root absent from the parent records', () => {
+    expect(collectDescendants(100, [[999, 999]])).toEqual([])
   })
 })
 
