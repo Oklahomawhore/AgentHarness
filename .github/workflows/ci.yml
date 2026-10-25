@@ -16,7 +16,6 @@ concurrency:
 env:
   PRIMARY_NODE_VERSION: '24'
   DSH_TELEMETRY_DISABLED: '1'
-  DSH_GATE_FAIL_FAST: '1'
 
 jobs:
   linux:

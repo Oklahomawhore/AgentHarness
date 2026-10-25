@@ -251,6 +251,11 @@ describe('Python release workflows', () => {
 })
 
 describe('AgentHarness repository automation', () => {
+  it('keeps independent checks running after a sibling failure', () => {
+    const workflow = loadWorkflow('.github/workflows/ci.yml')
+    expect(JSON.stringify(workflow)).not.toContain('"DSH_GATE_FAIL_FAST"')
+  })
+
   it('keeps imported organization policy manual without automatic privileged PR triggers', () => {
     for (const file of ['issue-policy.yml', 'issue-lifecycle.yml']) {
       const workflow = loadWorkflow(`.github/workflows/${file}`)
