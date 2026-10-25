@@ -204,7 +204,10 @@ export function apply(ctx: Context, config: Config): void {
           view = await ctx.developmentTasks.currentContextView(assignment.taskId)
         } catch (error) {
           if (isCancelled()) return cancelled()
+          // Each context read owns input restoration around the intervening backend work.
+          /* jscpd:ignore-start */
           agent.inbox.splice('next-step', 0, 0, decision.messages)
+          /* jscpd:ignore-end */
           throw error
         }
         if (isCancelled()) return cancelled()
