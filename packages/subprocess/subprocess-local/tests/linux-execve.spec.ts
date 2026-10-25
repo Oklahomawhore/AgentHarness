@@ -1,16 +1,24 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const NONBLOCK = 0x800
+
+beforeEach(() => {
+  vi.doMock('node:fs', () => ({ constants: { O_NONBLOCK: NONBLOCK } }))
+})
 
 afterEach(() => {
   vi.doUnmock('koffi')
+  vi.doUnmock('node:fs')
   vi.resetModules()
 })
 
-describe.skipIf(process.platform !== 'linux')('Linux libc execve binding', () => {
+// Native calls and the Linux status constant are mocked, so these decisions run on every host.
+describe('Linux libc execve binding', () => {
   it('preserves inherited stdio, null-terminates argv and envp, and reports execve errno', async () => {
     const nativeExecve = vi.fn(() => -1)
     const nativeFcntl = vi.fn((fd: number, command: number) => {
-      if (command === 2) return 0
-      return [1, 0, 5][fd]
+      if (command === 2 || command === 4) return 0
+      return command === 1 ? [1, 0, 5][fd] : [NONBLOCK | 0x400, 0x400, NONBLOCK | 2][fd]
     })
     const func = vi.fn((declaration: string) => declaration.includes('execve')
       ? nativeExecve
@@ -37,9 +45,14 @@ describe.skipIf(process.platform !== 'linux')('Linux libc execve binding', () =>
     expect(nativeFcntl.mock.calls).toEqual([
       [0, 1, 0],
       [0, 2, 0],
+      [0, 3, 0],
+      [0, 4, 0x400],
       [1, 1, 0],
+      [1, 3, 0],
       [2, 1, 0],
       [2, 2, 4],
+      [2, 3, 0],
+      [2, 4, 2],
     ])
     expect(nativeExecve).toHaveBeenCalledExactlyOnceWith(
       '/missing/tool',
@@ -98,6 +111,43 @@ describe.skipIf(process.platform !== 'linux')('Linux libc execve binding', () =>
       [0, 1, 0],
       [0, 2, 0],
     ])
+    expect(nativeExecve).not.toHaveBeenCalled()
+    expect(errno).toHaveBeenCalledOnce()
+  })
+
+  it('leaves already blocking stdio status flags unchanged', async () => {
+    const nativeExecve = vi.fn(() => -1)
+    const nativeFcntl = vi.fn((_fd: number, command: number) => command === 1 ? 0 : 2)
+    vi.doMock('koffi', () => ({ default: {
+      errno: () => 2,
+      load: () => ({ func: (declaration: string) => declaration.includes('execve') ? nativeExecve : nativeFcntl }),
+    } }))
+    const { loadLinuxExecve } = await import('../src/linux-execve.ts')
+    expect(() => loadLinuxExecve()('/missing/tool', ['tool'], {})).toThrow(expect.objectContaining({ code: 'ENOENT' }))
+    expect(nativeFcntl.mock.calls).toEqual([
+      [0, 1, 0], [0, 3, 0],
+      [1, 1, 0], [1, 3, 0],
+      [2, 1, 0], [2, 3, 0],
+    ])
+    expect(nativeExecve).toHaveBeenCalledOnce()
+  })
+
+  it.each([3, 4])('reports failure in status operation %s before replacing the process', async (failedOperation) => {
+    const nativeExecve = vi.fn()
+    const nativeFcntl = vi.fn((_fd: number, command: number) => {
+      if (command === failedOperation) return -1
+      return command === 3 ? NONBLOCK | 2 : 0
+    })
+    const errno = vi.fn(() => 5)
+    vi.doMock('koffi', () => ({ default: {
+      errno,
+      load: () => ({ func: (declaration: string) => declaration.includes('execve') ? nativeExecve : nativeFcntl }),
+    } }))
+    const { loadLinuxExecve } = await import('../src/linux-execve.ts')
+    expect(() => loadLinuxExecve()('/bin/tool', ['tool'], {})).toThrow(expect.objectContaining({
+      code: 'EIO', errno: -5, syscall: 'fcntl',
+    }))
+    expect(nativeFcntl).toHaveBeenLastCalledWith(0, failedOperation, failedOperation === 4 ? 2 : 0)
     expect(nativeExecve).not.toHaveBeenCalled()
     expect(errno).toHaveBeenCalledOnce()
   })
