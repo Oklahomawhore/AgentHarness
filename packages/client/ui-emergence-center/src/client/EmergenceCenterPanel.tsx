@@ -116,7 +116,7 @@ export function taskGraph(
           <small>{presentation.creator} · {presentation.runtime}</small>
         </div>,
       },
-      style: { width, padding: 0, borderRadius: 14, border: '1px solid #d0d5dd', overflow: 'hidden' },
+      style: { width, padding: 0, borderRadius: 14, overflow: 'hidden' },
     }
   })
   return { nodes, edges }

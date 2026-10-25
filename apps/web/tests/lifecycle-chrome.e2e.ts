@@ -399,6 +399,9 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       expect(await connectionIndicatorGeometry(indicator)).toEqual(connectingGeometry)
       expect(await connectionIndicatorTextAlignment(indicator)).toBe('left')
       await indicator.hover()
+      // The empty workbench inventory settles independently of the connection stream.
+      await recoveryPage.getByRole('button', { name: 'Open development workbench', exact: true })
+        .waitFor({ state: 'hidden' })
       const snapshot = await captureStableAria(recoveryPage, '[class*="footArea"]', scaffold.workspaceCwd)
       await compareOrRefreshGolden(CONNECTION_ERROR_EXPECTED, snapshot, MODE)
       const style = await indicator.evaluate((element) => {

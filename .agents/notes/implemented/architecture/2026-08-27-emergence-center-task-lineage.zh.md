@@ -22,6 +22,8 @@ Status: implemented
 
 **涌现协作中心呈现谱系，而不是聊天。**React Flow 渲染不可变边，Dagre 提供有界从左到右布局，Root/Fork/Merge 表单预览父 Task 上下文。Agent Session 连接是直接可见的重点区域，页头只有一个创建入口，侧栏徽标上限为 `99+`。MCP catalog 只提供 Task，不暴露面向模型的 Room 或 Mission 工具。
 
+**协作面板复用应用主题。**不透明背景以及文字、状态和操作的语义颜色通过共享主题别名解析。React Flow 的节点、边、控件和小地图使用同一套别名，默认浅色主题不能覆盖外围应用。主题切换不依赖 Task 状态，也无需维护第二套配色。
+
 ## 曾考虑的替代方案
 
 **在 Room 旁保留 Mission。**未采用，因为用户和 Agent 仍需在两个协作身份之间选择，继承与 assignment 也仍没有明确 owner。

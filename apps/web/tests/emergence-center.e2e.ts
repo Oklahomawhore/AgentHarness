@@ -168,6 +168,62 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
+  it('paints opaque, readable collaboration surfaces in both themes and viewport sizes', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-emergence-center-theme'))
+    const panel = page.locator('[data-emergence-center]')
+    const shots = process.env.DSH_EMERGENCE_THEME_SHOTS
+    if (shots !== undefined) await mkdir(shots, { recursive: true })
+    const originalDark = await page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))
+    const originalViewport = page.viewportSize()!
+    try {
+      for (const viewport of [{ width: 1680, height: 1000 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport)
+        const backgrounds: string[] = []
+        for (const dark of [false, true]) {
+          await page.evaluate(value => document.body.toggleAttribute('data-ds-dark-theme', value), dark)
+          const paint = await panel.evaluate((element) => {
+            const selectors = ['header', 'main', 'aside', '.react-flow__node', '.react-flow__controls-button', '.react-flow__minimap']
+            const surfaces = [element, ...selectors.map(selector => element.querySelector(selector)!)]
+            const backgrounds = surfaces.map(surface => getComputedStyle(surface).backgroundColor)
+            const title = element.querySelector('.react-flow__node strong')!
+            const canvas = document.createElement('canvas').getContext('2d')!
+            const channels = (color: string): number[] => {
+              canvas.fillStyle = color
+              canvas.fillRect(0, 0, 1, 1)
+              return [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
+            }
+            const titleColor = channels(getComputedStyle(title).color)
+            const nodeColor = channels(getComputedStyle(title.parentElement!).backgroundColor)
+            return { backgrounds, titleColor, nodeColor }
+          })
+          expect(paint.backgrounds.every(color => color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent')).toBe(true)
+          const luminance = (color: number[]): number => {
+            const channels = color.map((value) => {
+              const channel = value / 255
+              return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+            })
+            return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+          }
+          const foreground = luminance(paint.titleColor)
+          const background = luminance(paint.nodeColor)
+          expect((Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)).toBeGreaterThanOrEqual(4.5)
+          backgrounds.push(paint.backgrounds[0]!)
+          const bounds = await panel.boundingBox()
+          expect(bounds!.x).toBeGreaterThanOrEqual(0)
+          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+          if (shots !== undefined) {
+            await page.screenshot({ path: join(shots, `${dark ? 'dark' : 'light'}-${viewport.width}.png`), fullPage: true })
+          }
+        }
+        expect(backgrounds[0]).not.toBe(backgrounds[1])
+      }
+    } finally {
+      await page.evaluate(value => document.body.toggleAttribute('data-ds-dark-theme', value), originalDark)
+      await page.setViewportSize(originalViewport)
+    }
+    expect(tripwire.pageErrors).toEqual([])
+  })
+
   it.skipIf(process.platform === 'win32')('configures a project and joins only the selected Claude session through the live UI', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-claude-scope-setup'))
     const panel = page.locator('[data-emergence-center]')

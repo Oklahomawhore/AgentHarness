@@ -22,6 +22,8 @@ Discoverable chat-like Rooms did not give collaboration durable context identity
 
 **The Emergence Center presents lineage rather than chat.** React Flow renders immutable edges, Dagre supplies bounded left-to-right layout, and Root/Fork/Merge forms preview parent context. Agent-session connection is a prominent section, the header has one creation entry, and the sidebar badge caps at `99+`. The MCP catalog is Task-only and omits model-facing Room and Mission tools.
 
+**The collaboration panel shares the application palette.** Opaque surfaces and semantic text, status, and action colors resolve through the shared theme aliases. React Flow receives the same aliases for nodes, edges, controls, and minimap; its default light palette cannot override the surrounding application. This keeps theme switching independent of Task state and avoids maintaining a second palette.
+
 ## Alternatives considered
 
 **Keep Mission beside Room.** Rejected because users and Agents would continue choosing between two collaboration identities, while inheritance and assignment still had no owner.
