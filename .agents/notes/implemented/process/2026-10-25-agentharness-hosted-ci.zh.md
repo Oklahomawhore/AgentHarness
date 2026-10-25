@@ -20,7 +20,9 @@ Ubuntu job 通过发行版包管理器安装 bubblewrap，并在依赖沙箱的�
 
 一次性托管机器拥有各 job 的检出、工具、缓存、临时文件和子进程。不保留私有运行器选择器、持久主机工具缓存覆盖、待命 lane 或运行器健康兜底。上游部署决策保留为历史：[池故障切换](../../archived/process/2026-07-26-ci-failover-runbook.md)、[兼容性隔离](../../archived/process/2026-09-06-node-compatibility-selfhosted.md)和[发布演练路由](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md)。
 
-Windows 覆盖率通过 `DSH_COVERAGE_TEST_TIMEOUT_MS` 为用例、轮询断言和 hooks 分配 30 秒预算。插桩与覆盖率豁免命令都接收该预算。基于 CIM 的进程身份检查、顺序历史报告准备及完整 Web profile 打包运行在标准托管 Windows 容量上；Vitest 的五秒用例默认值和十秒 hook 默认值没有按这些操作定额。Linux 保留默认值，显式夹具期限仍具有优先级。
+Linux 与原生 Windows 覆盖率通过 `DSH_COVERAGE_TEST_TIMEOUT_MS` 为用例、轮询断言和 hooks 分配 30 秒预算。插桩与覆盖率豁免命令都接收该预算。顺序历史报告准备、完整 Web profile 打包及多条真实命令连续性验证可能超过 Vitest 默认的五秒用例期限和十秒 hook 期限；原生 Windows 还会执行基于 CIM 的进程身份检查。显式夹具期限仍具有优先级。
+
+共享预算校验同时供 CLI 参数及根配置中的两个测试 project 使用。Vitest 4 会将 CLI 用例期限传入 project，却不转发 hook 或轮询期限；只检查参数不能证明后两者的实际预算。根配置与两个 project 接收相同的解析选项。未设置预算时保留 Vitest 默认值，非法预算则在加载配置时失败。配置测试在独立进程中解析真实 project，并在退出前关闭每个 Vitest 实例。
 
 同目录 Session 恢复夹具将清理所有权移交给恢复后的 Host。恢复后的 Session 仍持有文件句柄或待落盘操作时，已退役 Host 不能删除该目录。恢复到另一份复制目录则保留独立清理所有者；这项夹具所有权不需要文件删除重试或生产清理变更。
 

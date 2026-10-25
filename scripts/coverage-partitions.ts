@@ -77,22 +77,28 @@ export function parseCoveragePartitionCount(raw: string | undefined): number | u
 }
 
 /**
- * Resolve the paired Vitest timeout arguments used by coverage partitions.
- * `--hookTimeout` travels with the test budget because setup and teardown pay
- * the same host contention the raised test budget accounts for: fixtures that
- * await child exit or retry Windows handle release spend that cost in
- * `afterEach`, where Vitest's separate 10 s default would otherwise fail a
- * suite whose cases all passed.
- * @param raw - the configured millisecond budget, or undefined to keep Vitest's defaults.
- * @returns the Vitest arguments applying that budget, empty when unset.
+ * Parse the optional coverage test, polling, and hook budget shared by Vitest projects.
+ * @param raw - configured millisecond budget, or undefined to keep Vitest defaults.
+ * @returns the validated budget, or undefined when unset.
  */
-export function coverageTestTimeoutArgs(raw: string | undefined): string[] {
-  if (raw === undefined || raw === '') return []
+export function parseCoverageTestTimeout(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isSafeInteger(parsed) || parsed < 1 || String(parsed) !== raw) {
     throw new Error(`${COVERAGE_TEST_TIMEOUT_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`)
   }
-  return [`--testTimeout=${raw}`, `--expect.poll.timeout=${raw}`, `--hookTimeout=${raw}`]
+  return parsed
+}
+
+/**
+ * Apply the shared coverage budget to test cases, polling assertions, and hooks.
+ * @param raw - configured millisecond budget, or undefined to keep Vitest defaults.
+ * @returns the Vitest arguments applying that budget, empty when unset.
+ */
+export function coverageTestTimeoutArgs(raw: string | undefined): string[] {
+  const budget = parseCoverageTestTimeout(raw)
+  return budget === undefined ? []
+    : [`--testTimeout=${String(budget)}`, `--expect.poll.timeout=${String(budget)}`, `--hookTimeout=${String(budget)}`]
 }
 
 /** Remove pnpm's package-script separator before forwarding Vitest arguments. */

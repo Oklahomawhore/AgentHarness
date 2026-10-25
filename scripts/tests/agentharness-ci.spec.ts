@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { runInNewContext } from 'node:vm'
 import { load } from 'js-yaml'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, TestRunner } from 'vitest'
 import { gatesForMode } from '../run-gates.ts'
 import { COVERAGE_PARTITIONS_ENV, COVERAGE_TEST_TIMEOUT_ENV } from '../coverage-partitions.ts'
 
@@ -88,11 +88,13 @@ describe('AgentHarness hosted CI', () => {
     expect(ci.jobs['all-checks-passed']!.needs).toContain('windows-native')
   })
 
-  it('applies the Windows coverage budget to test, polling, and hook waits while leaving Linux defaults intact', () => {
-    const budget = ci.jobs['windows-native']!.env![COVERAGE_TEST_TIMEOUT_ENV]!
+  it.each([
+    { job: 'linux', mode: 'ci-coverage' },
+    { job: 'windows-native', mode: 'ci-windows-complete' },
+  ] as const)('applies the $job coverage budget to test, polling, and hook waits', ({ job, mode }) => {
+    const budget = ci.jobs[job]!.env![COVERAGE_TEST_TIMEOUT_ENV]!
     expect(budget).toBe('30000')
     expect(ci.env[COVERAGE_TEST_TIMEOUT_ENV]).toBeUndefined()
-    expect(ci.jobs.linux!.env?.[COVERAGE_TEST_TIMEOUT_ENV]).toBeUndefined()
     const previous = [
       ['npm_execpath', process.env.npm_execpath],
       [COVERAGE_TEST_TIMEOUT_ENV, process.env[COVERAGE_TEST_TIMEOUT_ENV]],
@@ -103,17 +105,10 @@ describe('AgentHarness hosted CI', () => {
       process.env[COVERAGE_TEST_TIMEOUT_ENV] = budget
       Reflect.deleteProperty(process.env, COVERAGE_PARTITIONS_ENV)
       for (const id of ['coverage', 'coverage-exempt-heavy']) {
-        const args = gatesForMode('ci-windows-complete').find(gate => gate.id === id)!.args
+        const args = gatesForMode(mode).find(gate => gate.id === id)!.args
         expect(args).toContain(`--testTimeout=${budget}`)
         expect(args).toContain(`--expect.poll.timeout=${budget}`)
         expect(args).toContain(`--hookTimeout=${budget}`)
-      }
-      Reflect.deleteProperty(process.env, COVERAGE_TEST_TIMEOUT_ENV)
-      for (const id of ['coverage', 'coverage-exempt-heavy']) {
-        const args = gatesForMode('ci-coverage').find(gate => gate.id === id)!.args
-        for (const prefix of ['--testTimeout=', '--expect.poll.timeout=', '--hookTimeout=']) {
-          expect(args.some(arg => arg.startsWith(prefix))).toBe(false)
-        }
       }
     } finally {
       for (const [key, value] of previous) {
@@ -122,6 +117,45 @@ describe('AgentHarness hosted CI', () => {
       }
     }
     for (const [key, value] of previous) expect(process.env[key]).toBe(value)
+  })
+
+  it.each([undefined, '', '30000', '0'])('resolves actual Vitest project budgets for environment %j', (raw) => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-vitest-project-budget-'))
+    temporaryRoots.push(directory)
+    const output = join(directory, 'budgets.json')
+    const driver = join(directory, 'resolve.mjs')
+    writeFileSync(driver, [
+      "import { writeFileSync } from 'node:fs'",
+      `const { createVitest } = await import(${JSON.stringify(import.meta.resolve('vitest/node'))})`,
+      'let runner',
+      'try {',
+      `  runner = await createVitest('test', { root: ${JSON.stringify(root)}, config: ${JSON.stringify(join(root, 'vitest.config.ts'))}, watch: false })`,
+      '  const budget = config => ({ testTimeout: config.testTimeout, hookTimeout: config.hookTimeout, pollTimeout: config.expect?.poll?.timeout })',
+      '  writeFileSync(process.argv[2], JSON.stringify({ root: budget(runner.config),',
+      '    projects: runner.projects.map(project => ({ name: project.name, ...budget(project.config) })) }))',
+      '} finally { await runner?.close() }',
+      '',
+    ].join('\n'))
+    const env = { ...process.env }
+    if (raw === undefined) Reflect.deleteProperty(env, COVERAGE_TEST_TIMEOUT_ENV)
+    else env[COVERAGE_TEST_TIMEOUT_ENV] = raw
+    const child = spawnSync(process.execPath, [driver, output], {
+      cwd: root, env, encoding: 'utf8', timeout: TestRunner.getCurrentTest()!.timeout,
+    })
+    expect(child.error).toBeUndefined()
+    expect(child.signal).toBeNull()
+    if (raw === '0') {
+      expect(child.status).not.toBe(0)
+      expect(child.stderr).toContain(`${COVERAGE_TEST_TIMEOUT_ENV} must be a positive integer`)
+    } else {
+      expect(child.status, child.stderr).toBe(0)
+      const budget = raw === '30000'
+        ? { testTimeout: 30000, hookTimeout: 30000, pollTimeout: 30000 }
+        : { testTimeout: 5000, hookTimeout: 10000 }
+      expect(JSON.parse(readFileSync(output, 'utf8')) as unknown).toEqual({ root: budget, projects: [
+        { name: 'thread-safe', ...budget }, { name: 'process-bound', ...budget },
+      ] })
+    }
   })
 
   it('keeps benchmarks isolated with a browser and complete Python SDK tests', () => {
