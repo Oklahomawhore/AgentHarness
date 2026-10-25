@@ -24,9 +24,14 @@ MCP Service Provider and model-tool bridge: connects to external [Model Context 
 
 ## Usage
 
-One plugin instance per MCP server in `cordis.yml`:
+Mount the required MCP registry beside the clients in `cordis.yml`, with an explicit bound for concurrent servers. Each client connects one server; the two-server example below reserves two registrations. ACP Session declarations mount their private registry automatically.
 
 ```yaml
+- id: mcp
+  name: '@deepseek-ai/dsh-mcp'
+  config:
+    maxServers: 2
+
 - id: mcp-github
   name: '@deepseek-ai/dsh-mcp-client'
   config:
@@ -83,7 +88,7 @@ Every MCP tool has two names: the raw MCP name (sent on the wire in `tools/call`
 - Listens for `notifications/tools/list_changed` → re-syncs; a fetch-phase failure keeps the previous generation registered, while a registration conflict rolls back the attempted generation and leaves no tools from that server.
 - Tool execute: `client.callTool({ name: rawName, arguments }, { signal })` with timeout + abort support—the public name is never sent to the server.
 - Canonical success is `{ content: JsonValue[], structuredContent? }`; complete JSON MCP blocks survive for programmatic callers. A supported advertised `outputSchema` validates `structuredContent`; unsupported schema vocabulary falls back to unconstrained `JsonValue`.
-- Native/model rendering keeps the existing text projection: text blocks join with newlines while image, audio, resource, and unsupported blocks become placeholders.
+- Native/model rendering preserves ordered text, admitted durable images, and resource-link names and URIs. Image admission requires the calling agent’s exact route to declare image input and an attachment store to validate and persist the complete batch. Refused images, audio, embedded resources, and unsupported blocks produce diagnostic text.
 - On disconnect/crash: the direct `ctx.mcp` route is removed immediately because its transport generation is no longer callable. The supervisor restarts the original server config with exponential backoff (`reconnect.initialDelayMs` doubling up to `reconnect.maxDelayMs`) and re-runs discovery on success — the recovered generation replaces the previous one, so tools neither duplicate nor leak. During the outage the last good model-tool generation stays registered; calls against it fail until recovery.
 - Reconnection is budgeted per outage: after `reconnect.maxAttempts` consecutive failures the server's tools are unregistered and reconnection stops until an HMR reload or Host restart. A connection that survives past `maxDelayMs` resets the budget, so an occasionally-crashing server recovers indefinitely while a crash-looping one — even with briefly successful connects — still exhausts the cap instead of restarting forever.
 - Reconnect states are user-visible in logs: reconnecting (warn, with attempt count and delay), recovered (info), final failure and disabled-loss (error). Disposal cancels any pending reconnect. With `reconnect.enabled: false`, a lost connection keeps tools registered but failing until a reload — the manual-recovery behavior.
@@ -115,11 +120,11 @@ Prefix-stable while the discovered tool set and schemas are unchanged. A re-sync
 
 #### What the model sees
 
-The public tool name and JSON arguments remain in assistant history. Text result blocks are joined with newlines into one retained Native text result; image, audio, resource, and unsupported blocks become short placeholders there. Their full JSON blocks and optional structured content remain in the execution-local canonical value, and MCP `isError` rejects the call through the registry's error path.
+The public tool name and JSON arguments remain in assistant history. Adjacent text blocks join with newlines; admitted images retain their original positions as durable attachment references, and resource links retain their names and URIs as text. A refused image batch yields diagnostics for every image, with no partial references. Full MCP JSON blocks and optional structured content remain in the execution-local canonical value; MCP `isError` rejects the call through the registry’s error path.
 
 #### Token effect
 
-Arguments and mapped text are retained until compaction. Binary and resource payloads are discarded rather than added to context.
+Arguments and mapped text remain until compaction. Admitted images incur the selected route’s image-input cost. Raw binary and embedded-resource payloads remain programmatic values outside model context.
 
 #### KV Cache effect
 
@@ -132,7 +137,7 @@ No runtime invariant companion is published because the connection supervisor ow
 - **Tools are the only bridged MCP capability** — Resources and Prompts have no harness consumer and are deferred.
 - **Startup timeout is inherited from the MCP SDK** — DSH does not yet expose a connection/discovery timeout. Each initialize or paginated `tools/list` request uses the SDK's 60-second default, so an unresponsive server or cursor chain can delay both activation and teardown while the initial synchronization settles.
 - **Reconnect triggers on transport close** — a crashed stdio child fires it; Streamable HTTP failures surface per request and through the SDK transport's own SSE-stream recovery, so an unreachable HTTP server is retried per call rather than respawned by the supervisor.
-- **Native non-text rendering is lossy** — image, audio, and resource payloads become placeholders in model context even though the execution-local canonical value preserves their JSON blocks. Richer Native multimedia projection is deferred.
+- **Audio and embedded resources have no Native projection** — model context receives diagnostic text, while programmatic callers retain the raw JSON blocks. Images require durable storage and explicit image-input capability on the exact model route.
 - **Unsupported MCP output schemas are not enforced** — `structuredContent` falls back to `JsonValue` when the advertised schema uses vocabulary outside the harness subset.
 
 ### Dev Note

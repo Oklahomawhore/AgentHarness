@@ -22,9 +22,10 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import McpService from '@deepseek-ai/dsh-mcp'
 import { ToolCallId, LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { apply } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
+import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { publicToolName } from '@deepseek-ai/dsh-mcp-client/src/tools.ts'
 import type { Config } from '@deepseek-ai/dsh-mcp-client'
 
@@ -42,6 +43,7 @@ async function mountRegistry(): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(McpService, { maxServers: 1 })
   return ctx
 }
 
@@ -70,12 +72,6 @@ function imageAgent(): object {
     options: { provider: 'visual', model: 'vision' },
     session: { requestHeader: () => undefined },
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  const gate: PromiseWithResolvers<void> = Promise.withResolvers()
-  setTimeout(gate.resolve, ms)
-  return gate.promise
 }
 
 /** Narrow a result content block to its text, failing the test on any other shape. */
@@ -111,12 +107,11 @@ describe('fixture server — controlled scenarios', () => {
   beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'mcp-image-e2e-'))
     ctx = await mountImageRegistry(home)
-    await apply(ctx, fixtureConfig)
+    await McpClient.apply(ctx, fixtureConfig)
   }, 30_000)
 
   afterAll(async () => {
     if (ctx) await ctx.fiber.dispose()
-    await sleep(200)
     await rm(home, { recursive: true, force: true })
   })
 
@@ -194,8 +189,9 @@ describe('fixture server — controlled scenarios', () => {
 })
 
 describe('fixture server — duplicate serverName', () => {
-  it('rejects a second instance with the same serverName on one root', async () => {
+  it('rejects a second instance with the same serverName on one root', async ({ onTestFinished }) => {
     const ctx = await mountRegistry()
+    onTestFinished(() => ctx.fiber.dispose())
     const config: Config = {
       transport: 'stdio',
       serverName: 'dup',
@@ -206,19 +202,19 @@ describe('fixture server — duplicate serverName', () => {
       toolCallTimeoutMs: 15_000,
       failOnStartupError: false,
     }
-    await apply(ctx, config)
+    await McpClient.apply(ctx, config)
 
-    await expect(apply(ctx, config)).rejects.toThrow(/serverName "dup" is already in use/)
+    await expect(McpClient.apply(ctx, config)).rejects.toThrow(/serverName "dup" is already in use/)
 
     await ctx.fiber.dispose()
-    await sleep(200)
   }, 30_000)
 })
 
 describe('fixture server — disposal', () => {
-  it('disposes cleanly without error', async () => {
+  it('disposes cleanly without error', async ({ onTestFinished }) => {
     const ctx = await mountRegistry()
-    await apply(ctx, {
+    onTestFinished(() => ctx.fiber.dispose())
+    await McpClient.apply(ctx, {
       transport: 'stdio',
       serverName: 'fixture',
       command: process.execPath,
@@ -235,7 +231,6 @@ describe('fixture server — disposal', () => {
 
     // Dispose should complete without throwing.
     await ctx.fiber.dispose()
-    await sleep(200)
   }, 30_000)
 })
 
@@ -254,9 +249,10 @@ describe('fixture server — crash recovery', () => {
     }
   }
 
-  it('auto-reconnects after a stdio crash and serves tool calls again', async () => {
+  it('auto-reconnects after a stdio crash and serves tool calls again', async ({ onTestFinished }) => {
     const ctx = await mountRegistry()
-    await apply(ctx, crashConfig('crashy', { initialDelayMs: 50, maxDelayMs: 500, maxAttempts: 40 }))
+    onTestFinished(() => ctx.fiber.dispose())
+    await McpClient.apply(ctx, crashConfig('crashy', { initialDelayMs: 50, maxDelayMs: 500, maxAttempts: 40 }))
 
     const before = await ctx.tools.execute({
       signal: testToolSignal,
@@ -287,17 +283,16 @@ describe('fixture server — crash recovery', () => {
     expect(addEntries).toHaveLength(1)
 
     await ctx.fiber.dispose()
-    await sleep(200)
   }, 30_000)
 
-  it('plugin unload during an outage stops reconnection and unregisters tools', async () => {
+  it('plugin unload during an outage stops reconnection and unregisters tools', async ({ onTestFinished }) => {
     const ctx = await mountRegistry()
-    const fiber = ctx.plugin(
-      { name: 'mcp-client', inject: ['tools'], apply },
+    onTestFinished(() => ctx.fiber.dispose())
+    const fiber = await ctx.plugin(
+      McpClient,
       crashConfig('ephemeral', { initialDelayMs: 8_000, maxDelayMs: 8_000, maxAttempts: 5 }),
     )
-    // Cordis awaits async apply() as startup work; wait for it.
-    await vi.waitFor(() => { expect(ctx.tools.get('mcp__ephemeral__add')).toBeDefined() }, { timeout: 20_000 })
+    expect(ctx.tools.get('mcp__ephemeral__add')).toBeDefined()
 
     const crash = await ctx.tools.execute({
       signal: testToolSignal,
@@ -305,15 +300,11 @@ describe('fixture server — crash recovery', () => {
     })
     expect(crash.isError).toBe(false)
 
-    // Give the transport close a moment to land the supervisor in its 8s
-    // backoff wait, then unload: disposal must not sit out the backoff.
-    await sleep(300)
+    await vi.waitFor(() => { expect(ctx.mcp.listServers()).toEqual([]) })
     const started = Date.now()
     await fiber.dispose()
     expect(Date.now() - started).toBeLessThan(4_000)
 
-    expect(ctx.tools.get('mcp__ephemeral__add')).toBeUndefined()
-    await sleep(200)
     expect(ctx.tools.get('mcp__ephemeral__add')).toBeUndefined()
 
     await ctx.fiber.dispose()
@@ -338,12 +329,11 @@ describe('server-everything — official test server', () => {
 
   beforeAll(async () => {
     ctx = await mountRegistry()
-    await apply(ctx, config)
+    await McpClient.apply(ctx, config)
   }, 60_000)
 
   afterAll(async () => {
     if (ctx) await ctx.fiber.dispose()
-    await sleep(500)
   })
 
   it('discovers tools from server-everything', () => {
@@ -404,12 +394,11 @@ describe('server-filesystem — real filesystem operations', () => {
       toolCallTimeoutMs: 30_000,
       failOnStartupError: false,
     }
-    await apply(ctx, config)
+    await McpClient.apply(ctx, config)
   }, 60_000)
 
   afterAll(async () => {
     if (ctx) await ctx.fiber.dispose()
-    await sleep(500)
     await rm(tempDir, { recursive: true, force: true })
   })
 
@@ -521,12 +510,11 @@ describe('streamable-http — in-process MCP server', () => {
       toolCallTimeoutMs: 15_000,
       failOnStartupError: false,
     }
-    await apply(ctx, config)
+    await McpClient.apply(ctx, config)
   }, 30_000)
 
   afterAll(async () => {
     if (ctx) await ctx.fiber.dispose()
-    await sleep(200)
     const closed: PromiseWithResolvers<void> = Promise.withResolvers()
     httpServer.close(() => { closed.resolve() })
     await closed.promise

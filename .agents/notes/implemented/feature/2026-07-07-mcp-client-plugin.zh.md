@@ -26,7 +26,7 @@ harness 此前无法消费 MCP（Model Context Protocol）生态中的工具。M
 
 ### 插件形态
 
-命名空间插件（具名导出 `name`/`inject`/`Config`/`apply`，无 `export default`）。`inject: ['tools']`。每个 MCP 服务器对应 `cordis.yml` 中的一个插件实例——同一个包以不同配置加载 N 次，与 `dsh-tool-subagent` 相同。
+命名空间插件（具名导出 `name`/`inject`/`Config`/`apply`，无 `export default`）。`inject: ['mcp', 'tools']`。每个 MCP 服务器对应 `cordis.yml` 中的一个插件实例——同一个包以不同配置加载 N 次，与 `dsh-tool-subagent` 相同。
 
 ### 配置
 

@@ -26,9 +26,14 @@ MCP 服务提供者与模型工具桥接：连接外部 [Model Context Protocol]
 
 ## 用法
 
-`cordis.yml` 中每个 MCP 服务器使用一个插件实例：
+在 `cordis.yml` 中将必需的 MCP 注册表与客户端一起挂载，并明确并发服务器数量上限。每个客户端连接一台服务器；以下双服务器示例预留两个注册名额。ACP Session 声明会自动挂载私有注册表。
 
 ```yaml
+- id: mcp
+  name: '@deepseek-ai/dsh-mcp'
+  config:
+    maxServers: 2
+
 - id: mcp-github
   name: '@deepseek-ai/dsh-mcp-client'
   config:
@@ -91,7 +96,7 @@ MCP 服务提供者与模型工具桥接：连接外部 [Model Context Protocol]
 - 监听 `notifications/tools/list_changed` → 重新同步；获取阶段失败时保留上一世代的注册，注册冲突则会回滚本次尝试的世代，并且不保留该服务器的任何工具。
 - 工具执行：`client.callTool({ name: rawName, arguments }, { signal })`，支持超时 + 中止；公开名称绝不会发给服务器。
 - 规范成功值是 `{ content: JsonValue[], structuredContent? }`；完整的 JSON MCP 块会保留给编程调用方。受支持且已声明的 `outputSchema` 会验证 `structuredContent`；不受支持的 schema 词汇会回退为不受约束的 `JsonValue`。
-- Native／模型渲染保留现有文本投影：文本块以换行连接，图片、音频、资源和不受支持的块会变成占位符。
+- Native／模型渲染保留有序文本、已准入的持久图片，以及资源链接的名称和 URI。图片准入要求调用 agent（智能体）的确切路由明确声明支持图片输入，并由附件存储验证、持久化完整批次。被拒绝的图片、音频、嵌入式资源和不受支持的块会产生诊断文本。
 - 断开／崩溃时：直接 `ctx.mcp` 路由会立即移除，因为对应传输世代已不可调用。supervisor 以指数退避（`reconnect.initialDelayMs` 逐次翻倍，上限 `reconnect.maxDelayMs`）重启原始服务器配置，成功后重新执行发现——恢复的世代会替换前一个，因此工具既不会重复也不会泄漏。中断期间最后一个模型工具世代保持注册；针对它的调用在恢复前会失败。
 - 重连按中断预算控制：连续失败达到 `reconnect.maxAttempts` 次后，该服务器的工具会被注销，重连停止，直到 HMR 重载或重启 Host。连接存活超过 `maxDelayMs` 会重置预算，因此偶尔崩溃的服务器可以无限恢复，而崩溃循环的服务器——即使短暂连接成功——仍会耗尽上限而非永远重启。
 - 重连状态在日志中对用户可见：reconnecting（warn，含尝试次数和延迟）、recovered（info）、最终失败和 disabled-loss（error）。dispose（资源释放）会取消任何待执行的重连。设置 `reconnect.enabled: false` 时，连接丢失后工具保持注册但调用失败，直到重载——即手动恢复行为。
@@ -127,11 +132,11 @@ MCP 服务提供者与模型工具桥接：连接外部 [Model Context Protocol]
 
 #### 模型看到的内容
 
-公开工具名称和 JSON 参数会保留在 assistant 历史中。文本结果块会以换行连接为一个保留的 Native 文本结果；图片、音频、资源和不受支持的块在其中变为简短占位符。它们的完整 JSON 块及可选结构化内容保留在执行局部的规范值中；MCP `isError` 会通过注册表的错误路径拒绝调用。
+公开工具名称和 JSON 参数会保留在 assistant 历史中。相邻文本块以换行连接；已准入的图片以持久附件引用保留原有位置，资源链接以文本保留名称和 URI。被拒绝的图片批次会为每张图片产生诊断，不返回部分引用。完整 MCP JSON 块及可选结构化内容保留在执行局部的规范值中；MCP `isError` 通过注册表的错误路径拒绝调用。
 
 #### Token 影响
 
-参数和映射后的文本会保留到压缩（compaction）发生时。二进制与资源载荷会被丢弃，而不会加入上下文。
+参数和映射后的文本会保留到压缩（compaction）发生时。已准入的图片产生所选路由的图片输入成本。原始二进制与嵌入式资源载荷保留为程序化值，不进入模型上下文。
 
 #### KV Cache 影响
 
@@ -146,7 +151,7 @@ MCP 服务提供者与模型工具桥接：连接外部 [Model Context Protocol]
 - **只桥接 MCP 的工具能力**：资源和提示词没有 harness 消费接口，暂缓实现。
 - **启动超时继承自 MCP SDK**：DSH 尚未公开连接／发现超时。每次 initialize 请求或分页 `tools/list` 请求都使用 SDK 默认的 60 秒，因此在初始同步完成期间，无响应的 server 或 cursor chain 可能同时延迟激活与 teardown。
 - **重连在传输关闭时触发**：崩溃的 stdio 子进程会触发重连；Streamable HTTP 失败通过每次请求以及 SDK 传输自身的 SSE（Server-Sent Events）流恢复机制暴露，因此不可达的 HTTP 服务器会按调用重试，而非由 supervisor 重新 spawn。
-- **Native 非文本渲染有损**：图片、音频与资源载荷在模型上下文中会变成占位符，即使执行局部的规范值保留了其 JSON 块。更丰富的 Native 多媒体投影暂缓实现。
+- **音频和嵌入式资源没有 Native 投影**：模型上下文接收诊断文本，程序化调用方保留原始 JSON 块。图片要求持久存储，以及确切模型路由明确声明的图片输入能力。
 - **不强制执行不受支持的 MCP 输出 schema**：已声明 schema 使用 harness 子集之外的词汇时，`structuredContent` 会回退到 `JsonValue`。
 
 <a id="dev-note"></a>

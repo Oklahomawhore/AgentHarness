@@ -5,6 +5,11 @@
   disabled: true
 
 - insert:
+    - id: mcp
+      name: '@deepseek-ai/dsh-mcp'
+      config:
+        maxServers: 1
+
     - id: mcp-pagination-cycle
       name: '@deepseek-ai/dsh-mcp-client'
       config:
