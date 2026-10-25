@@ -108,7 +108,7 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     const publication = '后续 Task 必须继承这个显式结论。'
     await panel.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。').fill(publication)
     await panel.getByRole('button', { name: '发布上下文' }).click()
-    await panel.getByText(publication, { exact: true }).waitFor({ timeout: 10_000 })
+    await panel.getByRole('paragraph').filter({ hasText: /^后续 Task 必须继承这个显式结论。$/u }).waitFor({ timeout: 10_000 })
     if (process.env.AGENTHARNESS_CAPTURE_README_SCREENSHOT === '1') {
       await page.screenshot({ path: join(process.cwd(), 'assets/agentharness-collaboration.png'), fullPage: true })
     }
