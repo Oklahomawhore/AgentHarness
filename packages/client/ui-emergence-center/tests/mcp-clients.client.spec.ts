@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { McpClientSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
+import type { McpClientSetupSnapshot, McpClientSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import { createMcpClientSetupDirectory } from '../src/client/mcp-clients.ts'
 
 const CURSOR: McpClientSnapshot = {
@@ -41,5 +41,45 @@ describe('MCP client setup directory', () => {
     await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
     expect(directory.getSnapshot().error).toBe('unavailable')
     expect(onError).toHaveBeenCalledOnce()
+  })
+
+  it.each(['success', 'failure'])('discards an old connection %s while the reset read remains in flight', async (outcome) => {
+    const stale = Promise.withResolvers<McpClientSetupSnapshot>()
+    const current = Promise.withResolvers<McpClientSetupSnapshot>()
+    const list = vi.fn(() => current.promise).mockReturnValueOnce(stale.promise)
+    const report = vi.fn()
+    const directory = createMcpClientSetupDirectory({ list, setup: vi.fn() }, report)
+    directory.refresh()
+    expect(list).toHaveBeenCalledOnce()
+    directory.reset()
+    if (outcome === 'success') stale.resolve({ clients: [CURSOR] })
+    else stale.reject(new Error('old connection'))
+    await Promise.resolve()
+    await Promise.resolve()
+    directory.refresh()
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(directory.getSnapshot()).toEqual({ clients: [], read: false })
+    expect(report).not.toHaveBeenCalled()
+    current.resolve({ clients: [] })
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+  })
+
+  it('adds a newly configured client and preserves other clients when replacing it', async () => {
+    const other: McpClientSnapshot = { ...CURSOR, id: 'claude-code' }
+    const configured = { ...CURSOR, state: 'configured' as const }
+    const directory = createMcpClientSetupDirectory({
+      list: async () => ({ clients: [other] }),
+      setup: async () => ({ outcome: 'configured', client: configured }),
+    }, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    await directory.setup({ clientId: 'cursor' })
+    await directory.setup({ clientId: 'cursor' })
+    expect(directory.getSnapshot().clients).toEqual([other, configured])
+    expect(Object.isFrozen(directory.getSnapshot().clients[0])).toBe(true)
+  })
+
+  it('retains a non-Error transport failure for a current read', async () => {
+    const directory = createMcpClientSetupDirectory({ list: vi.fn().mockRejectedValue('offline'), setup: vi.fn() }, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().error).toBe('offline') })
   })
 })

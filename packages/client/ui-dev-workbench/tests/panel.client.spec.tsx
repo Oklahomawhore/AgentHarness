@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
+import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type { DevWorkbenchEntryId, DevWorkbenchEntrySnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import { DevWorkbenchPanel, type DevWorkbenchPanelProps } from '../src/client/DevWorkbenchPanel.tsx'
 import { zh } from '../src/client/locales.ts'
+import { apply, inject } from '../src/client/index.ts'
 
 afterEach(cleanup)
 
@@ -54,6 +56,45 @@ function props(
 }
 
 describe('DevWorkbenchPanel', () => {
+  it('updates the mounted plugin through its real inventory and releases open-panel polling on disposal', async () => {
+    const runtime = await SlotTestRuntime.create()
+    const clearInterval = vi.spyOn(window, 'clearInterval')
+    try {
+      const locale = new LocaleRuntime(runtime.ctx)
+      locale.setLocale('zh')
+      runtime.ctx.provide('locale', locale)
+      runtime.slots.installLocale(locale)
+      let current = entry()
+      const start = vi.fn(async () => {
+        current = entry('running')
+        return { ok: true as const, value: current }
+      })
+      const stop = vi.fn(async () => {
+        current = entry('stopped')
+        return { ok: true as const, value: current }
+      })
+      new TestRemote(runtime.ctx, {
+        devWorkbench: { list: async () => ({ ok: true as const, value: { entries: [current] } }), start, stop },
+      })
+      await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
+      await runtime.mount({ inject, apply })
+      runtime.renderSlot('sidebar.footer.action', { wide: true })
+      fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      fireEvent.click(screen.getByRole('button', { name: zh['action.start'] }))
+      await screen.findByText(zh['status.running'])
+      expect(start).toHaveBeenCalledWith(ENTRY)
+      fireEvent.click(screen.getByRole('button', { name: zh['action.stop'] }))
+      await screen.findByText(zh['status.stopped'])
+      expect(stop).toHaveBeenCalledWith(ENTRY)
+      await runtime.dispose()
+      expect(document.querySelector('[data-dev-workbench]')).toBeNull()
+      expect(clearInterval).toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+      clearInterval.mockRestore()
+    }
+  })
+
   it('opens one opaque integrated panel with shared task views and logs', () => {
     render(<DevWorkbenchPanel {...props()} />)
     fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))

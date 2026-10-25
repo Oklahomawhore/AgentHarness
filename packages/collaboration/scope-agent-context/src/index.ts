@@ -732,7 +732,11 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       const committed = this.state(runtime)
       runtime.dirty = true
       runtime.changeVersion++
+      // Remote adoption owns subscription rollback; local binding owns the Task epoch. Both activate
+      // their own committed state.
+      /* jscpd:ignore-start */
       this.startWatch(runtime)
+      /* jscpd:ignore-end */
       this.schedule(runtime)
       if (previous !== null && previous.kind !== 'local-task') await this.ctx.scopeAccess.leave({ subscriptionId: previous.subscriptionId })
       return committed

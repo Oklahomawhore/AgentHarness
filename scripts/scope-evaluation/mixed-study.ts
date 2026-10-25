@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import {
-  DataArtifactError, gradeDataArtifacts, sealDataArtifact,
+  DataArtifactError, gradeDataArtifacts, parseArtifact,
   type DataArtifactGrade, type DataArtifactGrades, type DataGradeStatus, type SealedDataArtifact,
 } from './data-artifacts.ts'
 import { createDataStudy, parseDataStudyConfig,
@@ -149,14 +149,7 @@ export function createMixedStudy(seed: number, config: DataStudyConfig): {
  * @returns A closed declaration; malformed bytes, seals, JSON or status/exit combinations throw DataArtifactError.
  */
 export function parseMixedVerification(artifact: SealedDataArtifact): MixedVerification {
-  if (Buffer.byteLength(artifact.text, 'utf8') > 65_536) throw new DataArtifactError('byte-limit')
-  const actual = sealDataArtifact(artifact.text)
-  if (actual.bytes !== artifact.bytes || actual.sha256 !== artifact.sha256) throw new DataArtifactError('integrity')
-  let input: unknown
-  try { input = JSON.parse(artifact.text) } catch { throw new DataArtifactError('json') }
-  const parsed = verificationSchema.safeParse(input)
-  if (!parsed.success || !isDeepStrictEqual(parsed.data, input)) throw new DataArtifactError('schema')
-  return parsed.data
+  return parseArtifact(artifact, verificationSchema)
 }
 
 /** A truthful description can pass independently while current source evidence remains unavailable. */

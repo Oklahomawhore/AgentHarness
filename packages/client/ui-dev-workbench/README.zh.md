@@ -49,4 +49,6 @@ kind: "package-reference"
 
 ### 开发备注
 
+清单快照使用同步的 [Client 快照 store](../store/README.zh.md)。渲染器负责每次订阅的清理，消费者须以只读方式使用快照中的嵌套值。刷新、任务修改与重置仍由清单负责；[状态所有权决策](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.zh.md)记录通知及开发环境冻结语义。
+
 本包不发布运行时 invariant companion，因为进程生命周期由 Host workbench 服务负责；本包只管理浏览器呈现与视图偏好。

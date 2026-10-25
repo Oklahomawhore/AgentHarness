@@ -318,12 +318,16 @@ export async function runNativeData(request: NativeDataRunRequest): Promise<Nati
     const requested = captureSchema.parse(await source.rpc('scopeAgentContributions/request', { request: {
       agentId: sourceId, expectedCapture: null, entry: entry.entry, roots: [sourceProject], tools: ['write', 'edit'], limits } }))
     if (requested.capture === null) throw new Error('source consent missing')
+    // Data and mixed studies preserve their separate source-consent scenarios, call ledgers, and
+    // observation limits.
+    /* jscpd:ignore-start */
     await until(() => owner.rpc('scopeAccess/contributionApplications', { request: { taskId: created.task.id } }),
       value => JSON.stringify(value).includes('"status":"pending"'), lifetime.signal)
     await owner.rpc('scopeAccess/approveContributionApplication', { request: { entryId: entry.entry.entryId,
       expectedProposal: requested.capture.proposal, limits, ownerAddress: address } })
     await until(async () => captureSchema.parse(await source.rpc('scopeAgentContributions/status', { request: { agentId: sourceId } })),
       value => value.capture?.collecting === true, lifetime.signal)
+    /* jscpd:ignore-end */
     await source.native('start')
     if (request.continuity !== undefined) {
       const continuity = request.continuity

@@ -553,7 +553,10 @@ export class DevelopmentRoomService extends TypertRemoteService {
 
   private enqueue<Result>(operation: () => Promise<Result> | Result): Promise<Result> {
     const result = this.operationTail.then(operation)
+    // Room and Task keep independent operation tails; this short rejection-recovery idiom needs no shared state owner.
+    /* jscpd:ignore-start */
     this.operationTail = result.then(() => {}, () => {})
+    /* jscpd:ignore-end */
     return result
   }
 

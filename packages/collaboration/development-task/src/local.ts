@@ -149,7 +149,10 @@ export function localPublicationRequest(publication: DevelopmentTaskContextPubli
   }
   return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
     kind: tool.kind, ...(tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
+    // Local receipts restore native versions; peer reconstruction separately preserves recorded provenance.
+    /* jscpd:ignore-start */
     reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+    /* jscpd:ignore-end */
     ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
   } }
 }

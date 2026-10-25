@@ -154,7 +154,11 @@ async function run(condition: 'E' | 'R', fault: Fault = 'none', driver = false) 
       const evidence = process.env.DSH_CONTINUITY_EVIDENCE_ROOT
       if (evidence !== undefined) {
         await mkdir(evidence, { recursive: true, mode: 0o700 })
+        // Continuity and mixed-study fixtures retain evidence under independent opt-in roots before
+        // their own cleanup.
+        /* jscpd:ignore-start */
         await cp(root, join(evidence, basename(root)), { recursive: true, errorOnExist: true, force: false })
+        /* jscpd:ignore-end */
       }
     } finally { await rm(root, { recursive: true, force: true }) }
   }

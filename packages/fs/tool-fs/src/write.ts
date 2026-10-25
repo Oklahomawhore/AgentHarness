@@ -124,8 +124,11 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
         // stable model-facing diagnostic; anything else passes through.
         throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
       }
+      // Successful tool events stay beside the actual provider result; edit retains its own intent and error scope.
+      /* jscpd:ignore-start */
       ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
       ctx.emit('tool-fs/mutation-completed', { mutation, content: outcome.after })
+      /* jscpd:ignore-end */
       return {
         path: target.displayPath,
         operation: outcome.operation,

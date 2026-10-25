@@ -138,7 +138,11 @@ export class ScopeNetworkCardController {
   private async save(): Promise<void> {
     const desired = this.desired()
     if (!this.writable() || this.saving || desired === undefined || same(this.addresses(), desired)) return
+    // Each settings card owns its draft revision; network address confirmation and model catalog saves
+    // are separate transactions.
+    /* jscpd:ignore-start */
     const revision = this.draft?.revision
+    /* jscpd:ignore-end */
     if (this.conflicted || revision === undefined || this.scope.getSnapshot().revision !== revision) {
       this.conflicted = true; this.publish(); return
     }

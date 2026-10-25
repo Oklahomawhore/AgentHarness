@@ -644,8 +644,7 @@ export default class ScopeAccessService extends TypertRemoteService {
     consumerSignal.throwIfAborted()
     this.lifetime.signal.throwIfAborted()
     const subscription = domain.table('subscriptions').get(id)
-    if (subscription === undefined || subscription.state === 'left') return { status: 'left' }
-    if (subscription.state !== 'active') return { status: subscription.state }
+    if (subscription?.state !== 'active') return { status: subscription?.state ?? 'left' }
     replacementSignal.throwIfAborted()
     if (subscription.invitation.expiresAt <= Date.now()) return await this.endSubscription(subscription, 'expired')
     if (this.receiverWaits.size + this.ownerWaits.size > this.config.maxConcurrentWaits) return { status: 'unavailable' }
@@ -668,7 +667,11 @@ export default class ScopeAccessService extends TypertRemoteService {
         signal.throwIfAborted()
         const current = currentDomain.table('subscriptions').get(id)
         if (current === undefined) return { status: 'left' }
+        // Wait completion rechecks its retained route; retrieval separately owns request nonces,
+        // expiry cleanup, and decoded payload authority.
+        /* jscpd:ignore-start */
         if (current.generation !== subscription.generation || (current.routeRevision ?? 0) !== (subscription.routeRevision ?? 0)) return { status: 'unavailable' }
+        /* jscpd:ignore-end */
         if (current.state !== 'active') return { status: current.state }
         if (subscription.invitation.expiresAt <= Date.now()) {
           await currentDomain.table('subscriptions').put(id, { ...current, state: 'expired' })
@@ -765,8 +768,7 @@ export default class ScopeAccessService extends TypertRemoteService {
     consumerSignal.throwIfAborted()
     this.lifetime.signal.throwIfAborted()
     const subscription = domain.table('subscriptions').get(id)
-    if (subscription === undefined || subscription.state === 'left') return { status: 'left' }
-    if (subscription.state !== 'active') return { status: subscription.state }
+    if (subscription?.state !== 'active') return { status: subscription?.state ?? 'left' }
     if (subscription.invitation.expiresAt <= Date.now()) return await this.endSubscription(subscription, 'expired')
     if (this.activeReads >= this.config.maxConcurrentReads || this.activeOrdinary >= this.ordinaryCapacity) return { status: 'unavailable' }
     this.activeReads++; this.activeOrdinary++

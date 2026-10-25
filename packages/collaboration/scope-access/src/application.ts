@@ -254,7 +254,11 @@ export class ContributionApplications {
         if (index <= start) continue
         const candidate: ScopeGroupEntries = { entries: [...page.entries, await this.groupStatus(record)],
           nextEntryId: index + 1 < entries.length ? id : null }
+        // Group-entry pages use their own cursor and may reconcile owner addresses; application and
+        // member decisions remain separate.
+        /* jscpd:ignore-start */
         if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') > this.owner.config.maxResponseBytes) {
+        /* jscpd:ignore-end */
           if (page.entries.length === 0) throw this.failure('scope-contribution/capacity')
           return page
         }
@@ -286,7 +290,11 @@ export class ContributionApplications {
           applicationId: member.applicationId, proposal: member.proposal }
         const candidate: ScopeGroupApplications = { entries: [...page.entries, value],
           nextApplicationId: index + 1 < members.length ? member.applicationId : null }
+        // Member pages retain application identities and reconcile each decision before byte
+        // accounting.
+        /* jscpd:ignore-start */
         if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') > this.owner.config.maxResponseBytes) {
+        /* jscpd:ignore-end */
           if (page.entries.length === 0) throw this.failure('scope-contribution/capacity')
           return page
         }

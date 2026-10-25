@@ -1,21 +1,16 @@
 /** Strict invitation and exact-projection validation shared by wire and Session consumers. */
 
 import { createHash } from 'node:crypto'
-import type { DevelopmentTaskId } from '@deepseek-ai/dsh-development-task/types'
 import type { DevelopmentTaskContextActivation, DevelopmentTaskContextEvidenceId } from '@deepseek-ai/dsh-development-task-context/types'
-import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { z } from 'zod'
+import { invitationSchema } from './invitation-schema.ts'
 import { peerCaptureSchema } from './subscription-schema.ts'
 import type {
-  ScopeGeneration, ScopeGrantId, ScopeAccessProjection, ScopeAccessLegacyProjection,
+  ScopeAccessProjection, ScopeAccessLegacyProjection,
   ScopeAccessCurrentProjection, ScopeAccessCaptureProjection, ScopeProjectionId,
 } from './types.ts'
 
-const peer = z.string().min(1).max(256).transform(value => value as ScopePeerId)
-const task = z.string().min(1).max(256).transform(value => value as DevelopmentTaskId)
-const grantId = z.uuid().transform(value => value as ScopeGrantId)
-const generation = z.uuid().transform(value => value as ScopeGeneration)
-const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const { ownerPeerId: peer, taskId: task, grantId, generation, expiresAt: integer } = invitationSchema.shape
 
 export { invitationSchema, sameReadGrant } from './invitation-schema.ts'
 export { originalCaptureSchema, subscriptionSchema, legacySubscriptionSchema, captureSubscriptionSchema } from './subscription-schema.ts'

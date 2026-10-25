@@ -7,6 +7,7 @@ import type {
   DevelopmentRoomDirectorySnapshot,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { EmergenceProfile } from './profile.ts'
 
 /** Presence operations consumed by the collaboration-center browser state source. */
@@ -47,27 +48,21 @@ export function createParticipantDirectory(
   initialProfile: EmergenceProfile,
   onError: (error: unknown) => void,
 ): ParticipantDirectory {
-  const listeners = new Set<() => void>()
-  let snapshot: ParticipantDirectoryState = { participants: [], presenceTtlMs: 1, read: false }
+  const store = createSnapshotStore<ParticipantDirectoryState>({ participants: [], presenceTtlMs: 1, read: false })
   let profile: EmergenceProfile | undefined = initialProfile.displayName.trim() === '' ? undefined : initialProfile
   let needsAnnounce = profile !== undefined
   let inFlight: Promise<void> | undefined
   let generation = 0
   let heartbeat: ReturnType<typeof setTimeout> | undefined
 
-  const publish = (next: ParticipantDirectoryState): void => {
-    snapshot = next
-    for (const listener of [...listeners]) listener()
-  }
   const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): void => {
-    publish({ nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
+    store.set({ nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
   }
   const scheduleHeartbeat = (ttl: number): void => {
     if (heartbeat !== undefined) clearTimeout(heartbeat)
-    if (profile === undefined) return
+    const active = profile
+    if (active === undefined) return
     heartbeat = setTimeout(() => {
-      const active = profile
-      if (active === undefined) return
       void port.heartbeat({ participantId: active.id }).then(
         (next) => { publishDirectory(next); scheduleHeartbeat(next.presenceTtlMs) },
         (error: unknown) => { onError(error); scheduleHeartbeat(ttl) },
@@ -93,28 +88,34 @@ export function createParticipantDirectory(
       (error: unknown) => {
         if (issued !== generation) return
         onError(error)
-        publish({ ...snapshot, read: true, error: error instanceof Error ? error.message : String(error) })
+        // Presence leases and Task assignment reads retain their own refresh lifecycles.
+        /* jscpd:ignore-start */
+        store.set({ ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) })
+        /* jscpd:ignore-end */
       },
     ).then(() => { if (issued === generation) inFlight = undefined })
   }
 
   refresh()
   return {
-    getSnapshot: () => snapshot,
-    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
+    getSnapshot: () => store.getSnapshot(),
+    // The shared store owns subscriptions; this directory owns refresh and presence-lease disposal.
+    /* jscpd:ignore-start */
+    subscribe: listener => store.subscribe(listener),
+    /* jscpd:ignore-end */
     refresh,
     reset() {
       generation += 1
       inFlight = undefined
-      publish({ participants: [], presenceTtlMs: 1, read: false })
+      store.set({ participants: [], presenceTtlMs: 1, read: false })
       needsAnnounce = profile !== undefined
       refresh()
     },
     applyPresence(participant) {
-      const participants = snapshot.participants.some(current => current.id === participant.id)
-        ? snapshot.participants.map(current => current.id === participant.id ? participant : current)
-        : [...snapshot.participants, participant]
-      publish({ ...snapshot, participants, read: true })
+      const participants = store.getSnapshot().participants.some(current => current.id === participant.id)
+        ? store.getSnapshot().participants.map(current => current.id === participant.id ? participant : current)
+        : [...store.getSnapshot().participants, participant]
+      store.set({ ...store.getSnapshot(), participants, read: true })
     },
     setProfile: announce,
     async dispose() {

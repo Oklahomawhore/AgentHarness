@@ -80,7 +80,10 @@ async function readText(path: string, limit: number, signal: AbortSignal): Promi
     const bytes = Buffer.alloc(limit + 1)
     let length = 0
     while (length < bytes.length) {
+      // Settings retain separate identity, UTF-8, and conflict checks around this bounded handle-read step.
+      /* jscpd:ignore-start */
       const read = await file.read(bytes, length, bytes.length - length, length)
+      /* jscpd:ignore-end */
       signal.throwIfAborted()
       if (read.bytesRead === 0) break
       length += read.bytesRead

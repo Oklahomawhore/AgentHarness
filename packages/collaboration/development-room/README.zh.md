@@ -31,6 +31,8 @@ kind: "package-reference"
 
 `restoreLocalLog()` 回放本地产生的持久记录，不重复写入。`acceptLogReplica()` 追加认证 peer 的记录，但不在本地持久化。`@deepseek-ai/dsh-development-room-storage-domain` 和 `@deepseek-ai/dsh-development-room-mesh` 提供这两个 Consumer。
 
+`./schema` 导出向 Mesh 和持久日志 Consumer 提供 `developmentRoomChangeSchema`。它严格校验变更字段；各 Consumer 分别校验记录外层字段，Room 服务继续校验标识、文本上限、时间戳和序号。
+
 <a id="configuration"></a>
 
 ## 配置

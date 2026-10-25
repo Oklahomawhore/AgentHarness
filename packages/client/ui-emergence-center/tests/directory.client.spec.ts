@@ -6,6 +6,7 @@ import type {
   DevelopmentTaskAssignment,
   DevelopmentTaskBindingId,
   DevelopmentTaskId,
+  DevelopmentTaskLineageSnapshot,
   DevelopmentTaskSnapshot,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { createParticipantDirectory, type ParticipantDirectoryPort } from '../src/client/participant-directory.ts'
@@ -106,5 +107,131 @@ describe('Emergence Center directories', () => {
     directory.applyAssignment(first, first.bindingId)
     directory.applyAssignment(second, second.bindingId)
     expect(directory.getSnapshot().assignments).toEqual([first, second])
+    directory.applyAssignment(undefined, first.bindingId)
+    expect(directory.getSnapshot().assignments).toEqual([second])
+  })
+
+  it('reannounces on reset and renews presence after a failed heartbeat', async () => {
+    vi.useFakeTimers()
+    const remote = participantPort()
+    remote.heartbeat.mockRejectedValueOnce(new Error('offline'))
+    remote.withdraw.mockRejectedValueOnce(new Error('connection closed'))
+    const report = vi.fn()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: 'Jet' }, report)
+    directory.refresh()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(remote.announce).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(report).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(remote.heartbeat).toHaveBeenCalledTimes(2)
+    directory.reset()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(remote.announce).toHaveBeenCalledTimes(2)
+    await directory.dispose()
+    expect(remote.withdraw).toHaveBeenCalledWith({ participantId: HUMAN })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('updates only the announced participant while a blank profile owns no lease', async () => {
+    const remote = participantPort()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: '' }, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const human = { id: HUMAN, nodeId: NODE, kind: 'human' as const, displayName: 'Jet', presence: 'online' as const, lastSeenAt: 1 }
+    const agent = { ...human, id: AGENT, displayName: 'Agent' }
+    directory.applyPresence(human)
+    directory.applyPresence(agent)
+    directory.applyPresence({ ...human, displayName: 'Updated' })
+    expect(directory.getSnapshot().participants).toEqual([{ ...human, displayName: 'Updated' }, agent])
+    expect(Object.isFrozen(directory.getSnapshot().participants[0])).toBe(true)
+    await directory.dispose()
+    expect(remote.withdraw).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'])('discards a participant read from a reset connection after %s', async (outcome) => {
+    const stale = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const current = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const remote = participantPort()
+    remote.list.mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise)
+    const report = vi.fn()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: '' }, report)
+    directory.reset()
+    if (outcome === 'success') stale.resolve(EMPTY)
+    else stale.reject(new Error('old connection'))
+    await Promise.resolve()
+    await Promise.resolve()
+    directory.refresh()
+    expect(remote.list).toHaveBeenCalledTimes(2)
+    expect(directory.getSnapshot().read).toBe(false)
+    expect(report).not.toHaveBeenCalled()
+    current.resolve(EMPTY)
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    await directory.dispose()
+  })
+
+  it.each([new Error('offline'), 'offline'])('retains a current participant transport error %s', async (failure) => {
+    const remote = participantPort()
+    remote.list.mockRejectedValueOnce(failure)
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: '' }, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().error).toBe('offline') })
+    await directory.dispose()
+  })
+
+  it('updates current Task cards and appends created Tasks to the bounded graph', async () => {
+    const directory = createDevelopmentTaskDirectory(taskPort(), vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const updated = { ...task(), revision: 2 }
+    directory.applyTask(updated)
+    expect(directory.getSnapshot().graphTasks).toEqual([updated])
+    const incoming = task('task-new' as DevelopmentTaskId)
+    directory.applyTask(incoming)
+    expect(directory.getSnapshot().tasks).toEqual([incoming, updated])
+    expect(directory.getSnapshot().graphTasks).toEqual([updated])
+    const created = await directory.create({ origin: { kind: 'root' }, createdBy: HUMAN, objective: 'Created', scope: 'Client' })
+    expect(directory.getSnapshot().graphTasks).toEqual([created, updated])
+    expect(Object.isFrozen(directory.getSnapshot().graphTasks[0]?.origin)).toBe(true)
+  })
+
+  it('ignores a lineage response after the connection resets', async () => {
+    const stale = Promise.withResolvers<DevelopmentTaskLineageSnapshot>()
+    const remote = taskPort()
+    remote.lineage.mockReturnValueOnce(stale.promise)
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const focusing = directory.focus(ROOT)
+    directory.reset()
+    stale.resolve({ tasks: [task('old-task' as DevelopmentTaskId)], boundaryTaskIds: [] })
+    await focusing
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    expect(directory.getSnapshot().graphTasks).toEqual([task()])
+  })
+
+  it.each(['success', 'failure'])('discards a Task read from a reset connection after %s', async (outcome) => {
+    const stale = Promise.withResolvers<readonly DevelopmentTaskSnapshot[]>()
+    const current = Promise.withResolvers<readonly DevelopmentTaskSnapshot[]>()
+    const remote = taskPort()
+    remote.list.mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise)
+    const report = vi.fn()
+    const directory = createDevelopmentTaskDirectory(remote, report)
+    directory.refresh()
+    directory.reset()
+    if (outcome === 'success') stale.resolve([task()])
+    else stale.reject(new Error('old connection'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    directory.refresh()
+    expect(remote.list).toHaveBeenCalledTimes(2)
+    expect(directory.getSnapshot().read).toBe(false)
+    expect(report).not.toHaveBeenCalled()
+    current.resolve([task()])
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+  })
+
+  it.each([new Error('offline'), 'offline'])('retains a current Task transport error %s', async (failure) => {
+    const remote = taskPort()
+    remote.list.mockRejectedValueOnce(failure)
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().error).toBe('offline') })
   })
 })

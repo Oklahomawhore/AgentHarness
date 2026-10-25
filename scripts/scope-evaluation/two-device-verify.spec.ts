@@ -58,6 +58,14 @@ async function writeJson(path: string, value: unknown): Promise<void> { await wr
 const objectSchema = z.record(z.string(), z.unknown())
 const rowSchema = z.looseObject({ type: z.string(), seq: z.number(), data: z.record(z.string(), z.unknown()) })
 const requestSchema = z.looseObject({ eventCount: z.number(), messages: z.array(z.unknown()) })
+function rewriteContext(row: z.infer<typeof rowSchema>, rewrite: (text: string) => string): void {
+  const content = z.array(z.looseObject({ text: z.string() })).parse(row.data.content)
+  const block = content[0]
+  if (block === undefined) throw new Error('context missing')
+  block.text = rewrite(block.text)
+  row.data.content = content
+}
+
 /** Recompute transport hashes after a targeted semantic mutation so the regression reaches the actual paired checks. */
 async function reseal(directory: string, mutate: (rows: z.infer<typeof rowSchema>[]) => void) {
   const verification = z.looseObject({ sessions: z.array(z.looseObject({ path: z.string() })) })
@@ -154,12 +162,7 @@ it('refuses an error tool result even after all transport hashes are recomputed'
 it('rejects a substituted peer execution sourceId with matching request and Session hashes', async () => {
   const f = await fixture()
   await reseal(f.aDirectory, (rows) => {
-    const row = event(rows, 'user/message', 35)
-    const content = z.array(z.looseObject({ text: z.string() })).parse(row.data.content)
-    const block = content[0]
-    if (block === undefined) throw new Error('context missing')
-    block.text = block.text.replace('9b402b0ce351de831040fc0b62c5c13c0fe460afbd6db629345ae51b42dbce82', 'a'.repeat(64))
-    row.data.content = content
+    rewriteContext(event(rows, 'user/message', 35), text => text.replace('9b402b0ce351de831040fc0b62c5c13c0fe460afbd6db629345ae51b42dbce82', 'a'.repeat(64)))
   })
   await expect(verifyTwoDeviceEvidence(f)).rejects.toThrow('peer sourceId differs from actual execution coordinates')
 })
@@ -249,12 +252,7 @@ it('rejects an invalid original header even when its missing depth would otherwi
 it('rejects a same-body contribution carrying another capture generation', async () => {
   const f = await fixture()
   await reseal(f.aDirectory, (rows) => {
-    const row = event(rows, 'user/message', 35)
-    const content = z.array(z.looseObject({ text: z.string() })).parse(row.data.content)
-    const block = content[0]
-    if (block === undefined) throw new Error('context missing')
-    block.text = block.text.replaceAll('36c401a2-6568-4bf2-b676-070ff5dd2549', '00000000-0000-4000-8000-000000000000')
-    row.data.content = content
+    rewriteContext(event(rows, 'user/message', 35), text => text.replaceAll('36c401a2-6568-4bf2-b676-070ff5dd2549', '00000000-0000-4000-8000-000000000000'))
   })
   await expect(verifyTwoDeviceEvidence(f)).rejects.toThrow('contribution grant differs from original read capture')
 })

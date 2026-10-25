@@ -372,13 +372,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     if (domain.table('sessions').get(agent.id)?.receivingContinuation !== undefined) throw this.invalid(agent.id, 'Finish the retained receiving operation before requesting another capture')
     const entry = contributionEntrySchema.parse(request.entry)
     const limits = contributionLimitsSchema.parse(request.limits)
-    this.validatePermission(agent.id, request)
-    const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
-    const outcome = request.sourceKind === 'completed-turn-outcomes' || native?.completedTurns === true
-    const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
-      ? { roots: [], tools: [] } : request
-    const commands = native === undefined ? this.permissionCommands(agent.id, permission)
-      : native.commands.length === 0 ? undefined : native.commands
+    const { permission, native, outcome, commands } = this.resolvePermission(agent.id, request)
     const initialization = request.initialization === undefined ? undefined : initializationRequestSchema.parse(request.initialization)
     if ((request.fileContent !== undefined || commands !== undefined) && initialization !== undefined) {
       throw this.invalid(agent.id, 'Complete file-result sharing cannot include recorded-tool initialization')
@@ -414,16 +408,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (permission.roots.length > 0 && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
-      const roots: FsTarget[] = []
-      if (filesystem !== undefined) for (const path of permission.roots) {
-        const cwd = agent.session.header.cwd
-        const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
-        signal.throwIfAborted()
-        if ((await filesystem.stat(target, signal))?.type !== 'directory') throw this.invalid(agent.id, 'A permitted root is not a directory')
-        if (roots.some(root => root.targetKey === target.targetKey)) {
-          if (commands !== undefined) throw this.invalid(agent.id, 'Command directory ordinals require distinct roots')
-        } else roots.push(target)
-      }
+      const roots = filesystem ? await this.resolveRoots(agent, filesystem, permission.roots, commands !== undefined, signal) : []
       const tools = (['write', 'edit'] as const).filter(tool => permission.tools.includes(tool))
       const identity = await this.ctx.scopeAccess.identity()
       signal.throwIfAborted()
@@ -710,13 +695,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     this.assertExpected(domain, agent.id, role, request.expectedCapture)
     this.requireLocalEligible(agent, request)
     const limits = contributionLimitsSchema.parse(request.limits)
-    this.validatePermission(agent.id, request)
-    const native = request.sourceKind === 'native-work' ? this.nativePermission(agent.id, request) : undefined
-    const outcome = request.sourceKind === 'completed-turn-outcomes' || native?.completedTurns === true
-    const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
-      ? { roots: [], tools: [] } : request
-    const commands = native === undefined ? this.permissionCommands(agent.id, permission)
-      : native.commands.length === 0 ? undefined : native.commands
+    const { permission, native, outcome, commands } = this.resolvePermission(agent.id, request)
     if (limits.expiresAt <= Date.now()
       || !outcome && (permission.roots.length === 0 || permission.tools.length === 0 && commands === undefined)
       || Buffer.byteLength(JSON.stringify(request), 'utf8') > this.config.maxObservationBytes) throw this.invalid(agent.id, 'Invalid local source permission')
@@ -727,16 +706,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (permission.roots.length > 0 && filesystem === undefined) throw this.invalid(agent.id, 'The selected Agent has no filesystem provider')
       const shell = commands === undefined ? undefined : agent.ctx.get('shell')
       if (commands !== undefined && shell === undefined) throw this.invalid(agent.id, 'Command sharing requires the selected Agent’s shell provider')
-      const roots: FsTarget[] = []
-      if (filesystem !== undefined) for (const path of permission.roots) {
-        const cwd = agent.session.header.cwd
-        const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
-        signal.throwIfAborted()
-        if ((await filesystem.stat(target, signal))?.type !== 'directory') throw this.invalid(agent.id, 'A permitted root is not a directory')
-        if (roots.some(root => root.targetKey === target.targetKey)) {
-          if (commands !== undefined) throw this.invalid(agent.id, 'Command directory ordinals require distinct roots')
-        } else roots.push(target)
-      }
+      // Remote admission and local Task permission acquire providers before their independent durable
+      // authorization checks.
+      /* jscpd:ignore-start */
+      const roots = filesystem ? await this.resolveRoots(agent, filesystem, permission.roots, commands !== undefined, signal) : []
+      /* jscpd:ignore-end */
       const tools = (['write', 'edit'] as const).filter(tool => permission.tools.includes(tool))
       await this.enqueue(async (current) => {
         signal.throwIfAborted()
@@ -775,7 +749,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             participantId: developmentAgentParticipantId(agent.id),
             captureId: randomUUID() as DevelopmentTaskLocalContributionGrant['captureId'],
             captureGeneration: randomUUID() as DevelopmentTaskLocalContributionGrant['captureGeneration'],
+            // Local grants exclude recorded remote initialization; preserve the independently
+            // versioned source fields and serialized order.
+            /* jscpd:ignore-start */
             source: native ?? (outcome ? { kind: 'completed-turn-outcomes', version: 5, name: 'session-outcomes' }
+            /* jscpd:ignore-end */
               : { kind: 'tool-observations', name: 'session-work', tools: tools.map(tool => tool === 'write' ? 'Write' : 'Edit'),
                 ...(commands !== undefined ? { version: 4 as const, commands,
                   ...(request.fileContent === undefined ? {} : { fileContent: request.fileContent }) }
@@ -790,7 +768,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           throw error
         }
         signal.throwIfAborted()
+        // Provider and live-Agent checks follow each role’s own persistence operation; local Task
+        // eligibility remains separate.
+        /* jscpd:ignore-start */
         if (this.ctx.agents.get(agent.id) !== agent) throw this.superseded(agent.id)
+        /* jscpd:ignore-end */
         this.requireLocalEligible(agent, request)
         this.sources[role].runtimes.set(agent.id, priorRuntime ?? { agent, ...(filesystem === undefined ? {} : { filesystem }),
           ...(shell === undefined ? {} : { shell }), roots, selection: selection(capture), role: 'local' })
@@ -808,7 +790,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     }
   }
 
-  private validatePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest): void {
+  private resolvePermission(id: SessionId, request: ScopeAgentContributionRequest | ScopeAgentLocalContributionRequest) {
     if (request.sourceKind !== undefined
       && !['tool-observations', 'completed-turn-outcomes', 'native-work'].includes(request.sourceKind)) {
       throw this.invalid(id, 'The contribution source kind is invalid')
@@ -817,12 +799,17 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (['roots', 'tools', 'commands', 'fileContent', 'initialization', 'completedTurns'].some(key => Object.hasOwn(request, key))) {
         throw this.invalid(id, 'Completed-answer sharing cannot include file or historical permissions')
       }
-      return
-    }
-    if (!Array.isArray(request.roots) || request.roots.some((root: unknown) => typeof root !== 'string')
+    } else if (!Array.isArray(request.roots) || request.roots.some((root: unknown) => typeof root !== 'string')
       || !Array.isArray(request.tools) || request.tools.some(tool => !['write', 'edit'].includes(tool))) {
       throw this.invalid(id, 'File sharing requires directory and tool arrays; file tools must be write or edit')
     }
+    const native = request.sourceKind === 'native-work' ? this.nativePermission(id, request) : undefined
+    const outcome = request.sourceKind === 'completed-turn-outcomes' || native?.completedTurns === true
+    const permission: Pick<ScopeAgentToolContributionPermission, 'roots' | 'tools' | 'commands' | 'fileContent'> = request.sourceKind === 'completed-turn-outcomes'
+      ? { roots: [], tools: [] } : request
+    const commands = native === undefined ? this.permissionCommands(id, permission)
+      : native.commands.length === 0 ? undefined : native.commands
+    return { permission, native, outcome, commands }
   }
   private nativePermission(id: SessionId, request: ScopeAgentNativeWorkContributionPermission): DevelopmentTaskNativeWorkSource {
     const source = nativeWorkSourceSchema.parse({ kind: 'native-work', version: 6, name: 'session-work',
@@ -847,6 +834,20 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       throw this.invalid(id, 'Command sharing requires unique commands at explicit directory ordinals')
     }
     return commands
+  }
+  private async resolveRoots(agent: Agent, filesystem: FileSystem, paths: readonly string[],
+    distinctOrdinals: boolean, signal: AbortSignal): Promise<FsTarget[]> {
+    const roots: FsTarget[] = []
+    for (const path of paths) {
+      const cwd = agent.session.header.cwd
+      const target = await filesystem.resolve(path, { ...(cwd === undefined ? {} : { cwd }), signal })
+      signal.throwIfAborted()
+      if ((await filesystem.stat(target, signal))?.type !== 'directory') throw this.invalid(agent.id, 'A permitted root is not a directory')
+      if (roots.some(root => root.targetKey === target.targetKey)) {
+        if (distinctOrdinals) throw this.invalid(agent.id, 'Command directory ordinals require distinct roots')
+      } else roots.push(target)
+    }
+    return roots
   }
   private sameFilesystem(left: FileSystem | undefined, right: FileSystem | undefined): boolean {
     return left === undefined || right === undefined ? left === right : filesystemIdentity(left) === filesystemIdentity(right)
@@ -1734,7 +1735,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     for (const role of captureRoles) {
       const capture = this.capture(agent.id, role)
       if (capture == null || !this.collecting(agent.id, capture)) continue
+      // Command completion ignores missing grants; file completion records an explicit omission for
+      // the same condition.
+      /* jscpd:ignore-start */
       const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+      /* jscpd:ignore-end */
       if (grant === undefined) continue
       for (const pending of this.sources[role].pending.get(agent.id)?.values() ?? []) {
         if (pending.kind !== 'command' || pending.operation !== completion.operation

@@ -361,7 +361,11 @@ describe('AgentHarness portable release staging', () => {
     const token = 'abcdefghijklmnop'
     const site = join(fixture, 'site')
     const baseUrl = `http://127.0.0.1:${port}/${token}`
+    // Each installer scenario owns its listener and artifact root; checksum failure and successful
+    // upgrade are independent observations.
+    /* jscpd:ignore-start */
     const staged = await stagePortableRelease({ artifacts: [archive], out: site, baseUrl, clusterSecret: TEST_CLUSTER_SECRET })
+    /* jscpd:ignore-end */
     await listen(createLanReleaseServer(staged.output, token), port)
     const home = join(fixture, 'home')
     const env = installerEnvironment(home)

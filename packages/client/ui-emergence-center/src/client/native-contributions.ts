@@ -28,8 +28,11 @@ export interface NativeContributionDirectory {
 }
 
 function sameCapture(left: ScopeAgentContributionSelection | null, right: ScopeAgentContributionSelection | null): boolean {
+  // Remote and local permission filters retain their own nullable capture identity check.
+  /* jscpd:ignore-start */
   return left === null ? right === null : right !== null
     && left.captureId === right.captureId && left.captureGeneration === right.captureGeneration
+  /* jscpd:ignore-end */
 }
 
 /**

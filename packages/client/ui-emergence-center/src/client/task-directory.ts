@@ -9,6 +9,7 @@ import type {
   DevelopmentTaskSnapshot,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 
 /** Remote operations consumed by the Task graph browser state source. */
 export interface DevelopmentTaskDirectoryPort {
@@ -50,21 +51,16 @@ export function createDevelopmentTaskDirectory(
   port: DevelopmentTaskDirectoryPort,
   onError: (error: unknown) => void,
 ): DevelopmentTaskDirectory {
-  const listeners = new Set<() => void>()
-  let snapshot: DevelopmentTaskDirectoryState = {
+  const store = createSnapshotStore<DevelopmentTaskDirectoryState>({
     tasks: [],
     graphTasks: [],
     boundaryTaskIds: [],
     assignments: [],
     read: false,
-  }
+  })
   let generation = 0
   let inFlight: Promise<void> | undefined
 
-  const publish = (next: DevelopmentTaskDirectoryState): void => {
-    snapshot = next
-    for (const listener of [...listeners]) listener()
-  }
   const upsertTask = (
     tasks: readonly DevelopmentTaskSnapshot[],
     task: DevelopmentTaskSnapshot,
@@ -76,52 +72,52 @@ export function createDevelopmentTaskDirectory(
     incoming: readonly DevelopmentTaskSnapshot[],
   ): readonly DevelopmentTaskSnapshot[] => incoming.reduce(upsertTask, current)
   const applyTask = (task: DevelopmentTaskSnapshot, includeInGraph = false): void => {
-    const tasks = upsertTask(snapshot.tasks, task)
-    const graphTasks = includeInGraph || snapshot.graphTasks.some(current => current.id === task.id)
-      ? upsertTask(snapshot.graphTasks, task)
-      : snapshot.graphTasks
-    publish({ ...snapshot, tasks, graphTasks, read: true })
+    const tasks = upsertTask(store.getSnapshot().tasks, task)
+    const graphTasks = includeInGraph || store.getSnapshot().graphTasks.some(current => current.id === task.id)
+      ? upsertTask(store.getSnapshot().graphTasks, task)
+      : store.getSnapshot().graphTasks
+    store.set({ ...store.getSnapshot(), tasks, graphTasks, read: true })
   }
   const applyAssignment = (
     assignment: DevelopmentTaskAssignment | undefined,
     bindingId: DevelopmentTaskBindingId,
   ): void => {
-    const retained = snapshot.assignments.filter(current => current.bindingId !== bindingId)
-    publish({ ...snapshot, assignments: assignment === undefined ? retained : [...retained, assignment], read: true })
+    const retained = store.getSnapshot().assignments.filter(current => current.bindingId !== bindingId)
+    store.set({ ...store.getSnapshot(), assignments: assignment === undefined ? retained : [...retained, assignment], read: true })
   }
   const refresh = (): void => {
     if (inFlight !== undefined) return
     const issued = generation
     inFlight = Promise.all([port.list({ limit: 200 }), port.assignmentList()]).then(
       ([tasks, assignments]) => {
-        if (issued === generation) publish({ tasks, graphTasks: tasks, boundaryTaskIds: [], assignments, read: true })
+        if (issued === generation) store.set({ tasks, graphTasks: tasks, boundaryTaskIds: [], assignments, read: true })
       },
       (error: unknown) => {
         if (issued !== generation) return
         onError(error)
-        publish({ ...snapshot, read: true, error: error instanceof Error ? error.message : String(error) })
+        store.set({ ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) })
       },
     ).then(() => { if (issued === generation) inFlight = undefined })
   }
 
   refresh()
   return {
-    getSnapshot: () => snapshot,
-    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
+    getSnapshot: () => store.getSnapshot(),
+    subscribe: listener => store.subscribe(listener),
     refresh,
     reset() {
       generation += 1
       inFlight = undefined
-      publish({ tasks: [], graphTasks: [], boundaryTaskIds: [], assignments: [], read: false })
+      store.set({ tasks: [], graphTasks: [], boundaryTaskIds: [], assignments: [], read: false })
       refresh()
     },
     async focus(taskId) {
       const issued = generation
       const lineage = await port.lineage({ taskId, ancestorDepth: 4, descendantDepth: 2, limit: 500 })
       if (issued !== generation) return
-      publish({
-        ...snapshot,
-        tasks: mergeTasks(snapshot.tasks, lineage.tasks),
+      store.set({
+        ...store.getSnapshot(),
+        tasks: mergeTasks(store.getSnapshot().tasks, lineage.tasks),
         graphTasks: lineage.tasks,
         boundaryTaskIds: lineage.boundaryTaskIds,
         read: true,

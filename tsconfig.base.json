@@ -277,6 +277,7 @@
       "@deepseek-ai/dsh-host-mcp-client-setup": ["./packages/host/mcp-client-setup/src"],
       "@deepseek-ai/dsh-host-mcp-client-setup/types": ["./packages/host/mcp-client-setup/src/types.ts"],
       "@deepseek-ai/dsh-development-room/types": ["./packages/collaboration/development-room/src/types.ts"],
+      "@deepseek-ai/dsh-development-room/schema": ["./packages/collaboration/development-room/src/schema.ts"],
       "@deepseek-ai/dsh-development-room-context/types": ["./packages/collaboration/development-room-context/src/types.ts"],
       "@deepseek-ai/dsh-development-task/schema": ["./packages/collaboration/development-task/src/schema.ts"],
       "@deepseek-ai/dsh-development-task/types": ["./packages/collaboration/development-task/src/types.ts"],

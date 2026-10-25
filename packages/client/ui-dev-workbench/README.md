@@ -41,4 +41,6 @@ None; browser inventory and iframe state do not affect provider requests.
 
 ### Dev Note
 
+Inventory snapshots use the synchronous [Client snapshot store](../store/README.md). The renderer owns each subscription's cleanup, and consumers keep nested snapshot values readonly. Refresh, task mutations, and reset remain inventory-owned; the [state ownership decision](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.md) records notification and development-freezing semantics.
+
 No runtime invariant companion is published because process lifecycle belongs to the Host workbench service; this package owns only browser presentation and view preferences.

@@ -73,4 +73,56 @@ describe('createDevWorkbenchInventory', () => {
     expect(source.getSnapshot().error).toBe('still offline')
     expect(report).toHaveBeenCalledOnce()
   })
+
+  it('keeps a reset baseline while an older successful read finishes', async () => {
+    const stale = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const current = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const pending = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const list = vi.fn(() => pending.promise).mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise)
+    const source = createDevWorkbenchInventory({ list, start: async () => row('running'), stop: async () => row('stopped') }, vi.fn())
+    source.refresh()
+    source.reset()
+    source.refresh()
+    stale.resolve({ entries: [row('failed')] })
+    await Promise.resolve()
+    await Promise.resolve()
+    source.refresh()
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(source.getSnapshot()).toEqual({ entries: [], read: false })
+    const other = { ...row('idle'), id: 'other' as DevWorkbenchEntryId }
+    current.resolve({ entries: [row('idle'), other] })
+    await vi.waitFor(() => { expect(source.getSnapshot().read).toBe(true) })
+    await source.start(ENTRY)
+    expect(source.getSnapshot().entries).toEqual([row('running'), other])
+  })
+
+  it('isolates subscriber errors and keeps each repeated subscription independently removable', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const source = createDevWorkbenchInventory({ list: vi.fn(), start: vi.fn(), stop: vi.fn() }, vi.fn())
+      const broken = source.subscribe(() => { throw new Error('render failure') })
+      const listener = vi.fn()
+      const first = source.subscribe(listener)
+      const second = source.subscribe(listener)
+      source.reset()
+      expect(listener).toHaveBeenCalledTimes(2)
+      expect(diagnostic).toHaveBeenCalledWith('[client-store] subscriber failed:', expect.any(Error))
+      first()
+      source.reset()
+      expect(listener).toHaveBeenCalledTimes(3)
+      second()
+      broken()
+      source.reset()
+      expect(listener).toHaveBeenCalledTimes(3)
+      expect(Object.isFrozen(source.getSnapshot().entries)).toBe(true)
+    } finally { diagnostic.mockRestore() }
+  })
+
+  it('retains transport failures without requiring an Error instance', async () => {
+    const source = createDevWorkbenchInventory({
+      list: vi.fn().mockRejectedValue('offline'), start: vi.fn(), stop: vi.fn(),
+    }, vi.fn())
+    source.refresh()
+    await vi.waitFor(() => { expect(source.getSnapshot().error).toBe('offline') })
+  })
 })

@@ -102,4 +102,6 @@ Connecting a session or publishing Task context can change a later request prefi
 
 ### Dev Note
 
+Participant, Task, and MCP-client snapshots use the synchronous [Client snapshot store](../store/README.md). The renderer owns each subscription's cleanup, and consumers keep nested snapshot values readonly. Refresh and reset remain directory-owned, and the participant directory retains its lease lifecycle; the [state ownership decision](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.md) records notification and development-freezing semantics.
+
 No runtime invariant companion is published because Task and scope authority belongs to Host services; this package owns only browser presentation and interaction state.
