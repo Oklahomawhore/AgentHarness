@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import type { ScopeAccessProjection as AccessProjection } from '@deepseek-ai/dsh-scope-access/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { receivedScopeProjection, remainingReceiveContextBytes } from '../src/receive.ts'
@@ -33,9 +34,9 @@ it('retains exact independent context and distinct offline, revoked, and expired
     expect(suspended.kind).toBe('suspended')
     expect(suspended.selectedSources).toEqual([])
     expect(suspended.text).not.toContain('displayName')
-    await expect(suspended.text + '\n').toMatchFileSnapshot(new URL(`./expected/receive-${status}.txt`, import.meta.url).pathname)
+    await expect(suspended.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL(`./expected/receive-${status}.txt`, import.meta.url)))
   }
-  await expect(active.text + '\n').toMatchFileSnapshot(new URL('./expected/receive-active.txt', import.meta.url).pathname)
+  await expect(active.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/receive-active.txt', import.meta.url)))
   expect(active.text).not.toContain('private-session')
 })
 

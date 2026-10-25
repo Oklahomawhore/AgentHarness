@@ -30,7 +30,7 @@ The [LSP backpressure test](../../../../packages/lsp/lsp-stdio/tests/instance.sp
 
 ### Built-client import classification
 
-The [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts) admits the Dockkit bundle only when Node reports `ERR_UNKNOWN_FILE_EXTENSION` for its exact `dockkit.module.css` path. Other errors and unexpectedly successful exempt imports fail. Scoped resolve/load hooks exercise expected CSS failure, arbitrary failure, another stylesheet, another error code, and stale exemption without modifying shared build artifacts.
+The [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts) starts its erasable TypeScript driver under plain Node, so transitive imports use built package exports. A tsx hook redirects those imports to source and can create a second native module instance; it cannot serve as the built-import oracle. Koffi imports without that hook and has no exemption. The sweep admits the Dockkit bundle only when Node reports `ERR_UNKNOWN_FILE_EXTENSION` for its exact `dockkit.module.css` path. Other errors and unexpectedly successful exempt imports fail. Scoped resolve/load hooks exercise expected CSS failure, arbitrary failure, another stylesheet, another error code, and stale exemption without modifying shared build artifacts.
 
 ## Alternatives considered
 

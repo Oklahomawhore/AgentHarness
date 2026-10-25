@@ -19,7 +19,7 @@ import { expect, test, TestRunner } from 'vitest'
 const runner = fileURLToPath(new URL('./transform-corpus-check.ts', import.meta.url))
 
 test('every built bundle imports under Node', (context) => {
-  const finished = spawnSync(process.execPath, ['--import', 'tsx/esm', runner], { encoding: 'utf8' })
+  const finished = spawnSync(process.execPath, [runner], { encoding: 'utf8' })
   const output = `${finished.stdout}${finished.stderr}`
   if (output.includes('no built bundles found')) {
     context.skip('the workspace has no build output to sweep')
@@ -66,7 +66,7 @@ test.each([
     process.argv = [process.execPath, 'corpus-classification', ${JSON.stringify(bundle)}]
     await import(${JSON.stringify(pathToFileURL(runner).href)})
   `
-  const finished = spawnSync(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script], {
+  const finished = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
     cwd: fileURLToPath(root), encoding: 'utf8', timeout: TestRunner.getCurrentTest()!.timeout,
   })
   const output = `${finished.stdout}${finished.stderr}`

@@ -1,4 +1,5 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -13,7 +14,7 @@ afterEach(async () => {
 
 async function fixture(): Promise<{ root: string; options: McpClientSetupOptions }> {
   const { mkdtemp } = await import('node:fs/promises')
-  const root = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'agentharness-mcp-setup-'))
+  const root = await mkdtemp(join(tmpdir(), 'agentharness-mcp-setup-'))
   roots.push(root)
   const home = join(root, 'home')
   const bin = join(root, 'bin')
@@ -112,7 +113,8 @@ describe('MCP client setup', () => {
     expect(await readFile(target, 'utf8')).toBe('{}\n')
   })
 
-  it('uses official CLI arguments and continues when another client fails', async () => {
+  // These fake CLI executables require native POSIX shebang execution; Windows setup is unsupported.
+  it.skipIf(process.platform === 'win32')('uses official CLI arguments and continues when another client fails', async () => {
     const { root, options } = await fixture()
     const codexLog = join(root, 'codex.log')
     const codex = join(root, 'bin', 'codex')

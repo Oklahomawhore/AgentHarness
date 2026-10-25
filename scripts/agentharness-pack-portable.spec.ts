@@ -9,17 +9,23 @@ import { portableEnvironment, portableWebArguments } from './agentharness-portab
 
 const script = resolve(import.meta.dirname, 'agentharness-pack-portable.mjs')
 const temporaryDirectories: string[] = []
+const windowsNativePackages = [
+  '@img/sharp-win32-x64',
+  '@koromix/koffi-win32-x64',
+  '@vscode/ripgrep-win32-x64',
+  'node-addon-require-builtin-win32-x64-msvc',
+]
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-async function portableFixture(): Promise<string> {
+async function portableFixture(target = `${process.platform}-${process.arch}`): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'agentharness-portable-test-'))
   temporaryDirectories.push(root)
   for (const path of [
     'lib/bin.js',
-    'runtime/node',
+    `runtime/${target.startsWith('win32-') ? 'node.exe' : 'node'}`,
     'runtime/NODE_LICENSE',
     'agentharness.mjs',
     'agentharness-cluster.mjs',
@@ -31,18 +37,22 @@ async function portableFixture(): Promise<string> {
     await mkdir(dirname(join(root, path)), { recursive: true })
     await writeFile(join(root, path), '{}')
   }
+  if (target === 'win32-x64') {
+    for (const name of windowsNativePackages) await mkdir(join(root, 'node_modules', name), { recursive: true })
+  }
   return root
 }
 
 describe('AgentHarness portable release', () => {
   it('parses an explicit output and safe defaults', () => {
     expect(parsePortableArguments(['--out', '/tmp/agentharness-artifact', '--skip-build'])).toEqual({
-      out: '/tmp/agentharness-artifact', target: `${process.platform}-${process.arch}`, runtimeExecutable: undefined, runtimeLicense: undefined, skipBuild: true, dryRun: false,
+      out: resolve('/tmp/agentharness-artifact'), target: `${process.platform}-${process.arch}`, runtimeExecutable: undefined, runtimeLicense: undefined, skipBuild: true, dryRun: false,
     })
     expect(parsePortableArguments([
       '--target', 'win32-x64', '--runtime-executable', '/tmp/node.exe', '--runtime-license', '/tmp/LICENSE',
-    ])).toMatchObject({ target: 'win32-x64', runtimeExecutable: '/tmp/node.exe', runtimeLicense: '/tmp/LICENSE' })
-    expect(() => parsePortableArguments(['--target', 'win32-x64'])).toThrow('cross-platform packaging requires')
+    ])).toMatchObject({ target: 'win32-x64', runtimeExecutable: resolve('/tmp/node.exe'), runtimeLicense: resolve('/tmp/LICENSE') })
+    const crossTarget = process.platform === 'win32' ? 'linux-x64' : 'win32-x64'
+    expect(() => parsePortableArguments(['--target', crossTarget])).toThrow('cross-platform packaging requires')
     expect(parsePortableArguments(['--', '--skip-build']).skipBuild).toBe(true)
     expect(() => parsePortableArguments(['--out'])).toThrow('--out needs a directory')
     expect(() => validatePortableOutput(resolve(import.meta.dirname, '..'))).toThrow('repository root')
@@ -84,17 +94,12 @@ describe('AgentHarness portable release', () => {
   })
 
   it('requires the target-specific bundled runtime filename', async () => {
-    const fixture = await portableFixture()
+    const fixture = await portableFixture('linux-x64')
     const fixtureClosure = ['@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-agentharness-bridge']
     await expect(verifyPortablePayload(fixture, fixtureClosure, 'win32-x64')).rejects.toThrow('bundled Node runtime')
     await writeFile(join(fixture, 'runtime', 'node.exe'), '{}')
     await expect(verifyPortablePayload(fixture, fixtureClosure, 'win32-x64')).rejects.toThrow('native packages')
-    for (const path of [
-      '@img/sharp-win32-x64',
-      '@koromix/koffi-win32-x64',
-      '@vscode/ripgrep-win32-x64',
-      'node-addon-require-builtin-win32-x64-msvc',
-    ]) await mkdir(join(fixture, 'node_modules', path), { recursive: true })
+    for (const path of windowsNativePackages) await mkdir(join(fixture, 'node_modules', path), { recursive: true })
     await expect(verifyPortablePayload(fixture, fixtureClosure, 'win32-x64')).resolves.toBeUndefined()
   })
 

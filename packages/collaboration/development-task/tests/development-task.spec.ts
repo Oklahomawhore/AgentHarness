@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentRoomService, {
   type DevelopmentParticipantId,
@@ -626,7 +627,7 @@ describe('observed Task context admission', () => {
         text: results[1].publication.text,
         publishedBy: results[1].publication.publishedBy,
       },
-    }, null, 2) + '\n').toMatchFileSnapshot(new URL('./expected/observed-context.json', import.meta.url).pathname)
+    }, null, 2) + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/observed-context.json', import.meta.url)))
   })
 
   it('rejects conflicting source text and preserves distinct observations with equal text', async () => {

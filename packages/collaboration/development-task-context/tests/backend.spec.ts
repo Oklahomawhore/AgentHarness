@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import DevelopmentTaskContextBackend from '../src/backend.ts'
 import * as TaskContext from '../src/index.ts'
 import TextBackend from '../src/text.ts'
@@ -372,7 +372,7 @@ describe('recipient Task context backend', () => {
         .replaceAll(task.id, '{{taskId}}').replaceAll(producer.intervalId, '{{intervalId}}')
         .replaceAll(withdrawalSource, '{{withdrawalSourceId}}')
     }).join('\n\n--- next request ---\n\n') + '\n'
-    await expect(recordedText).toMatchFileSnapshot(new URL('./expected/facts-remote-lifecycle.txt', import.meta.url).pathname)
+    await expect(recordedText).toMatchFileSnapshot(fileURLToPath(new URL('./expected/facts-remote-lifecycle.txt', import.meta.url)))
     const complete = await live.ctx.developmentTaskContextBackend.compute({
       view: current, recipient: { participantId: live.agentId },
       maxContextBytes: 65536, signal: new AbortController().signal,

@@ -11,9 +11,15 @@ if (row === undefined) throw new Error('Web composition must provide the Claude 
 
 it.each(['darwin', 'linux', 'win32'])('gates the descriptor adapter on the %s platform', (platform) => {
   expect(interpolate({ process: { platform } }, row.disabled)).toBe(platform === 'win32')
-  expect(rows.find(entry => entry.id === 'development-task-context-backend')?.name)
-    .toBe('@deepseek-ai/dsh-development-task-context/reported')
-  expect(rows.some(entry => entry.name === '@deepseek-ai/dsh-development-task-context/facts')).toBe(false)
+})
+
+it('keeps reported context as the configured default in its isolated audit realm', () => {
+  const audit = rows.find(entry => entry.id === 'development-task-context-audit')
+  expect(audit).toMatchObject({ name: 'cordis:group', group: true, isolate: { sessionPersistence: true } })
+  const children = audit?.config as typeof rows
+  expect(children.find(entry => entry.id === 'development-task-context-backend'))
+    .toMatchObject({ name: '@deepseek-ai/dsh-development-task-context/configured', config: { selection: { mode: 'reported' } } })
+  expect([...rows, ...children].some(entry => entry.name === '@deepseek-ai/dsh-development-task-context/facts')).toBe(false)
 })
 
 it.each([

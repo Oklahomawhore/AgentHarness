@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { appendFile, cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { appendFile, cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -64,6 +64,19 @@ async function temporaryDirectory(prefix = 'agentharness release test '): Promis
   return directory
 }
 
+async function portableCommandFixture(root: string, metadata: { version: string; product?: string }): Promise<string> {
+  const portable = join(root, 'portable')
+  await mkdir(portable, { recursive: true })
+  await cp(commandScript, join(portable, 'agentharness.mjs'))
+  await copyClusterRuntime(portable)
+  await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify(metadata))
+  return portable
+}
+
+function installerEnvironment(home: string): NodeJS.ProcessEnv {
+  return { ...process.env, HOME: home, AGENTHARNESS_NO_START: '1', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
+}
+
 async function freePort(): Promise<number> {
   const server = createServer()
   await new Promise<void>((resolvePromise, reject) => {
@@ -82,7 +95,9 @@ async function portableArchive(root: string, version = '1.2.3', platform = proce
   const payload = join(root, 'payload')
   await mkdir(join(payload, 'runtime'), { recursive: true })
   const runtimeName = platform === 'win32' ? 'node.exe' : 'node'
-  await writeFile(join(payload, 'runtime', runtimeName), platform === 'win32' ? 'fake PE runtime' : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 })
+  if (platform === 'win32') await writeFile(join(payload, 'runtime', runtimeName), 'fake PE runtime', { mode: 0o755 })
+  else if (platform !== process.platform) await writeFile(join(payload, 'runtime', runtimeName), 'fake POSIX runtime', { mode: 0o755 })
+  else await symlink(process.execPath, join(payload, 'runtime', runtimeName))
   await cp(commandScript, join(payload, 'agentharness.mjs'))
   await copyClusterRuntime(payload)
   await writeFile(join(payload, 'start.mjs'), '')
@@ -108,15 +123,17 @@ async function listen(server: ReturnType<typeof createServer>, port: number): Pr
   })
 }
 
-async function runShell(command: string, env: NodeJS.ProcessEnv): Promise<{ status: number; stdout: string; stderr: string }> {
-  const child = spawn('sh', ['-c', command], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+async function runCommand(
+  command: string, args: readonly string[], env: NodeJS.ProcessEnv,
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const child = spawn(command, [...args], { env, stdio: ['ignore', 'pipe', 'pipe'] })
   let stdout = ''
   let stderr = ''
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
   const status = await new Promise<number>((resolvePromise, reject) => {
     child.once('error', reject)
-    child.once('exit', (code) => { resolvePromise(code ?? 1) })
+    child.once('close', (code) => { resolvePromise(code ?? 1) })
   })
   return { status, stdout, stderr }
 }
@@ -234,11 +251,11 @@ describe('AgentHarness portable release staging', () => {
 
   it('stages separate shell and PowerShell installers for one cross-platform release', async () => {
     const fixture = await temporaryDirectory('agentharness cross platform release ')
-    const hostArchive = await portableArchive(join(fixture, 'host'))
+    const posixArchive = await portableArchive(join(fixture, 'posix'), '1.2.3', 'linux', 'x64')
     const windowsArchive = await portableArchive(join(fixture, 'windows'), '1.2.3', 'win32', 'x64')
     const site = join(fixture, 'site')
     const staged = await stagePortableRelease({
-      artifacts: [hostArchive, windowsArchive],
+      artifacts: [posixArchive, windowsArchive],
       out: site,
       baseUrl: 'https://downloads.example.test/agentharness',
     })
@@ -247,11 +264,15 @@ describe('AgentHarness portable release staging', () => {
       powershell: join(site, 'install.ps1'),
     })
     expect(await readFile(join(site, 'install.sh'), 'utf8')).not.toContain('win32-x64)')
+    expect(await readFile(join(site, 'install.sh'), 'utf8')).not.toContain(TEST_CLUSTER_SECRET)
     expect(await readFile(join(site, 'install.ps1'), 'utf8')).not.toContain(TEST_CLUSTER_SECRET)
+    expect(staged.credential).toEqual({ mode: 'prompt' })
+    expect(staged.manifest).toMatchObject({ formatVersion: 3, credential: { mode: 'prompt' } })
+    expect(staged.manifest.artifacts).toHaveProperty('linux-x64')
     expect(staged.manifest.artifacts).toHaveProperty('win32-x64')
   })
 
-  it('keeps public installers free of cluster credentials and persists a supplied join secret', async () => {
+  it.skipIf(process.platform === 'win32')('persists a supplied join secret through the public POSIX shell installer', async () => {
     const fixture = await temporaryDirectory('agentharness public release ')
     const archive = await portableArchive(fixture)
     const port = await freePort()
@@ -267,13 +288,10 @@ describe('AgentHarness portable release staging', () => {
     await listen(createLanReleaseServer(staged.output, token), port)
     const home = join(fixture, 'home')
     const env = {
-      ...process.env,
-      HOME: home,
+      ...installerEnvironment(home),
       AGENTHARNESS_MESH_SECRET: TEST_CLUSTER_SECRET,
-      AGENTHARNESS_NO_START: '1',
-      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     }
-    const installed = await runShell(`curl -fsSL ${baseUrl}/install.sh | sh`, env)
+    const installed = await runCommand('sh', ['-c', `curl -fsSL ${baseUrl}/install.sh | sh`], env)
     expect(installed.status).toBe(0)
     expect(installed.stdout).toContain('Joined AgentHarness cluster')
     const credentials = await readFile(join(home, '.dsh', '.credentials.yaml'), 'utf8')
@@ -281,7 +299,7 @@ describe('AgentHarness portable release staging', () => {
     expect(parseCredentialsDocument(credentials, 'installed credentials').refs.get('AGENTHARNESS_MESH_SECRET')).toBe(TEST_CLUSTER_SECRET)
   })
 
-  it('stages and installs twice through the exact curl pipe without Git, pnpm, or system Node', async () => {
+  it.skipIf(process.platform === 'win32')('stages and installs twice through the exact POSIX curl pipe without Git, pnpm, or system Node', async () => {
     const fixture = await temporaryDirectory()
     const archive = await portableArchive(fixture)
     const inspection = await inspectPortableArchive(archive)
@@ -297,15 +315,12 @@ describe('AgentHarness portable release staging', () => {
     const bin = join(home, 'bin with spaces')
     await mkdir(home, { recursive: true })
     const env = {
-      ...process.env,
-      HOME: home,
+      ...installerEnvironment(home),
       XDG_DATA_HOME: data,
       AGENTHARNESS_BIN_DIR: bin,
-      AGENTHARNESS_NO_START: '1',
-      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     }
     const command = `curl -fsSL ${baseUrl}/install.sh | sh`
-    const first = await runShell(command, env)
+    const first = await runCommand('sh', ['-c', command], env)
     expect(first.status).toBe(0)
     expect(first.stderr).toContain('trusted-LAN HTTP')
     expect(first.stdout).toContain('Installed AgentHarness 1.2.3')
@@ -314,7 +329,7 @@ describe('AgentHarness portable release staging', () => {
     expect(first.stdout).toContain('Joined AgentHarness cluster')
     expect((await lstat(join(home, '.dsh', '.credentials.yaml'))).mode & 0o077).toBe(0)
     const currentBefore = await readlink(join(data, 'agentharness', 'current'))
-    const second = await runShell(command, env)
+    const second = await runCommand('sh', ['-c', command], env)
     expect(second.status).toBe(0)
     expect(second.stdout).toContain('Installed AgentHarness 1.2.3')
     expect(await readlink(join(data, 'agentharness', 'current'))).toBe(currentBefore)
@@ -333,13 +348,13 @@ describe('AgentHarness portable release staging', () => {
       clusterSecret: TEST_CLUSTER_SECRET,
     })
     await listen(createLanReleaseServer(upgrade.output, upgradeToken), upgradePort)
-    const upgraded = await runShell(`curl -fsSL ${upgradeBaseUrl}/install.sh | sh`, env)
+    const upgraded = await runCommand('sh', ['-c', `curl -fsSL ${upgradeBaseUrl}/install.sh | sh`], env)
     expect(upgraded.status).toBe(0)
     expect(upgraded.stdout).toContain('Installed AgentHarness 1.2.4')
     expect(await readlink(join(data, 'agentharness', 'current'))).toContain('versions/1.2.4-')
   })
 
-  it('leaves the active version untouched when the archive checksum is wrong', async () => {
+  it.skipIf(process.platform === 'win32')('leaves the active POSIX version untouched when the archive checksum is wrong', async () => {
     const fixture = await temporaryDirectory('agentharness release negative ')
     const archive = await portableArchive(fixture)
     const port = await freePort()
@@ -349,19 +364,14 @@ describe('AgentHarness portable release staging', () => {
     const staged = await stagePortableRelease({ artifacts: [archive], out: site, baseUrl, clusterSecret: TEST_CLUSTER_SECRET })
     await listen(createLanReleaseServer(staged.output, token), port)
     const home = join(fixture, 'home')
-    const env = {
-      ...process.env,
-      HOME: home,
-      AGENTHARNESS_NO_START: '1',
-      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-    }
+    const env = installerEnvironment(home)
     const command = `curl -fsSL ${baseUrl}/install.sh | sh`
-    expect((await runShell(command, env)).status).toBe(0)
+    expect((await runCommand('sh', ['-c', command], env)).status).toBe(0)
     const currentPath = join(home, '.local', 'share', 'agentharness', 'current')
     const currentBefore = await readlink(currentPath)
     const artifactPath = join(site, 'releases', staged.version, staged.manifest.artifacts[`${process.platform}-${process.arch}`]!.file)
     await appendFile(artifactPath, 'corrupt')
-    const result = await runShell(command, env)
+    const result = await runCommand('sh', ['-c', command], env)
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('checksum mismatch')
     expect(await readlink(currentPath)).toBe(currentBefore)
@@ -386,13 +396,9 @@ describe('AgentHarness portable release staging', () => {
 describe('AgentHarness LAN release server and installed command', () => {
   it('waits for this startup URL with HTTP ready, concurrent reuse, and a previous launch in the log', async () => {
     const fixture = await temporaryDirectory('agentharness startup generation ')
-    const portable = join(fixture, 'portable')
+    const portable = await portableCommandFixture(fixture, { version: '9.8.7' })
     const state = join(fixture, 'state')
-    await mkdir(portable)
     await mkdir(state)
-    await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await copyClusterRuntime(portable)
-    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
     // The bound fixture owns HTTP; each real runtime process opens a control stream before HTTP becomes ready.
     let control: import('node:http').ServerResponse | undefined
     let entered = Promise.withResolvers<import('node:http').ServerResponse>()
@@ -526,13 +532,9 @@ describe('AgentHarness LAN release server and installed command', () => {
 
   it('reports this launch failure and exit code without stale log output or browser tokens', async () => {
     const fixture = await temporaryDirectory('agentharness failed start ')
-    const portable = join(fixture, 'portable')
+    const portable = await portableCommandFixture(fixture, { version: '9.8.7' })
     const state = join(fixture, 'state')
-    await mkdir(portable, { recursive: true })
     await mkdir(state)
-    await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await copyClusterRuntime(portable)
-    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
     await writeFile(join(state, 'server.log'), 'stale launch failure\n')
     await writeFile(join(portable, 'start.mjs'), [
       "console.error('credentials-local: unknown top-level key AGENTHARNESS_MESH_SECRET')",
@@ -565,12 +567,9 @@ describe('AgentHarness LAN release server and installed command', () => {
 
   it.each([200, 401])('starts, reports, and stops its owned runtime with HTTP %s', async (httpStatus) => {
     const fixture = await temporaryDirectory('agentharness command test ')
-    const portable = join(fixture, 'portable')
+    const portable = await portableCommandFixture(fixture, { product: 'AgentHarness', version: '9.8.7' })
     const state = join(fixture, 'state')
-    await mkdir(portable, { recursive: true })
-    await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await copyClusterRuntime(portable)
-    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ product: 'AgentHarness', version: '9.8.7' }))
+
     await writeFile(join(portable, 'start.mjs'), [
       'import { createServer } from \'node:http\'',
       'const args = process.argv.slice(2)',
@@ -597,8 +596,13 @@ describe('AgentHarness LAN release server and installed command', () => {
       expect(started).toContain(`AgentHarness 9.8.7 is ready at http://127.0.0.1:${port}`)
       expect(execFileSync(process.execPath, [installedCommand, 'status'], { env, encoding: 'utf8' })).toContain('ready at')
       expect(execFileSync(process.execPath, [installedCommand, 'start'], { env, encoding: 'utf8' })).toContain('already running')
-      expect(execFileSync(process.execPath, [installedCommand, 'mcp-guide'], { env, encoding: 'utf8' }))
-        .toContain(join(env.DSH_HOME, 'mcp', 'connection.json'))
+      const guide = execFileSync(process.execPath, [installedCommand, 'mcp-guide'], { env, encoding: 'utf8' })
+      if (process.platform === 'win32') {
+        expect(guide).toContain('MCP setup is unsupported on Windows')
+        expect(guide).not.toContain('mcp add')
+      } else {
+        expect(guide).toContain(join(env.DSH_HOME, 'mcp', 'connection.json'))
+      }
       const joined = spawnSync(process.execPath, [installedCommand, 'cluster', 'join', '--secret-stdin'], {
         env,
         encoding: 'utf8',
@@ -624,7 +628,7 @@ describe('AgentHarness LAN release server and installed command', () => {
 
     const occupiedPort = await freePort()
     await listen(createServer((_request, response) => { response.statusCode = 401; response.end('unmanaged') }), occupiedPort)
-    const occupied = await runShell(`${JSON.stringify(process.execPath)} ${JSON.stringify(installedCommand)} start`, {
+    const occupied = await runCommand(process.execPath, [installedCommand, 'start'], {
       ...env,
       AGENTHARNESS_PORT: String(occupiedPort),
     })
@@ -635,13 +639,9 @@ describe('AgentHarness LAN release server and installed command', () => {
 
   it('rejects a live foreign PID even when its recorded port answers HTTP 401', async () => {
     const fixture = await temporaryDirectory('agentharness wrong owner ')
-    const portable = join(fixture, 'portable')
+    const portable = await portableCommandFixture(fixture, { version: '9.8.7' })
     const state = join(fixture, 'state')
-    await mkdir(portable)
     await mkdir(state)
-    await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await copyClusterRuntime(portable)
-    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ version: '9.8.7' }))
     const server = createServer((_request, response) => { response.statusCode = 401; response.end('foreign') })
     await listen(server, 0)
     const address = server.address()
@@ -649,7 +649,7 @@ describe('AgentHarness LAN release server and installed command', () => {
     await writeFile(join(state, 'server.json'), JSON.stringify({
       pid: process.pid, entry: join(portable, 'start.mjs'), version: '9.8.7', port: address.port,
     }))
-    const result = await runShell(`${JSON.stringify(process.execPath)} ${JSON.stringify(join(portable, 'agentharness.mjs'))} start`, {
+    const result = await runCommand(process.execPath, [join(portable, 'agentharness.mjs'), 'start'], {
       ...process.env, AGENTHARNESS_RUNTIME_DIR: state, AGENTHARNESS_PORT: String(address.port), AGENTHARNESS_NO_OPEN: '1',
     })
     expect(result.status).not.toBe(0)
@@ -660,12 +660,9 @@ describe('AgentHarness LAN release server and installed command', () => {
 
   it('bounds restart time when an old page keeps the previous runtime alive', async () => {
     const fixture = await temporaryDirectory('agentharness open page upgrade ')
-    const portable = join(fixture, 'portable')
+    const portable = await portableCommandFixture(fixture, { product: 'AgentHarness', version: '9.8.8' })
     const state = join(fixture, 'state')
-    await mkdir(portable, { recursive: true })
-    await cp(commandScript, join(portable, 'agentharness.mjs'))
-    await copyClusterRuntime(portable)
-    await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify({ product: 'AgentHarness', version: '9.8.8' }))
+
     await writeFile(join(portable, 'start.mjs'), [
       'import { createServer } from \'node:http\'',
       'const args = process.argv.slice(2)',

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import type { DevelopmentTaskContextView } from '@deepseek-ai/dsh-development-task'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
@@ -37,12 +38,12 @@ it('records exact external projection and withdrawal text with scope, supersessi
     session, grant, view, backend: new TextBackend(ctx), cacheKey: 'fixture-key', maxContextBytes: 10_000,
     signal: new AbortController().signal,
   })
-  await expect(projection.text + '\n').toMatchFileSnapshot(new URL('./expected/projection.txt', import.meta.url).pathname)
+  await expect(projection.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/projection.txt', import.meta.url)))
   expect(projection.omittedSources).toEqual([{
     source: { kind: 'publication', taskId: grant.taskId, revision: 3, publicationId: 'own-source' }, reason: 'self-published',
   }])
   const withdrawal = withdrawnScopeProjection({ ...session, lastProjectionId: projection.projectionId }, 10_000)
-  await expect(withdrawal.text + '\n').toMatchFileSnapshot(new URL('./expected/withdrawal.txt', import.meta.url).pathname)
+  await expect(withdrawal.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/withdrawal.txt', import.meta.url)))
   expect(withdrawal.text).not.toContain('fixture-68')
   expect(projection.text).not.toContain('private-claude-session')
 })

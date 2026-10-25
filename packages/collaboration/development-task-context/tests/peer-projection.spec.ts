@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import type {
   DevelopmentTaskContextPublication, DevelopmentTaskPeerContributionGrant,
@@ -109,7 +110,7 @@ it('keeps authenticated peer corrections and independent conflicts separate from
   expect(result.text).toContain('meshField')
   expect(result.text).not.toContain('oldField')
   expect(result.text).toContain('"supersededCount":1')
-  await expect(result.text + '\n').toMatchFileSnapshot(new URL('./expected/peer-facts-conflict.txt', import.meta.url).pathname)
+  await expect(result.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/peer-facts-conflict.txt', import.meta.url)))
 })
 
 it.each(['invalid', 'unavailable'] as const)('does not revive older peer facts after an %s report', async (state) => {
@@ -143,7 +144,7 @@ it('withdraws an ended peer interval while retaining independent evidence and fr
   expect(facts.text).toContain('"state":"revoked"')
   expect(facts.text).toContain('otherField')
   expect(facts.text).toContain('"withdrawals":[')
-  await expect(facts.text + '\n').toMatchFileSnapshot(new URL('./expected/peer-facts-withdrawal.txt', import.meta.url).pathname)
+  await expect(facts.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/peer-facts-withdrawal.txt', import.meta.url)))
 })
 
 it('counts whole peer groups against the complete budget and never restores withdrawn text when a notice cannot fit', async () => {
@@ -175,7 +176,7 @@ it('selects the greatest peer sequence before considering identical publication 
   expect(result.omittedSources).toContainEqual({
     source: { kind: 'publication', taskId: 'orders', revision: 12, publicationId: 'old' }, reason: 'superseded',
   })
-  await expect(result.text + '\n').toMatchFileSnapshot(new URL('./expected/peer-text-superseded.txt', import.meta.url).pathname)
+  await expect(result.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/peer-text-superseded.txt', import.meta.url)))
 })
 
 it('does not substitute a small old peer sample when the latest complete sample exceeds the budget', async () => {

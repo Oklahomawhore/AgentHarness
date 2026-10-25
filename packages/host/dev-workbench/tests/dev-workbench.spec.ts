@@ -1,8 +1,9 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createServer, type Server } from 'node:http'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import type { SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, TestRunner, vi } from 'vitest'
 import DevWorkbenchService from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import type { DevWorkbenchEntryId } from '../src/types.ts'
@@ -97,10 +98,10 @@ describe('DevWorkbenchService', () => {
   })
 
   it('single-flights repeated starts and waits for process-tree stop', async () => {
-    const { ctx, service } = await bench(['-e', 'setInterval(() => {}, 1000)'])
+    const { ctx, service } = await bench(['-e', "console.log('started'); setInterval(() => {}, 1000)"])
     const subprocess = ctx.subprocess
     const spawn = subprocess.spawn.bind(subprocess)
-    const exitObserved = Promise.withResolvers<undefined>()
+    const exitObserved = Promise.withResolvers<boolean>()
     const releaseExit = Promise.withResolvers<undefined>()
     const spawned = vi.spyOn(subprocess, 'spawn').mockImplementation((spec) => {
       const handle = spawn(spec)
@@ -108,7 +109,7 @@ describe('DevWorkbenchService', () => {
         ...handle,
         async waitForExit(signal) {
           const empty = await handle.waitForExit(signal)
-          exitObserved.resolve(undefined)
+          exitObserved.resolve(empty)
           await releaseExit.promise
           return empty
         },
@@ -122,6 +123,9 @@ describe('DevWorkbenchService', () => {
       expect(spawned).toHaveBeenCalledTimes(1)
       expect(first.phase).toBe('running')
       expect(second).toEqual(first)
+      await expect.poll(() => service.list().entries[0]?.stdout, {
+        timeout: TestRunner.getCurrentTest()!.timeout,
+      }).toBe('started\n')
 
       let returned = false
       const stopping = service.stop(id('fixture')).then((snapshot) => {
@@ -132,6 +136,7 @@ describe('DevWorkbenchService', () => {
         exitObserved.promise.then(() => 'range-exit-observed'),
         stopping.then(() => 'stop-returned'),
       ])).toBe('range-exit-observed')
+      expect(await exitObserved.promise).toBe(true)
       expect(returned).toBe(false)
       releaseExit.resolve(undefined)
       const stopped = await stopping
@@ -142,6 +147,35 @@ describe('DevWorkbenchService', () => {
       expect(spawned).toHaveBeenCalledTimes(1)
     } finally {
       releaseExit.resolve(undefined)
+      spawned.mockRestore()
+    }
+  })
+
+  it('retains a startup failure without inventing an outcome and waits for its managed range', async () => {
+    const { ctx, service } = await bench([])
+    const done = Promise.withResolvers<SubprocessOutcome>()
+    const empty = Promise.withResolvers<boolean>()
+    const observing = Promise.withResolvers<undefined>()
+    const failure = new Error('subprocess terminated before target start')
+    const spawned = vi.spyOn(ctx.subprocess, 'spawn').mockReturnValue({
+      stdin: undefined, stdout: undefined, stderr: undefined, collected: {}, done: done.promise,
+      terminate() { done.reject(failure) },
+      waitForExit() {
+        observing.resolve(undefined)
+        return empty.promise
+      },
+    })
+    try {
+      await service.start(id('fixture'))
+      const stopping = service.stop(id('fixture'))
+      await observing.promise
+      expect(service.list().entries[0]).toMatchObject({ phase: 'failed', error: failure.message })
+      empty.resolve(true)
+      const stopped = await stopping
+      expect(stopped).toMatchObject({ phase: 'stopped', error: failure.message })
+      expect(stopped.outcome).toBeUndefined()
+    } finally {
+      empty.resolve(true)
       spawned.mockRestore()
     }
   })

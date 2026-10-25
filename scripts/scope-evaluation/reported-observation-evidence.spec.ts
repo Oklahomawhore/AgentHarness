@@ -225,7 +225,7 @@ it('the independent Python decoder preserves exact text and rejects the same mal
   const run = promisify(execFile)
   const pending = run(process.platform === 'win32' ? 'python' : 'python3',
     [fileURLToPath(new URL('./reported-observation-evidence.py', import.meta.url))],
-    { timeout: 20000, maxBuffer: 1048576 })
+    { timeout: 20000, maxBuffer: 1048576, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
   pending.child.stdin?.end(JSON.stringify(cases))
   const output = await pending
   expect(output.stderr).toBe('')
