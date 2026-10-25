@@ -275,9 +275,13 @@ def write_advanced_profile_patch(root: Path, name: str, sessions: Path) -> Path:
 
 
 def write_mcp_patch(root: Path, sessions: Path, server_script: Path) -> Path:
-    """Write a profile patch that mounts the packaged MCP client."""
+    """Write a profile patch that mounts the MCP registry and packaged client."""
     return write_profile_patch(root, "mcp.patch.yml", sessions, [{
         "insert": [{
+            "id": "mcp",
+            "name": "@deepseek-ai/dsh-mcp",
+            "config": {"maxServers": 1},
+        }, {
             "id": "mcp-fixture",
             "name": "@deepseek-ai/dsh-mcp-client",
             "config": {

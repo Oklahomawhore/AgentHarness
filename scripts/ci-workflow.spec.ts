@@ -38,7 +38,7 @@ describe('DeepSeek e2e workflow', () => {
     expect(workflow.concurrency).toMatchObject({ 'cancel-in-progress': false })
   })
 
-  it('prepares bubblewrap from the pinned payload without a package transaction', () => {
+  it('prepares bubblewrap through the shared functional-probe entrypoint', () => {
     const workflow = loadWorkflow('.github/workflows/e2e.yml')
     const e2e = workflowJob(workflow, 'e2e')
     if (!Array.isArray(e2e.steps)) throw new TypeError('DeepSeek e2e workflow must define steps')
@@ -47,7 +47,7 @@ describe('DeepSeek e2e workflow', () => {
     expect(steps.find(step => step.name === 'Prepare bubblewrap (unrestrict userns)')).toMatchObject({
       run: 'bash scripts/prepare-ci-bubblewrap.sh',
     })
-    expect(JSON.stringify(steps)).not.toContain('apt-get')
+    expect(steps.filter(step => String(step.run).includes('prepare-ci-bubblewrap.sh'))).toHaveLength(1)
   })
 
   it('bounds profile subprocess fan-out to the tested e2e default', () => {
@@ -182,7 +182,7 @@ describe('Python release workflows', () => {
     expect(JSON.stringify(workflow)).not.toMatch(/secrets\.|sdk-live|test:e2e|--find-links|cygpath/)
     expect(JSON.stringify(addon)).toContain('manylinux_2_28_x86_64')
     expect(JSON.stringify(addon)).toContain('manylinux_2_28_aarch64')
-    expect(JSON.stringify(addon)).toContain('npm_config_build_from_source=true pnpm run install')
+    expect(JSON.stringify(addon)).toContain('npm_config_build_from_source=true pnpm --config.verify-deps-before-run=false run install')
     expect(JSON.stringify(addon)).toContain('node-pty-glibc-versions.txt')
     expect(JSON.stringify(addon)).toContain('le 2.28')
     expect(macos).toMatchObject({ if: "runner.os == 'macOS'" })

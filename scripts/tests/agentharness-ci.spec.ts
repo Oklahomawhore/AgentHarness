@@ -88,9 +88,13 @@ describe('AgentHarness hosted CI', () => {
 
   it('keeps benchmarks isolated with a browser and complete Python SDK tests', () => {
     const benchmarks = ci.jobs.benchmarks!
+    expect(benchmarks['runs-on']).toBe('ubuntu-24.04')
     expect(benchmarks['timeout-minutes']).toBe(15)
     expect(benchmarks.needs).toBeUndefined()
-    expect(benchmarks.steps.map(step => step.run)).toContain('pnpm run check:ci:bench')
+    const setup = benchmarks.steps.find(step => step.uses === 'actions/setup-node@v6')
+    expect(setup?.with?.cache).toBe('pnpm')
+    expect(setup?.if).toBeUndefined()
+    expect(benchmarks.steps).toContainEqual({ run: 'pnpm run check:ci:bench', env: { DSH_GATE_VERBOSE: '1' } })
     expect(benchmarks.steps.map(step => step.run)).toContain('pnpm --filter @deepseek-ai/dsh-benchmarks exec playwright install --with-deps chromium')
     expect(ci.jobs['python-sdk']!.steps.map(step => step.run))
       .toContain('uv run --python 3.10 --group test --project python/sdk pytest')
@@ -242,6 +246,21 @@ describe.skipIf(process.platform === 'win32')('native wheel workflow steps', () 
       expect(child.status, child.stderr + child.stdout).toBe(0)
       expect(child.stdout).toContain(`--output ${join(root, 'dist-exe', cell.executable)}`)
     }
+  })
+
+  it('runs the installed addon script without attempting another workspace installation', () => {
+    const fixture = scriptFixture()
+    const manager = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { packageManager: string }
+    writeFileSync(join(fixture.directory, 'package.json'), JSON.stringify({ name: 'ci-installed-addon-fixture', packageManager: manager.packageManager,
+      scripts: { install: 'node rebuild.mjs' }, dependencies: { 'deliberately-uninstalled': 'file:missing' },
+    }))
+    writeFileSync(join(fixture.directory, 'rebuild.mjs'), "import { writeFileSync } from 'node:fs'; writeFileSync('rebuilt', process.env.npm_config_build_from_source)\n")
+    const step = stepScript(builder, 'build', 'Rebuild Linux node-pty against manylinux 2.28')
+    const command = /bash -euxo pipefail -c \\\n\s+'([^']+)'/.exec(step)?.[1]
+    expect(command).toBeDefined()
+    const result = fixture.run(command!, { HOST_NODE_ROOT: resolve(process.execPath, '../..'), PNPM_SETUP_ROOT: fixture.directory })
+    expect(result.status, result.stderr + result.stdout).toBe(0)
+    expect(readFileSync(join(fixture.directory, 'rebuilt'), 'utf8')).toBe('true')
   })
 
   it.each(['node24-win-x64,node24-win-x64', 'node24-linux-x64,', ',', 'linux-x64', 'node25-linux-x64', 'node24-win-arm64'])(

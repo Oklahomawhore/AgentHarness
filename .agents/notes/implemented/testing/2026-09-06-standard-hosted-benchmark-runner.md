@@ -23,4 +23,4 @@ The [Session performance decision](2026-09-04-session-open-performance-gate.md) 
 
 A standard runner trades parallel build capacity for a fixed measurement class without removing the required verdict. Cache misses and runner variation can still affect total duration. Each runner change needs an actual hosted benchmark run before its job timeout is treated as validated; local workflow assertions alone cannot establish execution time.
 
-The owning [workflow tests](../../../../scripts/ci-workflow.spec.ts) pin runner routing, unconditional cache restoration, required status, and the job timeout. Negative controls reject failover routing, a cache condition, and the former 30-minute job bound.
+The owning [workflow tests](../../../../scripts/tests/agentharness-ci.spec.ts) pin runner routing, unconditional cache restoration, required status, and the job timeout. Negative controls reject failover routing, a cache condition, and the former 30-minute job bound.

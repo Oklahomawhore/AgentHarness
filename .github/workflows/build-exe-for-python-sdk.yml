@@ -213,7 +213,7 @@ jobs:
             -w "$addon_dir" \
             "$image" \
             bash -euxo pipefail -c \
-              'export PATH="$HOST_NODE_ROOT/bin:$PNPM_SETUP_ROOT/node_modules/.bin:$PATH"; npm_config_build_from_source=true pnpm run install'
+              'export PATH="$HOST_NODE_ROOT/bin:$PNPM_SETUP_ROOT/node_modules/.bin:$PATH"; npm_config_build_from_source=true pnpm --config.verify-deps-before-run=false run install'
           [ -f "$addon" ] || { echo "::error::$addon missing after manylinux rebuild"; exit 1; }
           readelf --version-info "$addon" | tee node-pty-glibc-versions.txt
           maximum="$(sed -n 's/.*Name: GLIBC_\([0-9.]*\).*/\1/p' node-pty-glibc-versions.txt | sort -V | tail -1)"

@@ -83,6 +83,8 @@ jobs:
       - name: Install benchmark browser
         run: pnpm --filter @deepseek-ai/dsh-benchmarks exec playwright install --with-deps chromium
       - run: pnpm run check:ci:bench
+        env:
+          DSH_GATE_VERBOSE: '1'
 
   node-compat:
     name: node ${{ matrix.node }} / compatibility
