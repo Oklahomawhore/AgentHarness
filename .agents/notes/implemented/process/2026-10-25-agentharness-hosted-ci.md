@@ -20,6 +20,10 @@ The required verdict depends on every validation job and accepts only successful
 
 Disposable hosted machines own each job's checkout, tools, caches, temporary files, and subprocesses. No private runner selector, persistent-host toolcache override, standby lane, or runner-health fallback is retained. The upstream deployment decisions remain historical: [pool failover](../../archived/process/2026-07-26-ci-failover-runbook.md), [compatibility isolation](../../archived/process/2026-09-06-node-compatibility-selfhosted.md), and [release rehearsal routing](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md).
 
+Windows coverage assigns 30 seconds to test cases, polling assertions, and hooks through `DSH_COVERAGE_TEST_TIMEOUT_MS`. Both instrumented and coverage-exempt commands receive that budget. CIM-backed process identity, sequential historical-report setup, and complete Web-profile packing run on standard hosted Windows capacity; Vitest's five-second test and ten-second hook defaults do not size those operations. Linux retains its defaults, and explicit fixture deadlines remain authoritative.
+
+Same-directory Session recovery fixtures transfer cleanup ownership to the restored Host. The retired Host cannot remove that directory while the restored Session still owns file handles or pending persistence. Recovery into a separate copied directory retains independent cleanup owners; this fixture ownership does not require filesystem-removal retries or a production teardown change.
+
 ## Alternatives considered
 
 Restoring the imported triggers alone leaves private labels without runners and references to absent workflows. Recreating the upstream persistent infrastructure adds a deployment and trust model that this repository does not operate. Dropping tests or making native validation nonblocking would hide release failures rather than provide portable evidence.

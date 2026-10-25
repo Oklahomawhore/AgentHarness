@@ -30,7 +30,7 @@ Status: implemented
 
 ### 已构建 Client 的导入分类
 
-[Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts)通过普通 Node 启动只含可擦除语法的 TypeScript 驱动，使传递导入使用已构建的包导出。tsx hook 会将这些导入重定向到源码，并可能创建第二份原生模块实例，不能充当构建产物导入的判定器。不使用该 hook 时 Koffi 可以导入，不再有豁免。检查只有在 Node 针对准确的 `dockkit.module.css` 路径报告 `ERR_UNKNOWN_FILE_EXTENSION` 时才接受 Dockkit bundle。其他错误以及意外成功的豁免导入都会失败。限定范围的 resolve/load hook 覆盖预期 CSS 失败、任意失败、其他 stylesheet、其他错误码和过期豁免，不修改共享构建产物。
+[Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts)通过普通 Node 启动只含可擦除语法的 TypeScript 驱动，使传递导入使用已构建的包导出。tsx hook 会将这些导入重定向到源码，并可能创建第二份原生模块实例，不能充当构建产物导入的判定器。不使用该 hook 时 Koffi 可以导入，不再有豁免。检查只有在 Node 针对 Client 包已构建 `lib/` 目录中现存的普通样式表文件报告 `ERR_UNKNOWN_FILE_EXTENSION` 时，才接受列表中的三个 Client bundle。首先失败的样式表可以来自传递依赖，因此不能用导入顺序选定一个固定资源路径。源码路径、不存在的文件、其他错误以及意外成功的豁免导入都会失败。各隔离夹具持有自己的仓库目录结构和资源；限定范围的 resolve/load hook 只替换选中的 bundle，不修改共享构建产物。
 
 ## 考虑过的替代方案
 

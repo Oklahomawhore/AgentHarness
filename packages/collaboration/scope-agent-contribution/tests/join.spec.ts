@@ -469,7 +469,7 @@ describe('joint native receiving and contribution consent', () => {
     expect((await storedSource(source, b.id)).capture?.receiving?.automatic).toEqual(automaticPolicy)
     await source.ctx.fiber.dispose()
     const restarted = await createHost(network, 'source', 'native', { receive: true, root: source.root, peerId: source.peerId })
-    hosts.push(restarted)
+    hosts.splice(hosts.indexOf(source), 1, restarted)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).capture).toBeNull()
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).receivingContinuation)
       .toBeUndefined()
@@ -824,7 +824,7 @@ describe('joint native receiving and contribution consent', () => {
     expect(stored.receivingContinuation?.receiving.adoptionId).toBe(before.receivingContinuation?.receiving.adoptionId)
     await source.ctx.fiber.dispose()
     const restarted = await createHost(network, 'source', 'native', { receive: true, root: source.root, peerId: source.peerId })
-    hosts.push(restarted)
+    hosts.splice(hosts.indexOf(source), 1, restarted)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).receivingContinuation)
       .toBeUndefined()
     const replacement = await restarted.ctx.agents.resume({ resumeSessionId: b.id,

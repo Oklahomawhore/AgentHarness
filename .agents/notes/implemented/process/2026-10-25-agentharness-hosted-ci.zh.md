@@ -20,6 +20,10 @@ Ubuntu job 通过发行版包管理器安装 bubblewrap，并在依赖沙箱的�
 
 一次性托管机器拥有各 job 的检出、工具、缓存、临时文件和子进程。不保留私有运行器选择器、持久主机工具缓存覆盖、待命 lane 或运行器健康兜底。上游部署决策保留为历史：[池故障切换](../../archived/process/2026-07-26-ci-failover-runbook.md)、[兼容性隔离](../../archived/process/2026-09-06-node-compatibility-selfhosted.md)和[发布演练路由](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md)。
 
+Windows 覆盖率通过 `DSH_COVERAGE_TEST_TIMEOUT_MS` 为用例、轮询断言和 hooks 分配 30 秒预算。插桩与覆盖率豁免命令都接收该预算。基于 CIM 的进程身份检查、顺序历史报告准备及完整 Web profile 打包运行在标准托管 Windows 容量上；Vitest 的五秒用例默认值和十秒 hook 默认值没有按这些操作定额。Linux 保留默认值，显式夹具期限仍具有优先级。
+
+同目录 Session 恢复夹具将清理所有权移交给恢复后的 Host。恢复后的 Session 仍持有文件句柄或待落盘操作时，已退役 Host 不能删除该目录。恢复到另一份复制目录则保留独立清理所有者；这项夹具所有权不需要文件删除重试或生产清理变更。
+
 ## Alternatives considered
 
 仅恢复导入的触发器仍会留下没有运行器的私有标签及不存在的工作流引用。重建上游持久基础设施会增加本仓库没有运行的部署和信任模型。删除测试或将原生验收改为非阻塞会隐藏发布失败，不能提供跨平台证据。

@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it } from 'vitest'
 import { gatesForMode } from '../run-gates.ts'
+import { COVERAGE_PARTITIONS_ENV, COVERAGE_TEST_TIMEOUT_ENV } from '../coverage-partitions.ts'
 
 interface Step {
   name?: string
@@ -20,6 +21,7 @@ interface Job {
   name: string
   uses?: string
   with?: Record<string, unknown>
+  env?: Record<string, string>
   'runs-on': string
   'timeout-minutes'?: number
   'continue-on-error'?: boolean
@@ -84,6 +86,42 @@ describe('AgentHarness hosted CI', () => {
     expect(windows.steps.map(step => step.run).join('\n')).toContain('AllowDevelopmentWithoutDevLicense')
     expect(windows['continue-on-error']).toBeUndefined()
     expect(ci.jobs['all-checks-passed']!.needs).toContain('windows-native')
+  })
+
+  it('applies the Windows coverage budget to test, polling, and hook waits while leaving Linux defaults intact', () => {
+    const budget = ci.jobs['windows-native']!.env![COVERAGE_TEST_TIMEOUT_ENV]!
+    expect(budget).toBe('30000')
+    expect(ci.env[COVERAGE_TEST_TIMEOUT_ENV]).toBeUndefined()
+    expect(ci.jobs.linux!.env?.[COVERAGE_TEST_TIMEOUT_ENV]).toBeUndefined()
+    const previous = [
+      ['npm_execpath', process.env.npm_execpath],
+      [COVERAGE_TEST_TIMEOUT_ENV, process.env[COVERAGE_TEST_TIMEOUT_ENV]],
+      [COVERAGE_PARTITIONS_ENV, process.env[COVERAGE_PARTITIONS_ENV]],
+    ] as const
+    try {
+      process.env.npm_execpath = '/fixture/pnpm.cjs'
+      process.env[COVERAGE_TEST_TIMEOUT_ENV] = budget
+      Reflect.deleteProperty(process.env, COVERAGE_PARTITIONS_ENV)
+      for (const id of ['coverage', 'coverage-exempt-heavy']) {
+        const args = gatesForMode('ci-windows-complete').find(gate => gate.id === id)!.args
+        expect(args).toContain(`--testTimeout=${budget}`)
+        expect(args).toContain(`--expect.poll.timeout=${budget}`)
+        expect(args).toContain(`--hookTimeout=${budget}`)
+      }
+      Reflect.deleteProperty(process.env, COVERAGE_TEST_TIMEOUT_ENV)
+      for (const id of ['coverage', 'coverage-exempt-heavy']) {
+        const args = gatesForMode('ci-coverage').find(gate => gate.id === id)!.args
+        for (const prefix of ['--testTimeout=', '--expect.poll.timeout=', '--hookTimeout=']) {
+          expect(args.some(arg => arg.startsWith(prefix))).toBe(false)
+        }
+      }
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key)
+        else process.env[key] = value
+      }
+    }
+    for (const [key, value] of previous) expect(process.env[key]).toBe(value)
   })
 
   it('keeps benchmarks isolated with a browser and complete Python SDK tests', () => {
