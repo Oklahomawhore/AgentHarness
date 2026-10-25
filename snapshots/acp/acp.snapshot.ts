@@ -29,6 +29,8 @@ const controllerCases: readonly {
   readonly configPath?: string
 }[] = [
   { name: 'handshake', hasModelTurn: false },
+  { name: 'mcp-session', hasModelTurn: true, configPath: join(corpusDir, 'mcp-session', 'cordis.yml') },
+  { name: 'goal-idle-cancel', hasModelTurn: true, configPath: join(corpusDir, 'goal-idle-cancel', 'cordis.yml') },
   { name: 'reject-extra-dirs', hasModelTurn: false },
   { name: 'cancel', hasModelTurn: true },
   { name: 'cancel-tool-calls', hasModelTurn: true },

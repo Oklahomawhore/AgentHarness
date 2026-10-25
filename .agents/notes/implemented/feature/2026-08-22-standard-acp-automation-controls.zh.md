@@ -42,7 +42,7 @@ bridge 经由普通的持久性屏障实体化：`ctx.sessions.flush(session)` �
 
 `session/new` 和 `session/resume` 接受标准 stdio 和 Streamable HTTP MCP 声明。Stdio 使用会话 `cwd`；HTTP 使用已声明 URL 和 header；两者都保留 `dsh-mcp-client` 的超时和重连默认值。名称、命令、URL、环境项、header 和重复的规范化 namespace 都会在 Agent 公布前校验。初始连接或发现失败会回滚尚未公布的 Agent。
 
-MCP namespace reservation 跟随最近的 DSH registration scope，而不是进程 root。独立 Agent scope 可以使用同一服务器名，同一 Agent 内的重复名称仍会失败。Scoped disposal 会释放工具、传输和 reservation。
+每个非空 MCP 声明清单在尚未发布的 Agent 作用域下拥有经 Cordis 隔离的 `mcp` 服务。注册表容量等于已验证的清单长度，无需 Host 级注册表或额外用户配置。会话服务器不会进入 Host 注册表，独立 Agent 可以使用同一服务器名。同一 Agent 内规范化后的重复名称仍在挂载前失败。作用域释放会清理注册表、工具、传输与命名空间预留。
 
 ACP 客户端是受信任的控制器：stdio 声明授权执行进程，HTTP 声明授权携带其 header 发起请求。DSH 不增加每服务器私有 cwd 或超时字段。工具挂载后，普通 DSH 工具策略仍然约束调用。
 

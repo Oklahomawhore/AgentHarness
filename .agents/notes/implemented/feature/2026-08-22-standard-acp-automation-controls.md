@@ -42,7 +42,7 @@ The advisory LLM catalog now serves another automation consumer without becoming
 
 `session/new` and `session/resume` accept standard stdio and Streamable HTTP MCP declarations. Stdio uses the session `cwd`; HTTP uses the declared URL and headers; both retain `dsh-mcp-client` timeout and reconnect defaults. Names, commands, URLs, environment entries, headers, and duplicate normalized namespaces are validated before Agent publication. Initial connection or discovery failure rolls the unpublished Agent back.
 
-MCP namespace reservations follow the nearest DSH registration scope rather than the process root. Independent Agent scopes may use the same server name, while duplicate names inside one Agent still fail. Scoped disposal releases tools, transports, and reservations.
+Each nonempty MCP declaration list owns a Cordis-isolated `mcp` service under its unpublished Agent scope. The registry capacity equals the validated list length; no Host-level registry or additional user configuration is required. Session servers stay outside the Host registry, and independent Agents can use the same server name. Duplicate normalized names inside one Agent still fail before mounting. Scoped disposal releases the registry, tools, transports, and namespace reservations.
 
 ACP clients are trusted controllers: a stdio declaration authorizes process execution and an HTTP declaration authorizes requests with its headers. DSH does not add per-server private cwd or timeout fields. Ordinary DSH tool policy still governs calls after tools are mounted.
 

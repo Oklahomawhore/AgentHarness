@@ -2003,7 +2003,7 @@ Source: [`packages/lsp/lsp-stdio/src/index.ts:82`](../packages/lsp/lsp-stdio/src
 ```ts config-catalog
 /** Bound on live MCP transport registrations. */
 export interface Config {
-  /** Maximum MCP servers registered in this Host process. */
+  /** Maximum MCP servers registered in this service instance. */
   readonly maxServers: number
 }
 ```

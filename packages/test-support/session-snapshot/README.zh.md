@@ -134,6 +134,8 @@ Profile patch 先在其源文件附近解析裸包名，再链接到隔离 profi
 
 ### 数据流
 
+ACP 的 `newSession` 步骤可通过 `nodeMcpServers: [{ name, script }]` 挂载 Node MCP 测试脚本。脚本路径相对于场景 workspace；harness 提供自己的 Node 可执行文件，并发送普通 stdio MCP 声明，传输由该 Session 拥有。
+
 场景在启动器下运行 agent，通过 harness 向它喂入输入脚本，并捕获 stdout 与持久化日志。规范化器把捕获内容规范化——id 转为首次出现序列、生成 cwd 转为 `{{cwd}}`、`system/message` 文本转为 `{{system}}`、header 工具 schema 转为 `{{tools}}`——使已录制与本次运行可以结构化比较。随后工厂把规范化 stdout 与重新持久化日志同已提交 fixture 比较，或在录制/刷新模式下回写它们；其保护在任何比较结果被采信之前就拒绝畸形或漂移的 fixture。
 
 </details>

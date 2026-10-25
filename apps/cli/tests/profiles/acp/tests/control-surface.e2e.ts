@@ -87,6 +87,12 @@ describe('standard ACP v1 control surface', () => {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: 'model=beta; tool=5' },
       }))
+      expect(first.updates).toContainEqual({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'control-add',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: '5' } }],
+      })
       const message = first.updates.find(update => update.sessionUpdate === 'agent_message_chunk')
       expect(message !== undefined && 'messageId' in message && typeof message.messageId === 'string').toBe(true)
       await first.client.closeSession({ sessionId: created.sessionId })

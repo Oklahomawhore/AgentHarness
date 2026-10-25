@@ -10,6 +10,8 @@ import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceRevision, type SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import McpService from '@deepseek-ai/dsh-mcp'
+import * as McpInvariant from '@deepseek-ai/dsh-mcp/invariant'
 import { makeBridgeHarness, textResponse, type BridgeHarness } from './harness.ts'
 import { startHttpMcpFixture } from '../../../mcp/mcp-client/tests/http-fixture.ts'
 
@@ -774,7 +776,9 @@ describe('automation-only ACP bridge', () => {
   }, 30_000)
 
   it('allows the same MCP server namespace in independent sessions', async () => {
-    harness = await makeBridgeHarness()
+    harness = await makeBridgeHarness({ script: [textResponse('first'), textResponse('second'), textResponse('still connected')] })
+    await harness.ctx.plugin(McpService, { maxServers: 1 })
+    await harness.ctx.plugin(McpInvariant)
     await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
     const fixtureServer = fileURLToPath(new URL('../../../mcp/mcp-client/tests/fixture-server.ts', import.meta.url))
     const mcpServers = [{ name: 'fixture', command: process.execPath, args: [fixtureServer], env: [] }]
@@ -782,10 +786,16 @@ describe('automation-only ACP bridge', () => {
     const first = await harness.client.newSession({ cwd: process.cwd(), mcpServers })
     const second = await harness.client.newSession({ cwd: process.cwd(), mcpServers })
 
-    await Promise.all([
-      harness.client.closeSession({ sessionId: first.sessionId }),
-      harness.client.closeSession({ sessionId: second.sessionId }),
-    ])
+    await harness.client.prompt({ sessionId: first.sessionId, prompt: [{ type: 'text', text: 'first' }] })
+    await harness.client.prompt({ sessionId: second.sessionId, prompt: [{ type: 'text', text: 'second' }] })
+    expect(harness.adapter.requests.slice(0, 2).map(request => request.tools?.map(tool => tool.name)))
+      .toEqual([expect.arrayContaining(['mcp__fixture__add']), expect.arrayContaining(['mcp__fixture__add'])])
+    expect(harness.ctx.mcp.listServers()).toEqual([])
+
+    await harness.client.closeSession({ sessionId: first.sessionId })
+    await harness.client.prompt({ sessionId: second.sessionId, prompt: [{ type: 'text', text: 'continue' }] })
+    expect(harness.adapter.requests[2]?.tools?.map(tool => tool.name)).toContain('mcp__fixture__add')
+    await harness.client.closeSession({ sessionId: second.sessionId })
   }, 30_000)
 
   it('validates standard MCP declarations before publishing an Agent', async () => {

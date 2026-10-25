@@ -134,6 +134,8 @@ The shared core owns manifests, generation-qualified role selection, workspace s
 
 ### Data flow
 
+An ACP `newSession` step can attach Node MCP fixture scripts through `nodeMcpServers: [{ name, script }]`. Each script path is relative to the scenario workspace; the harness supplies its Node executable and sends ordinary stdio MCP declarations, whose transports belong to that Session.
+
 A scenario runs the agent under the launcher, feeds it the input script through the harness, and captures stdout plus the persisted logs. The normalizers canonicalize those captures — ids to first-seen sequence, generated cwd to `{{cwd}}`, `system/message` text to `{{system}}` and header tool schemas to `{{tools}}` — so recorded and fresh runs compare structurally. The factory then compares normalized stdout and re-persisted logs against committed fixtures, or writes them back in record/refresh mode, and its guards reject malformed or drifting fixtures before any comparison result is trusted.
 
 </details>
