@@ -162,6 +162,7 @@ interface DirectRange {
 class SystemdScopeOwner implements BoundProcessOwner {
   private establishment: 'pending' | 'established' = 'pending'
   private stopped = false
+  private terminationBeforeConsumption = false
   private observation: Promise<void> | undefined
   private killFailure: Error | undefined
   private wakeGeneration = 0
@@ -179,6 +180,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
 
   signal(signal: 'SIGTERM' | 'SIGKILL'): void {
     if (this.stopped) return
+    this.terminationBeforeConsumption ||= this.direct.running() && existsSync(this.files.requestPath)
     this.observeRequestConsumption()
     const directFallbackRequired = this.establishment === 'pending'
     if (directFallbackRequired && this.direct.running()) this.direct.signal(signal)
@@ -207,6 +209,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
 
   terminateForHostExit(): void {
     if (this.stopped) return
+    this.terminationBeforeConsumption ||= this.direct.running() && existsSync(this.files.requestPath)
     try {
       if (this.direct.running()) this.direct.signal('SIGKILL')
     } catch { /* Continue with the native owner. */ }
@@ -221,6 +224,15 @@ class SystemdScopeOwner implements BoundProcessOwner {
     } catch {
       // Host exit cannot report one range; the runtime continues with the rest.
     }
+  }
+
+  resolveOutcome(outcome: SubprocessOutcome, kind: 'subprocess' | 'terminal'): SubprocessOutcome {
+    const startup = readLinuxStartupError(this.files.startupErrorPath)
+    if (startup !== undefined) throw deserializeRunnerError(startup.error)
+    if (existsSync(this.files.requestPath) && !this.terminationBeforeConsumption) {
+      throw new Error(`${kind} scope exited before its bootstrap consumed the launch request`)
+    }
+    return outcome
   }
 
   private observeRequestConsumption(): void {
@@ -358,7 +370,7 @@ function scopeArgs(unitBase: string, invocation: RunnerInvocation, argv: readonl
 
 function directOutcome(
   child: ReturnType<typeof spawn>,
-  files: LinuxLaunchFiles,
+  owner: SystemdScopeOwner,
 ): Promise<SubprocessOutcome> {
   return new Promise((resolveOutcome, rejectOutcome) => {
     let settled = false
@@ -371,16 +383,7 @@ function directOutcome(
       if (settled) return
       settled = true
       try {
-        const startup = readLinuxStartupError(files.startupErrorPath)
-        if (startup !== undefined) {
-          rejectOutcome(deserializeRunnerError(startup.error))
-          return
-        }
-        if (existsSync(files.requestPath)) {
-          rejectOutcome(new Error('subprocess scope exited before its bootstrap consumed the launch request'))
-          return
-        }
-        resolveOutcome({ exitCode, signal })
+        resolveOutcome(owner.resolveOutcome({ exitCode, signal }, 'subprocess'))
       } catch (error) {
         /* v8 ignore next -- Node filesystem operations throw Error instances. */
         const failure = error instanceof Error ? error : new Error(String(error))
@@ -405,6 +408,11 @@ export interface LinuxTerminalScopeLaunch {
   cwd: string
   env: NodeJS.ProcessEnv
   bindOwner: (direct: DirectRange) => BoundProcessOwner
+  /**
+   * Resolve a direct PTY exit after binding its owner.
+   * @param outcome - direct exit code and signal from node-pty.
+   * @returns the direct outcome after startup-error classification.
+   */
   resolveOutcome: (outcome: SubprocessOutcome) => SubprocessOutcome
   cleanup: () => void
 }
@@ -424,12 +432,13 @@ export function prepareLinuxTerminalScope(
   const invocation = internals.runnerInvocation ?? spawnRunnerInvocation()
   const files = createLinuxLaunchFiles({ cwd: spec.cwd, env: targetEnv })
   const unitBase = unitStem('dsh-terminal')
+  let owner: SystemdScopeOwner
   return {
     command: internals.systemdRun ?? 'systemd-run',
     args: scopeArgs(unitBase, invocation, spec.argv),
     cwd: process.cwd(),
     env: runnerEnvironment(files.requestPath, invocation),
-    bindOwner: direct => new SystemdScopeOwner(
+    bindOwner: direct => owner = new SystemdScopeOwner(
       `${unitBase}.scope`,
       files,
       direct,
@@ -438,14 +447,7 @@ export function prepareLinuxTerminalScope(
       internals.systemctlQuery ?? querySystemctl,
       internals.sleep ?? sleepWithAbort,
     ),
-    resolveOutcome: (outcome) => {
-      const startup = readLinuxStartupError(files.startupErrorPath)
-      if (startup !== undefined) throw deserializeRunnerError(startup.error)
-      if (existsSync(files.requestPath)) {
-        throw new Error('terminal scope exited before its bootstrap consumed the launch request')
-      }
-      return outcome
-    },
+    resolveOutcome: outcome => owner.resolveOutcome(outcome, 'terminal'),
     cleanup: () => { cleanupLinuxLaunchFiles(files) },
   }
 }
@@ -497,7 +499,7 @@ export function launchLinuxScope(
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    direct: directOutcome(child, files),
+    direct: directOutcome(child, owner),
     owner,
   }
 }

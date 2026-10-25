@@ -17,6 +17,7 @@ import {
   writeLinuxStartupError,
 } from '../src/runner-protocol.ts'
 import { SUBPROCESS_RUNNER_ENV } from '../src/runner-launch.ts'
+import { bindManagedProcess } from '../src/spawn.ts'
 
 const childProcessMocks = vi.hoisted(() => ({
   execFile: vi.fn(),
@@ -97,6 +98,7 @@ function launch(
   query: LinuxScopeInternals['systemctlQuery'],
   overrides: LinuxScopeInternals = {},
 ) {
+  vi.spyOn(process, 'kill').mockImplementation(() => { throw new Error('fake child has no OS process group') })
   const child = new FakeChild()
   let options: { env?: NodeJS.ProcessEnv; cwd?: string; detached?: boolean } | undefined
   const spawn = vi.fn((_command: string, _args: readonly string[], received: typeof options) => {
@@ -205,11 +207,42 @@ describe('Linux scope establishment and quiescence', () => {
     expect(spawnSync).toHaveBeenCalledWith('/bin/systemctl', expect.arrayContaining([
       'kill', '--kill-whom=all', '--signal=SIGTERM',
     ]), expect.anything())
-    const direct = expect(result.direct).rejects.toThrow('before its bootstrap consumed')
     child.exit(null, 'SIGTERM')
-    await direct
+    await expect(result.direct).resolves.toEqual({ exitCode: null, signal: 'SIGTERM' })
     await expect(waiting).resolves.toBeUndefined()
     expect(existsSync(requestPath)).toBe(true)
+    result.owner.cleanup?.()
+  })
+
+  it.each(['abort', 'terminate', 'host-exit'] as const)('preserves the direct outcome when %s stops an unconsumed launch', async (action) => {
+    const { child, result, requestPath } = launch(async () => missingUnit())
+    const controller = new AbortController()
+    const handle = bindManagedProcess({
+      ...spec(),
+      stdio: { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' },
+      signal: controller.signal,
+    }, result)
+    if (action === 'abort') controller.abort(new Error('caller cancelled'))
+    else if (action === 'terminate') handle.terminate()
+    else handle.terminateForHostExit()
+    expect(existsSync(requestPath)).toBe(true)
+    const signal = action === 'host-exit' ? 'SIGKILL' : 'SIGTERM'
+    expect(child.kills).toEqual([signal])
+    child.exit(null, signal)
+    await expect(handle.done).resolves.toEqual({ exitCode: null, signal })
+    await expect(handle.waitForExit()).resolves.toBe(true)
+    await vi.waitFor(() => { expect(existsSync(linuxLaunchFilesFromLocator(requestPath).directory)).toBe(false) })
+  })
+
+  it('retains a structured startup failure after owned termination', async () => {
+    const { child, result, requestPath } = launch(async () => missingUnit())
+    result.owner.signal('SIGTERM')
+    writeLinuxStartupError(linuxLaunchFilesFromLocator(requestPath), {
+      type: 'error', error: { name: 'Error', message: 'spawn tool ENOENT', code: 'ENOENT' },
+    })
+    child.exit(127, null)
+    await expect(result.direct).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(result.owner.waitForExit()).resolves.toBeUndefined()
     result.owner.cleanup?.()
   })
 
@@ -467,6 +500,7 @@ describe('Linux scope establishment and quiescence', () => {
   it('settles direct outcomes once and reports malformed startup errors', async () => {
     const childError = launch(async () => missingUnit())
     const spawnError = new Error('systemd-run failed')
+    childError.result.owner.signal('SIGTERM')
     childError.child.emit('error', spawnError)
     childError.child.exit(1, null)
     await expect(childError.result.direct).rejects.toBe(spawnError)
@@ -481,6 +515,7 @@ describe('Linux scope establishment and quiescence', () => {
 
     const malformed = launch(async () => missingUnit())
     const files = linuxLaunchFilesFromLocator(malformed.requestPath)
+    malformed.result.owner.signal('SIGTERM')
     unlinkSync(malformed.requestPath)
     writeFileSync(files.startupErrorPath, '{', { mode: 0o600 })
     malformed.child.exit(127, null)
@@ -560,16 +595,40 @@ describe('Linux PTY bootstrap reuse', () => {
   })
 
   it('surfaces PTY pre-exec errors instead of launcher outcomes', () => {
-    const scope = prepareLinuxTerminalScope(terminalSpec, { TARGET: 'yes' })
+    const scope = prepareLinuxTerminalScope(terminalSpec, { TARGET: 'yes' }, {
+      spawnSync: vi.fn(() => ({ status: 0 })) as never,
+    })
     const requestPath = scope.env[SUBPROCESS_RUNNER_ENV]
     if (requestPath === undefined) throw new Error('missing PTY request')
     const files = linuxLaunchFilesFromLocator(requestPath)
+    scope.bindOwner({ running: () => true, signal: vi.fn() }).signal('SIGTERM')
     unlinkSync(requestPath)
     writeLinuxStartupError(files, {
       type: 'error', error: { name: 'Error', message: 'bad cwd', code: 'ENOENT' },
     })
     expect(() => scope.resolveOutcome({ exitCode: 127, signal: null })).toThrow('bad cwd')
     scope.cleanup()
+  })
+
+  it.each(['terminate', 'host-exit'] as const)('records PTY %s before its direct signal can synchronously publish exit', (action) => {
+    const scope = prepareLinuxTerminalScope(terminalSpec, { TARGET: 'yes' }, {
+      spawnSync: vi.fn(() => ({ status: 0 })) as never,
+    })
+    const requestPath = scope.env[SUBPROCESS_RUNNER_ENV]
+    if (requestPath === undefined) throw new Error('missing PTY request')
+    directories.push(linuxLaunchFilesFromLocator(requestPath).directory)
+    const outcome = { exitCode: null, signal: action === 'host-exit' ? 'SIGKILL' : 'SIGTERM' } as const
+    let observed: ReturnType<typeof scope.resolveOutcome> | undefined
+    const owner = scope.bindOwner({
+      running: () => true,
+      signal: () => { observed = scope.resolveOutcome(outcome) },
+    })
+    if (action === 'host-exit') owner.terminateForHostExit()
+    else owner.signal('SIGTERM')
+    expect(observed).toEqual(outcome)
+    expect(existsSync(requestPath)).toBe(true)
+    scope.cleanup()
+    expect(existsSync(linuxLaunchFilesFromLocator(requestPath).directory)).toBe(false)
   })
 
   it('uses default owner dependencies and rejects an unconsumed request', () => {

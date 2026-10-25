@@ -10,6 +10,10 @@ import type {
 } from '@deepseek-ai/dsh-subprocess-local/src/process-inspector.ts'
 import type { BoundProcessOwner } from '@deepseek-ai/dsh-subprocess-local/src/managed-owner.ts'
 import type { SubprocessTerminalSignal } from '@deepseek-ai/dsh-subprocess'
+import { existsSync } from 'node:fs'
+import { prepareLinuxTerminalScope } from '../src/linux-scope.ts'
+import { linuxLaunchFilesFromLocator } from '../src/runner-protocol.ts'
+import { SUBPROCESS_RUNNER_ENV } from '../src/runner-launch.ts'
 
 class FakePty {
   pid = 123
@@ -114,6 +118,34 @@ function makeHandle(pty: FakePty, inspector: ProcessInspector, graceMs: number):
 }
 
 describe('LocalTerminalHandle', () => {
+  it('terminates and cleans an unconsumed Linux PTY launch without replacing its direct signal', async () => {
+    const pty = new FakePty()
+    const scope = prepareLinuxTerminalScope({
+      argv: ['shell'], cwd: process.cwd(), rows: 24, cols: 80, graceMs: 10,
+    }, {}, {
+      spawnSync: vi.fn(() => ({ status: 0 })) as never,
+      systemctlQuery: async () => ({ status: 1, stdout: '', stderr: 'Unit dsh.scope could not be found.' }),
+    })
+    const requestPath = scope.env[SUBPROCESS_RUNNER_ENV]
+    if (requestPath === undefined) throw new Error('missing PTY request')
+    const owner = scope.bindOwner({
+      running: () => handle.running,
+      signal: (signal) => { pty.kill(signal) },
+    })
+    const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner, scope.resolveOutcome)
+    try {
+      expect(existsSync(requestPath)).toBe(true)
+      await handle.terminate()
+      await expect(handle.done).resolves.toEqual({ exitCode: null, signal: 'SIGTERM' })
+      await expect(owner.waitForExit()).resolves.toBeUndefined()
+      expect(pty.kills).toEqual(['SIGTERM'])
+      expect(existsSync(linuxLaunchFilesFromLocator(requestPath).directory)).toBe(false)
+    } finally {
+      await handle.terminate()
+      scope.cleanup()
+    }
+  })
+
   it('terminates a managed range with TERM when it stops within the grace period', async () => {
     vi.useFakeTimers()
     const pty = new FakePty()

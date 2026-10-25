@@ -54,7 +54,7 @@ kind: "package-reference"
 
 ### 可能出错的地方
 
-无法解析的可执行文件会以稳定错误快速失败。当 spawn 或 provider failure 使 direct outcome 无法产生时，`done` 会 reject；该 rejection 不能证明 target 是否已经开始执行。若所选 owner 无法再证明其范围为空，`waitForExit()` 会 reject，清理仍会尝试终止。越过保留尾部的读取是 `lossy` 的，并在 spill 文件存在时指向它。fallback 进程组或已观察终端 session 可能遗漏在观察前逃逸的后代——见下文限制。
+无法解析的可执行文件会以稳定错误快速失败。当 spawn 或 provider failure 使 direct outcome 无法产生时，`done` 会 reject；该 rejection 不能证明 target 是否已经开始执行。如果 Linux owner 在 bootstrap 消费 request 前请求终止，结果会保留实际观察到的 direct 退出码与信号；显式 startup error 仍会 reject。若所选 owner 无法再证明其范围为空，`waitForExit()` 会 reject，清理仍会尝试终止。越过保留尾部的读取是 `lossy` 的，并在 spill 文件存在时指向它。fallback 进程组或已观察终端 session 可能遗漏在观察前逃逸的后代——见下文限制。
 
 -----
 
