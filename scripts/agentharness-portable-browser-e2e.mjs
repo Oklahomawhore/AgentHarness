@@ -25,6 +25,7 @@ const playwrightRoot = await realpath(join(
 const { chromium } = await import(pathToFileURL(join(playwrightRoot, 'index.mjs')).href)
 const browser = await chromium.launch()
 let workspace
+let page
 const failures = []
 
 async function completeOnboarding(page) {
@@ -48,7 +49,7 @@ async function completeOnboarding(page) {
 }
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   workspace = await mkdtemp(join(tmpdir(), 'agentharness-portable-browser-workspace-'))
   const consoleErrors = []
   page.on('console', (message) => {
@@ -151,13 +152,16 @@ try {
   assert.deepEqual(consoleErrors, [])
 } catch (error) {
   failures.push(error)
+  if (page !== undefined) {
+    try { await page.screenshot({ path: screenshot, fullPage: true }) } catch (captureError) { failures.push(captureError) }
+  }
   throw error
 } finally {
   const cleanup = [browser.close()]
   if (workspace !== undefined) cleanup.push(rm(workspace, { recursive: true, force: true }))
   const results = await Promise.allSettled(cleanup)
   const cleanupFailures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
-  if (cleanupFailures.length > 0) {
+  if (cleanupFailures.length > 0 || failures.length > 1) {
     throw new AggregateError([...failures, ...cleanupFailures], failures.length > 0
       ? 'Portable browser acceptance and cleanup failed'
       : 'Portable browser cleanup failed')

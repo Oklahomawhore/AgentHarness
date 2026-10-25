@@ -113,7 +113,7 @@ async function main(args) {
     HOME: clientHome, USERPROFILE: clientHome, USER: 'portable-fixture', DSH_HOME: harnessHome,
   }
   const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', '0'], {
+  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--no-open', '--port', '0'], {
     cwd: current,
     env: environment,
     stdio: ['ignore', 'pipe', 'pipe'],

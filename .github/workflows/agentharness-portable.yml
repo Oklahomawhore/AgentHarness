@@ -115,6 +115,11 @@ jobs:
           AGENTHARNESS_PORT: ${{ env.AGENTHARNESS_ACCEPTANCE_PORT }}
           AGENTHARNESS_NO_OPEN: '1'
         run: |
+          # This Chromium journey drives the browse interaction. Native OS
+          # window confirmation remains a separate unverified requirement.
+          "${{ runner.temp }}/agentharness-bin/agentharness" stop
+          cp apps/web/tests/fixtures/portable-browse.cordis.patch.yml "$DSH_HOME/profiles/web/cordis.patch.yml"
+          "${{ runner.temp }}/agentharness-bin/agentharness" start
           "${{ runner.temp }}/agentharness-bin/agentharness" status
           node scripts/agentharness-portable-browser-e2e.mjs \
             --origin "http://127.0.0.1:$AGENTHARNESS_ACCEPTANCE_PORT" \

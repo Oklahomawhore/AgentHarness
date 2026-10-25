@@ -25,7 +25,7 @@ kind: "package-bundle"
 
 使用 `dsh --profile mcp --connection /absolute/private/connection.json` 启动。默认 descriptor 位于 `$DSH_HOME/mcp/connection.json`。`--participant-id` 和 `--display-name` 覆盖本地身份；省略时按 OS 用户和主机名一次性解析。`--url` 只用于可选的 origin 绑定，不能绕过 descriptor 认证。`--help` 输出用法，不读取 descriptor，也不连接 Host。
 
-Bundle patch 显式提供所有时间和字节上限：`requestTimeoutMs`、`maxDescriptorBytes`、`maxRequestBytes`、`maxResponseBytes`、`leaseRetryMs`、`leaseFallbackTtlMs`、`leaseMinHeartbeatMs` 和 `leaseMaxHeartbeatMs`。修改部署策略时替换该 row 的完整 Config。请求 deadline 覆盖 descriptor 认证、API 请求及完整响应读取。请求和响应上限包含 RPC JSON envelope。
+Bundle patch 显式提供所有时间和字节上限：`requestTimeoutMs`、`maxDescriptorBytes`、`maxRequestBytes`、`maxResponseBytes`、`leaseRetryMs`、`leaseFallbackTtlMs`、`leaseMinHeartbeatMs` 和 `leaseMaxHeartbeatMs`。修改部署策略时替换该 row 的完整 Config。请求 deadline 覆盖 descriptor 认证、API 请求及完整响应读取。超时码标识正在等待的阶段：`authentication-timeout`、`request-timeout` 或 `response-timeout`；整个过程使用同一截止时间。请求和响应上限包含 RPC JSON envelope。
 
 每次 RPC 都读取当前私有 descriptor，并将 launch token 换成正常 Connection cookie。Cookie 只进入 HTTP header；token 和 cookie 均不进入 argv 或诊断。Descriptor 缺失或 Host 不可用时返回安全错误码，presence 会重试。Descriptor 为已安装的同用户客户端提供普通本地 Host 权限，不是逐 Task 读取授权，也不是独立所有者凭据。
 

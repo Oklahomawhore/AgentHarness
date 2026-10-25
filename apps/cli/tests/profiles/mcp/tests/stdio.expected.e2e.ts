@@ -26,6 +26,41 @@ function environment(home: string, mode: string): Record<string, string> {
   return env
 }
 
+for (const phase of ['authentication', 'request', 'response'] as const) {
+  it.skipIf(process.platform === 'win32')(`built: reports a safe ${phase} timeout through the MCP profile`, async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-timeout-'))
+    const server = createServer((request, response) => {
+      if (request.url?.startsWith('/?token=') === true) {
+        if (phase !== 'authentication') response.writeHead(303, { location: '/',
+          'set-cookie': 'dsh-auth-timeout=v1.test.cookie; Path=/; HttpOnly' }).end()
+      } else if (phase === 'response') {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.write('{')
+      }
+    })
+    let client: Client | undefined
+    try {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('expected TCP fixture')
+      await mkdir(join(home, 'mcp'), { mode: 0o700 })
+      await writeFile(join(home, 'mcp/connection.json'), JSON.stringify({ version: 1, generation: 'timeout-fixture',
+        launchUrl: `http://127.0.0.1:${String(address.port)}/?token=private-timeout-fixture` }), { mode: 0o600 })
+      client = (await bridge(builtArgs, home, 'built')).client
+      const result = await client.callTool({ name: 'agentharness_task_list', arguments: {} }, undefined, { timeout: deadlineMs })
+      await expect(JSON.stringify(result, null, 2) + '\n')
+        .toMatchFileSnapshot(new URL(`./expected/${phase}-timeout.json`, import.meta.url).pathname)
+    } finally {
+      try { await client?.close() } finally {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+        await rm(home, { recursive: true, force: true })
+      }
+    }
+  }, deadlineMs)
+}
+
 async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
   const exited = once(child, 'exit')
