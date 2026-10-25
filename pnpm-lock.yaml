@@ -28,6 +28,9 @@ importers:
       '@deepseek-ai/dsh-package-manifest':
         specifier: workspace:^
         version: link:packages/util/package-manifest
+      '@deepseek-ai/dsh-terminal-bash':
+        specifier: workspace:^
+        version: link:packages/terminal/terminal-bash
       '@deepseek-ai/dsh-tool-session-query':
         specifier: workspace:^
         version: link:packages/session-query/tool-session-query
