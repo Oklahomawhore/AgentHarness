@@ -273,8 +273,8 @@ jobs:
           $python = Join-Path $venv 'Scripts/python.exe'
           & $python -m pip install "$env:GITHUB_WORKSPACE/dist-python/$env:SDK_WHEEL" "$env:GITHUB_WORKSPACE/dist-python/$env:RUNTIME_WHEEL"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:PYTHONPATH = ''
-          $env:DSH_RUNTIME_MODE = ''
+          $env:PYTHONPATH = $null
+          $env:DSH_RUNTIME_MODE = $null
           Push-Location $consumer
           try {
             & $python "$env:GITHUB_WORKSPACE/scripts/smoke-python-runtime.py" --scenario all --installed-wheel

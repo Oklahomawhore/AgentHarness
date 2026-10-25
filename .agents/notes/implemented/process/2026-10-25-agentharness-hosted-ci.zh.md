@@ -14,6 +14,8 @@ Status: implemented
 
 Ubuntu job 通过发行版包管理器安装 bubblewrap，并在依赖沙箱的验收前要求命名空间探针成功。Linux 运行时构建器对已安装 node-pty 的脚本调用仅在该命令中禁用 pnpm 依赖校验，避免 ABI 容器替换主机工作区安装；原生源码编译和 GLIBC 校验仍为必需。
 
+独立的 Linux 覆盖率 lane 在两个覆盖率进程启动前构建 CLI，因为 profile 子进程夹具显式启动已构建入口。这项前置依赖不改变源码导入解析或覆盖率阈值。Windows 已安装 wheel 的步骤删除 PYTHONPATH 和 DSH_RUNTIME_MODE，而不赋空字符串；空的运行时模式属于非法配置。
+
 必需汇总判定依赖所有验收 job，并只接受成功的依赖结果。空结果、跳过、取消、失败及意外结果都会使判定失败；取消后不再启动判定。工作流权限为只读。自动 CI 不接收模型账户密钥，不能调用发布或刷新记录期望。现有逐文件覆盖率阈值和门禁清单保持不变。
 
 一次性托管机器拥有各 job 的检出、工具、缓存、临时文件和子进程。不保留私有运行器选择器、持久主机工具缓存覆盖、待命 lane 或运行器健康兜底。上游部署决策保留为历史：[池故障切换](../../archived/process/2026-07-26-ci-failover-runbook.md)、[兼容性隔离](../../archived/process/2026-09-06-node-compatibility-selfhosted.md)和[发布演练路由](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md)。

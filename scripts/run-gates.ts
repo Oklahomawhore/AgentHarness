@@ -243,7 +243,10 @@ export function gatesForMode(selected: Mode): Gate[] {
         pnpmScript('duplication', 'duplication'),
       ]
     case 'ci-coverage':
-      return coverageGates()
+      return [ciBuildGate(), ...coverageGates().map(gate => ({
+        ...gate,
+        needs: [...new Set(['build', ...(gate.needs ?? [])])],
+      }))]
     case 'ci-bench':
       return [pnpmScript('bench', 'test:bench', { label: 'performance benchmarks' })]
     case 'ci-snapshot':

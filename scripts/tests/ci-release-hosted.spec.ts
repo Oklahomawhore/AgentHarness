@@ -23,6 +23,7 @@ interface Workflow {
   on: Record<string, unknown>
   permissions: Record<string, string>
   concurrency: Record<string, unknown>
+  env: Record<string, string>
   jobs: Record<string, Job>
 }
 const root = resolve(import.meta.dirname, '../..')
@@ -64,6 +65,27 @@ for (const [file, family, artifact] of [
       expect(pack.steps.at(-1)).toMatchObject({ uses: 'actions/upload-artifact@v4',
         with: { name: artifact, path: `${output}/*`, 'if-no-files-found': 'error' } })
       expect(JSON.stringify(pack)).not.toMatch(/secrets\.|release:publish/)
+    })
+
+    it('builds immutable dependencies before packing and only restores the dependency cache', () => {
+      expect(release.env.PRIMARY_NODE_VERSION).toBe('24')
+      expect(release.env.DSH_TELEMETRY_DISABLED).toBe('1')
+      expect(pack.steps.find(step => step.uses === 'actions/setup-node@v6')?.with)
+        .toEqual({ 'node-version': '${{ env.PRIMARY_NODE_VERSION }}' })
+      const commands = pack.steps.map(step => step.run)
+      const install = 'pnpm install --frozen-lockfile'
+      const build = family === 'dsh' ? 'pnpm run build' : 'pnpm run build:lib:host'
+      const packCommand = `pnpm run release:pack --family ${family} --out ${output}`
+      expect(commands).toContain(install)
+      expect(commands).toContain(build)
+      expect(commands.indexOf(install)).toBeLessThan(commands.indexOf(build))
+      expect(commands.indexOf(build)).toBeLessThan(commands.indexOf(packCommand))
+      const cache = pack.steps.filter(step => step.uses?.startsWith('actions/cache'))
+      expect(cache).toHaveLength(1)
+      expect(cache[0]).toMatchObject({ uses: 'actions/cache/restore@v4', with: {
+        path: '${{ steps.pnpm-store.outputs.path }}',
+        key: "${{ runner.os }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}",
+      } })
     })
 
     it('publishes the packed bytes without rebuilding or running install scripts', () => {

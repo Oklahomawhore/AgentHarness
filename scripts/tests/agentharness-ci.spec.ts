@@ -100,6 +100,16 @@ describe('AgentHarness hosted CI', () => {
       .toContain('uv run --python 3.10 --group test --project python/sdk pytest')
   })
 
+  it('removes source-import and runtime-mode overrides before installed-wheel validation', () => {
+    const posix = stepScript(builder, 'build', 'Run installed-wheel keyless black-box tests (POSIX)')
+    expect(posix).toContain('env -u PYTHONPATH -u DSH_RUNTIME_MODE')
+    const windows = stepScript(builder, 'build', 'Run installed-wheel keyless black-box tests (Windows)')
+    for (const variable of ['PYTHONPATH', 'DSH_RUNTIME_MODE']) {
+      expect(windows).toContain(`$env:${variable} = $null`)
+    }
+    expect(windows).not.toMatch(/\$env:(?:PYTHONPATH|DSH_RUNTIME_MODE) = ['"]{2}/)
+  })
+
   it('shares one native wheel builder between CI and release without model-account access', () => {
     const runtime = ci.jobs['python-runtime']!
     expect(runtime.uses).toBe('./.github/workflows/build-exe-for-python-sdk.yml')
@@ -127,11 +137,18 @@ describe('AgentHarness hosted CI', () => {
       .toContain('--platform "$PLATFORM" "$EXE" "$EXE-rg" "$EXE-spawn-helper"')
   })
 
-  it('keeps optional Wine diagnosis outside the required native gate graphs', () => {
+  it('declares coverage artifact dependencies and keeps optional Wine outside required graphs', () => {
     const previous = process.env.npm_execpath
     try {
       // Graph construction needs a pnpm entrypoint; these probes never launch it.
       process.env.npm_execpath = '/fixture/pnpm.cjs'
+      const gates = gatesForMode('ci-coverage')
+      expect(gates.find(gate => gate.id === 'build')?.args).toEqual(['/fixture/pnpm.cjs', 'run', 'build'])
+      for (const id of ['coverage', 'coverage-exempt-heavy']) {
+        expect(gates.find(gate => gate.id === id)?.needs).toContain('build')
+        expect(gates.find(gate => gate.id === id)?.needs).toContain('native-system')
+      }
+      expect(gates.find(gate => gate.id === 'native-system')?.needs).toContain('build')
       for (const mode of ['ci-linux-primary', 'ci-windows-complete'] as const) {
         expect(gatesForMode(mode).map(gate => gate.displayCommand).join('\n')).not.toMatch(/wine/i)
       }
