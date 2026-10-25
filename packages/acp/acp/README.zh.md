@@ -73,7 +73,7 @@ kind: "package-reference"
 | `session/update` | 已提交 assistant 消息与 thought、通用工具生命周期、配置变化与上下文用量，按会话串行交付。 |
 | `session/request_permission` | 带一次性允许／拒绝选项的权限提示；你的客户端可以自动回答。 |
 
-会话配置从实时 LLM 服务目录提供不透明的提供方／模型选项，并在确切模型声明推理选项时提供 `reasoning_effort`。提示词会在异步图片准入前快照该选择，并在该轮的每个模型步骤中固定它；并发选项变更从下一轮开始生效。每个非空 MCP 声明清单挂载独立于其他会话和 Host 注册表的私有注册表；容量等于清单中已验证的服务器数量。ACP 客户端是受信控制器：stdio MCP 条目授权其绝对命令与环境，HTTP 条目授权其绝对 HTTP(S) URL 与 header；初始连接或发现失败会回滚尚未发布的 Agent。不支持的界面会被省略或拒绝：`session/load`、删除、fork、附加目录、SSE 或 ACP 传输 MCP、mode、命令、计划、终端、客户端文件系统操作与 elicitation。
+会话配置从实时 LLM 服务目录提供不透明的提供方／模型选项，并在确切模型声明推理选项时提供 `reasoning_effort`。拓扑通知会省略已由成功配置响应或通知返回的相同完整选项状态。提示词会在异步图片准入前快照该选择，并在该轮的每个模型步骤中固定它；并发选项变更从下一轮开始生效。每个非空 MCP 声明清单挂载独立于其他会话和 Host 注册表的私有注册表；容量等于清单中已验证的服务器数量。ACP 客户端是受信控制器：stdio MCP 条目授权其绝对命令与环境，HTTP 条目授权其绝对 HTTP(S) URL 与 header；初始连接或发现失败会回滚尚未发布的 Agent。不支持的界面会被省略或拒绝：`session/load`、删除、fork、附加目录、SSE 或 ACP 传输 MCP、mode、命令、计划、终端、客户端文件系统操作与 elicitation。
 
 -----
 
@@ -90,7 +90,7 @@ kind: "package-reference"
 服务器是刻意采用标准公开协议的自动化传输。三项承诺塑造了它：
 
 - **只发送标准语义更新。** 协议承载已提交消息与 thought、通用工具生命周期、配置与上下文用量；原始提供方增量、重试尝试、DSH 呈现数据与不受支持内容不会进入协议。
-- **诚实的能力与配置状态。** `initialize` 只公布已挂载支持，拓扑变化会发布完整配置选项，提示词则固定其准入时的确切路由。
+- **诚实的能力与配置状态。** `initialize` 只公布已挂载支持，发生变化的拓扑选项会发布完整配置状态，提示词则固定其准入时的确切路由。
 - **停稳后才结算。** 提示词与关闭操作只在其拥有的准入、Agent 活动、有序更新、后代、持久化与释放达到所需终态后才结算。
 
 决策历史记录在 [ACP 作为仅面向自动化的协议笔记](../../../.agents/notes/implemented/simplification/2026-07-23-acp-automation-only-protocol.zh.md) 与[多会话笔记](../../../.agents/notes/archived/feature/2026-06-14-acp-multi-session.md) 中。

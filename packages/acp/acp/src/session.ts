@@ -1,6 +1,7 @@
 /** One standard ACP session's Agent, configuration, prompt, update, and teardown lifecycle. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { isDeepStrictEqual } from 'node:util'
 import {
   RequestError,
   type McpServer,
@@ -99,6 +100,7 @@ export class AcpSession {
   /** The exact top-level Agent owned by this ACP session. */
   readonly agent: Agent
   private readonly modelControl: AcpModelControl
+  private lastConfigOptions: SessionConfigOption[] | undefined
   private outputTail = Promise.resolve()
   private inflight: InflightPrompt | undefined
   private closing: Promise<void> | undefined
@@ -193,7 +195,10 @@ export class AcpSession {
    */
   configOptions(signal?: AbortSignal): Promise<SessionConfigOption[]> {
     this.assertActive()
-    return this.modelControl.options(signal)
+    return this.modelControl.options(signal).then((options) => {
+      this.lastConfigOptions = options
+      return options
+    })
   }
 
   /**
@@ -205,10 +210,13 @@ export class AcpSession {
    */
   setConfig(configId: string, value: unknown, signal?: AbortSignal): Promise<SessionConfigOption[]> {
     this.assertActive()
-    return this.modelControl.set(configId, value, signal)
+    return this.modelControl.set(configId, value, signal).then((options) => {
+      this.lastConfigOptions = options
+      return options
+    })
   }
 
-  /** Resolve topology state off-chain, then serialize its notification without blocking execution updates. */
+  /** Resolve topology off-chain, then serialize changed options without blocking execution updates. */
   topologyChanged(): void {
     if (this.closing !== undefined) return
     void this.modelControl.options()
@@ -216,10 +224,14 @@ export class AcpSession {
         if (this.closing !== undefined) return
         const previous = this.outputTail
         this.outputTail = previous
-          .then(() => this.notify({
-            sessionId: this.agent.session.id,
-            update: { sessionUpdate: 'config_option_update', configOptions },
-          }))
+          .then(async () => {
+            if (isDeepStrictEqual(this.lastConfigOptions, configOptions)) return
+            await this.notify({
+              sessionId: this.agent.session.id,
+              update: { sessionUpdate: 'config_option_update', configOptions },
+            })
+            this.lastConfigOptions = configOptions
+          })
           /* v8 ignore start -- the bridge notifier contains transport failure. */
           .catch((error: unknown) => {
             this.ctx.logger.warn(`acp: config-option update failed: ${errorChain(error)}`)

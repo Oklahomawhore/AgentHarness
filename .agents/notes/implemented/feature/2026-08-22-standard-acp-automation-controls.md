@@ -36,7 +36,7 @@ The bridge materializes through the ordinary durability barrier: `ctx.sessions.f
 
 ## Standard configuration options
 
-The advisory LLM catalog now serves another automation consumer without becoming request validation. ACP exposes a provider-grouped `model` select whose opaque values retain the provider/model pair, plus a dependent `reasoning_effort` select from the resolved exact model. A model with efforts but no adapter-configured default includes `Provider default`, which preserves omission and lets the provider choose. New, resume, and set responses return the complete state. Adapter topology events emit `config_option_update`; per-session mutations serialize in receive order. The configured ACP provider/model remains the initial selection, and unlisted configured routes are synthesized into the returned choices instead of being rejected.
+The advisory LLM catalog now serves another automation consumer without becoming request validation. ACP exposes a provider-grouped `model` select whose opaque values retain the provider/model pair, plus a dependent `reasoning_effort` select from the resolved exact model. A model with efforts but no adapter-configured default includes `Provider default`, which preserves omission and lets the provider choose. New, resume, and set responses return the complete state. Adapter topology events re-read the complete options off-chain. The existing per-session output queue emits `config_option_update` only when those options differ from the latest successful configuration response or notification; comparison at delivery time coalesces concurrent equal discoveries. Per-session mutations serialize in receive order. The configured ACP provider/model remains the initial selection, and unlisted configured routes are synthesized into the returned choices instead of being rejected.
 
 ## Standard MCP mapping
 
@@ -48,7 +48,7 @@ ACP clients are trusted controllers: a stdio declaration authorizes process exec
 
 ## Semantic update projection
 
-Only committed durable facts reach `session/update`. Assistant text/images become `agent_message_chunk`; reasoning becomes `agent_thought_chunk`; tool calls/results become generic `tool_call` and `tool_call_update`; known measured context pressure and capacity become `usage_update`; adapter topology changes become `config_option_update`. Durable message ids and tool-call ids preserve correlation. The canonical DSH tool name is the standard tool-call title.
+Only committed durable facts reach `session/update`. Assistant text/images become `agent_message_chunk`; reasoning becomes `agent_thought_chunk`; tool calls/results become generic `tool_call` and `tool_call_update`; known measured context pressure and capacity become `usage_update`; changed configuration options become `config_option_update`. Durable message ids and tool-call ids preserve correlation. The canonical DSH tool name is the standard tool-call title.
 
 The per-session chain serializes all updates and drains before prompt completion. A tool-call notification drains before a permission request refers to it. Raw model deltas, retry attempts, cards, terminal state, diffs, locations, plans, titles, todos, and unsupported content stay off the wire.
 
@@ -63,6 +63,8 @@ The per-session chain serializes all updates and drains before prompt completion
 **Implement every ACP session method.** Rejected. List, resume, and close complete the durable automation lifecycle. Load/replay, delete, and fork introduce separate transcript, destructive-storage, and lineage semantics that this use case does not require.
 
 **Use unstable provider methods for model discovery.** Rejected because standard session configuration options express the choice and remain scoped to the session.
+
+**Delay session publication until topology reads finish.** Rejected because topology can change during asynchronous discovery or persistence flush. Keeping the listener attached and comparing complete reported options retains real changes without another pending-session registry.
 
 **Copy every DSH runtime field to ACP metadata.** Rejected because exact token breakdowns, private result statuses, programmatic display names, and per-MCP tunables have no stable ACP v1 equivalent.
 
