@@ -30,9 +30,11 @@ Status: implemented
 
 [复合原生工作](../../../../snapshots/sdk/scope-native-work/README.zh.md)和[混合来源](../../../../snapshots/sdk/scope-mixed-source/README.zh.md) SDK 夹具在后续来源请求或独立来源发布前等待所有者回执。Agent 空闲不表示远端报告已被应用。独立的当前 writer 预期保留不可变的重放输入，并完整比较 publication、grant、来源身份和省略信息；Python 拥有对应的回执顺序输出。
 
-[Headless 默认参数夹具](../../../../apps/cli/tests/profiles/headless/tests/headless.expected.e2e.ts)在接受请求后立即写入第一条 SSE 注释，并在写入前注册关闭清理。后续注释保留原有间隔，完整流时长超过配置的空闲超时。严格的请求数与默认参数断言区分正常保活与主请求超时后伴随标题生成而发生的重试。
+[Headless 默认参数夹具](../../../../apps/cli/tests/profiles/headless/tests/headless.expected.e2e.ts)使用 provider 配置的空闲默认值，并在收到真实标题请求后才结束。它检查 SSE 注释、确切默认参数、两次 HTTP 请求及没有重试。[Adapter 时钟测试](../../../../packages/llm/llm-deepseek/tests/adapter.spec.ts)单独证明注释会重置空闲期限；其 fetch mock 将中止传播给 reader，并清理计时器与监听器。
 
-命令超时与开发预览夹具仅在失败时报告正在等待的清理阶段，以及直接命令和受管范围的结束状态。观测代码转发原始 Promise，并在清理后恢复。
+[Semantic Web observer](../../../../apps/cli/tests/profiles/web/fixtures/scope-semantic-observer.mjs)通过同目录独占临时写入与原子 rename 发布就绪状态。读取端只等待文件不存在，损坏的 JSON 仍立即失败。
+
+命令超时与开发预览夹具仅在失败时报告正在等待的清理阶段，以及直接命令和受管范围的结束状态。命令句柄保留实际使用的原生或 fallback 模式供诊断。观测代码转发原始 Promise，并在清理后恢复。[Outbox 恢复夹具](../../../../packages/collaboration/scope-agent-contribution/tests/recovery.spec.ts)在真实失败后阻挡后续写入，原子恢复原始字节及权限，再释放写入方并等待 Host 释放完成。
 
 ### 已构建 Client 的导入分类
 

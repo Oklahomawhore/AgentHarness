@@ -243,6 +243,66 @@ describe('Linux scope establishment and quiescence', () => {
     result.owner.cleanup?.()
   })
 
+  it('keeps escalation and both range waiters after an unconsumed direct launch exits', async () => {
+    vi.useFakeTimers()
+    try {
+      const firstQuery = Promise.withResolvers<ReturnType<typeof activeUnit>>()
+      const emptyQuery = Promise.withResolvers<ReturnType<typeof activeUnit>>()
+      const rechecked = Promise.withResolvers<undefined>()
+      const cleaned = Promise.withResolvers<undefined>()
+      const query = vi.fn()
+        .mockReturnValueOnce(firstQuery.promise)
+        .mockImplementationOnce(async () => { rechecked.resolve(undefined); return await emptyQuery.promise })
+      const sleep = vi.fn(async () => {})
+      const { child, result, requestPath, spawnSync } = launch(query, { sleep })
+      const cleanup = result.owner.cleanup?.bind(result.owner)
+      if (cleanup === undefined) throw new Error('Expected the native owner cleanup')
+      const cleanupObserved = vi.spyOn(result.owner, 'cleanup').mockImplementation(() => {
+        cleanup()
+        cleaned.resolve(undefined)
+      })
+      const ownerWait = vi.spyOn(result.owner, 'waitForExit')
+      const controller = new AbortController()
+      const handle = bindManagedProcess({ ...spec(),
+        stdio: { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' }, signal: controller.signal,
+      }, result)
+      const waits = Promise.allSettled([handle.waitForExit(), handle.waitForExit()])
+      let waitsSettled = false
+      void waits.then(() => { waitsSettled = true })
+      try {
+        controller.abort(new Error('caller deadline'))
+        child.exit(null, 'SIGTERM')
+        await expect(handle.done).resolves.toEqual({ exitCode: null, signal: 'SIGTERM' })
+        expect(ownerWait).toHaveBeenCalledOnce()
+        expect(query).toHaveBeenCalledOnce()
+        expect(waitsSettled).toBe(false)
+        expect(existsSync(requestPath)).toBe(true)
+        expect(cleanupObserved).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(spec().graceMs)
+        expect(spawnSync).toHaveBeenNthCalledWith(1, '/bin/systemctl', expect.arrayContaining(['--signal=SIGTERM']), expect.anything())
+        expect(spawnSync).toHaveBeenNthCalledWith(2, '/bin/systemctl', expect.arrayContaining(['--signal=SIGKILL']), expect.anything())
+        expect(waitsSettled).toBe(false)
+        expect(existsSync(requestPath)).toBe(true)
+        firstQuery.resolve(activeUnit())
+        await rechecked.promise
+        expect(sleep).not.toHaveBeenCalled()
+        emptyQuery.resolve(activeUnit('inactive'))
+        await expect(waits).resolves.toEqual([{ status: 'fulfilled', value: true }, { status: 'fulfilled', value: true }])
+        await cleaned.promise
+        expect(cleanupObserved).toHaveBeenCalledOnce()
+        expect(existsSync(linuxLaunchFilesFromLocator(requestPath).directory)).toBe(false)
+      } finally {
+        controller.abort()
+        firstQuery.resolve(activeUnit())
+        emptyQuery.resolve(activeUnit('inactive'))
+        if (child.exitCode === null && child.signalCode === null) child.exit(null, 'SIGTERM')
+        await Promise.allSettled([waits, handle.done])
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['abort', 'terminate', 'host-exit'] as const)('preserves the direct outcome when %s stops an unconsumed launch', async (action) => {
     const { child, result, requestPath } = launch(async () => missingUnit())
     const controller = new AbortController()

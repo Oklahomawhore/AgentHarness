@@ -1604,16 +1604,29 @@ describe('DeepSeekAdapter against a mock server', () => {
   it('keeps an idle provider read alive through SSE comments', async () => {
     vi.useFakeTimers()
     const encoder = new TextEncoder()
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      const signal = init?.signal
+      const timers: ReturnType<typeof setTimeout>[] = []
+      let cleanup = () => {}
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
-          setTimeout(() => { controller.enqueue(encoder.encode(': keep-alive\n\n')) }, 75)
-          setTimeout(() => { controller.enqueue(encoder.encode(': keep-alive\n\n')) }, 150)
-          setTimeout(() => {
-            controller.enqueue(encoder.encode(textEvents.map(event => `data: ${event}\n\n`).join('')))
-            controller.close()
-          }, 225)
+          const abort = () => { cleanup(); controller.error(signal?.reason) }
+          cleanup = () => {
+            for (const timer of timers) clearTimeout(timer)
+            signal?.removeEventListener('abort', abort)
+          }
+          signal?.addEventListener('abort', abort, { once: true })
+          timers.push(
+            setTimeout(() => { controller.enqueue(encoder.encode(': keep-alive\n\n')) }, 75),
+            setTimeout(() => { controller.enqueue(encoder.encode(': keep-alive\n\n')) }, 150),
+            setTimeout(() => {
+              cleanup()
+              controller.enqueue(encoder.encode(textEvents.map(event => `data: ${event}\n\n`).join('')))
+              controller.close()
+            }, 225),
+          )
         },
+        cancel() { cleanup() },
       })
       return Promise.resolve(new Response(body, { status: 200 }))
     })
@@ -1628,11 +1641,13 @@ describe('DeepSeekAdapter against a mock server', () => {
           chunks.push(chunk.type)
         }
       })()
+      const result = drain.then(() => ({ completed: true }), (error: unknown) => ({ completed: false, error }))
       await vi.advanceTimersByTimeAsync(75)
       await vi.advanceTimersByTimeAsync(75)
       await vi.advanceTimersByTimeAsync(75)
-      await expect(drain).resolves.toBeUndefined()
+      await expect(result).resolves.toEqual({ completed: true })
       expect(chunks).toEqual(['block-start', 'text-delta', 'block-end', 'usage', 'finish'])
+      expect(vi.getTimerCount()).toBe(0)
     } finally {
       fetchSpy.mockRestore()
     }

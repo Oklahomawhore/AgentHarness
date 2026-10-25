@@ -1,11 +1,14 @@
 /** Real foreground outcomes enter the existing durable local and peer contribution paths. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { spawn as spawnChild } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { linuxProcessGroupHasLiveMembers } from '@deepseek-ai/dsh-subprocess-local/src/process-inspector.ts'
 import type {
   ScopeAgentContributionSelection, ScopeAgentContributionStatus, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus,
 } from '../src/types.ts'
@@ -284,9 +287,25 @@ it.each(['local', 'peer'] as const)('reports an actual %s timeout independently 
   onTestFinished(() => { for (const undo of restore.reverse()) undo() })
   const timedCommand = 'sleep 5'
   const f = await fixture(role, { commands: [{ command: timedCommand, rootIndex: 0 }] })
+  const runtime = f.source.ctx.subprocess
+  if (!(runtime instanceof LocalSubprocessRuntime)) throw new Error('Expected the local subprocess provider')
+  const originalInternals = runtime.internals
+  restore.push(() => { runtime.internals = originalInternals })
   const spawn = f.source.ctx.subprocess.spawn.bind(f.source.ctx.subprocess)
   const observed = vi.spyOn(f.source.ctx.subprocess, 'spawn').mockImplementation((spec) => {
-    const handle = spawn(spec)
+    const previousInternals = runtime.internals
+    let fallback = false
+    let fallbackPid: number | undefined
+    runtime.internals = { ...previousInternals, spawn: (program, args, options) => {
+      fallback = true
+      const child = (previousInternals.spawn ?? spawnChild)(program, args, options)
+      fallbackPid = child.pid
+      return child
+    } }
+    let handle: ReturnType<typeof spawn>
+    try { handle = spawn(spec) } finally { runtime.internals = previousInternals }
+    const platform = previousInternals.platform ?? process.platform
+    const mode = fallback ? 'fallback' : platform === 'linux' ? 'linux-scope' : 'windows-job'
     let result: unknown = 'pending'
     void handle.done.then((value) => { result = value }, (error: unknown) => { result = { error: String(error) } })
     // oxlint-disable-next-line typescript/unbound-method -- invoked with .call(handle) and restored exactly.
@@ -294,7 +313,10 @@ it.each(['local', 'peer'] as const)('reports an actual %s timeout independently 
     const waiting = vi.fn<typeof handle.waitForExit>(signal => originalWait.call(handle, signal))
     handle.waitForExit = waiting
     restore.push(() => { handle.waitForExit = originalWait })
-    ranges.push(() => ({ result, signalAborted: spec.signal?.aborted,
+    ranges.push(() => ({ mode, ...(fallback ? { fallbackPid } : {}),
+      ...(fallback && process.platform === 'linux' && fallbackPid !== undefined
+        ? { linuxGroupLive: linuxProcessGroupHasLiveMembers(fallbackPid) ?? 'unknown' } : {}),
+      result, signalAborted: spec.signal?.aborted,
       rangeCalls: waiting.mock.calls.length, rangeResults: waiting.mock.settledResults.map(value => value.type) }))
     return handle
   })
@@ -309,6 +331,7 @@ it.each(['local', 'peer'] as const)('reports an actual %s timeout independently 
   stage = 'reading-durable-result'
   const row = await retained(f)
   expect(row.samples[0]?.sample.result).toMatchObject({ state: 'completed', timedOut: true })
+  expect(runtime.internals).toBe(originalInternals)
   stage = 'complete'
 })
 

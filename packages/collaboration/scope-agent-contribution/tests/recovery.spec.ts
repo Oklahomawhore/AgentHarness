@@ -7,6 +7,7 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { nativeContributionDomain } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
@@ -99,8 +100,10 @@ async function blockSourceCommit(source: TestHost, backupName: string, domain = 
   let restored = false
   const restore = async () => {
     if (restored) return
+    const content = await readFile(backup, 'utf8')
+    const { mode } = await stat(backup)
     await rm(path, { recursive: true, force: true })
-    await rename(backup, path)
+    await writeFileAtomic(path, content, { mode: mode & 0o777 })
     restored = true
   }
   restores.push(restore)
@@ -289,7 +292,27 @@ describe('native completion durability recovery', () => {
 
   it('retries an actual atomic outbox write failure using the original completed tool and sequence', async () => {
     const { owner, source, task, agent, allowed } = await fixture()
-    const { restore } = await blockSourceCommit(source, 'source-before-controlled-failure.json')
+    const records = source.ctx.storageDomain.get(nativeContributionDomain.name)?.table('sessions')
+    if (records === undefined) throw new Error('Source domain missing')
+    const put = records.put.bind(records)
+    const retryEntered = Promise.withResolvers<undefined>()
+    const restored = Promise.withResolvers<undefined>()
+    restores.push(() => { restored.resolve(undefined) })
+    let failedAt: number | undefined
+    let backendAttempts = 0
+    const writing = vi.spyOn(records, 'put').mockImplementation(async (key, value) => {
+      if (failedAt !== undefined) {
+        retryEntered.resolve(undefined)
+        await restored.promise
+      }
+      backendAttempts++
+      try { await put(key, value) }
+      catch (error) { failedAt ??= backendAttempts; throw error }
+    })
+    restores.push(() => { writing.mockRestore() })
+    const { path, backup, restore } = await blockSourceCommit(source, 'source-before-controlled-failure.json')
+    const original = await readFile(backup)
+    const originalMode = (await stat(backup)).mode & 0o777
     await writeFiles(source, agent, ['outbox.txt'])
     await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.collectionIssue)
       .toBe('durability-failed')
@@ -299,7 +322,15 @@ describe('native completion durability recovery', () => {
     expect((await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.pendingSamples).toBe(1)
     const requests = source.adapter.requests.length
     const events = agent.session.snapshotEvents()
+    await retryEntered.promise
+    expect(failedAt).toBeGreaterThan(0)
+    expect(backendAttempts).toBe(failedAt)
+    expect((await stat(path)).isDirectory()).toBe(true)
     await restore()
+    expect(backendAttempts).toBe(failedAt)
+    expect(await readFile(path)).toEqual(original)
+    expect((await stat(path)).mode & 0o777).toBe(originalMode)
+    restored.resolve(undefined)
     await expect.poll(() => owner.ctx.developmentTasks.get({ taskId: task.id }).context.length).toBe(1)
     await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: agent.id })).capture?.pendingSamples).toBe(0)
     const recovered = await assertRetainedEvidence(source, agent, 1)

@@ -30,9 +30,11 @@ The [LSP backpressure test](../../../../packages/lsp/lsp-stdio/tests/instance.sp
 
 The [combined native work](../../../../snapshots/sdk/scope-native-work/README.md) and [mixed-source](../../../../snapshots/sdk/scope-mixed-source/README.md) SDK fixtures await owner receipts before dependent source requests or independent-source publication. Agent idleness does not establish remote report application. Separate current-writer oracles preserve immutable replay inputs and retain complete publication, grant, source-identity, and omission comparisons; Python owns matching receipt-ordered outputs.
 
-The [headless defaults fixture](../../../../apps/cli/tests/profiles/headless/tests/headless.expected.e2e.ts) writes its first SSE comment immediately after accepting the request and registers close cleanup before writing. Later comments retain their interval, and total stream duration exceeds the configured idle timeout. Strict request-count and default-parameter assertions distinguish successful keepalive handling from a timed-out main request retried alongside title generation.
+The [headless defaults fixture](../../../../apps/cli/tests/profiles/headless/tests/headless.expected.e2e.ts) uses the provider’s configured idle default and waits for the actual title request before finishing. It checks SSE comments, exact defaults, two HTTP requests and the absence of retries. The [adapter clock test](../../../../packages/llm/llm-deepseek/tests/adapter.spec.ts) separately proves that comments reset the idle deadline; its fetch mock propagates abort into the reader and releases timers and listeners.
 
-The command-timeout and development-preview fixtures report their awaited cleanup stage and direct-command/range settlement only on failure. Instrumentation forwards the original promises and is restored after cleanup.
+The [semantic Web observer](../../../../apps/cli/tests/profiles/web/fixtures/scope-semantic-observer.mjs) publishes readiness through an exclusive same-directory temporary write and atomic rename. Its reader waits only for a missing file and rejects malformed JSON.
+
+The command-timeout and development-preview fixtures report their awaited cleanup stage and direct-command/range settlement only on failure. Command handles retain their actual native or fallback mode for diagnosis. Instrumentation forwards the original promises and is restored after cleanup. The [outbox recovery fixture](../../../../packages/collaboration/scope-agent-contribution/tests/recovery.spec.ts) holds subsequent writes after the actual failure, restores original bytes and permissions atomically, then releases the writer before awaiting Host disposal.
 
 ### Built-client import classification
 

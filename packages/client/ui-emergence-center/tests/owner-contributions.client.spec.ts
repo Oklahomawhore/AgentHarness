@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ScopeGroupEntry, ScopeGroupApplication } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DevelopmentNodeId, ScopeContributionApplication, ScopeContributionInventory,
+  ScopeGroupEntry, ScopeGroupApplication } from '@deepseek-ai/dsh-api-remotes/client'
 import { readOwnerContributions, type OwnerContributionPort } from '../src/client/owner-contributions.ts'
 import { applicationEntry, capture } from './native-contribution-fixture.client.ts'
 
@@ -24,6 +25,51 @@ function fixture() {
 }
 
 describe('owner reusable-entry pagination', () => {
+  it('retains grant and single-use application pages after their cursors finish while other streams continue', async () => {
+    const { port, first, second } = fixture()
+    const grant = { version: 1 as const, taskId: entry.taskId, ownerPeerId: entry.ownerPeerId,
+      ...capture.proposal, ...capture.limits,
+      grantId: 'grant-a' as ScopeContributionInventory['entries'][number]['grant']['grantId'],
+      generation: 'grant-generation' as ScopeContributionInventory['entries'][number]['grant']['generation'] }
+    const receipt = { taskId: grant.taskId, ownerPeerId: grant.ownerPeerId, contributorPeerId: grant.contributorPeerId,
+      grantId: grant.grantId, generation: grant.generation, captureId: grant.captureId,
+      captureGeneration: grant.captureGeneration, revision: 2,
+      event: { nodeId: 'owner-node' as DevelopmentNodeId, seq: 2, kind: 'peer-contribution-opened' as const } }
+    const active: ScopeContributionInventory['entries'][number] = { grant, state: 'active', openReceipt: receipt }
+    const otherGrant = { ...active, grant: { ...grant,
+      grantId: 'grant-b' as typeof grant.grantId, captureId: 'capture-b' as typeof grant.captureId },
+    openReceipt: { ...receipt, grantId: 'grant-b' as typeof grant.grantId, captureId: 'capture-b' as typeof grant.captureId,
+      revision: 4, event: { ...receipt.event, seq: 4 } } }
+    const pending: ScopeContributionApplication = { entry: applicationEntry, text: 'single-use-entry',
+      proposal: capture.proposal, limits: capture.limits, result: { status: 'pending' } }
+    const open: ScopeContributionApplication = { entry: { ...applicationEntry,
+      entryId: 'entry-b' as typeof applicationEntry.entryId }, text: 'another-single-use-entry',
+    proposal: null, limits: null, result: { status: 'open' } }
+    vi.mocked(port.contributionInventory).mockResolvedValueOnce({ entries: [active], nextGrantId: grant.grantId })
+    vi.mocked(port.contributionApplications).mockResolvedValueOnce({ entries: [pending], nextEntryId: pending.entry.entryId })
+    const initial = await readOwnerContributions(port, entry.taskId)
+    vi.mocked(port.contributionInventory).mockResolvedValueOnce({ entries: [otherGrant], nextGrantId: null })
+    vi.mocked(port.contributionApplications).mockResolvedValueOnce({ entries: [open], nextEntryId: null })
+    vi.mocked(port.groupApplications).mockResolvedValueOnce({ entries: [second], nextApplicationId: second.applicationId })
+    const next = await readOwnerContributions(port, entry.taskId, initial)
+    expect(port.contributionInventory).toHaveBeenNthCalledWith(1, { taskId: entry.taskId })
+    expect(port.contributionApplications).toHaveBeenNthCalledWith(1, { taskId: entry.taskId })
+    expect(port.contributionInventory).toHaveBeenLastCalledWith({ taskId: entry.taskId, afterGrantId: grant.grantId })
+    expect(port.contributionApplications).toHaveBeenLastCalledWith({ taskId: entry.taskId, afterEntryId: pending.entry.entryId })
+    expect(next.inventory).toEqual({ entries: [active, otherGrant], nextGrantId: null })
+    expect(next.applications).toEqual({ entries: [pending, open], nextEntryId: null })
+    const third = member('application-d')
+    vi.mocked(port.groupApplications).mockResolvedValueOnce({ entries: [third], nextApplicationId: null })
+    const more = await readOwnerContributions(port, entry.taskId, next)
+    expect(more.inventory).toEqual(next.inventory)
+    expect(more.applications).toEqual(next.applications)
+    expect(more.groups.entries[0]?.applications.entries).toEqual([first, second, third])
+    expect(port.contributionInventory).toHaveBeenCalledTimes(2)
+    expect(port.contributionApplications).toHaveBeenCalledTimes(2)
+    expect(port.groupEntries).toHaveBeenCalledOnce()
+    expect(port.groupApplications).toHaveBeenCalledTimes(3)
+  })
+
   it('appends members with separate application ids under the same entry and resumes only unfinished cursors', async () => {
     const { port, first, second } = fixture()
     const page = await readOwnerContributions(port, entry.taskId)

@@ -1,6 +1,6 @@
 /** Test-only observation of shipped Web composition; all calls use its production services. */
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 
 export const name = 'scope-semantic-profile-observer'
 export const inject = ['webServer', 'connection', 'loader', 'appReady', 'scopeAccess', 'developmentTasks',
@@ -108,7 +108,7 @@ export function apply(ctx, config) {
   } }), 'profile fixture endpoint')
   ctx.effect(() => service('appReady').onReady(async () => {
     await service('scopeAccess').identity()
-    await writeFile(config.ready, JSON.stringify(resolved()), { flag: 'wx' })
+    await writeFileAtomic(config.ready, JSON.stringify(resolved()), { mode: 0o600 })
   }), 'profile fixture readiness')
   ctx.effect(() => async () => {
     lifetime.abort(new Error('profile fixture disposed'))

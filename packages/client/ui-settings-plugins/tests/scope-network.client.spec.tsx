@@ -200,6 +200,34 @@ describe('collaboration network preferences', () => {
     subject.face.chooseMode('local')
     expect(subject.state()).toBe(pending)
   })
+
+  it('keeps a disposed card unchanged after a stale reset and rejected pending save', async () => {
+    const subject = bench()
+    const held = Promise.withResolvers<undefined>()
+    subject.host.mutate.mockImplementation(() => held.promise)
+    chooseLan(subject)
+    subject.face.save()
+    const pending = subject.state()
+    const notify = vi.fn()
+    const unsubscribe = subject.face.hooks.scopeNetworkCard.subscribe(notify)
+    try {
+      subject.controller.dispose()
+      subject.controller.resetConnection()
+      subject.host.publish({ revision: 4, value: { listenAddresses: [...local] } })
+      held.reject(new Error('connection closed after card disposal'))
+      await expect(held.promise).rejects.toThrow('connection closed after card disposal')
+      expect(subject.state()).toBe(pending)
+      expect(notify).not.toHaveBeenCalled()
+      expect(subject.host.listenerCount()).toBe(0)
+      subject.face.save()
+      expect(subject.host.mutate).toHaveBeenCalledTimes(1)
+    } finally {
+      held.resolve(undefined)
+      await held.promise.catch(() => undefined)
+      unsubscribe()
+      subject.controller.dispose()
+    }
+  })
 })
 
 describe('collaboration network card', () => {
