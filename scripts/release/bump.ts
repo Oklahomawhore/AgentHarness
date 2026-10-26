@@ -16,21 +16,10 @@
  */
 
 import { globSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, matchesGlob } from 'node:path'
+import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { releaseFamily, type ReleaseFamily, type ReleaseMember } from './families.ts'
 import { capture, isEntry } from './process.ts'
-
-/** Files npm publishes whether or not `files` lists them. */
-const ALWAYS_PUBLISHED = ['package.json', 'README*', 'LICENSE*', 'LICENCE*'] as const
-
-/**
- * Inputs that decide what a built payload contains. A package whose `files`
- * selects `lib/` publishes build output that git does not track, so a change to
- * the sources or the build configuration changes the tarball while no published
- * path appears in the diff.
- */
-const BUILD_INPUTS = ['src/**', 'tsconfig*.json', 'tsdown.config.*', 'build.config.*'] as const
 
 /** Release types the dsh family accepts besides an explicit version. */
 const RELEASE_TYPES = ['major', 'minor', 'patch'] as const
@@ -183,22 +172,6 @@ export function nextVendorVersion(
     ? `${String(major)}.${String(minor)}.${String(patch)}`
     : `${String(major)}.${String(minor)}.${String(patch + 1)}`
   return prerelease === undefined ? numbers : `${numbers}-${prerelease}`
-}
-
-/**
- * Whether a repository-relative path reaches the member's published payload.
- * @param member - the member the path belongs to.
- * @param path - repository-relative path.
- * @returns True when `files`, npm's always-published set, or a build input selects it.
- */
-export function reachesPayload(member: ReleaseMember, path: string): boolean {
-  const relative = path.slice(member.directory.length + 1)
-  const files = member.manifest.files
-  const selected = Array.isArray(files) ? files.filter((entry): entry is string => typeof entry === 'string') : []
-  const built = selected.some(pattern => pattern.startsWith('lib'))
-  const patterns = [...ALWAYS_PUBLISHED, ...selected, ...built ? BUILD_INPUTS : []]
-  return patterns.some(pattern =>
-    matchesGlob(relative, pattern) || matchesGlob(relative, `${pattern}/**`) || relative === pattern)
 }
 
 /**
@@ -384,11 +357,6 @@ function main(): void {
     planned = planPerPackage(family, members, values.prerelease)
   }
 
-  if (planned.length === 0) {
-    console.log(`release bump: family ${family.id}, nothing changed since publication`)
-    return
-  }
-
   const dryRun = values['dry-run']
   if (!dryRun) {
     for (const entry of planned) writeVersion(root, entry.manifestPath, entry.from, entry.to)
@@ -406,7 +374,7 @@ function main(): void {
   }
   capture('git', ['add', 'pnpm-lock.yaml', ...planned.map(entry => entry.manifestPath)])
   capture('git', ['commit', '-m', `release(${family.id}): ${summary}`])
-  console.log('release bump: committed. After this merges to master, tag it:')
+  console.log('release bump: committed. After this merges to main, tag it:')
   for (const tag of [...new Set(planned.map(entry => entry.tag).filter(tag => tag !== undefined))]) {
     console.log(`  git tag ${tag} <merge commit> && git push origin ${tag}`)
   }
