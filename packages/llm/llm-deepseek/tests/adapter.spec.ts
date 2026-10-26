@@ -1602,7 +1602,7 @@ describe('DeepSeekAdapter against a mock server', () => {
   })
 
   it('keeps an idle provider read alive through SSE comments', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const encoder = new TextEncoder()
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
       const signal = init?.signal
