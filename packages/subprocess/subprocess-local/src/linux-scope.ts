@@ -253,7 +253,7 @@ class SystemdScopeOwner implements BoundProcessOwner {
     return true
   }
 
-  private parseUnitState(stdout: string): { loadState: string; activeState: string } {
+  private parseUnitState(stdout: string): { loadState: string; activeState: string; tasksCurrent: string | undefined } {
     const values = new Map<string, string>()
     for (const line of stdout.split(/\r?\n/u)) {
       if (line === '') continue
@@ -269,10 +269,16 @@ class SystemdScopeOwner implements BoundProcessOwner {
     }
     const loadState = values.get('LoadState')
     const activeState = values.get('ActiveState')
-    if (values.size !== 2 || loadState === undefined || activeState === undefined) {
+    const tasksCurrent = values.get('TasksCurrent')
+    if (values.size !== (tasksCurrent === undefined ? 2 : 3) || loadState === undefined || activeState === undefined
+      || (loadState === 'loaded' && tasksCurrent === undefined)) {
       throw new Error(`systemctl returned incomplete state for ${this.unit}: ${JSON.stringify(stdout.trim())}`)
     }
-    return { loadState, activeState }
+    if (tasksCurrent !== undefined && tasksCurrent !== '[not set]'
+      && (!/^(0|[1-9][0-9]*)$/u.test(tasksCurrent) || BigInt(tasksCurrent) > 0xffff_ffff_ffff_ffffn)) {
+      throw new Error(`systemctl returned invalid TasksCurrent for ${this.unit}: ${JSON.stringify(tasksCurrent)}`)
+    }
+    return { loadState, activeState, tasksCurrent }
   }
 
   private async rangeActive(): Promise<boolean> {
@@ -284,10 +290,11 @@ class SystemdScopeOwner implements BoundProcessOwner {
       this.unit,
       '--property=LoadState',
       '--property=ActiveState',
+      '--property=TasksCurrent',
     ])
     const output = `${result.stdout}\n${result.stderr}`
     if (result.status === 0) {
-      const { loadState, activeState } = this.parseUnitState(result.stdout)
+      const { loadState, activeState, tasksCurrent } = this.parseUnitState(result.stdout)
       if (loadState === 'not-found' && activeState === 'inactive') return this.absentUnit(queryStartedPending)
       if (loadState !== 'loaded') {
         throw new Error(
@@ -299,6 +306,8 @@ class SystemdScopeOwner implements BoundProcessOwner {
       if (!['active', 'activating', 'reloading', 'deactivating'].includes(activeState)) {
         throw new Error(`systemctl returned unknown ActiveState for ${this.unit}: ${JSON.stringify(activeState)}`)
       }
+      // A pre-establishment count can predate work admitted while the query was pending.
+      if (tasksCurrent === '0') return queryStartedPending
       if (this.killFailure !== undefined) throw this.killFailure
       return true
     }

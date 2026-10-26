@@ -90,7 +90,7 @@ kind: "package-reference"
 
 ### 主流程
 
-一次 spawn 会同步校验最终 argv、cwd 与环境，在用户命令可能运行前选择 containment，并在目标身份保持私有的情况下返回句柄。Linux 普通命令与终端启动使用私有的一次性请求；scope 内的 bootstrap 会恢复目标 cwd 与环境、解析可执行文件、清除 fd 0 至 fd 2 的 close-on-exec 与 nonblocking 标记并保留其他 descriptor flag 与 status flag，再以原始 argv 进入 libc `execve()`。读取或更新这些标志失败时，启动会 reject。Windows 普通命令会隔离 runner 的 fd 0 至 fd 2、把 fd 3 留给 IPC，并用 fd 4 至 fd 6 承载 target stdio；runner 把这些 CRT 描述符解析成 OS handle，以 suspended 状态创建 target，将其加入 Job、恢复运行，再只关闭 carrier 描述符。`done` 会在 direct command 及其 stdio 屏障结算后完成，`waitForExit()` 则分别等待所选 scope、Job、进程组或已观察 session 变空。
+一次 spawn 会同步校验最终 argv、cwd 与环境，在用户命令可能运行前选择 containment，并在目标身份保持私有的情况下返回句柄。Linux 普通命令与终端启动使用私有的一次性请求；scope 内的 bootstrap 会恢复目标 cwd 与环境、解析可执行文件、清除 fd 0 至 fd 2 的 close-on-exec 与 nonblocking 标记并保留其他 descriptor flag 与 status flag，再以原始 argv 进入 libc `execve()`。读取或更新这些标志失败时，启动会 reject。Windows 普通命令会隔离 runner 的 fd 0 至 fd 2、把 fd 3 留给 IPC，并用 fd 4 至 fd 6 承载 target stdio；runner 把这些 CRT 描述符解析成 OS handle，以 suspended 状态创建 target，将其加入 Job、恢复运行，再只关闭 carrier 描述符。`done` 会在 direct command 及其 stdio 屏障结算后完成，`waitForExit()` 则分别等待所选 scope、Job、进程组或已观察 session 变空。Linux scope 没有成员时仍可能保持 active；新的 `TasksCurrent=0` 观测可以证明其为空。在 scope 建立前发起的查询必须重新执行，不可用的任务计数不能解释为零。
 
 ### 安全不变式
 
