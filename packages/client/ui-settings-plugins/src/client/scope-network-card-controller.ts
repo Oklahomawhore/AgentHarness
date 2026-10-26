@@ -52,10 +52,11 @@ interface Draft extends Choice { revision: number | undefined }
 
 function choice(addresses: readonly string[]): Choice {
   if (addresses.length !== 1) return { mode: 'custom', port: '' }
-  if (addresses[0] === '/ip4/127.0.0.1/tcp/0') return { mode: 'local', port: '' }
-  const match = /^\/ip4\/0\.0\.0\.0\/tcp\/([1-9]\d*)$/.exec(addresses[0] ?? '')
-  return match !== null && Number(match[1]) <= 65535
-    ? { mode: 'lan', port: match[1] ?? '' } : { mode: 'custom', port: '' }
+  const address = addresses.join('')
+  if (address === '/ip4/127.0.0.1/tcp/0') return { mode: 'local', port: '' }
+  const port = address.slice(address.lastIndexOf('/') + 1)
+  return /^\/ip4\/0\.0\.0\.0\/tcp\/[1-9]\d*$/.test(address) && Number(port) <= 65535
+    ? { mode: 'lan', port } : { mode: 'custom', port: '' }
 }
 
 function same(left: readonly string[], right: readonly string[]): boolean {

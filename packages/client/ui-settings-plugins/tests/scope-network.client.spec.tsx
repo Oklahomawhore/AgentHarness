@@ -13,7 +13,7 @@ afterEach(cleanup)
 const local = ['/ip4/127.0.0.1/tcp/0']
 const lan = ['/ip4/0.0.0.0/tcp/41901']
 
-function bench(addresses = local) {
+function bench(addresses: readonly string[] = local) {
   const stub = stubSettingsScope<ScopeNetworkSettings>()
   const mutate = vi.fn<SettingsScope<ScopeNetworkSettings>['mutate']>()
   const host = { ...stub, scope: { ...stub.scope, mutate }, mutate }
@@ -86,6 +86,18 @@ describe('collaboration network preferences', () => {
     expect(host.listenerCount()).toBe(0)
   })
 
+  it.each(['1', '65535'])('recognizes saved LAN port %s without rewriting the preference', (port) => {
+    const addresses = Object.freeze([`/ip4/0.0.0.0/tcp/${port}`])
+    const subject = bench(addresses)
+    onTestFinished(() => { subject.controller.dispose() })
+    mount(subject)
+    expect(subject.state()).toMatchObject({ mode: 'lan', port, dirty: false, saved: false })
+    expect(screen.getByRole('spinbutton', { name: en.scopeNetworkPort })).toHaveProperty('value', port)
+    subject.face.save()
+    expect(subject.host.mutate).not.toHaveBeenCalled()
+    expect(subject.host.scope.getSnapshot().value?.listenAddresses).toEqual(addresses)
+  })
+
   it('starts with the saved local choice and requires an explicit LAN port', () => {
     const subject = bench()
     expect(subject.state()).toMatchObject({ mode: 'local', dirty: false, saved: false })
@@ -132,6 +144,7 @@ describe('collaboration network preferences', () => {
 
   it.each([
     ['/ip6/::1/tcp/42100'],
+    ['/ip4/127.0.0.2/tcp/0'],
     ['/ip4/127.0.0.1/tcp/0', '/ip4/192.168.1.10/tcp/42100'],
   ])('preserves custom listener %j until explicit replacement', async (...addresses) => {
     const subject = bench(addresses)
@@ -300,6 +313,32 @@ describe('collaboration network card', () => {
     subject.host.publish({ revision: 4, value: { listenAddresses: [...local] } })
     expect(subject.state()).toMatchObject({ mode: 'local', saved: false })
     subject.controller.dispose()
+  })
+
+  it('keeps Host preferences clean when a queued selection notification arrives after replacement', async () => {
+    const subject = bench()
+    onTestFinished(() => { subject.controller.dispose() })
+    mount(subject)
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: en.scopeNetworkMode })
+    expect(screen.getByRole('option', { name: en.scopeNetworkLan })).toHaveProperty('disabled', false)
+    select.value = 'lan'
+    const queued = Promise.withResolvers<undefined>()
+    const notification = queued.promise.then(() => { fireEvent.change(select) })
+    try {
+      const replacement = '/ip6/::1/tcp/42100'
+      act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [replacement] } }) })
+      expect(select).toHaveProperty('value', 'custom')
+      expect(screen.getByRole('option', { name: en.scopeNetworkCustom })).toHaveProperty('disabled', true)
+      await act(async () => { queued.resolve(undefined); await notification })
+
+      const latest = '/ip6/::1/tcp/42101'
+      act(() => { subject.host.publish({ revision: 5, value: { listenAddresses: [latest] } }) })
+      expect(subject.state()).toMatchObject({ mode: 'custom', customAddresses: [latest], dirty: false, conflicted: false })
+      expect(screen.getByRole('textbox', { name: en.scopeNetworkCustom })).toHaveProperty('value', latest)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByRole('button', { name: en.save })).toHaveProperty('disabled', true)
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+    } finally { queued.resolve(undefined); await act(async () => { await notification }) }
   })
 
   it('shows custom addresses without a save or normalization', () => {
