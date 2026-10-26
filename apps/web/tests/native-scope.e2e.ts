@@ -115,7 +115,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     const panel = ownerPage.locator('[data-emergence-center]')
     await panel.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。').fill(text)
     await panel.getByRole('button', { name: '发布上下文', exact: true }).click()
-    await panel.getByText(text, { exact: true }).waitFor()
+    await panel.getByRole('paragraph').and(panel.getByText(text, { exact: true })).waitFor()
   }
 
   async function automatic(panel: Locator, extra = '1'): Promise<void> {

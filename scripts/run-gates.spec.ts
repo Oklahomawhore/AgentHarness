@@ -631,10 +631,10 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
 writeFileSync(join(process.env.DSH_GATE_FIXTURE_ROOT, process.pid + '.json'), JSON.stringify(args), { flag: 'wx' })
-process.exitCode = args[1] === 'verify-md-links' ? 7 : 0
+process.exitCode = args[1] === 'lint:contracts-ready' ? 7 : 0
 `)
-      const expected = withPnpmEntrypoint(() => gatesForMode('doc-quick'), pnpm)
-      const result = spawnSync(process.execPath, ['--import', 'tsx/esm', resolve(import.meta.dirname, 'run-gates.ts'), 'doc-quick'], {
+      const expected = withPnpmEntrypoint(() => gatesForMode('ci-lint-contracts-ready'), pnpm)
+      const result = spawnSync(process.execPath, ['--import', 'tsx/esm', resolve(import.meta.dirname, 'run-gates.ts'), 'ci-lint-contracts-ready'], {
         encoding: 'utf8', timeout: 30000,
         env: { ...process.env, npm_execpath: pnpm, DSH_GATE_FIXTURE_ROOT: directory,
           DSH_GATE_CONCURRENCY: '1', DSH_GATE_FAIL_FAST: '1' },

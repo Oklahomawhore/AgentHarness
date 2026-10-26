@@ -1,6 +1,7 @@
 # Agent Note: Redirect the Node compile cache to the data-volume runner temp
 
 Status: implemented
+Archived: 2026-10-26
 
 English | [中文](2026-08-28-ci-node-compile-cache-data-disk.zh.md)
 

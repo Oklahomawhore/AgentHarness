@@ -36,7 +36,7 @@ The [semantic Web observer](../../../../apps/cli/tests/profiles/web/fixtures/sco
 
 The command-timeout and development-preview fixtures report their awaited cleanup stage and direct-command/range settlement only on failure. Command handles retain their actual native or fallback mode for diagnosis. Instrumentation forwards the original promises and is restored after cleanup. The [outbox recovery fixture](../../../../packages/collaboration/scope-agent-contribution/tests/recovery.spec.ts) holds subsequent writes after the actual failure, restores original bytes and permissions atomically, then releases the writer before awaiting Host disposal.
 
-The [native work fixture](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts) compares every delivery attempt with four immutable sealed reports and four durable receipts. A controlled lost acknowledgement preserves receipt identity while allowing a new request id. Command-timeout failures capture bounded systemctl properties for this worker’s named scopes before teardown; they expose neither launch environments nor command arguments.
+The [native work fixture](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts) compares every delivery attempt with four immutable sealed reports and four durable receipts. A controlled lost acknowledgement preserves receipt identity while allowing a new request id. Command-timeout failures capture bounded systemctl properties for this worker’s named scopes before worker exit; they expose neither launch environments nor command arguments.
 
 ### Built-client import classification
 

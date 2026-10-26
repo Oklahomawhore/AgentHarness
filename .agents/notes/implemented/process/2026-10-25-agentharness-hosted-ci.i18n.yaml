@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-10-25-agentharness-hosted-ci.md
-2026-10-25-agentharness-hosted-ci.md: 51f1374e1b78abd05229438beb622b2ab2b6d20a
-2026-10-25-agentharness-hosted-ci.zh.md: 9527974ccb219cfccafed64383299f67d973a653
+2026-10-25-agentharness-hosted-ci.md: 195772ce03625aac2f0843f2d0c2f7f14c6c9034
+2026-10-25-agentharness-hosted-ci.zh.md: 1f058d8b4f2ba4753de91b710ced49ca072a1663

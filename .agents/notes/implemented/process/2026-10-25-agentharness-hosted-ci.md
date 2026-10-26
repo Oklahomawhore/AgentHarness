@@ -16,7 +16,7 @@ Ubuntu jobs install bubblewrap through the distribution package manager and requ
 
 The isolated Linux coverage lane builds the CLI before either coverage process starts, because profile subprocess fixtures explicitly launch built entries. This prerequisite does not change source import resolution or coverage thresholds. Windows installed-wheel steps remove PYTHONPATH and DSH_RUNTIME_MODE rather than assigning empty strings; an empty runtime mode is invalid.
 
-The required verdict depends on every validation job and accepts only successful dependency results. Empty, skipped, cancelled, failed, and unexpected results fail the verdict; cancellation prevents the verdict from starting. Workflow permissions are read-only. Automatic CI receives no model-account secret and cannot invoke publication or refresh recorded expectations. Existing per-file coverage thresholds and gate inventories remain unchanged.
+The required verdict depends on every validation job and accepts only successful dependency results. Empty, skipped, cancelled, failed, and unexpected results fail the verdict; cancellation prevents the verdict from starting. Workflow permissions are read-only. Automatic CI receives no model-account secret and cannot invoke publication or refresh recorded expectations. Provider-account validation uses the separate [manual real-API workflow](../testing/2026-06-19-real-api-e2e-ci.md). Existing per-file coverage thresholds and gate inventories remain unchanged.
 
 Disposable hosted machines own each job's checkout, tools, caches, temporary files, and subprocesses. No private runner selector, persistent-host toolcache override, standby lane, or runner-health fallback is retained. The upstream deployment decisions remain historical: [pool failover](../../archived/process/2026-07-26-ci-failover-runbook.md), [compatibility isolation](../../archived/process/2026-09-06-node-compatibility-selfhosted.md), and [release rehearsal routing](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md).
 
@@ -26,7 +26,7 @@ The shared budget validator supplies CLI arguments and the root configuration's 
 
 Same-directory Session recovery fixtures transfer cleanup ownership to the restored Host. The retired Host cannot remove that directory while the restored Session still owns file handles or pending persistence. Recovery into a separate copied directory retains independent cleanup owners; this fixture ownership does not require filesystem-removal retries or a production teardown change.
 
-Process-table traversal visits each numeric PID at most once and excludes the gate root. It uses an independent queue and enqueues children individually, so cyclic parent records and wide child lists cannot alias the source rows or exceed the JavaScript argument limit. Numeric ancestry sampling does not establish process birth identity. Focused tests retain breadth-first ordering and cover duplicate rows, cycles, and wide tables.
+The [complete-independent-gates decision](2026-10-26-complete-independent-gates.md) owns scheduler completion and interruption semantics.
 
 ## Alternatives considered
 

@@ -36,7 +36,7 @@ Status: implemented
 
 命令超时与开发预览夹具仅在失败时报告正在等待的清理阶段，以及直接命令和受管范围的结束状态。命令句柄保留实际使用的原生或 fallback 模式供诊断。观测代码转发原始 Promise，并在清理后恢复。[Outbox 恢复夹具](../../../../packages/collaboration/scope-agent-contribution/tests/recovery.spec.ts)在真实失败后阻挡后续写入，原子恢复原始字节及权限，再释放写入方并等待 Host 释放完成。
 
-[原生工作夹具](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts)将每次投递尝试与四份不可变封存报告和四个持久回执比较。受控的确认丢失保留回执身份，同时允许新的 request id。命令超时失败在清理前捕获属于当前 worker 的具名 scope 的有界 systemctl 属性，不输出启动环境或命令参数。
+[原生工作夹具](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts)将每次投递尝试与四份不可变封存报告和四个持久回执比较。受控的确认丢失保留回执身份，同时允许新的 request id。命令超时失败在 worker 退出前捕获属于当前 worker 的具名 scope 的有界 systemctl 属性，不输出启动环境或命令参数。
 
 ### 已构建 Client 的导入分类
 
