@@ -634,8 +634,13 @@ writeFileSync(join(process.env.DSH_GATE_FIXTURE_ROOT, process.pid + '.json'), JS
 process.exitCode = args[1] === 'lint:contracts-ready' ? 7 : 0
 `)
       const expected = withPnpmEntrypoint(() => gatesForMode('ci-lint-contracts-ready'), pnpm)
-      const environment: NodeJS.ProcessEnv = { ...process.env, npm_execpath: pnpm, DSH_GATE_FIXTURE_ROOT: directory,
-        DSH_GATE_CONCURRENCY: '1', DSH_GATE_FAIL_FAST: '1' }
+      // Exercise Windows' inherited spelling on every host before selecting the fixture's entrypoint.
+      const inherited = { ...process.env, NPM_EXECPATH: process.execPath }
+      const environment: NodeJS.ProcessEnv = {
+        ...Object.fromEntries(Object.entries(inherited).filter(([key]) => key.toLowerCase() !== 'npm_execpath')),
+        npm_execpath: pnpm, DSH_GATE_FIXTURE_ROOT: directory, DSH_GATE_CONCURRENCY: '1', DSH_GATE_FAIL_FAST: '1',
+      }
+      expect(Object.keys(environment).filter(key => key.toLowerCase() === 'npm_execpath')).toEqual(['npm_execpath'])
       const result = spawnSync(process.execPath, ['--import', 'tsx/esm', resolve(import.meta.dirname, 'run-gates.ts'), 'ci-lint-contracts-ready'], {
         encoding: 'utf8', timeout: 30000, env: environment,
       })

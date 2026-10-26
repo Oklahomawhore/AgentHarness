@@ -38,7 +38,7 @@ The command-timeout and development-preview fixtures report their awaited cleanu
 
 The [native work fixture](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts) compares every delivery attempt with four immutable sealed reports and four durable receipts. A controlled lost acknowledgement preserves receipt identity while allowing a new request id. Command-timeout failures capture bounded systemctl properties for this worker’s named scopes before worker exit; they expose neither launch environments nor command arguments.
 
-The [complete-gates CLI fixture](../../../../scripts/run-gates.spec.ts) reports bounded child output, actual private call records, and the last existing stage marker only on failure. Its entrypoint environment diagnostics contain matching key names and fixture-equality booleans without values. The original assertions and child deadlines remain unchanged.
+The [complete-gates CLI fixture](../../../../scripts/run-gates.spec.ts) reports bounded child output, actual private call records, and the last existing stage marker only on failure. Its entrypoint environment diagnostics contain matching key names and fixture-equality booleans without values. The child environment replaces every case variant of `npm_execpath` with the fixture entrypoint. [Node matches Windows environment keys case-insensitively](https://nodejs.org/docs/latest-v24.x/api/child_process.html), so retaining an inherited uppercase alias can launch the actual package manager. The fixture seeds that alias on every platform and requires exactly one selected key. The original assertions and child deadlines remain unchanged.
 
 ### Built-client import classification
 

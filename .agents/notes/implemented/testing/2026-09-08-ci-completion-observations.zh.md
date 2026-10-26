@@ -38,7 +38,7 @@ Status: implemented
 
 [原生工作夹具](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts)将每次投递尝试与四份不可变封存报告和四个持久回执比较。受控的确认丢失保留回执身份，同时允许新的 request id。命令超时失败在 worker 退出前捕获属于当前 worker 的具名 scope 的有界 systemctl 属性，不输出启动环境或命令参数。
 
-[完整门禁 CLI 夹具](../../../../scripts/run-gates.spec.ts)仅在失败时报告有界子进程输出、实际私有调用记录和最后一个已有阶段标记。入口环境诊断只含同名键及其与夹具值是否相等的布尔结果，不含环境值。原有断言和子进程时限保持不变。
+[完整门禁 CLI 夹具](../../../../scripts/run-gates.spec.ts)仅在失败时报告有界子进程输出、实际私有调用记录和最后一个已有阶段标记。入口环境诊断只含同名键及其与夹具值是否相等的布尔结果，不含环境值。子进程环境将 `npm_execpath` 的所有大小写变体替换为夹具入口。[Node 在 Windows 上不区分环境键的大小写](https://nodejs.org/docs/latest-v24.x/api/child_process.html)，因此保留继承的全大写别名可能会启动真实包管理器。夹具在每个平台都加入该别名，并要求最终只保留一个选定键。原有断言和子进程时限保持不变。
 
 ### 已构建 Client 的导入分类
 
