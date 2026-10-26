@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type {
-  ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, ScopeAccessList, ScopeContributionApplicationApprovalRequest,
+  ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, RemoteResult, ScopeAccessList,
+  ScopeContributionApplicationApprovalRequest,
   ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupEntry, ScopeInvitation,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { apply, inject } from '../src/client/index.ts'
@@ -74,7 +75,8 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
   const currentMember = (): ScopeGroupApplication => ({ ...member, result: !approved ? { status: 'pending' }
     : { status: 'approved', invitation: contribution, receipt, readInvitation,
       readState: readGrant?.state === 'revoked' ? 'revoked' : 'active' } })
-  const list = vi.fn(async () => ok({ grants: readGrant === undefined ? [] : [readGrant], subscriptions: [] } satisfies ScopeAccessList))
+  const list = vi.fn(async (): Promise<Extract<RemoteResult<ScopeAccessList>, { readonly ok: true }>> =>
+    ok({ grants: readGrant === undefined ? [] : [readGrant], subscriptions: [] }))
   const groupApplications = vi.fn(async () => ok({ entries: [currentMember()], nextApplicationId: null }))
   const approve = vi.fn(async (request: ScopeContributionApplicationApprovalRequest) => {
     expect(request).toEqual({ entryId: groupEntry.entryId, applicationId: member.applicationId,
@@ -101,10 +103,11 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
   const sessions = vi.fn(async () => ok(recipientState === undefined ? [] : [observed]))
   const receive = vi.fn(async () => { observed = receiving; return ok(observed) })
   const receiveLeave = vi.fn(async () => { observed = recipient; return ok(observed) })
+  const tasksList = vi.fn(async () => ok([task]))
   const remote = new TestRemote(runtime.ctx, {
     developmentRooms: { list: async () => ok({ nodeId, participants: [], rooms: [], presenceTtlMs: 15_000 }) },
     developmentTasks: {
-      list: async () => ok([task]), lineage: async () => ok({ tasks: [task], boundaryTaskIds: [] }),
+      list: tasksList, lineage: async () => ok({ tasks: [task], boundaryTaskIds: [] }),
       observedCandidates: async () => ok([]), observedIntervals: async () => ok([]),
     },
     developmentTaskAssignments: { list: async () => ok([]) },
@@ -134,7 +137,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     expect(value).toBeInstanceOf(HTMLElement)
     return value as HTMLElement
   })
-  return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave, recipient,
+  return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave, recipient, tasksList,
     authority: () => readGrant,
     revokeFromAnotherClient() {
       readGrant = { invitation: readInvitation, state: 'revoked' }
@@ -143,6 +146,49 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
 }
 
 describe('Emergence Center owner read inventory', () => {
+  it('re-reads mounted Task and permission inventories on reset without restoring the old connection authority', async () => {
+    const subject = await mountOwner(true)
+    const old = Promise.withResolvers<{ ok: true; value: ScopeAccessList }>()
+    const detached = Promise.withResolvers<{ ok: true; value: ScopeAccessList }>()
+    const active = ok({ grants: [{ invitation: readInvitation, state: 'active' as const }], subscriptions: [] })
+    const initialReads = subject.list.mock.calls.length
+    subject.list.mockReturnValueOnce(old.promise)
+    try {
+      await act(async () => { subject.revokeFromAnotherClient() })
+      await waitFor(() => { expect(subject.list).toHaveBeenCalledTimes(initialReads + 1) })
+      const taskReads = subject.tasksList.mock.calls.length
+      const permissionReads = subject.list.mock.calls.length
+      await act(async () => { subject.runtime.ctx.emit('connection/reset') })
+      await screen.findByText(zh['access.revoked'])
+      await waitFor(() => {
+        expect(subject.tasksList.mock.calls.length).toBeGreaterThan(taskReads)
+        expect(subject.list.mock.calls.length).toBeGreaterThan(permissionReads)
+      })
+      await act(async () => { old.resolve(active); await old.promise })
+      expect(screen.queryByRole('button', { name: zh['access.revoke'] })).toBeNull()
+      expect(screen.getByText(zh['access.revoked'])).toBeTruthy()
+      expect(screen.getAllByText(task.objective).length).toBeGreaterThan(0)
+      expect(subject.approve).not.toHaveBeenCalled()
+      expect(subject.revoke).not.toHaveBeenCalled()
+      expect(subject.receive).not.toHaveBeenCalled()
+      expect(subject.receiveLeave).not.toHaveBeenCalled()
+
+      subject.list.mockReturnValueOnce(detached.promise)
+      const beforeDetached = subject.list.mock.calls.length
+      await act(async () => { subject.revokeFromAnotherClient() })
+      await waitFor(() => { expect(subject.list).toHaveBeenCalledTimes(beforeDetached + 1) })
+      await act(async () => { await subject.runtime.dispose() })
+      runtimes.splice(runtimes.indexOf(subject.runtime), 1)
+      const afterDispose = [subject.list.mock.calls.length, subject.tasksList.mock.calls.length]
+      await act(async () => { detached.resolve(active); await detached.promise })
+      expect([subject.list.mock.calls.length, subject.tasksList.mock.calls.length]).toEqual(afterDispose)
+      expect(screen.queryByLabelText(zh['access.identity'])).toBeNull()
+    } finally {
+      old.resolve(active); detached.resolve(active)
+      await Promise.all([old.promise, detached.promise])
+    }
+  })
+
   it('shows a newly approved group member in the independent read revocation controls on the same page', async () => {
     const subject = await mountOwner(false)
     expect(subject.list).toHaveBeenCalledOnce()

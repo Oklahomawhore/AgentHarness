@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { bindSnapshotSelector, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
@@ -47,6 +47,45 @@ function mount(subject: ReturnType<typeof bench>, locale = en) {
 }
 
 describe('collaboration network preferences', () => {
+  it('waits for the Host namespace before allowing a network draft', () => {
+    const host = stubSettingsScope<ScopeNetworkSettings>()
+    const controller = new ScopeNetworkCardController(host.scope)
+    onTestFinished(() => { controller.dispose() })
+    const face = controller.inject()
+    expect(face.hooks.scopeNetworkCard.getSnapshot()).toMatchObject({
+      available: false, writable: false, dirty: false, customAddresses: [],
+    })
+    face.editPort('41901')
+    face.save()
+    expect(host.mutate).not.toHaveBeenCalled()
+    host.publish({ status: 'ready', mode: 'host', writable: true, revision: 3,
+      value: { listenAddresses: [...local] } })
+    expect(face.hooks.scopeNetworkCard.getSnapshot()).toMatchObject({
+      available: true, writable: true, mode: 'local', dirty: false,
+    })
+  })
+
+  it('ignores a notification already captured when an earlier subscriber disposes the card', () => {
+    const host = stubSettingsScope<ScopeNetworkSettings>()
+    host.publish({ status: 'ready', mode: 'host', writable: true, revision: 3,
+      value: { listenAddresses: [...local] } })
+    const unsubscribe = host.scope.subscribe(() => { controller.dispose() })
+    onTestFinished(unsubscribe)
+    const controller = new ScopeNetworkCardController(host.scope)
+    onTestFinished(() => { controller.dispose() })
+    const store = controller.inject().hooks.scopeNetworkCard
+    const previous = store.getSnapshot()
+    const notify = vi.fn()
+    const unobserve = store.subscribe(notify)
+    onTestFinished(unobserve)
+    host.publish({ revision: 4, value: { listenAddresses: [...lan] } })
+    expect(store.getSnapshot()).toBe(previous)
+    expect(notify).not.toHaveBeenCalled()
+    expect(host.listenerCount()).toBe(1)
+    unsubscribe()
+    expect(host.listenerCount()).toBe(0)
+  })
+
   it('starts with the saved local choice and requires an explicit LAN port', () => {
     const subject = bench()
     expect(subject.state()).toMatchObject({ mode: 'local', dirty: false, saved: false })
@@ -282,6 +321,39 @@ describe('collaboration network card', () => {
     expect(screen.queryByText(en.scopeNetworkSaved)).toBeNull()
     subject.controller.dispose()
   })
+
+  it.each([['English', en], ['Chinese', zh]] as const)(
+    'retains a conflicted draft until discard and shows the current Host value in %s', (_name, locale) => {
+      const subject = bench()
+      onTestFinished(() => { subject.controller.dispose() })
+      mount(subject, locale)
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'lan' } })
+      fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '41901' } })
+      expect(screen.getByRole('button', { name: locale.save })).toHaveProperty('disabled', false)
+
+      const replacement = '/ip6/::1/tcp/42100'
+      act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [replacement] } }) })
+      expect(screen.getByRole('alert').textContent).toBe(locale.scopeNetworkConflict)
+      expect(screen.queryByText(locale.scopeNetworkInvalidPort)).toBeNull()
+      expect(screen.getByRole('spinbutton')).toHaveProperty('value', '41901')
+      expect(screen.getByRole('spinbutton').getAttribute('aria-invalid')).toBe('false')
+      const save = screen.getByRole('button', { name: locale.save })
+      expect(save).toHaveProperty('disabled', true)
+      fireEvent.click(save)
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: `${locale.collapse}: ${locale.scopeNetworkTitle}` })).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: locale.discard }))
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('spinbutton')).toBeNull()
+      expect(screen.getByRole('combobox')).toHaveProperty('value', 'custom')
+      expect(screen.getByRole('textbox', { name: locale.scopeNetworkCustom })).toHaveProperty('value', replacement)
+      expect(screen.getByRole('textbox')).toHaveProperty('readOnly', true)
+      expect(screen.queryByText(locale.unsaved)).toBeNull()
+      expect(screen.queryByText(locale.scopeNetworkSaved)).toBeNull()
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+    },
+  )
 
   it('keeps a rejected save open with its draft and error', async () => {
     const subject = bench()

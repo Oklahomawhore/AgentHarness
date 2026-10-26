@@ -82,7 +82,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
   let revision = 0
   let reading: symbol | undefined
   let readAgain = false
-  let mutation: symbol | undefined
+  let mutating = false
   let watermark = -1
   let running = deps.session.getSnapshot().running
   let completedSteps = deps.contextProgress.getSnapshot()?.steps
@@ -101,7 +101,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
     if (!active || connection === undefined) return
     revision++
     publish({ ...snapshot, phase: 'loading' })
-    if (mutation !== undefined) { readAgain = true; return }
+    if (mutating) { readAgain = true; return }
     if (reading !== undefined) { readAgain = true; return }
     const token = Symbol()
     reading = token
@@ -145,7 +145,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
     completedSteps = deps.contextProgress.getSnapshot()?.steps
     // A sent mutation can still commit. Keep its single-flight lock until settlement.
     publish({ phase: connection === undefined ? 'disconnected' : 'loading', observation: null,
-      pending: mutation !== undefined, issue: mutation === undefined ? null : 'unknown' })
+      pending: mutating, issue: mutating ? 'unknown' : null })
     refresh()
   }
   const start = (): void => {
@@ -187,7 +187,7 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
     },
     refresh,
     async act(action) {
-      if (!active || connection === undefined || snapshot.phase !== 'ready' || mutation !== undefined) return false
+      if (!active || connection === undefined || snapshot.phase !== 'ready' || mutating) return false
       const observed = snapshot.observation
       if (observed === null || observed.eligibility === 'not-live') return false
       const expected = 'request' in action ? action.request.expectedBindingId : action.expectedBindingId
@@ -210,21 +210,19 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
       if (localAction && observed.state.binding?.kind === 'local-task-scope') return false
       if (action.kind !== 'leave' && action.kind !== 'pause' && action.kind !== 'leaveLocalTask' && action.kind !== 'updateRoute'
         && observed.eligibility !== 'eligible' && !(localAction && observed.eligibility === 'task-conflict')) return false
-      const token = Symbol()
-      mutation = token
+      mutating = true
       const issued = generation
       const current = (): boolean => observing() && issued === generation
-      const ownsMutation = (): boolean => mutation === token
       revision++
       publish({ ...snapshot, pending: true, issue: null })
       try {
-        const result = action.kind === 'updateRoute' ? await deps.port.updateRoute({ ...action.request, agentId: deps.agentId })
-          : action.kind === 'bind' ? await deps.port.bind({ ...action.request, agentId: deps.agentId })
-            : action.kind === 'bindLocal' ? await deps.port.bindLocal({ ...action.request, agentId: deps.agentId })
-              : action.kind === 'leaveLocalTask' ? await deps.port.leaveLocalTask({ ...action.request, agentId: deps.agentId })
-                : action.kind === 'resume' ? await deps.port.resume({ agentId: deps.agentId,
+        const result = await (action.kind === 'updateRoute' ? deps.port.updateRoute({ ...action.request, agentId: deps.agentId })
+          : action.kind === 'bind' ? deps.port.bind({ ...action.request, agentId: deps.agentId })
+            : action.kind === 'bindLocal' ? deps.port.bindLocal({ ...action.request, agentId: deps.agentId })
+              : action.kind === 'leaveLocalTask' ? deps.port.leaveLocalTask({ ...action.request, agentId: deps.agentId })
+                : action.kind === 'resume' ? deps.port.resume({ agentId: deps.agentId,
                   expectedBindingId: action.expectedBindingId, automatic: action.automatic })
-                  : await deps.port[action.kind]({ agentId: deps.agentId, expectedBindingId: action.expectedBindingId })
+                  : deps.port[action.kind]({ agentId: deps.agentId, expectedBindingId: action.expectedBindingId }))
         if (!current()) return false
         if (!result.ok) {
           publish({ ...snapshot, issue: result.error.code.startsWith('scope-agent/') ? result.error.code : 'unknown' })
@@ -235,10 +233,8 @@ export function createNativeScopeSource(deps: NativeScopeDependencies): NativeSc
         if (current()) publish({ ...snapshot, issue: 'unknown' })
         return false
       } finally {
-        if (ownsMutation()) {
-          mutation = undefined
-          if (observing()) { publish({ ...snapshot, pending: false }); refresh() }
-        }
+        mutating = false
+        if (observing()) { publish({ ...snapshot, pending: false }); refresh() }
       }
     },
   }
