@@ -55,7 +55,7 @@ Measure the working-tree graph and a Git ref through the local metadata-only reg
 
 ```sh
 pnpm run benchmark:npm-resolution -- --runs=5 --timeout-ms=300000
-pnpm run benchmark:npm-resolution -- --ref=origin/master --runs=5 --timeout-ms=300000
+pnpm run benchmark:npm-resolution -- --ref=origin/main --runs=5 --timeout-ms=300000
 ```
 
 Verify package placement through two incompatible synthetic DSH releases. The verifier copies every current DSH manifest into `0.1.0` and `0.2.0`, asks npm for a package lock only, and rejects cross-release DSH resolution, unexpected DSH locations, unequal release inventories, multiple Cordis installations, and package archive requests. The local index contains only installed current-platform metadata, so npm-accepted probes for unavailable optional packages are reported without failing the check.
@@ -72,7 +72,7 @@ pnpm run benchmark:npm-resolution:next -- --runs=1 --finalist-runs=5 --finalists
 
 ### Performance verification
 
-[`verify-npm-install-layout`](../../../../scripts/verify-npm-install-layout.ts) is a deterministic package-path and version check in the `Release (dsh)` workflow on every pull request and master push; it does not enforce resolver duration. [`benchmark-npm-resolution`](../../../../scripts/benchmark-npm-resolution.ts) and [`benchmark-next-package-dependency`](../../../../scripts/benchmark-next-package-dependency.ts) remain manual because resolver time varies with machine load and metadata completion order. Their fresh-consumer, metadata-only runs isolate npm's dependency-tree calculation from registry latency and archive downloads, so relative results identify peer relays without creating a release-time performance promise.
+[`verify-npm-install-layout`](../../../../scripts/verify-npm-install-layout.ts) is a deterministic package-path and version check in the static lane of [CI](../../../../.github/workflows/ci.yml) on every pull request and main push; it does not enforce resolver duration. [`benchmark-npm-resolution`](../../../../scripts/benchmark-npm-resolution.ts) and [`benchmark-next-package-dependency`](../../../../scripts/benchmark-next-package-dependency.ts) remain manual because resolver time varies with machine load and metadata completion order. Their fresh-consumer, metadata-only runs isolate npm's dependency-tree calculation from registry latency and archive downloads, so relative results identify peer relays without creating a release-time performance promise.
 
 The generated policy currently leaves 27 managed Host runtime edges in `dependencies` across 13 packages. Two edges remain in `peerDependencies`: `dsh-api-remotes → dsh-scope` for `carrierKeyOf`, and `dsh-session → dsh-scope` for `scopeOf` and `scopeTarget`.
 
