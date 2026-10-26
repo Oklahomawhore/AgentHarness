@@ -38,6 +38,8 @@ Status: implemented
 
 [原生工作夹具](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts)将每次投递尝试与四份不可变封存报告和四个持久回执比较。受控的确认丢失保留回执身份，同时允许新的 request id。命令超时失败在 worker 退出前捕获属于当前 worker 的具名 scope 的有界 systemctl 属性，不输出启动环境或命令参数。
 
+[完整门禁 CLI 夹具](../../../../scripts/run-gates.spec.ts)仅在失败时报告有界子进程输出、实际私有调用记录和最后一个已有阶段标记。入口环境诊断只含同名键及其与夹具值是否相等的布尔结果，不含环境值。原有断言和子进程时限保持不变。
+
 ### 已构建 Client 的导入分类
 
 [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts)通过普通 Node 启动只含可擦除语法的 TypeScript 驱动，使传递导入使用已构建的包导出。tsx hook 会将这些导入重定向到源码，并可能创建第二份原生模块实例，不能充当构建产物导入的判定器。不使用该 hook 时 Koffi 可以导入，不再有豁免。检查只有在 Node 针对 Client 包已构建 `lib/` 目录中现存的普通样式表文件报告 `ERR_UNKNOWN_FILE_EXTENSION` 时，才接受列表中的三个 Client bundle。首先失败的样式表可以来自传递依赖，因此不能用导入顺序选定一个固定资源路径。源码路径、不存在的文件、其他错误以及意外成功的豁免导入都会失败。各隔离夹具持有自己的仓库目录结构和资源；限定范围的 resolve/load hook 只替换选中的 bundle，不修改共享构建产物。

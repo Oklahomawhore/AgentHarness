@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import {
   defaultConcurrency,
   formatGateResultReason,
@@ -634,16 +634,34 @@ writeFileSync(join(process.env.DSH_GATE_FIXTURE_ROOT, process.pid + '.json'), JS
 process.exitCode = args[1] === 'lint:contracts-ready' ? 7 : 0
 `)
       const expected = withPnpmEntrypoint(() => gatesForMode('ci-lint-contracts-ready'), pnpm)
+      const environment: NodeJS.ProcessEnv = { ...process.env, npm_execpath: pnpm, DSH_GATE_FIXTURE_ROOT: directory,
+        DSH_GATE_CONCURRENCY: '1', DSH_GATE_FAIL_FAST: '1' }
       const result = spawnSync(process.execPath, ['--import', 'tsx/esm', resolve(import.meta.dirname, 'run-gates.ts'), 'ci-lint-contracts-ready'], {
-        encoding: 'utf8', timeout: 30000,
-        env: { ...process.env, npm_execpath: pnpm, DSH_GATE_FIXTURE_ROOT: directory,
-          DSH_GATE_CONCURRENCY: '1', DSH_GATE_FAIL_FAST: '1' },
+        encoding: 'utf8', timeout: 30000, env: environment,
+      })
+      const calls = readdirSync(directory).filter(name => name.endsWith('.json'))
+        .map(name => readFileSync(join(directory, name), 'utf8')).sort()
+      onTestFailed(() => {
+        const stdout = result.stdout || ''
+        const stderr = result.stderr || ''
+        const markers = [
+          'run-gates: ci-lint-contracts-ready running ',
+          ...expected.map(subject => `run-gates: start ${subject.label}`),
+          `run-gates: ${expected.length - 1} passed, 1 failed, 0 skipped`,
+        ]
+        console.error('complete CLI fixture diagnostics:', JSON.stringify({
+          errorCode: result.error !== undefined && 'code' in result.error ? result.error.code : undefined,
+          status: result.status, signal: result.signal,
+          lastObservedMarker: markers.filter(marker => stdout.includes(marker)).at(-1),
+          calls,
+          npmExecpathKeys: Object.keys(environment).filter(key => key.toLowerCase() === 'npm_execpath')
+            .map(key => ({ key, equalsFixture: environment[key] === pnpm })),
+          stdoutTail: stdout.slice(-4096), stderrTail: stderr.slice(-4096),
+        }))
       })
       expect(result.error).toBeUndefined()
       expect(result.signal).toBeNull()
       expect(result.status).toBe(1)
-      const calls = readdirSync(directory).filter(name => name.endsWith('.json'))
-        .map(name => readFileSync(join(directory, name), 'utf8')).sort()
       expect(calls).toEqual(expected.map(subject => JSON.stringify(subject.args.slice(1))).sort())
       expect(result.stdout).toContain('0 skipped')
       expect(result.stdout).toContain(`${expected.length - 1} passed, 1 failed`)
