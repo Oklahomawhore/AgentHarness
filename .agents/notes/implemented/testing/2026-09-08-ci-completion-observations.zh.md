@@ -36,6 +36,8 @@ Status: implemented
 
 命令超时与开发预览夹具仅在失败时报告正在等待的清理阶段，以及直接命令和受管范围的结束状态。命令句柄保留实际使用的原生或 fallback 模式供诊断。观测代码转发原始 Promise，并在清理后恢复。[Outbox 恢复夹具](../../../../packages/collaboration/scope-agent-contribution/tests/recovery.spec.ts)在真实失败后阻挡后续写入，原子恢复原始字节及权限，再释放写入方并等待 Host 释放完成。
 
+[原生工作夹具](../../../../packages/collaboration/scope-agent-contribution/tests/native-work.spec.ts)将每次投递尝试与四份不可变封存报告和四个持久回执比较。受控的确认丢失保留回执身份，同时允许新的 request id。命令超时失败在清理前捕获属于当前 worker 的具名 scope 的有界 systemctl 属性，不输出启动环境或命令参数。
+
 ### 已构建 Client 的导入分类
 
 [Node import sweep](../../../../packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts)通过普通 Node 启动只含可擦除语法的 TypeScript 驱动，使传递导入使用已构建的包导出。tsx hook 会将这些导入重定向到源码，并可能创建第二份原生模块实例，不能充当构建产物导入的判定器。不使用该 hook 时 Koffi 可以导入，不再有豁免。检查只有在 Node 针对 Client 包已构建 `lib/` 目录中现存的普通样式表文件报告 `ERR_UNKNOWN_FILE_EXTENSION` 时，才接受列表中的三个 Client bundle。首先失败的样式表可以来自传递依赖，因此不能用导入顺序选定一个固定资源路径。源码路径、不存在的文件、其他错误以及意外成功的豁免导入都会失败。各隔离夹具持有自己的仓库目录结构和资源；限定范围的 resolve/load hook 只替换选中的 bundle，不修改共享构建产物。

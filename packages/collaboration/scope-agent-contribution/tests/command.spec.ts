@@ -1,6 +1,6 @@
 /** Real foreground outcomes enter the existing durable local and peer contribution paths. */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { spawn as spawnChild } from 'node:child_process'
+import { spawn as spawnChild, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
@@ -281,9 +281,17 @@ it.each(['local', 'peer'] as const)('reports an actual %s timeout independently 
   const ranges: (() => unknown)[] = []
   const restore: (() => void)[] = []
   cleanup = { phase: 'not-started', hosts: [] }
-  onTestFailed(() => { console.error('Command contribution timeout lifecycle', JSON.stringify({
-    role, stage, cleanup, processes: ranges.map(snapshot => snapshot()),
-  })) })
+  onTestFailed(() => {
+    const scopes = process.platform === 'linux' ? spawnSync('systemctl', ['--user', 'show',
+      `dsh-subprocess-${process.pid}-*.scope`, '--all',
+      '--property=Id,LoadState,ActiveState,SubState,ControlGroup,TasksCurrent', '--no-pager',
+    ], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, timeout: 5000, maxBuffer: 65536 }) : undefined
+    console.error('Command contribution timeout lifecycle', JSON.stringify({
+      role, stage, cleanup, processes: ranges.map(snapshot => snapshot()),
+      nativeScopes: scopes === undefined ? undefined : { status: scopes.status, signal: scopes.signal,
+        error: scopes.error?.message, stdout: scopes.stdout, stderr: scopes.stderr },
+    }))
+  })
   onTestFinished(() => { for (const undo of restore.reverse()) undo() })
   const timedCommand = 'sleep 5'
   const f = await fixture(role, { commands: [{ command: timedCommand, rootIndex: 0 }] })

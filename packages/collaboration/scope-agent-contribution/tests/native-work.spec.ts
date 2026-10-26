@@ -9,6 +9,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
+import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
+import { nativeWorkContributionRequestSchema, nativeWorkContributionResponseSchema } from '@deepseek-ai/dsh-scope-access/src/contribution-schema.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import type { ScopeAgentNativeWorkContributionPermission } from '../src/types.ts'
 import { nativeContributionDomain } from '../src/state.ts'
@@ -106,11 +108,36 @@ function operations() {
 
 it.each(['local', 'peer'] as const)('shares real Write, Edit, Bash and the final answer from one %s Agent and one grant', async (role) => {
   const f = await fixture(role, { permission: { fileContent: 'completed-native-file' } })
-  const protocols: string[] = []
+  type SampleRequest = Extract<ReturnType<typeof nativeWorkContributionRequestSchema.parse>, { op: 'sample' }>
+  const attempts: { protocol: string; request: SampleRequest }[] = []
+  const responses: ReturnType<typeof nativeWorkContributionResponseSchema.parse>[] = []
   f.source.transport.beforeRequest = async (protocol, payload) => {
     if (payload === null || typeof payload !== 'object' || !('op' in payload) || payload.op !== 'sample') return
-    protocols.push(protocol)
+    const request = nativeWorkContributionRequestSchema.parse(structuredClone(payload))
+    if (request.op !== 'sample') throw new Error('Native work sample request absent')
+    attempts.push({ protocol, request })
     expect((await f.source.readEvents(f.agent)).length).toBeGreaterThan(f.original.events.length)
+    const sealed = await row(f)
+    expect(sealed.capture).toMatchObject({ invitation: request.invitation })
+    expect(sealed.samples.find(item => item.sample.sourceId === request.sample.sourceId
+      && item.sample.sequence === request.sample.sequence)?.sample).toEqual(request.sample)
+  }
+  let lostAck = false
+  if (role === 'peer') {
+    const protocol = '/agentharness/scope-contribute/6'
+    const handler = f.owner.transport.handlers.get(protocol)
+    if (handler === undefined) throw new Error('Native work owner handler absent')
+    f.owner.transport.handlers.set(protocol, async (input) => {
+      const response = await handler(input)
+      const parsed = nativeWorkContributionResponseSchema.parse(response)
+      responses.push(parsed)
+      if (!lostAck && parsed.op === 'sample' && parsed.result.status === 'accepted') {
+        lostAck = true
+        throw new ScopeTransportError('scope-transport/unavailable')
+      }
+      return response
+    })
+    releases.push(() => { f.owner.transport.handlers.set(protocol, handler) })
   }
   await work(f, operations())
   await expect.poll(async () => (await row(f)).samples.filter(item => item.receipt !== undefined).length).toBe(4)
@@ -142,7 +169,32 @@ it.each(['local', 'peer'] as const)('shares real Write, Edit, Bash and the final
     }
   }
   expect(JSON.stringify(retained)).not.toContain('PRIVATE_SOURCE_PROMPT')
-  expect(protocols).toEqual(role === 'peer' ? Array<string>(4).fill('/agentharness/scope-contribute/6') : [])
+  expect(lostAck).toBe(role === 'peer')
+  if (role === 'peer') {
+    if (retained.capture === null || !('invitation' in retained.capture)) throw new Error('Sealed peer capture absent')
+    const invitation = retained.capture.invitation
+    if (invitation === undefined) throw new Error('Sealed peer invitation absent')
+    expect(new Set(attempts.map(item => item.protocol))).toEqual(new Set(['/agentharness/scope-contribute/6']))
+    expect(new Set(attempts.map(item => item.request.requestId)).size).toBe(attempts.length)
+    const sealed = new Map(retained.samples.map(item => [`${item.sample.sourceId}/${item.sample.sequence}`,
+      { invitation, sample: item.sample }]))
+    for (const { request } of attempts) {
+      const { requestId: _requestId, ...submission } = request
+      expect(submission).toEqual({ version: 6, op: 'sample', ...sealed.get(`${request.sample.sourceId}/${request.sample.sequence}`) })
+    }
+    expect(new Set(attempts.map(item => `${item.request.sample.sourceId}/${item.request.sample.sequence}`))).toEqual(new Set(sealed.keys()))
+    expect(JSON.stringify(attempts)).not.toContain('PRIVATE_SOURCE_PROMPT')
+    const accepted = responses.find(response => response.op === 'sample' && response.result.status === 'accepted')
+    if (accepted?.op !== 'sample' || accepted.result.status !== 'accepted') throw new Error('Lost accepted receipt absent')
+    const reused = responses.flatMap(response => response.op === 'sample' && response.result.status === 'reused'
+      ? [response.result.receipt] : [])
+    expect(reused).toContainEqual(accepted.result.receipt)
+    expect(f.publications()).toHaveLength(4)
+    expect(new Set(f.publications().map(item => item.id)))
+      .toEqual(new Set(retained.samples.map(item => item.receipt?.publicationId)))
+  } else {
+    expect(attempts).toEqual([])
+  }
   const receiver = await createHost(f.network, 'receiver')
   hosts.push(receiver)
   const agent = await receiver.createAgent('original-recipient')
