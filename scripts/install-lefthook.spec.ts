@@ -525,7 +525,9 @@ describe('worktree-local Lefthook installer', { timeout: 90_000 }, () => {
     const result = await runInstaller(fixture, fixture.main)
 
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain('invalid Lefthook installer lock')
+    expect(result.stderr).toContain('[install-lefthook] Error: invalid Lefthook installer lock')
+    expect(result.stderr).toContain('at manualLockRecoveryError (')
+    expect(result.stderr).toContain('at acquireInstallLock (')
     expect(result.stderr).toContain('remove it manually')
     expect(readFileSync(lockPath, 'utf8')).toBe(invalidRecord)
     expect(existsSync(hooksPath(fixture, fixture.main))).toBe(false)

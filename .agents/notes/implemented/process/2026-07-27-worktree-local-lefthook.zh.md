@@ -18,7 +18,7 @@ Lefthook 生成的钩子会优先使用安装时从对应 worktree 记录的绝�
 
 每个钩子目录都有一个 JSON 所有权标记，其中包含上次写入 worktree 配置的绝对路径。检出目录移动后，该标记只允许替换确切的陈旧自有值。Git 会以主 worktree 的配置为新链接 worktree 初始化 `config.worktree`；当该初始配置包含某个已注册 worktree 中由所有权标记佐证的保留钩子路径时，安装程序只会在新 worktree 的配置中将其替换为新 worktree 自有的路径。Lefthook 运行前，所有权标记和每个已有的生成钩子都必须是不带别名的常规文件。安装程序会解析 `core.hooksPath` 的生效作用域、来源和值，包括通过当前生效的 `config.worktree` include 加载的值；它会拒绝命令作用域路径、非自有的 worktree 作用域路径以及非自有的保留目录。继承自系统、全局或共用仓库配置的路径必须设置 `DSH_LEFTHOOK_ALLOW_HOOKS_PATH_OVERRIDE=1`，从而只让当前 worktree 显式启用 Lefthook。未生效的 `includeIf` 目标不会被递归检查，因为它们不影响当前配置。完成验证后，Lefthook 子进程的环境会移除命令作用域的 Git 配置。
 
-若 Lefthook 在更改 `core.hooksPath` 后失败，安装程序会恢复先前的 worktree 值；若回滚失败，会与安装失败一并报告。`$GIT_COMMON_DIR/hooks` 中的现有文件绝不会被移除或改写。有针对性的安装程序测试锁定了以下行为：隔离、对复制而来的新 worktree 配置的处理、迁移拒绝、所有权与检出目录移动、并发安装、自定义路径及回滚。
+若 Lefthook 在更改 `core.hooksPath` 后失败，安装程序会恢复先前的 worktree 值；若回滚失败，会与安装失败一并报告。安装失败会保留原始 Error 的调用栈和可用诊断属性。`$GIT_COMMON_DIR/hooks` 中的现有文件绝不会被移除或改写。有针对性的安装程序测试锁定了以下行为：隔离、对复制而来的新 worktree 配置的处理、迁移拒绝、所有权与检出目录移动、并发安装、自定义路径及回滚。
 
 ## 考虑过的替代方案
 
