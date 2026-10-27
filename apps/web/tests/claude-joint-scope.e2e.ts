@@ -244,9 +244,10 @@ describe.skipIf(process.platform === 'win32')('web e2e: Claude joins a reusable 
     ]
     const shots = process.env.DSH_CONTRIBUTION_SCOPE_SHOTS
     await expect.poll(() => source.getByRole('button', { name: '退出此次协作', exact: true }).isEnabled()).toBe(true)
-    await captureContributionPanel(claude, SOURCE, join(EXPECTED, 'source-waiting.expected.md'), replacements, shots)
     const claudeRow = applications.locator('[data-group-application]').filter({ hasText: claudeIdentity.peerId })
     await claudeRow.getByText('收到申请，等待你的批准', { exact: true }).waitFor()
+    await source.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
+    await captureContributionPanel(claude, SOURCE, join(EXPECTED, 'source-waiting.expected.md'), replacements, shots)
     await claude.page.close()
     await claudeRow.getByLabel('该会话的协作职责', { exact: true }).fill('维护 Claude 服务端重试延迟')
     await claudeRow.getByRole('button', { name: '批准读取与文件贡献', exact: true }).click()
