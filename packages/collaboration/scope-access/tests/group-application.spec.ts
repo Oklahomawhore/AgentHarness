@@ -278,6 +278,26 @@ it('never accepts reusable records or requests under the single-capture storage 
   expect(f.retained().members).toEqual([])
 })
 
+it('rejects a retained pending group member that names the owner as its contributor', async () => {
+  const f = await fixture()
+  await f.b.access.applyContribution(f.requestB, signal())
+  const record = f.retained()
+  expect(record.members).toHaveLength(1)
+  expect(record.members[0]?.grant).toBeNull()
+  const events = f.a.tasks.log()
+  await f.a.ctx.fiber.dispose()
+  const records = f.a.pool.media.get('scope_group_applications')?.tables.get('entries')
+  if (records === undefined) throw new Error('Group application medium was not retained')
+  records.set(record.entry.entryId, { ...record, members: record.members.map(member => ({ ...member,
+    proposal: { ...member.proposal, contributorPeerId: record.entry.ownerPeerId } })) })
+  const retained = structuredClone(f.a.pool.media)
+  const restored = await host(f.a.transport.peerId, f.a.pool, {}, events)
+  await expect(restored.access.identity()).rejects.toThrow()
+  expect(restored.exit).toHaveBeenCalledWith(1)
+  expect(f.a.pool.media).toEqual(retained)
+  expect(restored.tasks.log()).toEqual(events)
+})
+
 it.each(['owner', 'application', 'capture', 'grant', 'budget'] as const)('refuses restored group %s conflicts', async (field) => {
   const f = await fixture()
   await approveBoth(f)

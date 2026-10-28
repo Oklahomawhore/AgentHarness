@@ -66,7 +66,7 @@ describe('AgentHarness hosted CI', () => {
     expect(linux.steps).toContainEqual({ name: 'Install Chromium', if: "matrix.lane == 'consumers'",
       run: 'pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium' })
     expect(linux.steps).toContainEqual({ uses: 'actions/setup-python@v6.3.0', if: "matrix.lane == 'consumers'",
-      with: { 'python-version': '3.10', cache: 'pip' } })
+      with: { 'python-version': '3.10', cache: 'pip', 'cache-dependency-path': 'python/sdk/uv.lock' } })
     expect(linux.steps).toContainEqual({ name: 'Install Python collaboration tooling', if: "matrix.lane == 'consumers'",
       run: 'python -m pip install uv==0.11.23' })
     expect(linux.steps).toContainEqual({ name: 'Verify npm install layout', if: "matrix.lane == 'static'", run: 'pnpm run verify-npm-install-layout' })
