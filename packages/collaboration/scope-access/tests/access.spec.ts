@@ -205,6 +205,35 @@ it('retains revocation and receiving withdrawal across restart and rejects trans
   expect(changed.exit).toHaveBeenCalledWith(1)
 })
 
+it.each(['grant owner', 'recipient', 'owner projection', 'recipient projection'] as const)(
+  'rejects a restored %s mismatch without discarding durable evidence', async (damage) => {
+    const { a, b, invitation, subscription } = await joined()
+    expect((await b.access.retrieve(subscription.id, signal())).status).toBe('active')
+    const owner = damage === 'grant owner' || damage === 'owner projection'
+    const selected = owner ? a : b
+    const events = selected.tasks.log()
+    await a.ctx.fiber.dispose()
+    await b.ctx.fiber.dispose()
+    const medium = selected.pool.media.get('scope_access')
+    if (medium === undefined) throw new Error('Scope medium is absent')
+    if (damage === 'grant owner') {
+      medium.tables.get('grants')!.set(invitation.grantId, {
+        invitation: { ...invitation, ownerPeerId: peer('another-owner') }, state: 'active',
+      })
+    } else if (damage === 'recipient') {
+      medium.tables.get('subscriptions')!.set(subscription.id, {
+        ...subscription, invitation: { ...invitation, recipientPeerId: peer('another-recipient') },
+      })
+    } else medium.tables.get(owner ? 'grants' : 'subscriptions')!.clear()
+    const retained = structuredClone(medium)
+    const restored = await host(owner ? 'peer-a' : 'peer-b', selected.pool, {}, events)
+    await expect(restored.access.identity()).rejects.toThrow(damage === 'grant owner'
+      ? 'invalid stored grant owner' : damage === 'recipient' ? 'invalid stored recipient' : 'orphaned stored projection')
+    expect(restored.exit).toHaveBeenCalledWith(1)
+    expect(selected.pool.media.get('scope_access')).toEqual(retained)
+  },
+)
+
 it('keeps grant and projection state unchanged when durability fails, while revocation needs no spare slot', async () => {
   const { a, b, invitation, subscription } = await joined({ maxGrants: 1 })
   a.pool.failNextWrites = 1

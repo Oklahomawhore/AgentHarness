@@ -14,7 +14,7 @@ Status: implemented
 
 Ubuntu job 通过发行版包管理器安装 bubblewrap，并在依赖沙箱的验收前要求命名空间探针成功。Linux 运行时构建器对已安装 node-pty 的脚本调用仅在该命令中禁用 pnpm 依赖校验，避免 ABI 容器替换主机工作区安装；原生源码编译和 GLIBC 校验仍为必需。
 
-Linux consumer lane 安装固定版本的 Python 和 uv，并通过已构建的 `dsh` SDK profile 运行 Python Scope 聚合。显式场景选择项与聚合由同一注册表拥有，聚合保留每个场景的记录期望和验证。这个读取者完成后，HMR 才能改写共享构建产物。仅验证协议的 Python 测试与五平台已安装 wheel 冒烟保留各自独立的用途。
+Linux consumer lane 安装固定版本的 Python 和 uv，并通过已构建的 `dsh` SDK profile 运行 Python Scope 聚合。该 lane 与 SDK job 的 Python 设置对明确的 `python/sdk/uv.lock` 缓存输入计算指纹；默认递归查找依赖文件可能在任何测试执行前沿已安装的 pnpm 链接进入环。[工作流回归测试](../../../../scripts/ci-workflow.spec.ts)拒绝隐式缓存输入。显式场景选择项与聚合由同一注册表拥有，聚合保留每个场景的记录期望和验证。这个读取者完成后，HMR 才能改写共享构建产物。仅验证协议的 Python 测试与五平台已安装 wheel 冒烟保留各自独立的用途。
 
 独立的 Linux 覆盖率 lane 在两个覆盖率进程启动前构建 CLI，因为 profile 子进程夹具显式启动已构建入口。这项前置依赖不改变源码导入解析或覆盖率阈值。Windows 已安装 wheel 的步骤删除 PYTHONPATH 和 DSH_RUNTIME_MODE，而不赋空字符串；空的运行时模式属于非法配置。
 

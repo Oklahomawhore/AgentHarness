@@ -251,6 +251,17 @@ describe('Python release workflows', () => {
 })
 
 describe('AgentHarness repository automation', () => {
+  it('hashes explicit Python cache inputs without scanning workspace dependency links', () => {
+    const workflow = loadWorkflow('.github/workflows/ci.yml')
+    for (const name of ['linux', 'python-sdk']) {
+      const job = workflowJob(workflow, name)
+      if (!Array.isArray(job.steps)) throw new TypeError(`${name} must define steps`)
+      const setup = job.steps.filter(isRecord).find(step => String(step.uses).startsWith('actions/setup-python@'))
+      expect(setup).toMatchObject({ with: { cache: 'pip', 'cache-dependency-path': 'python/sdk/uv.lock' } })
+    }
+    expect(existsSync(resolve(root, 'python/sdk/uv.lock'))).toBe(true)
+  })
+
   it('keeps independent checks running after a sibling failure', () => {
     const workflow = loadWorkflow('.github/workflows/ci.yml')
     expect(JSON.stringify(workflow)).not.toContain('"DSH_GATE_FAIL_FAST"')

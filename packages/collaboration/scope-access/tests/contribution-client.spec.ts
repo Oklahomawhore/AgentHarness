@@ -56,7 +56,7 @@ async function source() {
     sequence: 1, result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
       fields: { rootIndex: 0, path: 'notes.txt', content: 'Use the corrected route' }, omissions: [] },
   }
-  return { owner, source, task, store, controller, run, current, approve, sample, outbox, cleared,
+  return { owner, source, task, entry, limits, store, controller, run, current, approve, sample, outbox, cleared,
     inLocalOperation: () => localOperation, endSession: () => { ended = true } }
 }
 
@@ -150,4 +150,118 @@ it('requires a group receiving-consent adopter before activating an approved con
   await value.controller.pollApplication(supported, signal())
   expect(selectApproval).toHaveBeenCalledTimes(1)
   expect(value.current().state).toBe('active')
+})
+
+async function replacementCapture(value: Awaited<ReturnType<typeof source>>, active: boolean) {
+  const original = value.current()
+  const task = await value.owner.createTask('Replacement capture')
+  const { entry } = await value.owner.access.createContributionEntry({ sourceKind: 'tool-observations',
+    taskId: task.id, ownerAddress: value.entry.ownerAddress, expiresAt: value.entry.expiresAt })
+  const proposal = peerContributionProposalSchema.parse({ ...original.proposal, captureGeneration: randomUUID() })
+  const capture: LocalCapture = { proposal, state: 'prepared', sequence: 0, rootLabels: ['replacement-local-root'],
+    application: { entry, limits: value.limits, state: 'applying' } }
+  if (!active) return { capture, task }
+  expect(await value.source.access.applyContribution({ entry, proposal, limits: value.limits }, signal()))
+    .toEqual({ status: 'pending' })
+  const approval = await value.owner.access.approveContributionApplication({ entryId: entry.entryId,
+    expectedProposal: proposal, limits: value.limits, ownerAddress: entry.ownerAddress })
+  const selected: LocalCapture = { proposal, state: 'active', sequence: 1, invitation: approval.invitation,
+    rootLabels: capture.rootLabels }
+  return { capture: selected, task }
+}
+
+it.each(['application', 'activation'] as const)('rejects an old %s reply after the capture generation changes', async (phase) => {
+  const value = await source()
+  await value.controller.pollApplication(value.run, signal())
+  await value.approve()
+  const replacement = await replacementCapture(value, false)
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const lifetime = new AbortController()
+  let replies = 0
+  value.source.transport.transform = async (response) => {
+    replies++
+    if (replies === (phase === 'application' ? 1 : 2)) {
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return response
+  }
+  const pending = value.controller.pollApplication(value.run, lifetime.signal).then(
+    () => ({ state: 'fulfilled' as const }),
+    (error: unknown) => ({ state: 'rejected' as const, error }),
+  )
+  try {
+    await Promise.race([entered.promise, pending.then(() => { throw new Error('Application settled before the reply barrier') })])
+    expect(value.source.transport.outbound).toBe(1)
+    expect(value.owner.transport.inbound).toBe(1)
+    expect(value.inLocalOperation()).toBe(false)
+    await value.run(store => store.save(replacement.capture))
+    release.resolve(undefined)
+    expect(await pending).toMatchObject({ state: 'rejected', error: { code: 'stale-capture' } })
+    expect(value.current()).toEqual(replacement.capture)
+    expect(value.current().invitation).toBeUndefined()
+    expect(value.cleared).toEqual([])
+    expect(value.outbox.size).toBe(0)
+    expect(value.owner.tasks.peerContributions({ taskId: replacement.task.id })).toEqual([])
+    expect(value.owner.tasks.peerContributions({ taskId: value.task.id })[0]?.state).toBe('active')
+  } finally {
+    release.resolve(undefined)
+    lifetime.abort()
+    await pending
+    value.source.transport.transform = undefined
+  }
+  expect(value.source.transport.outbound).toBe(0)
+  expect(value.owner.transport.inbound).toBe(0)
+})
+
+it('does not attach an old sample receipt after the capture generation changes', async () => {
+  const value = await source()
+  await value.controller.pollApplication(value.run, signal())
+  await value.approve()
+  await value.controller.pollApplication(value.run, signal())
+  await value.store.save({ ...value.current(), sequence: 1 })
+  const oldCapture = value.current()
+  const oldItem = { id: 'original-lease', sample: value.sample }
+  value.outbox.set(oldItem.id, oldItem)
+  const replacement = await replacementCapture(value, true)
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const lifetime = new AbortController()
+  value.source.transport.transform = async (response) => {
+    entered.resolve(undefined)
+    await release.promise
+    return response
+  }
+  const pending = value.controller.pollRecovery(value.run, lifetime.signal).then(
+    result => ({ state: 'fulfilled' as const, result }),
+    (error: unknown) => ({ state: 'rejected' as const, error }),
+  )
+  try {
+    await Promise.race([entered.promise, pending.then(() => { throw new Error('Recovery settled before the reply barrier') })])
+    expect(value.source.transport.outbound).toBe(1)
+    expect(value.owner.transport.inbound).toBe(1)
+    expect(value.inLocalOperation()).toBe(false)
+    const committed = value.owner.tasks.get({ taskId: value.task.id })
+    expect(committed.context).toHaveLength(1)
+    expect(value.outbox.get(oldItem.id)?.receipt).toBeUndefined()
+    expect(replacement.capture.proposal.captureId).toBe(oldCapture.proposal.captureId)
+    expect(replacement.capture.proposal.captureGeneration).not.toBe(oldCapture.proposal.captureGeneration)
+    await value.run(store => store.save(replacement.capture))
+    release.resolve(undefined)
+    expect(await pending).toEqual({ state: 'fulfilled', result: false })
+    expect(value.current()).toEqual(replacement.capture)
+    expect(value.outbox.get(oldItem.id)).toEqual(oldItem)
+    expect(value.outbox.size).toBe(1)
+    expect(value.cleared).toEqual([])
+    expect(value.owner.tasks.get({ taskId: value.task.id }).revision).toBe(committed.revision)
+    expect(value.owner.tasks.get({ taskId: replacement.task.id }).context).toEqual([])
+  } finally {
+    release.resolve(undefined)
+    lifetime.abort()
+    await pending
+    value.source.transport.transform = undefined
+  }
+  expect(value.source.transport.outbound).toBe(0)
+  expect(value.owner.transport.inbound).toBe(0)
 })
