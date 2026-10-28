@@ -1,5 +1,5 @@
 /** Ordinary consent rejects ineligible Sessions, inconsistent selections, and excess retained identities. */
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
@@ -10,6 +10,7 @@ const hosts: TestHost[] = []
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  vi.restoreAllMocks()
   for (const host of hosts.splice(0).reverse()) await host.close()
 })
 
@@ -108,6 +109,130 @@ it.each([
   const excess = entries.get(next.id)
   expect((await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries
     .find(item => item.entry.entryId === excess?.entryId)).toMatchObject({ proposal: null, result: { status: 'open' } })
+})
+
+it.each([
+  ['local', 'local'], ['local', 'remote'], ['remote', 'local'], ['remote', 'remote'],
+] as const)('reclaims stopped %s capacity for a new %s Session', async (firstRole, nextRole) => {
+  const f = await fixture(1)
+  const first = await f.source.createAgent('stopped-source')
+  const next = await f.source.createAgent('replacement-source')
+  const firstAssignment = await f.assignment(first)
+  const nextAssignment = await f.assignment(next)
+  const firstEntry = await f.entry()
+  const nextEntry = await f.entry()
+  const permission = (agent: Agent) => ({ agentId: agent.id, expectedCapture: null, limits: f.limits,
+    sourceKind: 'native-work' as const, roots: [], tools: [], commands: [], completedTurns: true })
+  const initial = firstRole === 'local'
+    ? await f.source.ctx.scopeAgentContributions.requestLocal({ ...permission(first), ...firstAssignment })
+    : await f.source.ctx.scopeAgentContributions.request({ ...permission(first), entry: firstEntry })
+  if (initial.capture === null) throw new Error('Missing initial capture')
+  const stop = { agentId: first.id, expectedCapture: initial.capture.selection }
+  if (firstRole === 'local') await f.source.ctx.scopeAgentContributions.stopLocal(stop)
+  else await f.source.ctx.scopeAgentContributions.stop(stop)
+  await expect.poll(async () => {
+    const status = await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })
+    const local = await f.source.ctx.scopeAgentContributions.localStatus({ agentId: first.id })
+    return status.capture === null && status.receivingContinuation === undefined && local.capture === null
+  }).toBe(true)
+  const stoppedRevision = (await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).revision
+  const replacement = nextRole === 'local'
+    ? await f.source.ctx.scopeAgentContributions.requestLocal({ ...permission(next), ...nextAssignment })
+    : await f.source.ctx.scopeAgentContributions.request({ ...permission(next), entry: nextEntry })
+  expect(replacement.capture).not.toBeNull()
+  expect((await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).revision).toBeGreaterThanOrEqual(stoppedRevision)
+  for (const domain of ['scope_agent_contributions', 'scope_agent_local_contributions']) {
+    expect(f.source.ctx.storageDomain.get(domain)?.table('sessions').get(first.id)).toBeUndefined()
+  }
+})
+
+it.each(['remote-floor', 'local-floor', 'remote-delete', 'local-delete'] as const)(
+  'retains capacity and monotonic status after a failed %s reclamation', async (failure) => {
+    const f = await fixture(2)
+    const first = await f.source.createAgent('stopped-source')
+    const next = await f.source.createAgent('replacement-source')
+    const keeper = await f.source.createAgent('unchanged-source')
+    const firstAssignment = await f.assignment(first)
+    const nextAssignment = await f.assignment(next)
+    const keeperAssignment = await f.assignment(keeper)
+    const permission = { agentId: first.id, expectedCapture: null, limits: f.limits,
+      sourceKind: 'native-work' as const, roots: [], tools: [], commands: [], completedTurns: true }
+    const local = await f.source.ctx.scopeAgentContributions.requestLocal({ ...permission, ...firstAssignment })
+    const remote = await f.source.ctx.scopeAgentContributions.request({ ...permission, entry: await f.entry() })
+    const kept = await f.source.ctx.scopeAgentContributions.requestLocal({ ...permission, agentId: keeper.id, ...keeperAssignment })
+    if (kept.capture === null) throw new Error('Missing retained permission')
+    await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: keeper.id })).capture?.collecting)
+      .toBe(true)
+    if (local.capture === null || remote.capture === null) throw new Error('Missing source permission')
+    await f.source.ctx.scopeAgentContributions.stopLocal({ agentId: first.id, expectedCapture: local.capture.selection })
+    await f.source.ctx.scopeAgentContributions.stop({ agentId: first.id, expectedCapture: remote.capture.selection })
+    await expect.poll(async () => [
+      (await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).capture,
+      (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: first.id })).capture,
+    ]).toEqual([null, null])
+    const before = (await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).revision
+    const remoteDomain = f.source.ctx.storageDomain.get('scope_agent_contributions')
+    const localDomain = f.source.ctx.storageDomain.get('scope_agent_local_contributions')
+    if (remoteDomain === undefined || localDomain === undefined) throw new Error('Missing source domains')
+    const selected = failure.startsWith('remote') ? remoteDomain : localDomain
+    const failed = failure.endsWith('floor') ? vi.spyOn(selected.global, 'set') : vi.spyOn(selected.table('sessions'), 'delete')
+    failed.mockRejectedValueOnce(new Error('Controlled reclamation failure'))
+    const request = { ...permission, agentId: next.id, ...nextAssignment }
+    await expect(f.source.ctx.scopeAgentContributions.requestLocal(request)).rejects.toThrow('Controlled reclamation failure')
+    expect((await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).revision).toBeGreaterThanOrEqual(before)
+    expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: next.id })).capture).toBeNull()
+    expect(new Set([...remoteDomain.table('sessions').keys(), ...localDomain.table('sessions').keys()]).size).toBe(2)
+    expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: keeper.id })).capture)
+      .toMatchObject({ selection: kept.capture.selection, grant: kept.capture.grant, collecting: true })
+    const replacement = await f.source.ctx.scopeAgentContributions.requestLocal(request)
+    if (replacement.capture === null) throw new Error('Missing replacement permission')
+    await f.source.ctx.scopeAgentContributions.stopLocal({ agentId: next.id, expectedCapture: replacement.capture.selection })
+    await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: next.id })).capture).toBeNull()
+    const renewed = await f.source.ctx.scopeAgentContributions.requestLocal({ ...permission, ...firstAssignment })
+    expect(renewed.capture?.selection).not.toEqual(local.capture.selection)
+    expect(renewed.revision).toBeGreaterThanOrEqual(before)
+    await expect(f.source.ctx.scopeAgentContributions.stopLocal({ agentId: first.id, expectedCapture: local.capture.selection }))
+      .rejects.toMatchObject({ code: 'scope-agent-contribution/stale-capture' })
+    expect((await f.source.ctx.scopeAgentContributions.localStatus({ agentId: keeper.id })).capture)
+      .toMatchObject({ selection: kept.capture.selection, grant: kept.capture.grant, collecting: true })
+  })
+
+it('retains a pending receiving continuation until its late cancellation reply settles', async () => {
+  const f = await fixture(1)
+  const first = await f.source.createAgent('joint-source')
+  const next = await f.source.createAgent('replacement-source')
+  const assignment = await f.assignment(next)
+  const read = await f.source.ctx.scopeAgentContext.status({ agentId: first.id })
+  if (read.eligibility !== 'eligible') throw new Error('Missing native receiver')
+  const initial = await f.source.ctx.scopeAgentContributions.request({ agentId: first.id, expectedCapture: null,
+    limits: f.limits, sourceKind: 'native-work', roots: [], tools: [], commands: [], completedTurns: true,
+    entry: await f.entry('join'), receive: { expectedReadStateSeq: read.readStateSeq } })
+  if (initial.capture === null) throw new Error('Missing joint permission')
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const receiver = f.source.ctx.scopeAgentContext
+  const cancel = receiver.cancelJoinRead.bind(receiver)
+  vi.spyOn(receiver, 'cancelJoinRead').mockImplementation(async (request) => {
+    entered.resolve(undefined); await release.promise
+    return cancel(request)
+  })
+  cleanups.push(async () => { release.resolve(undefined) })
+  await f.source.ctx.scopeAgentContributions.stop({ agentId: first.id, expectedCapture: initial.capture.selection })
+  await entered.promise
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).capture).toBeNull()
+  const request = { agentId: next.id, expectedCapture: null, limits: f.limits, ...assignment,
+    sourceKind: 'native-work' as const, roots: [], tools: [], commands: [], completedTurns: true }
+  await expect(f.source.ctx.scopeAgentContributions.requestLocal(request))
+    .rejects.toMatchObject({ message: 'The native source inventory is full' })
+  expect((await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).receivingContinuation?.selection)
+    .toEqual(initial.capture.selection)
+  release.resolve(undefined)
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: first.id })).receivingContinuation)
+    .toBeUndefined()
+  expect((await f.source.ctx.scopeAgentContributions.requestLocal(request)).capture).not.toBeNull()
+  const ended = await f.source.ctx.scopeAgentContext.status({ agentId: first.id })
+  if (ended.eligibility === 'not-live') throw new Error('Receiver disappeared')
+  expect(ended.state.binding).toBeNull()
 })
 
 it.each(['local', 'remote'] as const)('rejects inconsistent native execution roots before saving %s permission', async (role) => {

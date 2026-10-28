@@ -41,7 +41,7 @@ Add this row to that composition; retention and retry limits are required:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `maxSessions` | Required | Retained source Sessions across both modes, including ended captures. |
+| `maxSessions` | Required | Retained source Sessions across both modes; completely cleared Sessions are reclaimed when capacity is needed. |
 | `maxLeases` | Required | Retained samples, unfinished observations, and pending frozen-plan reservations across Sessions; acknowledged samples remain until capture termination. |
 | `maxObservationBytes` | Required | Complete application or sample request bytes, plus each historical sample with its retained proof; samples also obey the owner's grant. |
 | `contributionPollIntervalMs` | Required | Retry delay for unfinished reconciliation and persistence work. |
@@ -79,6 +79,8 @@ For joint reading, explicitly include the observed read-state sequence with rout
 
 Agent disposal stops both captures and retains their separate termination work until each owner confirms it. A local Task clear or rebind ends only its old local capture. Remote file permission belongs to the Session and retains its explicit roots, tools, and remote Task across local reassignment. Restart waits for application readiness, then ends both retained permissions without resuming collection. Active capture retries reuse persisted samples unchanged. Cold restoration retains the outbox only until termination is confirmed; unsaved completions cannot survive process death.
 
+New source consent and cold restoration reclaim completely cleared Sessions only when the inventory needs space. Both roles must have no capture, samples, or pending receiving continuation. Unfinished cancellation and withdrawal keep their slots. Reclamation persists revision floors before deleting rows, so status revisions do not decrease after partial failure or renewed consent. Cold inventories containing too many unfinished Sessions still reject without discarding their authority.
+
 -----
 
 `request.sourceKind` and `requestLocal.sourceKind` can explicitly select `completed-turn-outcomes`. That source requires no Session working directory, filesystem service or file tools; roots, tools, commands, file-content and initialization fields are rejected. It shares only complete visible text from the last assistant answer of a normally completed turn, after both durable authorization and live activation. The original next-turn inbox claim must contain one user-channel input; canceled claims, added input, managed automatic responses, failed or interrupted endings, and pre-authorization turns are excluded. A user-channel label identifies runtime provenance, not an independently authenticated human. Text can quote private inputs, so final-answer disclosure requires its own consent. Reasoning, raw user messages and tool records are not copied directly. Oversized answers are omitted whole, never represented by a truncated success.
@@ -100,6 +102,8 @@ The [adapter](src/index.ts) owns consent and completion retention. [File reports
 Historical initialization converts validated native observations and locally derived attribution into owned reports; durable and peer decoders validate inputs. Whole-field omission and root remapping leave each original local report unchanged.
 
 Combined native-work permission uses remote row version 4 and local row version 3. Earlier row versions reject that source. Tool samples retain execution coordinates and final answers retain turn coordinates, even when they share the same capture and sequence.
+
+Both source domains retain unit version 1 and use version-2 global metadata for reclaimed-row revision floors. The remote domain explicitly decodes its strict version-1 global as a zero floor; the local domain's never-written global starts at zero. Source permission row versions and Session generations remain unchanged.
 
 No invariant companion is published because durable source relationships are validated during parsing and execution admission; this package maintains no independent derived registry requiring a separate check.
 

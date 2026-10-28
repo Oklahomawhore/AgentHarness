@@ -1,9 +1,13 @@
-/** Real Web composition recovers one failed presence request without reloading the page. */
+/** Real Web composition recovers presence, selected lineage, and exhausted source capacity. */
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task'
+import type { AgentHandle } from '@deepseek-ai/dsh-agent'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
+import type { DevelopmentParticipantId, DevelopmentTaskId } from '@deepseek-ai/dsh-development-task'
+import type {} from '@deepseek-ai/dsh-scope-agent-contribution'
 import { compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
 
@@ -17,6 +21,8 @@ describe('web e2e: participant refresh recovery', () => {
   let browser: Browser
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
+  let taskId: DevelopmentTaskId
+  const handles: AgentHandle[] = []
   const errors: string[] = []
   const releaseDirectory = Promise.withResolvers<undefined>()
   let announcements = 0
@@ -26,6 +32,7 @@ describe('web e2e: participant refresh recovery', () => {
     await scaffold.ctx.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Fixture owner' })
     const root = await scaffold.ctx.developmentTasks.create({ createdBy: owner, objective: '目录恢复根任务',
       scope: 'Host-owned query bounds', origin: { kind: 'root' } })
+    taskId = root.id
     const first = await scaffold.ctx.developmentTasks.create({ createdBy: owner, objective: '目录恢复分支',
       scope: 'Host-owned query bounds', origin: { kind: 'fork', parent: { taskId: root.id, revision: root.revision } } })
     await scaffold.ctx.developmentTasks.create({ createdBy: owner, objective: '目录恢复末级', scope: 'Host-owned query bounds',
@@ -56,6 +63,7 @@ describe('web e2e: participant refresh recovery', () => {
   afterAll(async () => {
     releaseDirectory.resolve(undefined)
     await page?.unrouteAll({ behavior: 'wait' })
+    for (const handle of handles.reverse()) await handle.dispose()
     await browser?.close()
     await scaffold?.close()
   })
@@ -76,11 +84,48 @@ describe('web e2e: participant refresh recovery', () => {
     const status = panel.getByRole('status').filter({ hasText: '协作身份已生效：恢复验收用户' })
     await status.waitFor({ timeout: 10_000 })
     expect(announcements).toBe(2)
+    await panel.getByText('边界外还有 1 个任务，可选中节点继续展开', { exact: true }).waitFor({ timeout: 10_000 })
     expect(scaffold.ctx.developmentRooms.list().participants).toContainEqual(expect.objectContaining({
       id: receiver, displayName: '恢复验收用户', presence: 'online',
     }))
     await compareOrRefreshGolden(expected, await status.ariaSnapshot(), webSnapshotMode())
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
+  })
+
+  it('reclaims stopped SQLite-backed source Sessions without resetting their observed revisions', async () => {
+    const grant = async (name: string) => {
+      const handle = await scaffold.ctx.agents.create({ sessionId: SessionId(name),
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } })
+      handles.push(handle)
+      const agentId = handle.agent.id
+      const participantId = developmentAgentParticipantId(agentId)
+      await expect.poll(() => scaffold.ctx.developmentRooms.list().participants.some(item => item.id === participantId)).toBe(true)
+      await scaffold.ctx.developmentTasks.checkout({ taskId, participantId })
+      const status = await scaffold.ctx.scopeAgentContributions.localStatus({ agentId })
+      if (status.assignment === null) throw new Error('Source Task assignment missing')
+      return { agentId, ...status.assignment, expectedCapture: null, sourceKind: 'completed-turn-outcomes' as const,
+        limits: { expiresAt: Date.now() + 60_000, maxSamples: 1, maxSampleBytes: 8192 } }
+    }
+    const first = await grant('capacity-first')
+    const second = await grant('capacity-second')
+    const started = await scaffold.ctx.scopeAgentContributions.requestLocal(first)
+    if (started.capture === null) throw new Error('First source capture missing')
+    await expect.poll(async () => (await scaffold.ctx.scopeAgentContributions.localStatus(first)).capture?.collecting).toBe(true)
+    await scaffold.ctx.scopeAgentContributions.stopLocal({ agentId: first.agentId, expectedCapture: started.capture.selection })
+    await expect.poll(async () => (await scaffold.ctx.scopeAgentContributions.localStatus(first)).capture).toBeNull()
+    const stopped = await scaffold.ctx.scopeAgentContributions.localStatus(first)
+    const next = await scaffold.ctx.scopeAgentContributions.requestLocal(second)
+    if (next.capture === null) throw new Error('Replacement source capture missing')
+    await expect.poll(async () => (await scaffold.ctx.scopeAgentContributions.localStatus(second)).capture?.collecting).toBe(true)
+    expect((await scaffold.ctx.scopeAgentContributions.localStatus(first)).revision).toBeGreaterThanOrEqual(stopped.revision)
+    await expect(scaffold.ctx.scopeAgentContributions.requestLocal(first)).rejects.toThrow('source inventory is full')
+    await scaffold.ctx.scopeAgentContributions.stopLocal({ agentId: second.agentId, expectedCapture: next.capture.selection })
+    await expect.poll(async () => (await scaffold.ctx.scopeAgentContributions.localStatus(second)).capture).toBeNull()
+    const renewed = await scaffold.ctx.scopeAgentContributions.requestLocal(first)
+    expect(renewed.capture).not.toBeNull()
+    expect(renewed.revision).toBeGreaterThan(stopped.revision)
+    expect(handles.every(handle => handle.agent.session.snapshotEvents().every(event => event.type !== 'step/start'))).toBe(true)
+    expect(tripwire.pageErrors).toEqual([])
   })
 })

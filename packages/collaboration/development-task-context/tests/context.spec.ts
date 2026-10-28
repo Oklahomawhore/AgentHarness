@@ -13,7 +13,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import DevelopmentRoomService, { type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import DevelopmentTaskService from '@deepseek-ai/dsh-development-task'
-import type { DevelopmentTaskBindingId, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
+import type { DevelopmentTaskBindingId, DevelopmentTaskId, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import {
   createUserMessage,
   LlmAdapter,
@@ -371,6 +371,26 @@ function requireActive(result: DevelopmentTaskLocalContextReadResult) {
 }
 
 describe('managed owner-local Task admission', () => {
+  it('withdraws a historical version-1 snapshot without changing its original Session record', async () => {
+    const { agent, adapter } = await harness()
+    const legacy = createUserMessage({
+      source: { kind: 'development-task-context', form: 'snapshot', version: 1,
+        taskId: 'historical-task' as DevelopmentTaskId,
+        revision: 1 },
+      content: [{ type: 'text', text: 'Historical Task facts' }],
+    })
+    agent.session.append('user/message', legacy, { surfaceOp: 'append' })
+    const history = agent.session.snapshotEvents()
+    expect(visibleLocalTaskContext(agent).map(event => event.data)).toEqual([legacy])
+    const withdrawal = localContextWithdrawalMessage('left')
+    expect(replaceLocalTaskContext(agent, withdrawal)).toBeUndefined()
+    expect(visibleLocalTaskContext(agent).map(event => event.data)).toEqual([withdrawal])
+    expect(agent.session.snapshotEvents().slice(0, history.length)).toEqual(history)
+    expect(Session.create(agent.id, structuredClone(agent.session.snapshotEvents()), agent.session.header).deriveMessages())
+      .toEqual(agent.session.deriveMessages())
+    expect(adapter.requests).toEqual([])
+  })
+
   it.each(['admission', 'acknowledgement'] as const)(
     'keeps Task %s local when an isolated native registry reuses the Session id', async (operation) => {
       const { ctx, agent, agentId, owner, adapter } = await harness()

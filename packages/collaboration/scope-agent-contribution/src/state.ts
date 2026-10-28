@@ -322,10 +322,18 @@ export function validateNativeSample(agentId: SessionId, item: NativeSample, cap
   if (item.receipt !== undefined) validateContributionReceipt(capture.invitation, item.receipt, item.sample)
 }
 
+/** Durable lower bound for revisions of reclaimed Session rows. */
+export const nativeRevisionStateSchema = z.strictObject({
+  version: z.literal(2), revisionFloor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+})
+
 /** Bounded source authority; restart never grants a new live instance collection permission. */
 export const nativeContributionDomain = defineDomain({
   name: 'scope_agent_contributions', version: 1,
-  global: { schema: z.object({ version: z.literal(1) }).strict(), initial: { version: 1 as const } },
+  global: { schema: z.union([
+    z.strictObject({ version: z.literal(1) }).transform(() => ({ version: 2 as const, revisionFloor: 0 })),
+    nativeRevisionStateSchema,
+  ]), initial: { version: 2 as const, revisionFloor: 0 } },
   tables: { sessions: domainTable<SessionId, NativeSourceRecord>(recordSchema) },
 })
 

@@ -14,7 +14,7 @@ The [workbench inventory](../../../../packages/client/ui-dev-workbench/README.md
 
 The renderer owns subscription cleanup. Consumers read nested DTOs without mutation, and Task graph layout creates separate node and position objects. Refresh ordering, stale-response generations, mutations, and participant lease disposal remain directory-owned. Participant refresh reports failures from both listing and announcement and releases its read lock after settlement. Lease replies must still belong to the current connection generation and selected profile. Closing stops new work and drains sent lease requests before attempting withdrawal. Timers are installed before notifying observers, so a synchronous reset or disposal cancels the scheduled renewal.
 
-Task catalog and lineage queries use the Host's configured result defaults; the browser does not copy a second set of limits.
+Task catalog and lineage queries use the Host's configured result defaults; the browser does not copy a second set of limits. The directory retains the selected Task across catalog refresh and connection reset, reads its lineage again, and preserves selected graph entries outside the bounded catalog. A separate request ordinal rejects older focus replies within one connection, including failures; the connection generation still rejects replies from a replaced Host connection. Task upserts compare revisions, so a lineage reply cannot overwrite newer notification data.
 
 [Read-authorization invalidation](../bug-fix/2026-10-24-owner-read-inventory-synchronization.md) retains its independent notification and permission decisions; the inventory engine does not replace Host authority or the contribution directory.
 

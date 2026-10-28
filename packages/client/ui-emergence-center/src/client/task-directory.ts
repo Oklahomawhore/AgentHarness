@@ -35,6 +35,11 @@ export interface DevelopmentTaskDirectoryState {
 export interface DevelopmentTaskDirectory extends HostObservable<DevelopmentTaskDirectoryState> {
   refresh(): void
   reset(): void
+  /**
+   * Retain the selected neighborhood across refresh and connection reset.
+   * @param taskId - Task whose lineage replaces the graph after the latest request succeeds.
+   * @returns completion; superseded replies are ignored, while current read failures reject.
+   */
   focus(taskId: DevelopmentTaskId): Promise<void>
   applyTask(task: DevelopmentTaskSnapshot): void
   applyAssignment(assignment: DevelopmentTaskAssignment | undefined, bindingId: DevelopmentTaskBindingId): void
@@ -60,17 +65,22 @@ export function createDevelopmentTaskDirectory(
   })
   let generation = 0
   let inFlight: Promise<void> | undefined
+  let selectedTaskId: DevelopmentTaskId | undefined
+  let focusRequest = 0
 
   const upsertTask = (
     tasks: readonly DevelopmentTaskSnapshot[],
     task: DevelopmentTaskSnapshot,
   ): readonly DevelopmentTaskSnapshot[] => tasks.some(current => current.id === task.id)
-    ? tasks.map(current => current.id === task.id ? task : current)
+    ? tasks.map(current => current.id === task.id && task.revision >= current.revision ? task : current)
     : [task, ...tasks]
   const mergeTasks = (
     current: readonly DevelopmentTaskSnapshot[],
     incoming: readonly DevelopmentTaskSnapshot[],
   ): readonly DevelopmentTaskSnapshot[] => incoming.reduce(upsertTask, current)
+  const latestTask = (task: DevelopmentTaskSnapshot): DevelopmentTaskSnapshot => store.getSnapshot().tasks.reduce(
+    (selected, current) => current.id === task.id && current.revision > selected.revision ? current : selected, task,
+  )
   const applyTask = (task: DevelopmentTaskSnapshot, includeInGraph = false): void => {
     const tasks = upsertTask(store.getSnapshot().tasks, task)
     const graphTasks = includeInGraph || store.getSnapshot().graphTasks.some(current => current.id === task.id)
@@ -85,19 +95,45 @@ export function createDevelopmentTaskDirectory(
     const retained = store.getSnapshot().assignments.filter(current => current.bindingId !== bindingId)
     store.set({ ...store.getSnapshot(), assignments: assignment === undefined ? retained : [...retained, assignment], read: true })
   }
+  const focus = async (taskId: DevelopmentTaskId): Promise<void> => {
+    selectedTaskId = taskId
+    const request = ++focusRequest
+    const issued = generation
+    try {
+      const lineage = await port.lineage({ taskId })
+      if (issued !== generation || request !== focusRequest) return
+      const tasks = mergeTasks(store.getSnapshot().tasks, lineage.tasks)
+      store.set({
+        ...store.getSnapshot(),
+        tasks,
+        graphTasks: lineage.tasks.map(latestTask),
+        boundaryTaskIds: lineage.boundaryTaskIds,
+        read: true,
+      })
+    } catch (error) {
+      if (issued === generation && request === focusRequest) throw error
+    }
+  }
   const refresh = (): void => {
     if (inFlight !== undefined) return
     const issued = generation
-    inFlight = Promise.all([port.list({}), port.assignmentList()]).then(
-      ([tasks, assignments]) => {
-        if (issued === generation) store.set({ tasks, graphTasks: tasks, boundaryTaskIds: [], assignments, read: true })
-      },
-      (error: unknown) => {
+    const read = async (): Promise<void> => {
+      try {
+        const [tasks, assignments] = await Promise.all([port.list({}), port.assignmentList()])
+        if (issued !== generation) return
+        const current = store.getSnapshot()
+        const catalog = tasks.map(latestTask)
+        const graphTasks = selectedTaskId === undefined ? catalog : current.graphTasks
+        store.set({ tasks: mergeTasks(catalog, graphTasks), graphTasks,
+          boundaryTaskIds: selectedTaskId === undefined ? [] : current.boundaryTaskIds, assignments, read: true })
+        if (issued === generation && selectedTaskId !== undefined) await focus(selectedTaskId)
+      } catch (error) {
         if (issued !== generation) return
         onError(error)
         store.set({ ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) })
-      },
-    ).then(() => { if (issued === generation) inFlight = undefined })
+      }
+    }
+    inFlight = read().finally(() => { if (issued === generation) inFlight = undefined })
   }
 
   refresh()
@@ -111,18 +147,7 @@ export function createDevelopmentTaskDirectory(
       store.set({ tasks: [], graphTasks: [], boundaryTaskIds: [], assignments: [], read: false })
       refresh()
     },
-    async focus(taskId) {
-      const issued = generation
-      const lineage = await port.lineage({ taskId })
-      if (issued !== generation) return
-      store.set({
-        ...store.getSnapshot(),
-        tasks: mergeTasks(store.getSnapshot().tasks, lineage.tasks),
-        graphTasks: lineage.tasks,
-        boundaryTaskIds: lineage.boundaryTaskIds,
-        read: true,
-      })
-    },
+    focus,
     applyTask,
     applyAssignment,
     async create(request) {

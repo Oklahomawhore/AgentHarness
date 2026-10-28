@@ -115,6 +115,105 @@ describe('Emergence Center directories', () => {
     expect(directory.getSnapshot().assignments).toEqual([second])
   })
 
+  it.each([false, true])('retains the latest lineage request when an older reply arrives last (same Task: %s)', async (sameTask) => {
+    const remote = taskPort()
+    const stale = Promise.withResolvers<DevelopmentTaskLineageSnapshot>()
+    remote.lineage.mockReturnValueOnce(stale.promise)
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const first = directory.focus(ROOT)
+    const selected = { ...task(sameTask ? ROOT : 'selected-task' as DevelopmentTaskId), revision: 2 }
+    remote.lineage.mockResolvedValueOnce({ tasks: [selected], boundaryTaskIds: [selected.id] })
+    await directory.focus(selected.id)
+    stale.resolve({ tasks: [task()], boundaryTaskIds: [] })
+    await first
+    expect(directory.getSnapshot().graphTasks).toEqual([selected])
+    expect(directory.getSnapshot().boundaryTaskIds).toEqual([selected.id])
+  })
+
+  it('retains focused lineage and its selected Task when the initial catalog arrives later', async () => {
+    const remote = taskPort()
+    const catalog = Promise.withResolvers<readonly DevelopmentTaskSnapshot[]>()
+    remote.list.mockReturnValueOnce(catalog.promise)
+    const selected = task('outside-catalog' as DevelopmentTaskId)
+    remote.lineage.mockResolvedValue({ tasks: [selected], boundaryTaskIds: [ROOT] })
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await directory.focus(selected.id)
+    catalog.resolve([task()])
+    await vi.waitFor(() => { expect(directory.getSnapshot().tasks.some(item => item.id === ROOT)).toBe(true) })
+    expect(directory.getSnapshot().tasks).toContainEqual(selected)
+    expect(directory.getSnapshot().graphTasks).toEqual([selected])
+    expect(directory.getSnapshot().boundaryTaskIds).toEqual([ROOT])
+  })
+
+  it('refreshes the selected lineage and retains it across a connection reset', async () => {
+    const remote = taskPort()
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const selected = task('outside-catalog' as DevelopmentTaskId)
+    remote.lineage.mockResolvedValue({ tasks: [selected], boundaryTaskIds: [ROOT] })
+    await directory.focus(selected.id)
+    const updated = { ...selected, revision: 2 }
+    remote.lineage.mockResolvedValue({ tasks: [updated], boundaryTaskIds: [ROOT] })
+    directory.refresh()
+    await vi.waitFor(() => { expect(remote.list).toHaveBeenCalledTimes(2) })
+    await vi.waitFor(() => { expect(directory.getSnapshot().graphTasks).toEqual([updated]) })
+    expect(directory.getSnapshot().tasks).toContainEqual(updated)
+    directory.reset()
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    expect(directory.getSnapshot().graphTasks).toEqual([updated])
+    expect(directory.getSnapshot().boundaryTaskIds).toEqual([ROOT])
+    expect(remote.lineage).toHaveBeenLastCalledWith({ taskId: selected.id })
+  })
+
+  it.each(['selection', 'connection'])('ignores a failed lineage request after its %s changes', async (changed) => {
+    const remote = taskPort()
+    const stale = Promise.withResolvers<DevelopmentTaskLineageSnapshot>()
+    remote.lineage.mockReturnValueOnce(stale.promise)
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const first = directory.focus(ROOT)
+    const result = expect(first).resolves.toBeUndefined()
+    if (changed === 'selection') await directory.focus('selected-task' as DevelopmentTaskId)
+    else directory.reset()
+    stale.reject(new Error('old selection is unavailable'))
+    await result
+    remote.lineage.mockRejectedValueOnce(new Error('current selection is unavailable'))
+    await expect(directory.focus(ROOT)).rejects.toThrow('current selection is unavailable')
+  })
+
+  it('retains a newer Task notification when an earlier lineage snapshot arrives later', async () => {
+    const remote = taskPort()
+    const lineage = Promise.withResolvers<DevelopmentTaskLineageSnapshot>()
+    remote.lineage.mockReturnValueOnce(lineage.promise)
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const focusing = directory.focus(ROOT)
+    const updated = { ...task(), revision: 3, objective: 'Current shared objective' }
+    directory.applyTask(updated)
+    lineage.resolve({ tasks: [{ ...task(), revision: 2 }], boundaryTaskIds: [] })
+    await focusing
+    expect(directory.getSnapshot().tasks).toEqual([updated])
+    expect(directory.getSnapshot().graphTasks).toEqual([updated])
+    directory.refresh()
+    await vi.waitFor(() => { expect(remote.list).toHaveBeenCalledTimes(2) })
+    expect(directory.getSnapshot().tasks).toEqual([updated])
+  })
+
+  it('preserves a newer catalog notification outside the selected graph during Refresh', async () => {
+    const remote = taskPort()
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    await directory.focus(ROOT)
+    const other = { ...task('catalog-task' as DevelopmentTaskId), revision: 3 }
+    directory.applyTask(other)
+    remote.list.mockResolvedValueOnce([{ ...other, revision: 2 }, task()])
+    directory.refresh()
+    await vi.waitFor(() => { expect(remote.lineage).toHaveBeenCalledTimes(2) })
+    expect(directory.getSnapshot().tasks.find(item => item.id === other.id)).toEqual(other)
+    expect(directory.getSnapshot().graphTasks).toEqual([task()])
+  })
+
   it('reannounces on reset and renews presence after a failed heartbeat', async () => {
     vi.useFakeTimers()
     const remote = participantPort()

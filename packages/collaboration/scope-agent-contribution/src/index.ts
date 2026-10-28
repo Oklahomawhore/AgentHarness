@@ -56,7 +56,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** Bounded durable source inventory, complete report bytes, and peer retry cadence. */
 export interface Config {
-  /** Maximum retained source Session rows, including ended captures. */
+  /** Maximum retained source Sessions; completely cleared Sessions are reclaimed when capacity is needed. */
   readonly maxSessions: number
   /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number
@@ -230,27 +230,29 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       this.localDomain = local
       this.domain = domain
       const records = [...domain.table('sessions').entries()]
-      if (new Set([...domain.table('sessions').keys(), ...local.table('sessions').keys()]).size > config.maxSessions
-        || this.retainedSamples(domain) > config.maxLeases) {
-        throw new Error('scope-agent-contribution: restored inventory exceeds configured retention')
-      }
       const identity = await ctx.scopeAccess.identity()
       for (const [id, row] of records) {
         if (id !== row.agentId) throw new Error('scope-agent-contribution: stored Session identity differs from its row key')
         if (row.capture !== null) {
           if (row.capture.proposal.contributorPeerId !== identity.peerId) throw new Error('scope-agent-contribution: restored capture belongs to another peer')
           for (const item of row.samples) validateNativeSample(id, item, row.capture)
-          // The previous live Agent instance no longer exists; recovery ends its retained permission instead of resuming collection.
-          await this.markEnding(domain, id, 'remote')
         } else if (row.receivingContinuation !== undefined) {
           if (row.receivingContinuation.proposal.contributorPeerId !== identity.peerId) throw new Error('scope-agent-contribution: restored receiving belongs to another peer')
-          await this.markEnding(domain, id, 'remote')
         }
       }
       for (const [id, row] of local.table('sessions').entries()) {
         if (id !== row.agentId) {
           throw new Error('scope-agent-contribution: restored source identity differs from its row key')
         }
+      }
+      if (this.retainedSamples(domain) > config.maxLeases) throw new Error('scope-agent-contribution: restored inventory exceeds configured retention')
+      await this.reclaim(domain, config.maxSessions)
+      if (this.inventorySize(domain) > config.maxSessions) throw new Error('scope-agent-contribution: restored inventory exceeds configured retention')
+      // The previous live Agent instance no longer exists; recovery ends its retained permission instead of resuming collection.
+      for (const [id, row] of records) {
+        if (row.capture !== null || row.receivingContinuation !== undefined) await this.markEnding(domain, id, 'remote')
+      }
+      for (const [id, row] of local.table('sessions').entries()) {
         if (row.capture !== null) await this.saveLocal(id, { ...row.capture, state: 'ending' }, row.samples)
       }
       this.lifetime.signal.throwIfAborted()
@@ -450,7 +452,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             ...(retained.application === undefined ? {} : { application: { ...retained.application, entry } }),
             ...(retained.invitation === undefined ? {} : { invitation: { ...retained.invitation, ownerAddress: entry.ownerAddress } }) }
         } else {
-          if (row === undefined && this.local().table('sessions').get(agent.id) === undefined && this.inventorySize(current) >= this.config.maxSessions) throw this.invalid(agent.id, 'The native source inventory is full')
+          if (row === undefined && this.local().table('sessions').get(agent.id) === undefined) {
+            await this.reclaim(current, this.config.maxSessions - 1)
+            signal.throwIfAborted()
+            if (this.inventorySize(current) >= this.config.maxSessions) throw this.invalid(agent.id, 'The native source inventory is full')
+          }
           if (request.receive !== undefined) {
             const receiver = this.ctx.get('scopeAgentContext')
             if (receiver === undefined) throw this.invalid(agent.id, 'Native context receiving is unavailable')
@@ -742,8 +748,11 @@ export default class ScopeAgentContributions extends TypertRemoteService {
           }
           capture = retained
         } else {
-          if (row === undefined && current.table('sessions').get(agent.id) === undefined
-            && this.inventorySize(current) >= this.config.maxSessions) throw this.invalid(agent.id, 'The native source inventory is full')
+          if (row === undefined && current.table('sessions').get(agent.id) === undefined) {
+            await this.reclaim(current, this.config.maxSessions - 1)
+            signal.throwIfAborted()
+            if (this.inventorySize(current) >= this.config.maxSessions) throw this.invalid(agent.id, 'The native source inventory is full')
+          }
           const grant: DevelopmentTaskLocalContributionGrant = { version: 1,
             taskId: request.taskId, bindingId: request.bindingId, expectedBindingEpoch: request.expectedBindingEpoch,
             participantId: developmentAgentParticipantId(agent.id),
@@ -874,10 +883,38 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     return role === 'remote' ? this.domain?.table('sessions').get(id)?.capture : this.localDomain?.table('sessions').get(id)?.capture
   }
   private revision(domain: NativeContributionDomain, id: SessionId): number {
-    return (domain.table('sessions').get(id)?.revision ?? 0) + (this.local().table('sessions').get(id)?.revision ?? 0)
+    return (domain.table('sessions').get(id)?.revision ?? domain.global.get().revisionFloor)
+      + (this.local().table('sessions').get(id)?.revision ?? this.local().global.get().revisionFloor)
   }
   private inventorySize(domain: NativeContributionDomain): number {
     return new Set([...domain.table('sessions').keys(), ...this.local().table('sessions').keys()]).size
+  }
+  private async reclaim(domain: NativeContributionDomain, limit: number): Promise<void> {
+    const local = this.local()
+    const ids = [...new Set([...domain.table('sessions').keys(), ...local.table('sessions').keys()])].sort()
+    let remaining = ids.length
+    if (remaining <= limit) return
+    const candidates = ids.filter((id) => {
+      const remoteRow = domain.table('sessions').get(id)
+      const localRow = local.table('sessions').get(id)
+      return remoteRow?.capture == null && remoteRow?.receivingContinuation === undefined
+        && (remoteRow?.samples.length ?? 0) === 0 && localRow?.capture == null && (localRow?.samples.length ?? 0) === 0
+    })
+    if (remaining - candidates.length > limit) return
+    for (const id of candidates) {
+      if (remaining <= limit) return
+      const remoteRow = domain.table('sessions').get(id)
+      const localRow = local.table('sessions').get(id)
+      const remoteFloor = Math.max(domain.global.get().revisionFloor, remoteRow?.revision ?? 0)
+      const localFloor = Math.max(local.global.get().revisionFloor, localRow?.revision ?? 0)
+      if (remoteFloor !== domain.global.get().revisionFloor) await domain.global.set({ version: 2, revisionFloor: remoteFloor })
+      if (localFloor !== local.global.get().revisionFloor) await local.global.set({ version: 2, revisionFloor: localFloor })
+      try {
+        await domain.table('sessions').delete(id)
+        await local.table('sessions').delete(id)
+        remaining -= 1
+      } finally { this.notify(domain, id) }
+    }
   }
   private retainedSamples(domain: NativeContributionDomain): number {
     return [...domain.table('sessions').entries()].reduce((sum, [, row]) => sum + row.samples.length, 0)
@@ -971,7 +1008,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const table = this.local().table('sessions')
     const previous = table.get(id)
     if (isDeepStrictEqual(previous?.capture, capture) && isDeepStrictEqual(previous?.samples, samples)) return
-    const revision = (previous?.revision ?? 0) + 1
+    const revision = (previous?.revision ?? this.local().global.get().revisionFloor) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: local source revision exhausted')
     await table.put(id, { agentId: id, revision, capture, samples,
       ...(previous?.version === 3 || capture?.grant.source.kind === 'native-work' ? { version: 3 as const }
@@ -1168,7 +1205,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const receivingContinuation = continuation === undefined ? previous?.receivingContinuation : continuation ?? undefined
     if (isDeepStrictEqual(previous?.capture, capture) && isDeepStrictEqual(previous?.samples, samples)
       && isDeepStrictEqual(previous?.receivingContinuation, receivingContinuation)) return
-    const revision = (previous?.revision ?? 0) + 1
+    const revision = (previous?.revision ?? domain.global.get().revisionFloor) + 1
     if (!Number.isSafeInteger(revision)) throw new Error('scope-agent-contribution: source revision exhausted')
     const record: NativeSourceRecord = { agentId: id, revision, capture, samples,
       ...(previous?.version === 4 || capture?.proposal.source.kind === 'native-work'

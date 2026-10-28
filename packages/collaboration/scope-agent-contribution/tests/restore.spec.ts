@@ -39,7 +39,7 @@ it.each(['local', 'remote'] as const)('refuses a cold %s Session row under a dif
     .rejects.toThrow(role === 'local' ? 'restored source identity differs from its row key' : 'stored Session identity differs from its row key')
 })
 
-it.each([false, true])('counts shared Session identities once across cold domains; overflow=%s', async (overflow) => {
+it.each([false, true])('counts shared cold identities once and reclaims only excess empty Sessions; overflow=%s', async (overflow) => {
   const root = await coldRoot()
   const rows = Object.fromEntries(Array.from({ length: 100 }, (_, index) => {
     const agentId = `retained-${index}`
@@ -51,9 +51,34 @@ it.each([false, true])('counts shared Session identities once across cold domain
     : rows)
   const host = await createHost(new TestNetwork(), 'source', 'native', { root })
   hosts.push(host)
-  const status = host.ctx.scopeAgentContributions.status({ agentId: SessionId('retained-0') })
-  if (overflow) await expect(status).rejects.toThrow('restored inventory exceeds configured retention')
-  else await expect(status).resolves.toMatchObject({ eligibility: 'not-live', capture: null })
+  await expect(host.ctx.scopeAgentContributions.status({ agentId: SessionId('retained-0') }))
+    .resolves.toMatchObject({ eligibility: 'not-live', capture: null })
+  const remote = host.ctx.storageDomain.get('scope_agent_contributions')
+  const local = host.ctx.storageDomain.get('scope_agent_local_contributions')
+  if (remote === undefined || local === undefined) throw new Error('Source domains missing')
+  expect(new Set([...remote.table('sessions').keys(), ...local.table('sessions').keys()]).size).toBe(100)
+  expect(remote.global.get()).toEqual({ version: 2, revisionFloor: 0 })
+  expect(local.global.get()).toEqual({ version: 2, revisionFloor: overflow ? 1 : 0 })
+  if (overflow) {
+    await host.ctx.fiber.dispose()
+    const restarted = await createHost(new TestNetwork(), 'source', 'native', { root, peerId: host.peerId })
+    hosts.push(restarted)
+    expect((await restarted.ctx.scopeAgentContributions.status({ agentId: SessionId('additional-session') })).revision).toBe(1)
+    expect(restarted.ctx.storageDomain.get('scope_agent_local_contributions')?.global.get()).toEqual({ version: 2, revisionFloor: 1 })
+  }
+})
+
+it.each([
+  { version: 1, revisionFloor: 9 }, { version: 2 }, { version: 2, revisionFloor: -1 }, { version: 3, revisionFloor: 0 },
+])('rejects malformed or unknown revision metadata %j', async (global) => {
+  const root = await coldRoot()
+  const path = join(root, 'domains/scope_agent_contributions.json')
+  const bytes = JSON.stringify({ unit: { name: 'scope_agent_contributions', version: 1 }, global, tables: { sessions: {} } }) + '\n'
+  await writeFile(path, bytes)
+  const host = await createHost(new TestNetwork(), 'source', 'native', { root })
+  hosts.push(host)
+  await expect(host.ctx.scopeAgentContributions.status({ agentId: SessionId('unopened') })).rejects.toMatchObject({ code: 'invalid-record' })
+  expect(await readFile(path, 'utf8')).toBe(bytes)
 })
 
 async function requested(joint: boolean) {
@@ -84,6 +109,21 @@ async function saved(source: TestHost, id: string) {
     || !('sessions' in raw.tables) || typeof raw.tables.sessions !== 'object' || raw.tables.sessions === null) throw new Error('Missing source rows')
   return nativeContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
+
+it.each([false, true])('rejects excess cold captures without rewriting the inventory; empty row=%s', async (empty) => {
+  const f = await requested(false)
+  const row = await saved(f.source, f.agent.id)
+  const root = await coldRoot()
+  const bytes = await writeRows(root, 'remote', { [f.agent.id]: row,
+    'another-session': { ...row, agentId: 'another-session' },
+    ...(empty ? { 'cleared-session': { agentId: 'cleared-session', revision: 9, capture: null, samples: [] } } : {}) })
+  await f.source.ctx.fiber.dispose()
+  const restarted = await createHost(f.network, 'source', 'native', { root, peerId: f.source.peerId, maxSessions: 1 })
+  hosts.push(restarted)
+  await expect(restarted.ctx.scopeAgentContributions.status({ agentId: f.agent.id }))
+    .rejects.toThrow('restored inventory exceeds configured retention')
+  expect(await readFile(join(root, 'domains/scope_agent_contributions.json'), 'utf8')).toBe(bytes)
+})
 
 it.each(['capture', 'receiving'] as const)('refuses a retained %s when the Host peer identity changed', async (kind) => {
   const f = await requested(kind === 'receiving')

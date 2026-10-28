@@ -2384,7 +2384,7 @@ export interface Config {
 ```ts config-catalog
 /** Bounded durable source inventory, complete report bytes, and peer retry cadence. */
 export interface Config {
-  /** Maximum retained source Session rows, including ended captures. */
+  /** Maximum retained source Sessions; completely cleared Sessions are reclaimed when capacity is needed. */
   readonly maxSessions: number
   /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number

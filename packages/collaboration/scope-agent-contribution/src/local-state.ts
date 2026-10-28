@@ -13,7 +13,7 @@ import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionRequest,
   DevelopmentTaskLocalContributionReceipt, DevelopmentTaskLocalContributionAdmissionReceipt,
 } from '@deepseek-ai/dsh-development-task/types'
-import { nativeDigest, type NativeToolSample, type NativeTurnSample } from './state.ts'
+import { nativeDigest, nativeRevisionStateSchema, type NativeToolSample, type NativeTurnSample } from './state.ts'
 import { turnOutcomeId, turnOutcomeProofSchema } from './turn-outcome.ts'
 
 /** Source-side intent; Task events remain the only local contribution authority. */
@@ -180,6 +180,7 @@ const recordSchema: z.ZodType<LocalSourceRecord> = z.union([
 /** Separate additive authority preserves the existing remote domain and its version-one rows unchanged. */
 export const nativeLocalContributionDomain = defineDomain({
   name: 'scope_agent_local_contributions', version: 1,
+  global: { schema: nativeRevisionStateSchema, initial: { version: 2 as const, revisionFloor: 0 } },
   tables: { sessions: domainTable<SessionId, LocalSourceRecord>(recordSchema) },
 })
 
