@@ -11,8 +11,8 @@ import { cleanup, host, peer } from './helpers.ts'
 afterEach(cleanup)
 const signal = (): AbortSignal => new AbortController().signal
 
-async function application(overrides: Partial<Config> = {}) {
-  const a = await host('application-owner', undefined, overrides)
+async function application(overrides: Partial<Config> = {}, maxEventsPerTask = 32) {
+  const a = await host('application-owner', undefined, overrides, [], peer('application-owner'), maxEventsPerTask)
   const b = await host('application-source')
   const task = await a.createTask()
   const [ownerAddress] = (await a.access.identity()).addresses
@@ -117,6 +117,44 @@ it('retains approval intent across failed Task persistence and later opens exact
   const events = a.tasks.log()
   await expect(b.access.contributionApplicationStatus(request, signal())).resolves.toEqual(result)
   expect(a.tasks.log()).toHaveLength(events.length)
+})
+
+it('ends an uncommitted approval after Task capacity refusal without opening authority on retry', async () => {
+  const { a, b, request, task, approve } = await application({}, 2)
+  await b.access.applyContribution(request, signal())
+  await expect(approve()).rejects.toMatchObject({ code: 'scope-contribution/capacity' })
+  const retained = structuredClone(a.pool.media)
+  const events = a.tasks.log()
+  expect(a.tasks.peerContributions({ taskId: task.id })).toEqual([])
+  expect(await b.access.contributionApplicationStatus(request, signal())).toEqual({ status: 'capacity' })
+  expect(a.pool.media).toEqual(retained)
+  expect(a.tasks.log()).toEqual(events)
+  const ended = await b.access.cancelContributionApplication(request, signal())
+  expect(ended).toMatchObject({ status: 'ended', reason: 'left', receipt: { event: { kind: 'peer-contribution-ended' } } })
+  expect(a.tasks.peerContributions({ taskId: task.id })).toMatchObject([{ state: 'ended' }])
+  expect(a.tasks.log().filter(entry => entry.change.kind === 'peer-contribution-opened')).toEqual([])
+  expect(await b.access.applyContribution(request, signal())).toEqual(ended)
+  expect(a.tasks.log()).toHaveLength(events.length + 1)
+})
+
+it('restores an expired approval plan as terminal without ever opening its grant', async () => {
+  const { a, b, request, approve, task } = await application()
+  await b.access.applyContribution(request, signal())
+  const stop = a.ctx.on('development-task/persist', (entry) => {
+    if (entry.change.kind === 'peer-contribution-opened') throw new Error('approval interrupted before Task commit')
+  })
+  await expect(approve()).rejects.toMatchObject({ code: 'scope-contribution/unavailable' })
+  stop()
+  const events = a.tasks.log()
+  await a.ctx.fiber.dispose()
+  vi.spyOn(Date, 'now').mockReturnValue(request.limits.expiresAt)
+  const restored = await host('application-owner', a.pool, {}, events)
+  const ended = await b.access.contributionApplicationStatus(request, signal())
+  expect(ended).toMatchObject({ status: 'ended', reason: 'revoked', receipt: { event: { kind: 'peer-contribution-ended' } } })
+  expect(restored.tasks.peerContributions({ taskId: task.id })).toMatchObject([{ state: 'ended' }])
+  expect(restored.tasks.log().filter(entry => entry.change.kind === 'peer-contribution-opened')).toEqual([])
+  expect(await b.access.contributionApplicationStatus(request, signal())).toEqual(ended)
+  expect(restored.tasks.log()).toHaveLength(events.length + 1)
 })
 
 it('ends a planned but uncommitted grant before a delayed manual approval can open it', async () => {
@@ -341,6 +379,22 @@ it('paginates retained entries without dropping a loaded page and recovers the s
   const recovered = await a.access.recoverContributionEntry({ entryId: created.entry.entryId, ownerAddress: address })
   expect(recovered.entry).toEqual({ ...created.entry, ownerAddress: address })
   expect(await a.access.previewContributionText({ text: recovered.text })).toEqual(recovered.entry)
+})
+
+it('keeps a pending application intact while its owner has no advertised route and recovers the current address', async () => {
+  const { a, b, request, task, ownerAddress } = await application()
+  await b.access.applyContribution(request, signal())
+  const retained = structuredClone(a.pool.media)
+  const events = a.tasks.log()
+  const identity = vi.spyOn(a.transport, 'identity').mockResolvedValue({ peerId: a.transport.peerId, addresses: [] })
+  await expect(a.access.contributionApplications({ taskId: task.id })).rejects.toMatchObject({ code: 'scope-contribution/unavailable' })
+  const currentAddress = ownerAddress.replace('/tcp/1/', '/tcp/2/')
+  identity.mockResolvedValue({ peerId: a.transport.peerId, addresses: [currentAddress] })
+  const page = await a.access.contributionApplications({ taskId: task.id })
+  expect(page.entries).toMatchObject([{ entry: { ...request.entry, ownerAddress: currentAddress },
+    proposal: request.proposal, result: { status: 'pending' } }])
+  expect(a.pool.media).toEqual(retained)
+  expect(a.tasks.log()).toEqual(events)
 })
 
 it('keeps pending and committed source intent after the querying caller aborts during durable application persistence', async () => {

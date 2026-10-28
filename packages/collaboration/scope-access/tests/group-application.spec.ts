@@ -95,6 +95,25 @@ it('closes future admission while preserving pending approval and independently 
   })).entry).toEqual(f.created.entry)
 })
 
+it('retains group closure without an advertised address and reports it through the recovered route', async () => {
+  const f = await fixture()
+  await f.b.access.applyContribution(f.requestB, signal())
+  const members = structuredClone(f.retained().members)
+  const events = f.a.tasks.log()
+  const identity = vi.spyOn(f.a.transport, 'identity').mockResolvedValue({ peerId: f.a.transport.peerId, addresses: [] })
+  await expect(f.a.access.closeGroupEntry({ entryId: f.created.entry.entryId }))
+    .rejects.toMatchObject({ code: 'scope-contribution/unavailable' })
+  expect(f.retained()).toMatchObject({ closed: true, members })
+  const currentAddress = f.ownerAddress.replace('/tcp/1/', '/tcp/2/')
+  identity.mockResolvedValue({ peerId: f.a.transport.peerId, addresses: [currentAddress] })
+  expect((await f.a.access.closeGroupEntry({ entryId: f.created.entry.entryId })).entry.ownerAddress).toBe(currentAddress)
+  const page = await f.a.access.groupEntries({ taskId: f.task.id })
+  expect(page.entries).toMatchObject([{ entry: { ...f.created.entry, ownerAddress: currentAddress },
+    state: 'closed', applicationCount: 1 }])
+  expect(f.retained().members).toEqual(members)
+  expect(f.a.tasks.log()).toEqual(events)
+})
+
 it('retains cancellation before delayed apply per full authenticated capture identity', async () => {
   const f = await fixture()
   expect(await f.b.access.cancelContributionApplication(f.requestB, signal())).toEqual({ status: 'cancelled' })

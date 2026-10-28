@@ -42,4 +42,4 @@ Claude 接收端预留完整 Hook 包装后，向所有者申请接收方字节�
 
 在线路径用一次入口交换代替申请与批准邀请的往返交换。用户仍须选择会话、本地采集策略及贡献限额，所有者仍须批准。交付要求已公布的对等地址可达且 Host 正在运行；本决策不提供公共发现、中继或 NAT 穿透。支持的[来源模式](2026-10-03-independent-tool-observations.zh.md)决定哪些已授权 Write/Edit 工作会贡献内容；入口不授权任意工具输出。
 
-定向 Host 测试覆盖丢回复、重启、同意限额、审批与取消顺序、延迟验证、无关会话继续工作及后台任务释放。[申请测试](../../../../packages/collaboration/scope-access/tests/application.spec.ts)拒绝不匹配的回复，并在普通读取仍等待时完成取消；终结提交使已捕获投影失效，同时保留独立签发的读取许可。浏览器验收覆盖[独立贡献路径](../../../../apps/web/tests/online-contribution-scope.e2e.ts)与 [Claude/原生联合入口](../../../../apps/web/tests/claude-joint-scope.e2e.ts)。这些检查以受控输入验证设置、授权和交付行为，不证明真实模型任务质量或物理跨机器易用性。
+定向 Host 测试覆盖丢回复、重启、同意限额、Task 事件容量、过期批准计划恢复、审批与取消顺序、延迟验证、无关会话继续工作及后台任务释放。[申请测试](../../../../packages/collaboration/scope-access/tests/application.spec.ts)拒绝不匹配的回复，并在普通读取仍等待时完成取消；终结提交使已捕获投影失效，同时保留独立签发的读取许可。浏览器验收覆盖[独立贡献路径](../../../../apps/web/tests/online-contribution-scope.e2e.ts)与 [Claude/原生联合入口](../../../../apps/web/tests/claude-joint-scope.e2e.ts)。这些检查以受控输入验证设置、授权和交付行为，不证明真实模型任务质量或物理跨机器易用性。
