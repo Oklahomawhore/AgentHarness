@@ -1,6 +1,6 @@
 /** Owner-local capture management with observed binding and capture checks. */
 import type {
-  DevelopmentTaskCheckoutRequest, DevelopmentTaskId, ScopeAgentContributionSelection,
+  DevelopmentParticipantId, DevelopmentTaskCheckoutRequest, DevelopmentTaskId, ScopeAgentContributionSelection,
   ScopeAgentContributionStopRequest, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -21,7 +21,10 @@ export interface NativeLocalContributionDirectory {
   request(request: ScopeAgentLocalContributionRequest): Promise<void>
   stop(request: ScopeAgentContributionStopRequest): Promise<void>
   changed(agentId: SessionId, revision?: number): void
-  assignmentsChanged(): void
+  /** Refresh matching Sessions and those whose participant identity is not yet known.
+   * @param participantId - participant whose Task binding changed.
+   */
+  assignmentsChanged(participantId: DevelopmentParticipantId): void
   reset(): void
   dispose(): void
 }
@@ -86,8 +89,12 @@ export function createNativeLocalContributionDirectory(
       if (revision !== undefined) revisions.set(agentId, Math.max(revisions.get(agentId) ?? 0, revision))
       directory.invalidate(agentId)
     },
-    assignmentsChanged(): void {
-      for (const agentId of Object.keys(directory.getSnapshot()) as SessionId[]) directory.invalidate(agentId)
+    assignmentsChanged(participantId): void {
+      const snapshot = directory.getSnapshot()
+      for (const agentId of Object.keys(snapshot) as SessionId[]) {
+        const known = snapshot[agentId]?.value?.participantId
+        if (known == null || known === participantId) directory.invalidate(agentId)
+      }
     },
     reset(): void { revisions.clear(); directory.reset() },
     dispose(): void { revisions.clear(); directory.dispose() },

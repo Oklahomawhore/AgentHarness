@@ -2,6 +2,65 @@ import { describe, expect, it, vi } from 'vitest'
 import { createContributionDirectory } from '../src/client/contribution-directory.ts'
 
 describe('contribution management directory', () => {
+  it('clears a failed status read when a Host notification successfully refreshes it', async () => {
+    const read = vi.fn().mockRejectedValueOnce(Object.assign(new Error('offline'), { code: 'status/offline' }))
+      .mockResolvedValue('confirmed')
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    await directory.refresh('s')
+    expect(directory.getSnapshot().s).toMatchObject({ status: 'error', error: 'status/offline' })
+    directory.invalidate('s')
+    await vi.waitFor(() => { expect(directory.getSnapshot().s?.status).toBe('ready') })
+    expect(directory.getSnapshot().s).toEqual({ status: 'ready', value: 'confirmed', pending: false })
+    directory.dispose()
+  })
+
+  it('clears a failed concurrent status read after the sent mutation is confirmed', async () => {
+    const gate = Promise.withResolvers<string>()
+    const read = vi.fn().mockResolvedValueOnce('before').mockRejectedValueOnce(new Error('status unavailable'))
+      .mockResolvedValue('committed')
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    await directory.refresh('s')
+    const mutation = directory.mutate('s', () => gate.promise)
+    await directory.refresh('s')
+    expect(directory.getSnapshot().s?.status).toBe('error')
+    gate.resolve('acknowledged')
+    await mutation
+    expect(directory.getSnapshot().s).toEqual({ status: 'ready', value: 'committed', pending: false })
+    directory.dispose()
+  })
+
+  it('retains a lost mutation warning through failed confirmation and later automatic recovery', async () => {
+    const gate = Promise.withResolvers<string>()
+    const unavailable = Object.assign(new Error('status unavailable'), { code: 'status/offline' })
+    const read = vi.fn().mockResolvedValueOnce('before').mockRejectedValueOnce(unavailable)
+      .mockRejectedValueOnce(unavailable).mockResolvedValue('current authority')
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    await directory.refresh('s')
+    const operation = vi.fn(() => gate.promise)
+    const mutation = directory.mutate('s', operation)
+    await directory.refresh('s')
+    gate.reject(Object.assign(new Error('reply lost'), { code: 'mutation/unknown-outcome' }))
+    await mutation
+    expect(directory.getSnapshot().s?.status).toBe('error')
+    directory.invalidate('s')
+    await vi.waitFor(() => { expect(directory.getSnapshot().s?.status).toBe('ready') })
+    expect(directory.getSnapshot().s?.error).toBe('mutation/unknown-outcome')
+    await directory.refresh('s')
+    expect(directory.getSnapshot().s?.error).toBeUndefined()
+    expect(operation).toHaveBeenCalledOnce()
+    directory.dispose()
+  })
+
+  it('clears an earlier mutation warning when a subsequent action is confirmed', async () => {
+    const directory = createContributionDirectory<string, string>(async () => 'current authority', vi.fn())
+    await directory.refresh('s')
+    await directory.mutate('s', async () => { throw new Error('reply lost') })
+    expect(directory.getSnapshot().s?.error).toBe('contribution/unknown-outcome')
+    await directory.mutate('s', async () => 'acknowledged')
+    expect(directory.getSnapshot().s?.error).toBeUndefined()
+    directory.dispose()
+  })
+
   it('discards reads started before and during a mutation and recovers a committed lost reply', async () => {
     const old = Promise.withResolvers<string>()
     const during = Promise.withResolvers<string>()

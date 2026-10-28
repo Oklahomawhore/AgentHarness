@@ -48,6 +48,10 @@ class EmergenceCenterRemoteError extends Error {
   }
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unexpected Task assignment change: ${JSON.stringify(value)}`)
+}
+
 /** Required services for the footer action, localized copy, and Host Remotes. */
 export const inject = [
   'slots', 'locale', 'remote', 'remote.developmentRooms', 'remote.developmentTasks',
@@ -170,7 +174,11 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => ctx.remote.$on('development-task/assignment-changed', (assignment, entry) => {
       tasks.applyAssignment(assignment ?? undefined, entry.bindingId)
-      nativeLocalContributions.assignmentsChanged()
+      switch (entry.change.kind) {
+        case 'task-bound': case 'task-cleared': nativeLocalContributions.assignmentsChanged(entry.participantId); break
+        case 'context-acknowledged': break
+        default: assertNever(entry.change)
+      }
       observedScopes.refresh(); claudeScopes.refresh()
     }),
     'ui-emergence-center: assignment changes',

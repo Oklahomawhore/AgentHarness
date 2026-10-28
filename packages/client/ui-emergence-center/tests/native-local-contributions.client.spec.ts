@@ -103,9 +103,38 @@ describe('owner-local contribution directory', () => {
       await source.stop({ agentId, expectedCapture: localCapture.selection })
       expect(port.stopLocal).toHaveBeenCalledOnce()
       const reads = vi.mocked(port.status).mock.calls.length
-      source.assignmentsChanged()
+      source.assignmentsChanged(localCapture.grant.participantId)
       await source.directory.refresh(agentId)
       expect(vi.mocked(port.status).mock.calls.length).toBeGreaterThan(reads)
+    } finally { source.dispose() }
+  })
+
+  it('invalidates an unfinished first read when its participant is not yet known', async () => {
+    const held = Promise.withResolvers<typeof assigned>()
+    const { port, source } = fixture()
+    vi.mocked(port.status).mockReturnValueOnce(held.promise).mockResolvedValue(assigned)
+    try {
+      const initial = source.directory.refresh(agentId)
+      await Promise.resolve()
+      expect(port.status).toHaveBeenCalledOnce()
+      source.assignmentsChanged(localCapture.grant.participantId)
+      await source.directory.refresh(agentId)
+      held.resolve(unbound)
+      await initial
+      expect(port.status).toHaveBeenCalledTimes(2)
+      expect(source.directory.getSnapshot()[agentId]?.value).toEqual(assigned)
+    } finally { held.resolve(unbound); source.dispose() }
+  })
+
+  it('refreshes a formerly cold Session whose cached participant identity is unknown', async () => {
+    const { port, source } = fixture({ ...unbound, eligibility: 'not-live', participantId: null })
+    try {
+      await source.directory.refresh(agentId)
+      vi.mocked(port.status).mockResolvedValue(assigned)
+      source.assignmentsChanged(localCapture.grant.participantId)
+      await source.directory.refresh(agentId)
+      expect(port.status).toHaveBeenCalledTimes(2)
+      expect(source.directory.getSnapshot()[agentId]?.value).toEqual(assigned)
     } finally { source.dispose() }
   })
 })
