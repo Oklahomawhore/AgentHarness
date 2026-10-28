@@ -10,6 +10,7 @@ import DevelopmentTaskService, {
   type DevelopmentTaskAdmitObservedContextRequest,
   type DevelopmentTaskBindingId,
   type DevelopmentTaskAssignmentLogEntry,
+  type DevelopmentTaskLogEntry,
   type DevelopmentTaskId,
   type DevelopmentTaskObservedSourceId,
   type DevelopmentTaskArtifactId,
@@ -668,6 +669,33 @@ describe('DevelopmentTaskService', () => {
     const valid = await source.tasks.acknowledge(request)
     await expect(owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)).resolves.toEqual(valid)
     expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a conflicting duplicate Task replica before persistence and keeps later events restorable', async () => {
+    const owner = await setup({}, 'node-a')
+    const replica = await setup({}, 'node-b')
+    const task = await owner.tasks.create(rootRequest('Replica identity'))
+    const ownerNodeId = 'node-a' as DevelopmentNodeId
+    await replica.tasks.acceptLogReplica(owner.tasks.log()[0]!, ownerNodeId)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Original publication' })
+    const published = owner.tasks.log().at(-1)!
+    await replica.tasks.acceptLogReplica(published, ownerNodeId)
+    if (published.change.kind !== 'context-published') throw new Error('Expected a context publication')
+    const conflict: DevelopmentTaskLogEntry = { ...published, change: { ...published.change,
+      publication: { ...published.change.publication, text: 'Conflicting publication' } } }
+    const retained = replica.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    replica.ctx.on('development-task/persist', persisted)
+
+    await expect(replica.tasks.acceptLogReplica(conflict, ownerNodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(replica.tasks.log()).toEqual(retained)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Later publication' })
+    const latest = await replica.tasks.acceptLogReplica(owner.tasks.log().at(-1)!, ownerNodeId)
+    expect(persisted).toHaveBeenCalledOnce()
+    const restored = await setup({}, 'node-b')
+    restored.tasks.restoreLog([...retained, ...persisted.mock.calls.map(([entry]) => entry)])
+    expect(restored.tasks.get({ taskId: task.id })).toEqual(latest)
   })
 
   it('keeps different sessions of the same Agent independently bound', async () => {

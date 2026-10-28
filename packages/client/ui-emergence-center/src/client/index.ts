@@ -238,7 +238,7 @@ export function apply(ctx: Context): void {
       },
       focusTask: async (taskId) => {
         const task = tasks.getSnapshot().tasks.find(item => item.id === taskId)
-        observedScopes.focus(task?.ownerNodeId === participants.getSnapshot().nodeId ? taskId : undefined)
+        observedScopes.focus(task !== undefined && task.ownerNodeId === participants.getSnapshot().nodeId ? taskId : undefined)
         await tasks.focus(taskId)
       },
       createTask: request => tasks.create(request),

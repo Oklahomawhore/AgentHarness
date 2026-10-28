@@ -1402,7 +1402,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated Task event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
-      if (entry.seq > (this.lastSeqByNode.get(entry.nodeId) ?? 0)) this.prepare(entry, 'REPLICA_CONFLICT')
+      this.prepare(entry, 'REPLICA_CONFLICT')
       await this.persistEntry(entry)
       return this.append(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })
@@ -1500,15 +1500,9 @@ export class DevelopmentTaskService extends TypertRemoteService {
     origin: DevelopmentTaskEventOrigin,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): DevelopmentTaskSnapshot {
-    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
-    if (entry.seq <= lastSeq) {
-      const retained = this.entries.find(item => item.nodeId === entry.nodeId && item.seq === entry.seq)
-      if (retained === undefined || JSON.stringify(retained) !== JSON.stringify(entry)) {
-        throw new DevelopmentTaskError('same Task event identity carries different content', 'REPLICA_CONFLICT')
-      }
-      return this.snapshot(this.requireTask(entry.taskId))
-    }
     const task = this.prepare(entry, code)
+    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
+    if (entry.seq <= lastSeq) return this.snapshot(task)
     task.events.push(entry)
     task.revision = entry.revision
     task.updatedAt = entry.at
@@ -1528,7 +1522,15 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   private prepare(entry: DevelopmentTaskLogEntry, code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT'): TaskRecord {
-    const expectedSeq = (this.lastSeqByNode.get(entry.nodeId) ?? 0) + 1
+    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
+    if (entry.seq <= lastSeq) {
+      const retained = this.entries.find(item => item.nodeId === entry.nodeId && item.seq === entry.seq)
+      if (retained === undefined || JSON.stringify(retained) !== JSON.stringify(entry)) {
+        throw new DevelopmentTaskError('same Task event identity carries different content', 'REPLICA_CONFLICT')
+      }
+      return this.requireTask(entry.taskId)
+    }
+    const expectedSeq = lastSeq + 1
     if (entry.seq !== expectedSeq) throw new DevelopmentTaskError(`Task event expected node sequence ${String(expectedSeq)}`, code)
     const current = this.tasks.get(entry.taskId)
     if (entry.revision !== (current?.revision ?? 0) + 1) {

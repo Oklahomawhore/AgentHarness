@@ -183,7 +183,7 @@ export function EmergenceCenterPanel({
   const [pendingAction, setPendingAction] = useState<PendingAction>()
   const [actionError, setActionError] = useState<string>()
   const participantId = profile.id
-  const selectedTask = taskState.tasks.find(task => task.id === selectedTaskId) ?? taskState.tasks[0]
+  const selectedTask = selectedTaskId === undefined ? taskState.tasks[0] : taskState.tasks.find(task => task.id === selectedTaskId)
   const taskCount = taskState.tasks.filter(task => task.createdBy === participantId).length
 
   useEffect(() => {
@@ -192,7 +192,7 @@ export function EmergenceCenterPanel({
 
   useEffect(() => {
     if (selectedTaskId !== undefined) void focusTask(selectedTaskId).catch(() => {})
-  }, [focusTask, selectedTaskId, participants.nodeId])
+  }, [focusTask, selectedTaskId, selectedTask?.id, selectedTask?.ownerNodeId, participants.nodeId])
 
   const participantMap = useMemo(
     () => new Map(participants.participants.map(participant => [participant.id, participant])),
