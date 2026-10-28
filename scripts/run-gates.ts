@@ -265,7 +265,6 @@ export function gatesForMode(selected: Mode): Gate[] {
           docTypecheckEnv: { DSH_DOC_TYPECHECK_USE_BUILD_OUTPUT: '1' },
           docTypecheckScript: 'doc-typecheck:contracts-ready',
         }),
-        pnpmScript('module-graph', 'verify-module-graph', { label: 'module graph' }),
       ]
     case 'hygiene':
       return [
@@ -315,7 +314,6 @@ function ciPrimaryGates(): Gate[] {
       docTypecheckNeeds: ['typert-contracts'],
       docTypecheckScript: 'doc-typecheck:contracts-ready',
     }),
-    pnpmScript('module-graph', 'verify-module-graph', { label: 'module graph' }),
     // The prepared typecheck and build both drive Client tsc, while build also
     // repeats the Host contract pass. Wait for all three consumers so build
     // neither races tsbuildinfo nor replaces declarations while they are read.
@@ -420,7 +418,6 @@ function ciStaticGates(options: { ownsBuild: boolean }): Gate[] {
         : {},
       docsBuildScript: 'docs:build:mpa',
     }),
-    pnpmScript('module-graph', 'verify-module-graph', { label: 'module graph' }),
   ]
 }
 
@@ -764,6 +761,7 @@ function docSyncLeafGates(options: {
       label: 'documentation site checks',
     }),
     pnpmScript('package-readme-limitations', 'verify-package-readme-limitations', { label: 'package README limitations', quick: true }),
+    pnpmScript('module-graph', 'verify-module-graph', { label: 'module graph', quick: true }),
   ]
 }
 

@@ -30,6 +30,8 @@ Same-directory Session recovery fixtures transfer cleanup ownership to the resto
 
 The [complete-independent-gates decision](2026-10-26-complete-independent-gates.md) owns scheduler completion and interruption semantics.
 
+Generated package-graph freshness belongs to the documentation aggregate. Local quick/full documentation checks and CI reuse that leaf; a dependency change cannot pass documentation synchronization with a stale graph.
+
 ## Alternatives considered
 
 Restoring the imported triggers alone leaves private labels without runners and references to absent workflows. Recreating the upstream persistent infrastructure adds a deployment and trust model that this repository does not operate. Dropping tests or making native validation nonblocking would hide release failures rather than provide portable evidence.

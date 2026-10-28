@@ -105,23 +105,12 @@ describe('gate graph validation', () => {
     expect(scripts['test:bench:built']).toBe('vitest run --config vitest.bench.config.ts')
   })
 
-  it('keeps the public repository link policy in the documentation gate', () => {
-    const ids = withPnpmEntrypoint(() => gatesForMode('doc-sync').map(subject => subject.id))
-
-    expect(ids).toContain('public-repository-links')
-  })
-
-  it('keeps package-group subsystem ownership in the documentation gate', () => {
-    const ids = withPnpmEntrypoint(() => gatesForMode('doc-sync').map(subject => subject.id))
-
-    expect(ids).toContain('subsystem-pages')
-  })
-
-  it('keeps the package README Summary limit in the documentation gate', () => {
-    const ids = withPnpmEntrypoint(() => gatesForMode('doc-sync').map(subject => subject.id))
-
-    expect(ids).toContain('package-readme-summaries')
-  })
+  it.each(['public-repository-links', 'subsystem-pages', 'package-readme-summaries', 'module-graph'])(
+    'keeps %s in the documentation gate', (id) => {
+      const ids = withPnpmEntrypoint(() => gatesForMode('doc-sync').map(subject => subject.id))
+      expect(ids).toContain(id)
+    },
+  )
 
   it('derives the quick documentation aggregate from marked doc-sync leaves', () => {
     const full = withPnpmEntrypoint(() => gatesForMode('doc-sync'))
