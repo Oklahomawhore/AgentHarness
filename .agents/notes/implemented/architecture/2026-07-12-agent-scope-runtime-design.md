@@ -42,7 +42,7 @@ All agents share one Cordis service graph. A derived context does not clone `Too
 
 `agent.ctx` is such a derived context. Service calls still reach the shared instances, while a registration can inspect its calling context and store a contribution under the nearest scope key. Ordinary plugin contexts carry no scope key and therefore register globally.
 
-The Agent context is exactly the context returned by `createScope`; it carries no second reverse association to the Agent. Subject-bearing APIs pass the Agent explicitly, leaving one formal scope mechanism for registration ownership and routing.
+The Agent context is exactly the context returned by `createScope`; it carries no second reverse association to the Agent. Service dependency lookup retains the minting context’s isolation key while walking its active injected ancestors. The root Proxy target cannot supply that key: derived isolated contexts share the Proxy while selecting different providers. Subject-bearing APIs pass the Agent explicitly, leaving one formal scope mechanism for registration ownership and routing.
 
 ### Fibers and effects make cleanup structural
 

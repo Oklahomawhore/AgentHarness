@@ -908,13 +908,13 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const tasks = this.ctx.get('developmentTasks')
     if (tasks === undefined) return null
     const participantId = developmentAgentParticipantId(id)
-    const binding = tasks.assignmentList().find(item => item.participantId === participantId)
+    const binding = tasks.latestAssignment(participantId)
     if (binding === undefined) return null
     const task = tasks.get({ taskId: binding.taskId })
     const rooms = this.ctx.get('developmentRooms')
     if (task.origin.kind !== 'root' || rooms === undefined || task.ownerNodeId !== rooms.list().nodeId) return null
-    const epoch = tasks.assignmentLog().findLast(item => item.bindingId === binding.bindingId && item.change.kind === 'task-bound')
-    if (epoch === undefined || epoch.change.kind !== 'task-bound' || epoch.change.taskId !== binding.taskId) return null
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- Task retains this binding's epoch; reads are synchronous.
+    const epoch = tasks.assignmentLog().findLast(item => item.bindingId === binding.bindingId && item.change.kind === 'task-bound')!
     return { taskId: binding.taskId, bindingId: binding.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
   }
   private matchesBinding(id: SessionId, value: ScopeAgentLocalContributionBinding): boolean {

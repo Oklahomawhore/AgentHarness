@@ -1,0 +1,34 @@
+{
+  "turns": [
+    {
+      "text": "The existing local Task and ordinary work history are retained.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "One real Write reached both independently authorized Tasks.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Remote sharing ended; local collection received the next Write.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Both captures ended independently; the local Task and history remain.",
+      "finishReason": "completed"
+    }
+  ],
+  "contextRevisions": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "realWriteTurns": [
+    2,
+    3
+  ],
+  "withdrawnSources": 2,
+  "localAssignmentPreserved": true,
+  "wirePreservesExactContextMessages": true,
+  "remoteReadingEvents": 0
+}

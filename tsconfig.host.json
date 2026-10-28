@@ -857,12 +857,6 @@
       "path": "./packages/collaboration/development-task-storage-domain"
     },
     {
-      "path": "./packages/collaboration/development-evidence"
-    },
-    {
-      "path": "./packages/collaboration/development-evidence-reviewed-file"
-    },
-    {
       "path": "./packages/collaboration/development-room-mesh"
     },
     {

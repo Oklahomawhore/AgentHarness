@@ -53,7 +53,7 @@ kind: "package-reference"
 
 `permissionDraft({ agentId })` 读取选中的运行中普通 Session，返回配置的建议值、Session 记录的工作目录，以及当前可见的 `write`/`edit` 工具。Session 没有目录时，不建议任何根目录；Host 不会替换为自己的目录或扫描文件。未配置 `permissionDefaults` 的部署返回 `null`。建议不会授予权限、改变 Session 或采集状态，也不联系所有者。[Web 配置](../../bundle/web-app/cordis.patch.yml) 提供明确默认值。用户审阅或编辑草稿，并分别确认采集、读取、完整文件内容、历史初始化和自动工作。[权限草稿决策](../../../.agents/notes/implemented/feature/2026-10-07-native-permission-drafts.zh.md)。
 
-向独立所有者分享文件或命令时，选择在线普通 Agent、工具观察入口、根目录、所选工具或精确命令及有限额度；所有者批准后启用采集。连接本机所有的 Task 时，先检出该 Root Task，再针对精确绑定代际批准所选工作。Task 直接记录本地许可，不使用 peer 邀请。一个 Session 可分别持有一份本地与远端许可。每份许可独立保留来源选择、到期时间和样本额度，不授权另一份采集。绝对根目录仅在本机保存；获准报告正文可能包含私有文本。两种文件来源均要求 roots 为字符串数组，tools 为只包含 `write` 或 `edit` 的数组。非法数组会在解析目录或替换采集前被拒绝；字符串不会被当作列表。
+向独立所有者分享文件或命令时，选择在线普通 Agent、工具观察入口、根目录、所选工具或精确命令及有限额度；所有者批准后启用采集。连接本机所有的 Task 时，先检出该 Root Task，再针对精确绑定代际批准所选工作。Task 直接记录本地许可，不使用 peer 邀请。一个 Session 可分别持有一份本地与远端许可。每份许可独立保留来源选择、到期时间和样本额度，不授权另一份采集。绝对根目录仅在本机保存；获准报告正文可能包含私有文本。两种文件来源均要求 roots 为字符串数组，tools 为只包含 `write` 或 `edit` 的数组。非法数组会在解析目录或替换采集前被拒绝；字符串不会被当作列表。 本地选择遵循 Task 服务的[最后保留绑定](../development-task/README.zh.md#remote-api)；选中另一个保留绑定会结束旧本地采集，必须重新批准采集。
 
 `request.fileContent` 与 `requestLocal.fileContent` 接受显式值 `completed-native-file`。这项独立许可涵盖获准原生 Write/Edit 成功后由同一 provider 返回的完整 LF 规范化文本，包括文件中未修改的部分。采集不读取其他文件，也不重新扫描磁盘。仅文件许可保留显式版本三来源标记；省略选项仍只允许分享原始参数。更改此选择必须先停止采集并重新选择。既有工具记录初始化不能与该选项组合，开启完整内容分享的本地采集也不能作为历史初始化来源。
 

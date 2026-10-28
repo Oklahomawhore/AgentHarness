@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto'
 import { symbols, type Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
-import { localContextProjectionSchema, readLocalTaskContext } from '@deepseek-ai/dsh-development-task-context/local'
+import { localContextProjectionSchema, readLocalTaskContext, nextTaskContextExpiry } from '@deepseek-ai/dsh-development-task-context/local'
 import { projectionSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeAccessProjection, ScopeRetrieveResult } from '@deepseek-ai/dsh-scope-access/types'
 import type { ScopeAgentBinding, ScopeAgentCompositeBinding, ScopeAgentCompositeProjection, ScopeAgentLocalBinding } from './types.ts'
@@ -49,17 +49,9 @@ export function compositeProjection(local: ScopeAgentCompositeProjection['local'
     taskRevision: remote.taskRevision, projectionId: digest(local, remote, maxContextBytes) }
 }
 
-function original(value: object | undefined): object | undefined {
-  return value === undefined ? undefined : (value as { [symbols.original]?: object })[symbols.original] ?? value
-}
-
-function nextExpiry(ctx: Context, binding: ScopeAgentCompositeBinding): number {
-  const context = ctx.get('developmentTasks')?.get({ taskId: binding.target.taskId }).context ?? []
-  const now = Date.now()
-  return Math.min(Infinity, ...context.flatMap((item) => {
-    const expiresAt = item.localContribution?.grant.expiresAt ?? item.peerContribution?.grant.expiresAt
-    return expiresAt !== undefined && expiresAt > now ? [expiresAt] : []
-  }))
+// The synchronous current() check establishes these installed Cordis services.
+function original(value: object | undefined): object {
+  return (value as Record<symbol, object>)[symbols.original] as object
 }
 
 /**
@@ -67,42 +59,36 @@ function nextExpiry(ctx: Context, binding: ScopeAgentCompositeBinding): number {
  * @param ctx - current owner services and independent remote access.
  * @param binding - explicit local assignment and remote subscription.
  * @param maxContextBytes - total final UTF-8 text bytes, including remote framing.
- * @param maxLocalContextBytes - complete local projection allowance within a combined request.
+ * @param maxLocalContextBytes - validated positive local allowance leaving room for remote framing and text.
  * @param signal - request and binding lifetime cancellation.
- * @param extraContextBytes - complete withdrawal text retained for additional owned context nodes.
  * @param current - synchronous final assignment and installed-consumer validation.
  * @returns both exact inputs, or the observed remote/local termination.
  */
 export async function readComposite(ctx: Context, binding: ScopeAgentCompositeBinding, maxContextBytes: number,
-  maxLocalContextBytes: number, signal: AbortSignal, extraContextBytes: number, current: () => boolean): Promise<Exclude<ScopeRetrieveResult, { status: 'active' }>
+  maxLocalContextBytes: number, signal: AbortSignal, current: () => boolean): Promise<Exclude<ScopeRetrieveResult, { status: 'active' }>
     | { readonly status: 'active'; readonly projection: ScopeAgentCompositeProjection }> {
   while (true) {
     signal.throwIfAborted()
     if (!current()) return { status: 'left' }
     const tasks = original(ctx.get('developmentTasks'))
     const backend = original(ctx.get('developmentTaskContextBackend'))
-    const expiresAt = nextExpiry(ctx, binding)
+    const expiresAt = nextTaskContextExpiry((ctx.get('developmentTasks') as Context['developmentTasks']).get({ taskId: binding.target.taskId }).context)
     const framingBytes = scopeContextFramingBytes()
-    const localBudget = Math.min(maxLocalContextBytes, maxContextBytes - framingBytes - extraContextBytes)
-    if (localBudget <= 0) throw new Error('scope-agent-context: combined context leaves no local Task budget')
-    const local = await readLocalTaskContext(ctx, binding.target, localBudget, signal)
+    const local = await readLocalTaskContext(ctx, binding.target, maxLocalContextBytes, signal)
     signal.throwIfAborted()
     if (local.status !== 'active') return local
     const localBytes = Buffer.byteLength(local.projection.text, 'utf8')
-    const remaining = maxContextBytes - localBytes - framingBytes - extraContextBytes
-    if (remaining <= 0) throw new Error('scope-agent-context: combined context leaves no remote scope budget')
+    const remaining = maxContextBytes - localBytes - framingBytes
     const remote = await ctx.scopeAccess.retrieveWithinBudget({ subscriptionId: binding.subscriptionId,
       maxContextBytes: remaining }, signal)
     signal.throwIfAborted()
     if (remote.status !== 'active') return remote
     if (!current()) return { status: 'left' }
-    if (tasks !== original(ctx.get('developmentTasks')) || backend !== original(ctx.get('developmentTaskContextBackend'))
+    const currentTasks = ctx.get('developmentTasks') as Context['developmentTasks']
+    if (tasks !== original(currentTasks) || backend !== original(ctx.get('developmentTaskContextBackend'))
       || expiresAt <= Date.now()
-      || ctx.get('developmentTasks')?.get({ taskId: binding.target.taskId }).revision !== local.projection.taskRevision) continue
+      || currentTasks.get({ taskId: binding.target.taskId }).revision !== local.projection.taskRevision) continue
     if (remote.projection.expiresAt <= Date.now()) return { status: 'expired' }
-    if (localBytes + Buffer.byteLength(remote.projection.text, 'utf8') + framingBytes + extraContextBytes > maxContextBytes) {
-      throw new Error('scope-agent-context: combined complete context byte budget exceeded')
-    }
     return { status: 'active', projection: compositeProjection(local.projection, remote.projection, maxContextBytes) }
   }
 }

@@ -22,8 +22,10 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
     if (!isAgentLoopRequest(options)) return next()
     if (!Object.isFrozen(options)) fail('a loop-built request must be frozen')
     if (options.sessionId === undefined) fail('a loop-built request must carry a session id')
+    const agent = ctx.agents.get(options.sessionId)
+    if (agent === undefined || !isAgentLoopRequest(options, agent.session)) return next()
     const session = ctx.sessions.get(options.sessionId)
-    if (!session) fail(`a loop-built request must carry a live session id, got "${String(options.sessionId)}"`)
+    if (session !== agent.session) fail(`a loop-built request must carry a live session id, got "${String(options.sessionId)}"`)
     if (!Object.isFrozen(options.messages)) {
       fail('a loop-built request must carry a frozen messages array')
     }
@@ -53,7 +55,7 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
     }
     return next()
   }, { global: true, prepend: true })
-}, { inject: ['sessions'] })
+}, { inject: ['agents', 'sessions'] })
 
 /**
  * Register the agent-loop invariant companion.

@@ -216,9 +216,6 @@ flowchart LR
   pkg_dev_workbench["dev-workbench"]
   svc_devWorkbench["ctx.devWorkbench<br/>Profile-configured development task control"]
   pkg_api_remotes["api-remotes"]
-  pkg_development_evidence["development-evidence"]
-  svc_developmentEvidence["ctx.developmentEvidence<br/>Bounded development evidence retrieval"]
-  pkg_development_evidence_reviewed_file["development-evidence-reviewed-file"]
   pkg_mcp["mcp"]
   svc_mcp["ctx.mcp<br/>Host-side MCP call seam"]
   pkg_mcp_client["mcp-client"]
@@ -302,8 +299,6 @@ flowchart LR
   pkg_credentials_local --> svc_credentials
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
   pkg_dev_workbench --> svc_devWorkbench
-  pkg_development_evidence --> svc_developmentEvidence
-  pkg_development_evidence_reviewed_file --> svc_developmentEvidence
   pkg_development_mesh --> svc_developmentMesh
   pkg_development_mesh_websocket --> svc_developmentMesh
   pkg_development_room --> svc_developmentRooms
@@ -650,7 +645,6 @@ flowchart LR
 | `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse) | [`api-workspace-controller`](../packages/api/workspace-controller) | - | Discriminated interaction capability: the native backend opens one OS chooser on the host display, the browse backend serves listing/creation primitives for the in-app browser; dual-face backends fill ui-workspace directory-flow slots from their browser halves (no wire advertisement). |
 | `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`client-hmr`](../packages/client/hmr) | - | Plain node:http carrier: named-route registry, index transform taps, and the static dist fallback; web-transport plugins register their own routes. |
 | `ctx.devWorkbench` | `core` | `dev-workbench` | - | [`api-remotes`](../packages/api/remotes) | - | Owns configured local process trees, bounded output snapshots, and browser-view metadata; deployment profiles provide repository commands and URLs. |
-| `ctx.developmentEvidence` | `seam` | [`development-evidence`](../packages/collaboration/development-evidence) | [`development-evidence-reviewed-file`](../packages/collaboration/development-evidence-reviewed-file) | - | - | Queries independent enterprise, project, and operational providers while preserving available, empty, denied, and failed outcomes; retrieval alone changes no room or Session state. |
 | `ctx.mcp` | `seam` | [`mcp`](../packages/mcp/mcp) | [`mcp-client`](../packages/mcp/mcp-client) | `agentharness-evidence-gitee-issue` | - | Publishes only connected MCP client generations for trusted Host Consumers; direct calls retain JSON protocol content and bypass model ToolRuntime presentation and approval behavior. |
 | `ctx.mcpClientSetup` | `core` | `mcp-client-setup` | - | [`api-remotes`](../packages/api/remotes) | - | Detects supported local AI clients, performs conflict-safe registration where a stable unattended mechanism exists, and reports each independent setup outcome. |
 | `ctx.developmentRooms` | `core` | [`development-room`](../packages/collaboration/development-room) | - | [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain), [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task`](../packages/collaboration/development-task), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Owns the collaborator roster and append-only Room membership runtime used by Task assignments; separate plugins project Agent presence, persist the local log, and replicate it over the generic Mesh. |

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -10,12 +10,13 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { invitationSchema, projectionSchema, projectionDigest } from '@deepseek-ai/dsh-scope-access/schema'
+import { invitationSchema, originalCaptureSchema, projectionSchema, projectionDigest } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeSubscription, ScopeSubscriptionId, ScopeWaitResult } from '@deepseek-ai/dsh-scope-access/types'
 import { afterEach, describe, expect, it } from 'vitest'
 import ScopeAgentContext from '../src/index.ts'
-import { joinReadEventSchema, joinReadHistory } from '../src/join-read.ts'
-import { initialState } from '../src/state.ts'
+import { joinCompositePlan, joinReadEventSchema, joinReadHistory, joinUsesLiveConsent } from '../src/join-read.ts'
+import { routeEventSchema } from '../src/route.ts'
+import { initialState, stateSchema } from '../src/state.ts'
 import { snapshotMessage } from '../src/messages.ts'
 import type { ScopeAgentJoinReadEvent } from '../src/types.ts'
 
@@ -96,13 +97,13 @@ async function fixture() {
         session: Session.fromRestore(id, seed.events, handle.header, handle.inheritedEventCount, seed.eventState) }
     } finally { await handle.close() }
   }
-  return { ctx, subscriptions, left, persist, read, ensure }
+  return { ctx, subscriptions, left, persist, read, ensure, root }
 }
 
-function prepared() {
+function prepared(ownerPeerId = 'owner') {
   const session = Session.create(SessionId(randomUUID()))
-  const invitation = invitationSchema.parse({ version: 1, ownerPeerId: 'owner', recipientPeerId: 'source',
-    ownerAddress: '/ip4/127.0.0.1/tcp/1/p2p/owner', taskId: 'scope-task', grantId: randomUUID(), generation: randomUUID(),
+  const invitation = invitationSchema.parse({ version: 1, ownerPeerId, recipientPeerId: 'source',
+    ownerAddress: `/ip4/127.0.0.1/tcp/1/p2p/${ownerPeerId}`, taskId: 'scope-task', grantId: randomUUID(), generation: randomUUID(),
     expiresAt: 4_000_000_000_000, responsibility: 'Review changes' })
   const plan = joinReadEventSchema.parse({ version: 1, agentId: session.id, adoptionId: randomUUID(), phase: 'planned', plan: {
     expectedReadStateSeq: -1, bindingId: randomUUID(), subscription: { id: randomUUID(), generation: randomUUID(), invitation, state: 'active' },
@@ -318,4 +319,132 @@ it('retains v2 permission in cold cancellation without constructing or running a
   const history = joinReadHistory((await read(original.session.id)).session)
   expect(history.bindingId).toBeNull()
   expect(history.records.get(plan.adoptionId)).toMatchObject({ version: 2, phase: 'ended', plan: { automatic } })
+})
+
+it.each(['state-owner', 'adoption-owner', 'orphan-terminal', 'changed-terminal', 'route-cursor', 'route-ordinal', 'route-grant'] as const)(
+  'rejects structurally valid altered JSONL before cold cancellation changes authority: %s', async (change) => {
+    const { ctx, persist, read, root, left, ensure } = await fixture()
+    const { session, plan } = prepared(change.startsWith('route-') ? '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy' : 'owner')
+    let before: string, after: string, diagnostic: string
+    if (change === 'state-owner') {
+      session.append('scope-agent-context/state', initialState(session.id))
+      before = JSON.stringify(session.id)
+      after = JSON.stringify(randomUUID())
+      diagnostic = 'read state belongs to another Session'
+    } else if (change === 'adoption-owner') {
+      session.append('scope-agent-context/join-read', plan)
+      before = JSON.stringify(session.id)
+      after = JSON.stringify(randomUUID())
+      diagnostic = 'adoption belongs to another Session'
+    } else if (change === 'orphan-terminal') {
+      session.append('scope-agent-context/join-read', { ...plan, phase: 'ended', plan: null, leaveAdopted: false })
+      before = '"plan":null'
+      after = `"plan":${JSON.stringify(plan.plan)}`
+      diagnostic = 'terminal adoption changed its original plan'
+    } else if (change === 'changed-terminal') {
+      session.append('scope-agent-context/join-read', plan)
+      session.append('scope-agent-context/join-read', { ...plan, phase: 'ended', leaveAdopted: false })
+      before = JSON.stringify(plan.plan.subscription.generation)
+      after = JSON.stringify(randomUUID())
+      diagnostic = 'terminal adoption changed its original plan'
+    } else {
+      session.append('scope-agent-context/join-read', plan)
+      const adopted = session.append('scope-agent-context/join-read', { ...plan, phase: 'adopted' })
+      session.append('scope-agent-context/route', routeEventSchema.parse({ version: 1, agentId: session.id,
+        bindingId: plan.plan.bindingId, expectedReadStateSeq: adopted.seq,
+        previousOwnerAddress: plan.plan.subscription.invitation.ownerAddress,
+        subscription: { ...plan.plan.subscription, routeRevision: 1, invitation: {
+          ...plan.plan.subscription.invitation, ownerAddress: plan.plan.subscription.invitation.ownerAddress.replace('/tcp/1/', '/tcp/2/'),
+        } } }))
+      before = change === 'route-cursor' ? '"expectedReadStateSeq":1' : change === 'route-ordinal'
+        ? '"routeRevision":1' : JSON.stringify(plan.plan.subscription.invitation.grantId)
+      after = change === 'route-cursor' ? '"expectedReadStateSeq":0' : change === 'route-ordinal'
+        ? '"routeRevision":2' : JSON.stringify(randomUUID())
+      diagnostic = 'route intent lacks its exact preceding read state'
+    }
+    await persist(session)
+    const files = (await readdir(root, { recursive: true })).filter(path => path.endsWith('.jsonl'))
+    expect(files).toHaveLength(1)
+    const path = join(root, files[0]!)
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n')
+    const last = lines.at(-1)!
+    expect(last).toContain(before)
+    lines[lines.length - 1] = last.replace(before, after)
+    const altered = `${lines.join('\n')}\n`
+    await writeFile(path, altered)
+    const parsed = (await read(session.id)).session
+    if (change === 'state-owner') {
+      expect(ctx.sessionProjections.stateOf(parsed, 'scopeAgentContext')).toEqual(initialState(session.id))
+    } else if (change === 'adoption-owner') {
+      expect(() => ctx.sessionProjections.stateOf(parsed, 'scopeAgentContext')).toThrow('adoption belongs to another Session')
+    } else if (change === 'route-grant') {
+      expect(() => ctx.sessionProjections.stateOf(parsed, 'scopeAgentContext')).toThrow('route intent changed read authority')
+    }
+    await expect(ctx.scopeAgentContext.cancelJoinRead({ agentId: session.id, adoptionId: plan.adoptionId, leaveAdopted: true }))
+      .rejects.toThrow(diagnostic)
+    expect(await readFile(path, 'utf8')).toBe(altered)
+    expect(ensure.calls).toBe(0)
+    expect(left).toEqual([])
+    expect(ctx.agents.get(session.id)).toBeUndefined()
+    expect(ctx.sessions.get(session.id)).toBeUndefined()
+  },
+)
+
+it('retains a historical composite cancellation with no plan without inferring live consent', async () => {
+  const { ctx, persist, read, left, ensure } = await fixture()
+  const { session, plan } = prepared()
+  session.append('scope-agent-context/join-read', { ...plan, version: 3, phase: 'ended', plan: null, leaveAdopted: true })
+  await persist(session)
+  const parsed = joinReadHistory((await read(session.id)).session).records.get(plan.adoptionId)
+  if (parsed === undefined) throw new Error('fixture must retain its historical cancellation')
+  expect(joinCompositePlan(parsed)).toBeUndefined()
+  expect(joinUsesLiveConsent(parsed)).toBe(false)
+  expect(await ctx.scopeAgentContext.cancelJoinRead({ agentId: session.id, adoptionId: plan.adoptionId, leaveAdopted: true }))
+    .toEqual({ status: 'ended' })
+  expect((await read(session.id)).events).toEqual(session.snapshotEvents())
+  expect(ensure.calls).toBe(0)
+  expect(left).toEqual([])
+  expect(ctx.agents.get(session.id)).toBeUndefined()
+})
+
+it.each([false, true])('validates retained capture authority after a historical terminal record; departed=%s', async (departed) => {
+  const { ctx, persist, read, root, left } = await fixture()
+  const { session, plan: original } = prepared()
+  const capture = originalCaptureSchema.parse({ captureId: randomUUID(), captureGeneration: randomUUID() })
+  const plan = joinReadEventSchema.parse({ ...original, version: 4, plan: { ...original.plan, kind: 'scope', automatic: null,
+    subscription: { ...original.plan.subscription, version: 2, originalCapture: capture } } })
+  if (plan.version !== 4 || plan.phase !== 'planned') throw new Error('fixture must have an original capture plan')
+  session.append('scope-agent-context/join-read', plan)
+  session.append('scope-agent-context/join-read', { ...plan, phase: 'adopted' })
+  session.append('scope-agent-context/join-read', { ...plan, phase: 'ended', leaveAdopted: false })
+  const binding = { id: plan.plan.bindingId, subscriptionId: plan.plan.subscription.id,
+    invitation: plan.plan.subscription.invitation, originalCapture: capture }
+  const captured = stateSchema.parse({ ...initialState(session.id), version: 4, mode: 'passive', binding })
+  const state = session.append('scope-agent-context/state', captured)
+  await persist(session)
+  const files = (await readdir(root, { recursive: true })).filter(path => path.endsWith('.jsonl'))
+  expect(files).toHaveLength(1)
+  const path = join(root, files[0]!)
+  const originalBytes = await readFile(path, 'utf8')
+  if (departed) {
+    const { originalCapture: omitted, ...plain } = binding
+    expect(omitted).toEqual(capture)
+    const legacy = stateSchema.parse({ ...captured, version: 1, binding: plain })
+    const lines = originalBytes.trimEnd().split('\n')
+    const last = lines.pop()!
+    expect(last).toContain(`"data":${JSON.stringify(captured)}`)
+    const bridge = last.replace(`"data":${JSON.stringify(captured)}`, `"data":${JSON.stringify(legacy)}`)
+    const resumed = last.replace(`"seq":${state.seq}`, `"seq":${state.seq + 1}`)
+    expect(resumed).not.toBe(last)
+    const altered = `${lines.join('\n').replace('"leaveAdopted":false', '"leaveAdopted":true')}\n${bridge}\n${resumed}\n`
+    await writeFile(path, altered)
+    await expect(ctx.scopeAgentContext.cancelJoinRead({ agentId: session.id, adoptionId: plan.adoptionId, leaveAdopted: false }))
+      .rejects.toThrow('capture state lacks its original adopted permission')
+    expect(await readFile(path, 'utf8')).toBe(altered)
+  } else {
+    expect(joinReadHistory((await read(session.id)).session).bindingId).toBe(binding.id)
+    expect(await readFile(path, 'utf8')).toBe(originalBytes)
+  }
+  expect(left).toEqual([])
+  expect(ctx.agents.get(session.id)).toBeUndefined()
 })

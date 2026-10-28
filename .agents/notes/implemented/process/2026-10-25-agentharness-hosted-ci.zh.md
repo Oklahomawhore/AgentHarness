@@ -10,13 +10,15 @@ Status: implemented
 
 ## Decision
 
-[CI](../../../../.github/workflows/ci.yml) 在 Pull Request、main 推送和明确手动触发时使用标准 GitHub 托管运行器。独立 Linux lane 保留现有静态、覆盖率和构建消费方聚合门禁。benchmark 使用独立运行器。Node 兼容性保留 22.19、24.9 和 26。原生 Windows 在 PowerShell 下运行完整 Windows 聚合。Python SDK 测试保持无密钥。CI 与 Python 发布工作流调用同一个原生 wheel 构建器；目标规划和发布清单读取唯一的 Python 运行时平台声明。构建器规定五个原生目标、完整可执行文件与已安装 wheel 的无密钥冒烟、Linux GLIBC 校验和 macOS 架构及部署目标检查。已安装 wheel 的消费方在检出目录外的干净虚拟环境中使用明确的本地 SDK 与运行时路径。受保护发布工作流单独负责发布。
+[CI](../../../../.github/workflows/ci.yml) 在 Pull Request、main 推送和明确手动触发时使用标准 GitHub 托管运行器。独立 Linux lane 保留现有静态、覆盖率和构建消费方聚合门禁。benchmark 使用独立运行器，job 的 30 分钟额度包含浏览器安装、编译、执行和清理。托管浏览器准备可能在 benchmark 命令开始前就消耗十分钟以上；job 额度不改变测量用的性能阈值。Node 兼容性保留 22.19、24.9 和 26。原生 Windows 在 PowerShell 下运行完整 Windows 聚合。Python SDK 测试保持无密钥。CI 与 Python 发布工作流调用同一个原生 wheel 构建器；目标规划和发布清单读取唯一的 Python 运行时平台声明。构建器规定五个原生目标、完整可执行文件与已安装 wheel 的无密钥冒烟、Linux GLIBC 校验和 macOS 架构及部署目标检查。已安装 wheel 的消费方在检出目录外的干净虚拟环境中使用明确的本地 SDK 与运行时路径。受保护发布工作流单独负责发布。
 
 Ubuntu job 通过发行版包管理器安装 bubblewrap，并在依赖沙箱的验收前要求命名空间探针成功。Linux 运行时构建器对已安装 node-pty 的脚本调用仅在该命令中禁用 pnpm 依赖校验，避免 ABI 容器替换主机工作区安装；原生源码编译和 GLIBC 校验仍为必需。
 
+Linux consumer lane 安装固定版本的 Python 和 uv，并通过已构建的 `dsh` SDK profile 运行 Python Scope 聚合。显式场景选择项与聚合由同一注册表拥有，聚合保留每个场景的记录期望和验证。这个读取者完成后，HMR 才能改写共享构建产物。仅验证协议的 Python 测试与五平台已安装 wheel 冒烟保留各自独立的用途。
+
 独立的 Linux 覆盖率 lane 在两个覆盖率进程启动前构建 CLI，因为 profile 子进程夹具显式启动已构建入口。这项前置依赖不改变源码导入解析或覆盖率阈值。Windows 已安装 wheel 的步骤删除 PYTHONPATH 和 DSH_RUNTIME_MODE，而不赋空字符串；空的运行时模式属于非法配置。
 
-必需汇总判定依赖所有验收 job，并只接受成功的依赖结果。空结果、跳过、取消、失败及意外结果都会使判定失败；取消后不再启动判定。工作流权限为只读。自动 CI 不接收模型账户密钥，不能调用发布或刷新记录期望。提供方账户验证使用独立的[手动真实 API 工作流](../testing/2026-06-19-real-api-e2e-ci.zh.md)。现有逐文件覆盖率阈值和门禁清单保持不变。
+必需汇总判定依赖所有验收 job，并只接受成功的依赖结果。空结果、跳过、取消、失败及意外结果都会使判定失败；取消后不再启动判定。工作流权限为只读。自动 CI 不接收模型账户密钥，不能调用发布或刷新记录期望。提供方账户验证使用独立的[手动真实 API 工作流](../testing/2026-06-19-real-api-e2e-ci.zh.md)。现有逐文件覆盖率阈值保持不变。
 
 一次性托管机器拥有各 job 的检出、工具、缓存、临时文件和子进程。不保留私有运行器选择器、持久主机工具缓存覆盖、待命 lane 或运行器健康兜底。上游部署决策保留为历史：[池故障切换](../../archived/process/2026-07-26-ci-failover-runbook.md)、[兼容性隔离](../../archived/process/2026-09-06-node-compatibility-selfhosted.md)和[发布演练路由](../../archived/process/2026-09-06-release-rehearsal-selfhosted.md)。
 

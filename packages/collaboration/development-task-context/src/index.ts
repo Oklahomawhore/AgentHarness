@@ -7,9 +7,11 @@ import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room
 import type {} from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentTaskAssignment, DevelopmentTaskContextView } from '@deepseek-ai/dsh-development-task/types'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { scopeOf, scopeChainOf } from '@deepseek-ai/dsh-scope'
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import { z } from 'zod'
 import { localTaskContextSourceSchema as sourceSchema } from './local-schema.ts'
+import { replaceLocalTaskContext, nextTaskContextExpiry } from './local.ts'
 import type {} from './backend.ts'
 import { isTerminalPublication } from './publication.ts'
 import type { DevelopmentTaskBindingEpoch, DevelopmentTaskContextProjection, DevelopmentTaskContextSource } from './types.ts'
@@ -17,9 +19,6 @@ import type { DevelopmentTaskBindingEpoch, DevelopmentTaskContextProjection, Dev
 export type * from './types.ts'
 export * from './local.ts'
 
-const RETIRED = `## Retired Task context
-
-A prior Task context snapshot was withdrawn after this Agent session changed its Task binding. Use only the current connected Task snapshot.`
 const DISCONNECTED = `## Disconnected Task context
 
 This Agent session is not connected to a Task. Previously injected Task context has been withdrawn.`
@@ -77,27 +76,14 @@ function snapshotMessage(
 }
 
 function bindingEpoch(ctx: Context, assignment: DevelopmentTaskAssignment): DevelopmentTaskBindingEpoch {
+  // Task assignments and their retained events are committed synchronously by the same service.
   const bound = ctx.developmentTasks.assignmentLog().findLast(entry => entry.bindingId === assignment.bindingId
-    && entry.participantId === assignment.participantId && entry.change.kind === 'task-bound')
-  if (bound === undefined) throw new Error('development-task-context: current binding has no durable task-bound event')
+    && entry.participantId === assignment.participantId && entry.change.kind === 'task-bound') as DevelopmentTaskBindingEpoch
   return { nodeId: bound.nodeId, seq: bound.seq }
 }
 
 function sameEpoch(left: DevelopmentTaskBindingEpoch, right: { readonly nodeId: string; readonly seq: number }): boolean {
   return left.nodeId === right.nodeId && left.seq === right.seq
-}
-
-function retiredMessage(view: DevelopmentTaskContextView): UserMessage {
-  return createUserMessage({
-    content: [{ type: 'text', text: RETIRED }],
-    source: {
-      kind: 'development-task-context',
-      form: 'retired',
-      version: 1,
-      activeTaskId: view.task.id,
-      activeRevision: view.task.revision,
-    },
-  })
 }
 
 /**
@@ -115,7 +101,6 @@ export function apply(ctx: Context, config: Config): void {
     await Promise.all(acknowledgements.values())
   })
   const acknowledge = (participantId: DevelopmentTaskAssignment['participantId'], source: Pick<Extract<DevelopmentTaskContextSource, { version: 2 }>, 'taskId' | 'revision' | 'bindingId' | 'bindingEpoch'>): void => {
-    if (lifetime.signal.aborted) return
     const assignment = ctx.developmentTasks.assignmentList().find(item => item.bindingId === source.bindingId)
     if (assignment?.participantId !== participantId || assignment.taskId !== source.taskId
       || !sameEpoch(bindingEpoch(ctx, assignment), source.bindingEpoch)
@@ -131,10 +116,9 @@ export function apply(ctx: Context, config: Config): void {
     acknowledgements.set(key, pending)
   }
   ctx.on('session/event', (session, event) => {
-    if (event.type === 'turn/end') {
-      const agent = ctx.agents.get(session.id)
-      if (agent?.session === session) claims.delete(agent)
-    }
+    const agent = ctx.agents.get(session.id)
+    if (agent?.session !== session) return
+    if (event.type === 'turn/end') claims.delete(agent)
     if (event.type === 'user/message' && event.data.source.kind === 'development-task-context'
       && event.data.source.form === 'snapshot') {
       const source = event.data.source
@@ -147,140 +131,124 @@ export function apply(ctx: Context, config: Config): void {
     }
   })
   ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
+    if (ctx.agents.get(agent.id) !== agent) return
     const pending = claims.get(agent) ?? []
     pending.push({ message, turn })
     claims.set(agent, pending)
   }, { global: true })
   ctx.on('agent/disposed', ({ agent }) => { claims.delete(agent) }, { global: true })
   ctx.on('agent/pre-step', async ({ agent, signal, turn, step }, next): Promise<PreStepDecision> => {
+    if (ctx.agents.get(agent.id) !== agent) return next()
     const actualClaims = (claims.get(agent) ?? []).filter(item => item.turn === turn).map(item => item.message)
     claims.delete(agent)
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
     validateDurableSources(agent, decision.messages)
     const admissionSignal = AbortSignal.any([signal, lifetime.signal])
-    return await ctx.waterfall('development-task-context/admit', { agent, decision, claimed: actualClaims, turn, step, signal: admissionSignal }, async () => {
-      const participantId = developmentAgentParticipantId(agent.id)
-      const selectedAssignment = (): DevelopmentTaskAssignment | undefined => ctx.developmentTasks.assignmentList()
-        .filter(item => item.participantId === participantId)
-        .sort((left, right) => right.assignedAt - left.assignedAt)[0]
-      const operationSignal = AbortSignal.any([signal, lifetime.signal])
-      const isCancelled = (): boolean => operationSignal.aborted
-      const cancelled = (): PreStepDecision => {
-        if (lifetime.signal.aborted && !signal.aborted) {
-          agent.inbox.splice('next-step', 0, 0, decision.messages)
-        }
-        return { kind: 'reject' }
-      }
+    const participantId = developmentAgentParticipantId(agent.id)
+    const selectedAssignment = (): DevelopmentTaskAssignment | undefined => ctx.developmentTasks.latestAssignment(participantId)
+    let retainedInput: readonly UserMessage[] = decision.messages
+    const retainInput = (messages: readonly UserMessage[]): void => { retainedInput = messages }
+    const isCancelled = (): boolean => admissionSignal.aborted
+    const cancelled = (): PreStepDecision => {
+      if (lifetime.signal.aborted && !signal.aborted) agent.inbox.splice('next-step', 0, 0, [...retainedInput])
+      return { kind: 'reject' }
+    }
+    try {
       while (!isCancelled()) {
-        const assignment = selectedAssignment()
-        const visibleContext = agent.session.surface.nodes.flatMap((seq) => {
-          const event = agent.session.eventAt(seq)
-          if (event?.type !== 'user/message' || event.data.source.kind !== 'development-task-context') return []
-          const source = sourceSchema.parse(event.data.source)
-          return [{ event, source }]
-        })
-        if (assignment === undefined) {
-          for (const item of visibleContext) {
-            if (item.source.form === 'disconnected') continue
-            agent.session.append('user/message', createUserMessage({
-              content: [{ type: 'text', text: DISCONNECTED }],
-              source: { kind: 'development-task-context', form: 'disconnected', version: 1 },
-            }), {
-              surfaceOp: { op: 'replace', startSeq: item.event.seq, endSeq: item.event.seq },
-              sourceEventSeqs: [item.event.seq],
+        let isCurrent = () => true
+        const result = await ctx.waterfall('development-task-context/admit', { agent, decision, claimed: actualClaims, turn, step, signal: admissionSignal, retainInput }, async () => {
+          while (!isCancelled()) {
+            const assignment = selectedAssignment()
+            const visibleContext = agent.session.surface.nodes.flatMap((seq) => {
+              const event = agent.session.eventAt(seq)
+              if (event?.type !== 'user/message' || event.data.source.kind !== 'development-task-context') return []
+              const source = sourceSchema.parse(event.data.source)
+              return [{ event, source }]
             })
-          }
-          return decision
-        }
-        const epoch = bindingEpoch(ctx, assignment)
-        const stillBound = (): boolean => {
-          const current = selectedAssignment()
-          return current !== undefined && current.bindingId === assignment.bindingId
-            && current.taskId === assignment.taskId && sameEpoch(epoch, bindingEpoch(ctx, current))
-        }
-        let view: DevelopmentTaskContextView
-        try {
-          view = await ctx.developmentTasks.currentContextView(assignment.taskId)
-        } catch (error) {
-          if (isCancelled()) return cancelled()
-          // Each context read owns input restoration around the intervening backend work.
-          /* jscpd:ignore-start */
-          agent.inbox.splice('next-step', 0, 0, decision.messages)
-          /* jscpd:ignore-end */
-          throw error
-        }
-        if (isCancelled()) return cancelled()
-        if (!stillBound()) continue
-        const backend = ctx.developmentTaskContextBackend
-        const providerIdentity = backend.identity
-        const identity = { ...providerIdentity }
-        const current = visibleContext.find(item => item.source.form === 'snapshot'
-          && item.source.version === 2 && item.source.taskId === view.task.id && item.source.revision === view.task.revision
-          && item.source.bindingId === assignment.bindingId && sameEpoch(epoch, item.source.bindingEpoch)
-          && item.source.backend.id === identity.id && item.source.backend.revision === identity.revision
-          && item.source.maxContextBytes === config.maxContextBytesPerStep)
-        const stale = visibleContext.filter(item => item !== current)
-        let projection: DevelopmentTaskContextProjection | undefined
-        if (current === undefined) {
-          try {
-            projection = await backend.compute({
-              view,
-              recipient: {
-                participantId,
-                ...(assignment.sessionLabel === undefined ? {} : { sessionLabel: assignment.sessionLabel }),
-              },
-              maxContextBytes: config.maxContextBytesPerStep,
-              signal: operationSignal,
-            })
-          } catch (error) {
+            if (assignment === undefined) {
+              isCurrent = () => selectedAssignment() === undefined
+              if (visibleContext.some(item => item.source.form !== 'disconnected')) {
+                replaceLocalTaskContext(agent, createUserMessage({
+                  content: [{ type: 'text', text: DISCONNECTED }],
+                  source: { kind: 'development-task-context', form: 'disconnected', version: 1 },
+                }))
+              }
+              return decision
+            }
+            const epoch = bindingEpoch(ctx, assignment)
+            const stillBound = (): boolean => {
+              const current = selectedAssignment()
+              return current !== undefined && current.bindingId === assignment.bindingId
+                && current.taskId === assignment.taskId && sameEpoch(epoch, bindingEpoch(ctx, current))
+            }
+            const view = await ctx.developmentTasks.currentContextView(assignment.taskId)
             if (isCancelled()) return cancelled()
-            throw error
+            if (!stillBound()) continue
+            const expiresAt = nextTaskContextExpiry(view.task.context)
+            const backend = ctx.developmentTaskContextBackend
+            const providerIdentity = backend.identity
+            const identity = { ...providerIdentity }
+            const current = visibleContext.find(item => item.source.form === 'snapshot'
+              && item.source.version === 2 && item.source.taskId === view.task.id && item.source.revision === view.task.revision
+              && item.source.bindingId === assignment.bindingId && sameEpoch(epoch, item.source.bindingEpoch)
+              && item.source.backend.id === identity.id && item.source.backend.revision === identity.revision
+              && item.source.maxContextBytes === config.maxContextBytesPerStep)
+            const stale = visibleContext.filter(item => item !== current)
+            let projection: DevelopmentTaskContextProjection | undefined
+            if (current === undefined) {
+              projection = await backend.compute({
+                view,
+                recipient: {
+                  participantId,
+                  ...(assignment.sessionLabel === undefined ? {} : { sessionLabel: assignment.sessionLabel }),
+                },
+                maxContextBytes: config.maxContextBytesPerStep,
+                signal: admissionSignal,
+              })
+            }
+            await ctx.developmentTasks.currentContextView(assignment.taskId)
+            if (isCancelled()) return cancelled()
+            if (!stillBound() || ctx.get('developmentTaskContextBackend')?.identity !== providerIdentity) continue
+            const terminalIds = new Set(view.task.context.filter(isTerminalPublication).map(item => item.id))
+            const latest = ctx.developmentTasks.get({ taskId: assignment.taskId })
+            if (latest.context.some(item => isTerminalPublication(item) && !terminalIds.has(item.id))) continue
+            isCurrent = () => stillBound() && expiresAt > Date.now()
+              && ctx.get('developmentTaskContextBackend')?.identity === providerIdentity
+              && !ctx.developmentTasks.get({ taskId: assignment.taskId }).context
+                .some(item => isTerminalPublication(item) && !terminalIds.has(item.id))
+            if (projection !== undefined) {
+              if (Buffer.byteLength(projection.text, 'utf8') > config.maxContextBytesPerStep) {
+                throw new Error(`development-task-context: backend output for Task ${view.task.id} exceeds maxContextBytesPerStep`)
+              }
+              const pending = replaceLocalTaskContext(agent,
+                snapshotMessage(view, assignment, epoch, identity, config.maxContextBytesPerStep, projection))
+              if (pending !== undefined) return { ...decision, messages: [...decision.messages, pending] }
+            } else if (current !== undefined && stale.length > 0) {
+              replaceLocalTaskContext(agent, current.event.data)
+            }
+            if (current !== undefined && current.event.data.source.kind === 'development-task-context'
+              && current.event.data.source.form === 'snapshot' && current.event.data.source.version === 2) {
+              acknowledge(participantId, current.event.data.source)
+            }
+            return decision
           }
-        }
-        try {
-          await ctx.developmentTasks.currentContextView(assignment.taskId)
-        } catch (error) {
-          if (isCancelled()) return cancelled()
-          agent.inbox.splice('next-step', 0, 0, decision.messages)
-          throw error
-        }
+          return cancelled()
+        })
         if (isCancelled()) return cancelled()
-        if (!stillBound() || ctx.get('developmentTaskContextBackend')?.identity !== providerIdentity) continue
-        const terminalIds = new Set(view.task.context.filter(isTerminalPublication).map(item => item.id))
-        const latest = ctx.developmentTasks.get({ taskId: assignment.taskId })
-        if (latest.context.some(item => isTerminalPublication(item) && !terminalIds.has(item.id))) continue
-        if (projection !== undefined) {
-          if (Buffer.byteLength(projection.text, 'utf8') > config.maxContextBytesPerStep) {
-            throw new Error(`development-task-context: backend output for Task ${view.task.id} exceeds maxContextBytesPerStep`)
-          }
-          const message = snapshotMessage(view, assignment, epoch, identity, config.maxContextBytesPerStep, projection)
-          const first = stale.shift()
-          if (first === undefined) {
-            return { ...decision, messages: [...decision.messages, message] }
-          } else {
-            agent.session.append('user/message', message, {
-              surfaceOp: { op: 'replace', startSeq: first.event.seq, endSeq: first.event.seq },
-              sourceEventSeqs: [first.event.seq],
-            })
-          }
-        }
-        for (const item of stale) {
-          if (item.source.form === 'retired' && item.source.activeTaskId === view.task.id
-            && item.source.activeRevision === view.task.revision) continue
-          agent.session.append('user/message', retiredMessage(view), {
-            surfaceOp: { op: 'replace', startSeq: item.event.seq, endSeq: item.event.seq },
-            sourceEventSeqs: [item.event.seq],
-          })
-        }
-        if (current !== undefined && current.event.data.source.kind === 'development-task-context'
-          && current.event.data.source.form === 'snapshot' && current.event.data.source.version === 2) {
-          acknowledge(participantId, current.event.data.source)
-        }
-        return decision
+        if (result.kind === 'reject') return result
+        if (isCurrent()) return result
       }
       return cancelled()
-    })
+    } catch (error) {
+      if (isCancelled()) return cancelled()
+      agent.inbox.splice('next-step', 0, 0, [...retainedInput])
+      throw error
+    }
   })
-  ctx.provide('developmentTaskContextAdmission', { signal: lifetime.signal })
+  const scope = scopeOf(ctx)
+  ctx.provide('developmentTaskContextAdmission', {
+    signalFor: agent => ctx.agents.get(agent.id) === agent && (scope === undefined || scopeChainOf(agent).includes(scope))
+      ? lifetime.signal : undefined,
+  })
 }

@@ -1,8 +1,8 @@
-# AgentHarness 分发层
+# AgentHarness 协作
 
 [English](README.md) | 中文
 
-本目录包含构建在 DeepSeek Harness 之上的可选 AgentHarness 证据适配器。产品协作运行时位于[协作包](../packages/collaboration/README.zh.md)与 Web profile：Task 是用户可见的对象，Room 提供隐藏的成员关系。
+本目录保留已完成的[房间](plans/realtime-room-plan.md)与[共享上下文](plans/shared-context-plan.md)阶段计划。产品协作运行时位于[协作包](../packages/collaboration/README.zh.md)与 Web profile：Task 是用户可见的对象，Room 提供隐藏的成员关系。
 
 ## 产品架构
 
@@ -19,13 +19,12 @@ Web profile 已组合 Task 创建、谱系、分配、持久化、同步和上�
 
 [协作包参考](../packages/collaboration/README.zh.md)维护各包的职责。早期的[房间阶段计划](plans/realtime-room-plan.md)记录已完成阶段，不再代表当前产品范围。
 
-## AgentHarness 包
+## 检索适配器
 
-`agentharness/packages/` 提供面向代码仓库、火山引擎 TLS 与 Viking Knowledge 的可选证据适配器。它们与默认的 Task-first Web 组合分离，不改变 Task 或 Room 状态。
+本目录不提供面向代码仓库、火山引擎 TLS 与 Viking Knowledge 的证据适配器。这些适配器的本地包安装目标与 Host `developmentEvidence` 查询 API 均不可用。
 
 ## 开发职责
 
-- `agentharness/packages/` 负责可选 AgentHarness 适配器。
 - `packages/collaboration/` 负责 Task、Room、Mesh、持久化和上下文服务。
 - `packages/client/` 负责浏览器协作 Consumer。
 - `packages/bundle/web-app/` 负责 Web 运行时组合。

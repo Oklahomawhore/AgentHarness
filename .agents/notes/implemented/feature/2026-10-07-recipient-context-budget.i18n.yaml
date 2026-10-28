@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-07-recipient-context-budget.md
-2026-10-07-recipient-context-budget.md: 6f083ae3de2dce9a7fa2caf8b8ccc35f6d03fb43
-2026-10-07-recipient-context-budget.zh.md: 05663160cbb8999def9470635515c5ca75003ba3
+2026-10-07-recipient-context-budget.md: ad2bf5c5d98f724ba6e799201083416f21f33aeb
+2026-10-07-recipient-context-budget.zh.md: 38b4f3c5c7ee40c02eb1c413ca15deb22862e4c0

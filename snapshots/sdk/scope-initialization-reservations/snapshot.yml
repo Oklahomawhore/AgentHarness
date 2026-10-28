@@ -3,6 +3,8 @@ scenario: scope-initialization-reservations
 profile: sdk
 composition: sdk-scope-initialization-reservations
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-initialization-reservations
   pin: true

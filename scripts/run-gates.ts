@@ -447,6 +447,7 @@ function ciConsumerGates(): Gate[] {
     'publint',
     'lint-and-duplication',
     'snapshot',
+    'python-scope',
     'expected-output',
     'doc-typecheck',
     'node-next-types',
@@ -465,6 +466,11 @@ function ciConsumerGates(): Gate[] {
       needs: validatedBuild,
     }),
     snapshotGate(validatedBuild),
+    pnpmExec('python-scope', ['uv', 'run', '--frozen', '--python', '3.10', '--group', 'test', '--project', 'python/sdk',
+      'python', 'scripts/smoke-python-runtime.py', '--scenario', 'sdk-scope-all', '--exe', 'apps/cli/lib/bin.js'], {
+      label: 'Python SDK scope collaboration',
+      needs: validatedBuild,
+    }),
     expectedOutputGate(validatedBuild),
     webSnapshotGate(validatedBuild, buildArtifactReaders),
     pnpmScript('doc-typecheck', 'doc-typecheck:contracts-ready', {

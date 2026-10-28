@@ -645,15 +645,6 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Owns configured local process trees, bounded output snapshots, and browser-view metadata; deployment profiles provide repository commands and URLs.',
   },
   {
-    key: 'developmentEvidence',
-    pkg: 'development-evidence',
-    title: 'Bounded development evidence retrieval',
-    mode: 'seam',
-    implementations: ['development-evidence-reviewed-file'],
-    consumers: [],
-    note: 'Queries independent enterprise, project, and operational providers while preserving available, empty, denied, and failed outcomes; retrieval alone changes no room or Session state.',
-  },
-  {
     key: 'mcp',
     pkg: 'mcp',
     title: 'Host-side MCP call seam',

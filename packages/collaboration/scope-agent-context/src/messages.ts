@@ -1,12 +1,12 @@
 /** Exact logged scope messages and replacement of this consumer's visible context. */
 
 import { isDeepStrictEqual } from 'node:util'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
+import type { TextBlock, UserMessage } from '@deepseek-ai/dsh-llm/types'
 import type { ScopeAccessProjection } from '@deepseek-ai/dsh-scope-access/types'
-import type { ScopeAgentRemoteBinding, ScopeAgentCompositeBinding, ScopeAgentBindingStatus, ScopeAgentContextSource } from './types.ts'
+import type { ScopeAgentRemoteBinding, ScopeAgentCompositeBinding, ScopeAgentCompositeProjection, ScopeAgentBindingStatus, ScopeAgentContextSource } from './types.ts'
 import { joinReadHistory } from './join-read.ts'
 import { initialState, scopeAgentProjection } from './state.ts'
 import { evaluationSchema, goalDigest, requestEvidenceSchema } from './evidence.ts'
@@ -46,15 +46,16 @@ export function validateHistory(agent: Agent): ScopeAgentBindingStatus {
       const projection = source?.kind === 'scope-agent-context' && source.form === 'snapshot' ? source.projection
         : source?.kind === 'development-task-context' && source.form === 'snapshot' && source.version === 3 ? source.projection : undefined
       if (data.version === 3 || (data.version === 4 && 'kind' in data.projection)) {
-        const local = data.localContextSeq === undefined ? undefined : agent.session.eventAt(data.localContextSeq)
+        // The parsed request schema requires a combined projection and both anchors here.
+        const localContextSeq = data.localContextSeq as SessionSeq
+        const local = agent.session.eventAt(localContextSeq)
         const localSource = local?.type === 'user/message' ? local.data.source : undefined
-        const combined = 'kind' in data.projection && data.projection.kind === 'local-task-scope' ? data.projection : undefined
+        const combined = data.projection as ScopeAgentCompositeProjection
         const binding = state.binding
         if (!pulse || state.mode !== 'enabled' || state.pendingActivation?.id !== data.activationId
           || binding?.kind !== 'local-task-scope' || binding.id !== data.bindingId
           || state.automatic === null || goalDigest(state.automatic.goal) !== data.goalDigest
-          || combined === undefined || data.contextSeq >= event.seq
-          || data.localContextSeq === undefined || data.localContextSeq >= event.seq
+          || data.contextSeq >= event.seq || localContextSeq >= event.seq
           || source?.kind !== 'scope-agent-context' || source.form !== 'snapshot' || source.bindingId !== binding.id
           || source.subscriptionId !== binding.subscriptionId || !isDeepStrictEqual(source.projection, combined.remote)
           || localSource?.kind !== 'development-task-context' || localSource.form !== 'snapshot' || localSource.version !== 3
@@ -70,8 +71,7 @@ export function validateHistory(agent: Agent): ScopeAgentBindingStatus {
           || context?.type !== 'user/message' || local?.type !== 'user/message'
           || !isDeepStrictEqual(context.data.content, snapshotMessage(binding, combined.remote, data.maxContextBytes).content)
           || !isDeepStrictEqual(local.data.content, [{ type: 'text', text: combined.local.text }])
-          || Buffer.byteLength(combined.local.text) + context.data.content.reduce((sum, block) => sum
-            + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0) > data.maxContextBytes) {
+          || Buffer.byteLength(combined.local.text) + Buffer.byteLength(scopeContextPrefix + combined.remote.text) > data.maxContextBytes) {
           throw new Error('scope-agent-context: combined request lacks both exact logged contexts')
         }
         continue
@@ -118,12 +118,12 @@ export function validateHistory(agent: Agent): ScopeAgentBindingStatus {
 
 /**
  * Read visible messages owned by this consumer, excluding replaced history.
- * @param agent - current Session carrier.
+ * @param session - current or detached conversation.
  * @returns committed context messages with their durable sequence numbers.
  */
-export function visibleContext(agent: Agent): SessionEvent<'user/message'>[] {
-  return agent.session.surface.nodes.flatMap((seq) => {
-    const event = agent.session.eventAt(seq)
+export function visibleContext(session: Session): SessionEvent<'user/message'>[] {
+  return session.surface.nodes.flatMap((seq) => {
+    const event = session.eventAt(seq)
     return event?.type === 'user/message' && event.data.source.kind === 'scope-agent-context' ? [event] : []
   })
 }
@@ -143,11 +143,11 @@ export function scopeContextFramingBytes(): number {
  * @param binding - local subscription interval.
  * @param projection - online authorized immutable result.
  * @param maxBytes - complete UTF-8 model text limit, including this framing.
- * @returns the logged model-visible message.
+ * @returns the text-only logged model-visible message.
  */
 export function snapshotMessage(
   binding: ScopeAgentRemoteBinding | ScopeAgentCompositeBinding, projection: ScopeAccessProjection, maxBytes: number,
-): UserMessage {
+): Omit<UserMessage, 'content'> & { readonly content: TextBlock[] } {
   validateProjectionOrigin(binding, projection)
   const text = `${scopeContextPrefix}${projection.text}`
   if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('scope-agent-context: complete context byte budget exceeded')
@@ -170,28 +170,31 @@ function validateProjectionOrigin(binding: ScopeAgentRemoteBinding | ScopeAgentC
 /**
  * Construct a fixed withdrawal without retaining formerly authorized source text.
  * @param reason - why no active context can be used.
- * @returns the replacement logged in the current model surface.
+ * @returns the text-only replacement logged in the current model surface.
  */
-export function withdrawalMessage(reason: Extract<ScopeAgentContextSource, { form: 'withdrawn' }>['reason']): UserMessage {
+export function withdrawalMessage(
+  reason: Extract<ScopeAgentContextSource, { form: 'withdrawn' }>['reason'],
+): Omit<UserMessage, 'content'> & { readonly content: TextBlock[] } {
   return createUserMessage({ content: [{ type: 'text', text: `## Shared scope context withdrawn\n\nNo current shared scope facts are available (${reason}). Earlier shared scope snapshots must not be used as current facts.` }],
     source: { kind: 'scope-agent-context', version: 1, form: 'withdrawn', reason } })
 }
 
 /**
- * Replace committed owned nodes, preserving history; return a first message for normal Loop admission.
- * @param agent - live Session carrier.
+ * Clear committed owned nodes and append current context after prior work, preserving history.
+ * @param session - current or detached conversation whose context is adopted.
  * @param message - exact context or withdrawal to adopt.
  * @returns a first-admission message when no owned node is committed yet.
  */
-export function replaceContext(agent: Agent, message: UserMessage): UserMessage | undefined {
-  const visible = visibleContext(agent)
+export function replaceContext(session: Session, message: UserMessage): UserMessage | undefined {
+  const visible = visibleContext(session)
   if (visible.length === 0) return message
-  for (const [index, event] of visible.entries()) {
-    const replacement = index === 0 ? message : withdrawalMessage('left')
-    agent.session.append('user/message', replacement, {
+  for (const event of visible) {
+    session.append('user/message', createUserMessage({ content: [],
+      source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-scope-agent-context' } }), {
       surfaceOp: { op: 'replace', startSeq: event.seq, endSeq: event.seq }, sourceEventSeqs: [event.seq],
     })
   }
+  session.append('user/message', message, { surfaceOp: 'append', sourceEventSeqs: visible.map(event => event.seq) })
   return undefined
 }
 
@@ -200,12 +203,7 @@ export function replaceContext(agent: Agent, message: UserMessage): UserMessage 
  * @param session - exclusively owned detached Session or current live Session.
  */
 export function withdrawJoinContext(session: Session): void {
-  for (const seq of [...session.surface.nodes]) {
-    const event = session.eventAt(seq)
-    if (event?.type !== 'user/message' || event.data.source.kind !== 'scope-agent-context'
-      || event.data.source.form !== 'snapshot') continue
-    session.append('user/message', withdrawalMessage('left'), {
-      surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq],
-    })
-  }
+  if (!visibleContext(session).some(event => event.data.source.kind === 'scope-agent-context'
+    && event.data.source.form === 'snapshot')) return
+  replaceContext(session, withdrawalMessage('left'))
 }

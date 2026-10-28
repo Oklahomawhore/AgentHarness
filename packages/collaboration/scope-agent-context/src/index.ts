@@ -85,7 +85,6 @@ interface Runtime {
   cancelledActivity: Promise<void> | undefined
   ownedCancellation: AgentCancelCause | undefined
   clearingTarget: DevelopmentTaskLocalContextTarget | undefined
-  stepSignal: AbortSignal | undefined
   localAdmissionSignal: AbortSignal | undefined
   stopAdmission: (() => void) | undefined
   claimed: { readonly message: UserMessage; readonly turn: number }[]
@@ -129,9 +128,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     ctx.sessionProjections.register(scopeAgentProjection)
     ctx.sessionProjections.register(scopeAgentEvidenceProjection)
     ctx.on('llm/stream', (options, next) => {
-      if (isAgentLoopRequest(options) && options.sessionId !== undefined) {
+      if (!this.lifetime.signal.aborted && options.sessionId !== undefined) {
         const runtime = this.runtimes.get(options.sessionId)
-        if (runtime !== undefined) {
+        if (runtime !== undefined && isAgentLoopRequest(options, runtime.agent.session)) {
           runtime.unsubmittedInputs = []
           const state = this.state(runtime)
           const evidence = this.evidence(runtime)
@@ -175,7 +174,16 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     ctx.on('agent/created', ({ agent }) => { this.attach(agent) }, { global: true })
     ctx.on('agent/disposed', ({ agent }) => { this.detach(agent) }, { global: true })
     ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
-      this.attach(agent).claimed.push({ message, turn })
+      const runtime = this.attach(agent)
+      if (runtime === undefined) return
+      runtime.claimed.push({ message, turn })
+      if (message.source.kind === 'scope-agent-pulse') {
+        const state = this.state(runtime)
+        if (state.mode === 'enabled' && message.source.activationId === state.pendingActivation?.id
+          && message.source.bindingId === state.binding?.id) runtime.activeTurn = turn
+      }
+      if (runtime.activeTurn === turn) runtime.unsubmittedInputs = runtime.claimed.filter(item => item.turn === turn)
+        .map(item => item.message).filter(item => item.source.kind !== 'scope-agent-pulse' && item.source.kind !== 'scope-agent-context')
     }, { global: true })
     ctx.on('agent/cancel-requested', ({ agent, cause }) => {
       const runtime = this.runtimes.get(agent.id)
@@ -206,20 +214,18 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       runtime.claimed = []
     })
     ctx.on('agent/pre-step', async (payload, next) => {
+      if (this.lifetime.signal.aborted) return next()
       const runtime = this.attach(payload.agent)
-      runtime.stepSignal = payload.signal
+      if (runtime === undefined) return next()
       const claimed = runtime.claimed.filter(item => item.turn === payload.turn).map(item => item.message)
       runtime.claimed = []
-      const state = this.state(runtime)
-      if (state.mode === 'enabled' && claimed.some(message => message.source.kind === 'scope-agent-pulse'
-        && message.source.activationId === state.pendingActivation?.id && message.source.bindingId === state.binding?.id)) {
-        // Stop ownership begins at the real claim; completion evidence still requires an actual frozen request.
-        runtime.activeTurn = payload.turn
-        runtime.unsubmittedInputs = claimed.filter(message => message.source.kind !== 'scope-agent-pulse'
-          && message.source.kind !== 'scope-agent-context')
-      }
       const decision = await next()
       if (decision.kind === 'reject') return decision
+      if (!this.isCommand(runtime, runtime.commandEpoch)) {
+        if (!payload.signal.aborted) this.requeue(runtime, claimed.filter(message => message.source.kind !== 'scope-agent-pulse'
+          && message.source.kind !== 'scope-agent-context'))
+        return { kind: 'reject' }
+      }
       if (hasLocal(this.state(runtime).binding)) {
         if (!this.localAdmissionAvailable(runtime)) {
           this.pauseRuntime(runtime, 'unavailable')
@@ -227,18 +233,35 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         }
         return decision
       }
-      return await this.admit(runtime, decision, claimed, payload.turn, payload.step, payload.signal)
+      if (this.ctx.get('developmentTaskContextAdmission')?.signalFor(payload.agent)?.aborted === false) return decision
+      try {
+        return await this.admit(runtime, decision, claimed, payload.turn, payload.step, payload.signal)
+      } catch (error) {
+        if (!payload.signal.aborted) this.requeue(runtime, decision.messages.filter(message => message.source.kind !== 'scope-agent-pulse'))
+        throw error
+      }
     })
     ctx.on('development-task-context/admit', async (payload, next) => {
+      if (this.lifetime.signal.aborted) return next()
       const runtime = this.attach(payload.agent)
-      if (!hasLocal(this.state(runtime).binding)) return await next()
-      try {
-        return await this.admit(runtime, payload.decision, payload.claimed, payload.turn, payload.step, payload.signal)
-      } catch (error) {
-        if (!payload.signal.aborted || runtime.stepSignal?.aborted !== false || this.lifetime.signal.aborted) throw error
-        this.requeue(runtime, payload.claimed.filter(message => message.source.kind !== 'scope-agent-pulse'))
+      if (runtime === undefined) return next()
+      const retainOrdinaryInput = () => {
+        if (this.state(runtime).binding !== null || visibleContext(runtime.agent.session).length > 0
+          || payload.claimed.some(message => message.source.kind === 'scope-agent-pulse')) {
+          payload.retainInput(payload.claimed.filter(message => message.source.kind !== 'scope-agent-pulse'
+            && message.source.kind !== 'scope-agent-context'))
+        }
+      }
+      retainOrdinaryInput()
+      const decision = hasLocal(this.state(runtime).binding) ? payload.decision : await next()
+      if (decision.kind === 'reject') return decision
+      if (!this.isCommand(runtime, runtime.commandEpoch)) {
+        if (!payload.signal.aborted) this.requeue(runtime, payload.claimed.filter(message => message.source.kind !== 'scope-agent-pulse'
+          && message.source.kind !== 'scope-agent-context'))
         return { kind: 'reject' }
       }
+      retainOrdinaryInput()
+      return await this.admit(runtime, decision, payload.claimed, payload.turn, payload.step, payload.signal)
     })
     ctx.on('development-task/changed', (task, entry) => {
       for (const runtime of this.runtimes.values()) {
@@ -264,13 +287,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
           && entry.bindingId === runtime.clearingTarget.taskBindingId
           && entry.participantId === runtime.clearingTarget.participantId
           && entry.change.previousTaskId === runtime.clearingTarget.taskId) continue
-        if (!this.currentLocalTarget(runtime, binding.target)) this.invalidateLocal(runtime)
+        if (!this.currentLocalTarget(runtime, binding.target)) this.invalidateLocal(runtime, binding)
       }
     })
     ctx.on('internal/service', (name) => {
       if (name !== 'developmentTaskContextBackend' && name !== 'developmentTaskContextAdmission') return
       for (const runtime of this.runtimes.values()) if (hasLocal(this.state(runtime).binding)) {
-        if (name === 'developmentTaskContextAdmission' && this.ctx.get('developmentTaskContextAdmission')?.signal.aborted === false) {
+        if (name === 'developmentTaskContextAdmission' && this.ctx.get('developmentTaskContextAdmission')?.signalFor(runtime.agent)?.aborted === false) {
           this.startWatch(runtime)
         }
         runtime.dirty = true
@@ -381,8 +404,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       if (work === undefined) {
         work = Promise.resolve().then(() => this.ctx.scopeAccess.ensureSubscription(current.plan.subscription))
         this.joinEnsures.set(key, work)
-        const retained = work
-        void work.finally(() => { if (this.joinEnsures.get(key) === retained) this.joinEnsures.delete(key) })
+        void work.finally(() => { this.joinEnsures.delete(key) })
           .catch(() => {}) // The adoption caller owns the failure; cancellation still checks durable cleanup.
       }
       return { work }
@@ -890,8 +912,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       this.requireCommand(runtime, command)
       this.requireExpected(runtime, request.expectedBindingId)
       this.write(runtime, { ...this.state(runtime), mode: 'paused', pauseReason: 'terminal', pendingActivation: null })
+      // The matched non-null binding cannot be absent; local-only resume returned above.
       throw new RemoteError('scope-agent/terminal-subscription', 'The local scope subscription cannot resume.', {
-        agentId: request.agentId, state: subscriptionState === 'unbound' ? 'missing' : subscriptionState,
+        agentId: request.agentId, state: subscriptionState as Exclude<typeof subscriptionState, 'unbound'>,
       })
     }
     this.requireBudget(runtime, automatic)
@@ -958,8 +981,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       const bindingId = this.state(runtime).binding?.id
       const inventory = this.state(runtime).binding?.kind === 'local-task' || this.state(runtime).binding === null
         ? { subscriptions: [] } : await this.ctx.scopeAccess.list()
-      if (!this.isCommand(runtime, runtime.commandEpoch) || this.runtimes.get(agentId) !== runtime
-        || this.state(runtime).binding?.id !== bindingId) continue
+      if (!this.isCommand(runtime, runtime.commandEpoch) || this.state(runtime).binding?.id !== bindingId) continue
       const snapshot = this.ctx.sessionProjections.snapshot(agent.session, ['scopeAgentContext', 'scopeAgentEvidence'])
       const state = snapshot.values.scopeAgentContext
       const evidence = snapshot.values.scopeAgentEvidence
@@ -1037,7 +1059,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       ? 4 : state.binding?.kind === 'local-task-scope' ? 3 : state.binding?.kind === 'local-task' ? 2 : 1 })
   }
 
-  private attach(agent: Agent): Runtime {
+  private attach(agent: Agent): Runtime | undefined {
+    if (this.lifetime.signal.aborted || this.ctx.agents.get(agent.id) !== agent) return undefined
     const current = this.runtimes.get(agent.id)
     if (current?.agent === agent) return current
     if (current !== undefined) this.stopRuntime(current)
@@ -1046,7 +1069,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       commandEpoch: 0, disposing: false, automaticJoins: new Map(), dirty: false, changeVersion: 0, terminal: undefined, timer: undefined,
       expiryTimer: undefined, maintenance: false, activating: false, watching: undefined, activeTurn: undefined, unsubmittedInputs: [],
       cancelledActivity: undefined, ownedCancellation: undefined, clearingTarget: undefined,
-      stepSignal: undefined, localAdmissionSignal: undefined, stopAdmission: undefined, claimed: [],
+      localAdmissionSignal: undefined, stopAdmission: undefined, claimed: [],
       readTail: Promise.resolve() }
     const state = this.state(runtime)
     if (!isDeepStrictEqual(state, replayed)) throw new Error('scope-agent-context: cached read state differs from its Session log')
@@ -1089,13 +1112,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const rooms = this.ctx.get('developmentRooms')
     if (tasks === undefined || rooms === undefined) return null
     const participantId = developmentAgentParticipantId(runtime.agent.id)
-    const assignment = tasks.assignmentList().find(item => item.participantId === participantId)
+    const assignment = tasks.latestAssignment(participantId)
     if (assignment === undefined) return null
     const task = tasks.get({ taskId: assignment.taskId })
     if (task.origin.kind !== 'root' || task.ownerNodeId !== rooms.list().nodeId) return null
+    // Task assignments and their retained events commit synchronously in the same service.
     const epoch = tasks.assignmentLog().findLast(item => item.bindingId === assignment.bindingId
-      && item.participantId === participantId && item.change.kind === 'task-bound')
-    if (epoch === undefined) throw new Error('scope-agent-context: local assignment has no committed epoch')
+      && item.participantId === participantId && item.change.kind === 'task-bound') as DevelopmentTaskLocalContextTarget['bindingEpoch']
     return { taskId: assignment.taskId, taskBindingId: assignment.bindingId,
       expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
   }
@@ -1120,7 +1143,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       expectedBindingEpoch: request.expectedBindingEpoch })) {
       throw new RemoteError('scope-agent/stale-task', 'The selected local Task assignment changed.', { agentId: runtime.agent.id })
     }
-    if (this.ctx.get('developmentTaskContextAdmission')?.signal.aborted !== false) throw new Error('scope-agent-context: local Task admission consumer is unavailable')
+    if (this.ctx.get('developmentTaskContextAdmission')?.signalFor(runtime.agent)?.aborted !== false) throw new Error('scope-agent-context: local Task admission consumer is unavailable')
     if (this.ctx.get('developmentTaskContextBackend') === undefined) throw new Error('scope-agent-context: local Task context backend is unavailable')
     return { taskId: request.taskId, taskBindingId: request.taskBindingId, bindingEpoch: request.expectedBindingEpoch,
       participantId: developmentAgentParticipantId(runtime.agent.id) }
@@ -1141,36 +1164,24 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     return hasLocal(binding) ? !this.currentLocalTarget(runtime, binding.target) : this.hasTask(runtime)
   }
 
-  private extraContextBytes(runtime: Runtime): number {
-    const bytes = (message: UserMessage) => message.content.reduce((sum, block) => sum
-      + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0)
-    return Math.max(0, visibleLocalTaskContext(runtime.agent).length - 1) * bytes(localContextWithdrawalMessage('left'))
-      + Math.max(0, visibleContext(runtime.agent).length - 1) * bytes(withdrawalMessage('left'))
-  }
-
-  private contextMessages(binding: NonNullable<ScopeAgentBindingStatus['binding']>, projection: ScopeAgentReadProjection): UserMessage[] {
-    if (binding.kind === 'local-task-scope') {
-      if (!('kind' in projection) || projection.kind !== 'local-task-scope'
-        || !this.sameLocalTarget(binding.target, projection.local)) throw new Error('scope-agent-context: combined projection target changed')
-      return [localContextSnapshotMessage(projection.local), snapshotMessage(binding, projection.remote, this.config.maxContextBytes)]
-    }
-    if (binding.kind === 'local-task') {
-      if (!('kind' in projection) || projection.kind !== 'local-task' || !this.sameLocalTarget(binding.target, projection)) throw new Error('scope-agent-context: local projection target changed')
+  private contextMessages(binding: NonNullable<ScopeAgentBindingStatus['binding']>, projection: ScopeAgentReadProjection): ReturnType<typeof snapshotMessage>[] {
+    if ('kind' in projection && projection.kind === 'local-task') {
       return [localContextSnapshotMessage(projection)]
     }
-    if ('kind' in projection) throw new Error('scope-agent-context: remote binding received local context')
-    return [snapshotMessage(binding, projection, this.config.maxContextBytes)]
+    // read() pairs each non-local projection with its unchanged remote or combined binding.
+    const remoteBinding = binding as Exclude<NonNullable<ScopeAgentBindingStatus['binding']>, ScopeAgentLocalBinding>
+    return 'kind' in projection
+      ? [localContextSnapshotMessage(projection.local), snapshotMessage(remoteBinding, projection.remote, this.config.maxContextBytes)]
+      : [snapshotMessage(remoteBinding, projection, this.config.maxContextBytes)]
   }
 
-  private localAdmissionAvailable(runtime: Runtime): boolean {
+  private localAdmissionAvailable(runtime: Runtime): runtime is Runtime & { localAdmissionSignal: AbortSignal } {
     const signal = runtime.localAdmissionSignal
-    return signal !== undefined && !signal.aborted && this.ctx.get('developmentTaskContextAdmission')?.signal === signal
+    return signal !== undefined && !signal.aborted && this.ctx.get('developmentTaskContextAdmission')?.signalFor(runtime.agent) === signal
   }
 
-  private invalidateLocal(runtime: Runtime, reason: 'conflict' | 'unavailable' = 'conflict'): void {
+  private invalidateLocal(runtime: Runtime, binding: ScopeAgentLocalBinding | ScopeAgentCompositeBinding, reason: 'conflict' | 'unavailable' = 'conflict'): void {
     if (runtime.disposing) return
-    const binding = this.state(runtime).binding
-    if (!hasLocal(binding)) return
     ++runtime.commandEpoch
     this.stopBinding(runtime)
     const operation = Promise.resolve().then(() => {
@@ -1207,7 +1218,6 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (nearest === undefined) return
     runtime.expiryTimer = setTimeout(() => {
       runtime.expiryTimer = undefined
-      if (this.lifetime.signal.aborted || this.state(runtime).binding?.id !== binding.id) return
       if (nearest > Date.now()) { this.armLocalExpiry(runtime, binding); return }
       runtime.dirty = true
       runtime.changeVersion++
@@ -1217,12 +1227,18 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private withdrawLocalIdle(runtime: Runtime, reason: WithdrawalReason = 'left'): void {
     if (runtime.disposing || runtime.agent.status !== 'idle' || runtime.maintenance || visibleLocalTaskContext(runtime.agent).length === 0) return
-    runtime.maintenance = true
-    const work = runtime.agent.runMaintenance((signal) => {
-      signal.throwIfAborted()
-      replaceLocalTaskContext(runtime.agent, localContextWithdrawalMessage(reason))
-      return Promise.resolve()
-    })
+    let work: Promise<void>
+    try {
+      work = runtime.agent.runMaintenance((signal) => {
+        runtime.maintenance = true
+        signal.throwIfAborted()
+        replaceLocalTaskContext(runtime.agent, localContextWithdrawalMessage(reason))
+        return Promise.resolve()
+      })
+    } catch {
+      // Another activity owns the idle phase; the next admission withdraws stale facts.
+      return
+    }
     void this.track(work).then(() => { runtime.maintenance = false }, () => { runtime.maintenance = false })
   }
 
@@ -1260,6 +1276,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private cancelOwnedTurn(runtime: Runtime): void {
     if (runtime.disposing || runtime.activeTurn === undefined) return
+    // New automatic permission commits only after the old activity retires; disposal also drains it.
+    runtime.cancelledActivity = this.track(runtime.agent.whenIdle())
     const unsubmitted = runtime.unsubmittedInputs
     runtime.unsubmittedInputs = []
     runtime.activeTurn = undefined
@@ -1267,12 +1285,6 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const cause: AgentCancelCause = { kind: 'hook', reason: localStopReason }
     runtime.ownedCancellation = cause
     try { runtime.agent.cancel(cause, { keepInbox: true }) } finally { runtime.ownedCancellation = undefined }
-    // New automatic permission commits only after the old activity retires; disposal also drains it.
-    const settlement = this.track(runtime.agent.whenIdle())
-    runtime.cancelledActivity = settlement
-    void settlement.then(() => {
-      if (runtime.cancelledActivity === settlement) runtime.cancelledActivity = undefined
-    })
   }
 
   private stopBinding(runtime: Runtime): void {
@@ -1320,10 +1332,10 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (hasLocal(binding)) {
       runtime.stopAdmission?.()
       runtime.stopAdmission = undefined
-      const signal = this.ctx.get('developmentTaskContextAdmission')?.signal
-      if (signal === undefined || signal.aborted) { this.invalidateLocal(runtime, 'unavailable'); return }
+      const signal = this.ctx.get('developmentTaskContextAdmission')?.signalFor(runtime.agent)
+      if (signal === undefined || signal.aborted) { this.invalidateLocal(runtime, binding, 'unavailable'); return }
       runtime.localAdmissionSignal = signal
-      const stop = () => { if (!this.lifetime.signal.aborted) this.invalidateLocal(runtime, 'unavailable') }
+      const stop = () => { this.invalidateLocal(runtime, binding, 'unavailable') }
       signal.addEventListener('abort', stop, { once: true })
       runtime.stopAdmission = () => { signal.removeEventListener('abort', stop) }
       this.armLocalExpiry(runtime, binding)
@@ -1337,7 +1349,6 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         signal.throwIfAborted()
         const result = await this.ctx.scopeAccess.waitForChange(binding.subscriptionId, cursor, signal)
         signal.throwIfAborted()
-        if (this.state(runtime).binding?.id !== binding.id) return
         if (result.status === 'changed' || result.status === 'unchanged') {
           cursor = result.cursor
           if (result.status === 'changed') { runtime.dirty = true; runtime.changeVersion++; this.schedule(runtime) }
@@ -1352,9 +1363,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       }
     })
     void this.track(operation).then(() => {
-      if (!signal.aborted && runtime.watching === binding.id) runtime.watching = undefined
+      if (!signal.aborted) runtime.watching = undefined
     }, () => {
-      if (!signal.aborted && runtime.watching === binding.id) runtime.watching = undefined
+      if (!signal.aborted) runtime.watching = undefined
       if (signal.aborted) return
       this.pauseRuntime(runtime, 'failed')
       this.withdrawIdle(runtime, 'failed')
@@ -1389,9 +1400,8 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     }, wait)
   }
 
-  private read(runtime: Runtime, signal: AbortSignal): Promise<ScopeReadResult> {
-    const binding = this.state(runtime).binding
-    if (binding === null) return Promise.resolve({ status: 'left' })
+  private read(runtime: Runtime, signal: AbortSignal, messages: readonly UserMessage[] = []): Promise<ScopeReadResult> {
+    const binding = this.state(runtime).binding as NonNullable<ScopeAgentBindingStatus['binding']>
     if (this.unflushedBindings.has(binding.id) && !joinReadHistory(runtime.agent.session).routes.has(binding.id)) return Promise.resolve({ status: 'unavailable' })
     const read = runtime.readTail.catch(() => {}).then(async () => { // Each request caller handles its own failure.
       signal.throwIfAborted()
@@ -1399,23 +1409,23 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         await this.reconcileRoute(runtime)
         signal.throwIfAborted()
         if (binding.kind === 'local-task-scope') {
-          if (!this.localAdmissionAvailable(runtime) || runtime.localAdmissionSignal === undefined) {
+          if (!this.localAdmissionAvailable(runtime)) {
             throw new Error('scope-agent-context: local admission consumer changed')
           }
           return await readComposite(this.ctx, binding, this.config.maxContextBytes, this.config.maxLocalContextBytes,
-            AbortSignal.any([signal, runtime.localAdmissionSignal]), this.extraContextBytes(runtime),
+            AbortSignal.any([signal, runtime.localAdmissionSignal]),
             () => this.currentLocalTarget(runtime, binding.target)
               && this.localAdmissionAvailable(runtime) && this.state(runtime).binding?.id === binding.id)
         }
-        const budget = this.config.maxContextBytes - scopeContextFramingBytes() - this.extraContextBytes(runtime)
-        if (budget <= 0) throw new Error('scope-agent-context: context leaves no remote scope budget')
+        const budget = this.config.maxContextBytes - this.managedBytes(runtime, messages, ['scope-agent-context']) - scopeContextFramingBytes()
+        if (budget <= 0) throw new Error('scope-agent-context: retained Task context leaves no remote text allowance')
         return await this.ctx.scopeAccess.retrieveWithinBudget({ subscriptionId: binding.subscriptionId, maxContextBytes: budget }, signal)
       }
-      if (!this.localAdmissionAvailable(runtime) || runtime.localAdmissionSignal === undefined) throw new Error('scope-agent-context: local admission consumer changed')
-      const remoteWithdrawal = visibleContext(runtime.agent).length === 0 ? 0 : withdrawalMessage('left').content.reduce((sum, block) => sum
-        + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0)
+      if (!this.localAdmissionAvailable(runtime)) throw new Error('scope-agent-context: local admission consumer changed')
+      const remoteWithdrawal = visibleContext(runtime.agent.session).length === 0 ? 0 : withdrawalMessage('left').content.reduce((sum, block) => sum
+        + Buffer.byteLength(block.text), 0)
       return await readLocalTaskContext(this.ctx, binding.target,
-        this.config.maxContextBytes - remoteWithdrawal - this.extraContextBytes(runtime),
+        this.config.maxContextBytes - remoteWithdrawal,
         AbortSignal.any([signal, runtime.localAdmissionSignal]))
     })
     runtime.readTail = read
@@ -1452,13 +1462,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   private async activate(runtime: Runtime): Promise<void> {
     const initial = this.state(runtime)
     if (initial.mode !== 'enabled' || initial.binding === null || initial.automatic === null) return
+    const initialAutomatic = initial.automatic
     const signal = AbortSignal.any([this.lifetime.signal, runtime.bindingAbort.signal, runtime.activationAbort.signal])
     const capturedVersion = runtime.changeVersion
     let result: ScopeReadResult
     try { result = await this.read(runtime, signal) } catch (error) { if (signal.aborted) return; throw error }
     if (signal.aborted || this.ctx.agents.get(runtime.agent.id) !== runtime.agent
       || this.state(runtime).binding?.id !== initial.binding.id) return
-    if (runtime.terminal !== undefined) result = { status: runtime.terminal }
     if (result.status === 'active' && !('kind' in result.projection) && result.projection.expiresAt <= Date.now()) result = { status: 'expired' }
     if (result.status !== 'active') {
       if (result.status !== 'unavailable') runtime.terminal = result.status
@@ -1483,27 +1493,32 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (this.conflictingTask(runtime)) { this.pauseRuntime(runtime, 'conflict'); this.withdrawIdle(runtime, 'conflict'); return }
     const evaluated = result.projection
     let removeAbort = () => {}
-    runtime.maintenance = true
     try {
-      await runtime.agent.runMaintenance((maintenanceSignal) => {
-        const onAbort = () => { this.pauseRuntime(runtime, 'cancelled') }
-        maintenanceSignal.addEventListener('abort', onAbort, { once: true })
-        removeAbort = () => { maintenanceSignal.removeEventListener('abort', onAbort) }
-        signal.throwIfAborted()
-        maintenanceSignal.throwIfAborted()
-        const state = this.state(runtime)
-        if (state.mode !== 'enabled' || state.binding?.id !== initialBinding.id || state.automatic === null) return Promise.resolve()
-        if (state.usedBudget >= state.automatic.activationLimit) { this.pauseRuntime(runtime, 'budget'); return Promise.resolve() }
-        const activationId = randomUUID() as ScopeAgentActivationId
-        this.write(runtime, { ...state, usedBudget: state.usedBudget + 1, lastActivationAt: Date.now(),
-          pendingActivation: { id: activationId, bindingId: state.binding.id } })
-        this.evaluate(runtime, 'activate', evaluated, activationId)
-        maintenanceSignal.throwIfAborted()
-        runtime.agent.followup(createUserMessage({ content: [{ type: 'text', text: `Shared scope changed. Re-read the current scope snapshot in this request, including when it appears before older turns. The snapshot contains the current evidence; this notification restates your authorized goal:\n\n${state.automatic.goal}` }],
-          source: { kind: 'scope-agent-pulse', version: 1, bindingId: state.binding.id, activationId } }))
-        if (maintenanceSignal.aborted) this.removePulses(runtime)
-        return Promise.resolve()
-      })
+      let work: Promise<void>
+      try {
+        work = runtime.agent.runMaintenance((maintenanceSignal) => {
+          runtime.maintenance = true
+          const onAbort = () => { this.pauseRuntime(runtime, 'cancelled') }
+          maintenanceSignal.addEventListener('abort', onAbort, { once: true })
+          removeAbort = () => { maintenanceSignal.removeEventListener('abort', onAbort) }
+          signal.throwIfAborted()
+          maintenanceSignal.throwIfAborted()
+          const state = this.state(runtime)
+          const activationId = randomUUID() as ScopeAgentActivationId
+          this.write(runtime, { ...state, usedBudget: state.usedBudget + 1, lastActivationAt: Date.now(),
+            pendingActivation: { id: activationId, bindingId: initialBinding.id } })
+          this.evaluate(runtime, 'activate', evaluated, activationId)
+          maintenanceSignal.throwIfAborted()
+          runtime.agent.followup(createUserMessage({ content: [{ type: 'text', text: `Shared scope changed. Continue the authorized goal using the current scope snapshot:\n\n${initialAutomatic.goal}` }],
+            source: { kind: 'scope-agent-pulse', version: 1, bindingId: initialBinding.id, activationId } }))
+          if (maintenanceSignal.aborted) this.removePulses(runtime)
+          return Promise.resolve()
+        })
+      } catch {
+        // Another activity owns the idle phase; existing dirty scheduling retains this permission.
+        return
+      }
+      await work
     } finally {
       removeAbort()
       runtime.maintenance = false
@@ -1516,13 +1531,19 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   }
 
   private withdrawRemoteIdle(runtime: Runtime, reason: WithdrawalReason): void {
-    if (runtime.disposing || runtime.agent.status !== 'idle' || runtime.maintenance || visibleContext(runtime.agent).length === 0) return
-    runtime.maintenance = true
-    const work = runtime.agent.runMaintenance((signal) => {
-      signal.throwIfAborted()
-      replaceContext(runtime.agent, withdrawalMessage(reason))
-      return Promise.resolve()
-    })
+    if (runtime.disposing || runtime.agent.status !== 'idle' || runtime.maintenance || visibleContext(runtime.agent.session).length === 0) return
+    let work: Promise<void>
+    try {
+      work = runtime.agent.runMaintenance((signal) => {
+        runtime.maintenance = true
+        signal.throwIfAborted()
+        replaceContext(runtime.agent.session, withdrawalMessage(reason))
+        return Promise.resolve()
+      })
+    } catch {
+      // Another activity owns the idle phase; the next admission withdraws stale facts.
+      return
+    }
     void this.track(work).then(() => { runtime.maintenance = false }, () => { runtime.maintenance = false })
   }
 
@@ -1553,21 +1574,17 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       }
       if (state.binding === null || this.conflictingTask(runtime)) {
         if (state.binding !== null) this.pauseRuntime(runtime, 'conflict')
-        if (state.binding === null && visibleContext(runtime.agent).length === 0 && !validPulse) return { ...decision, messages }
+        if (state.binding === null && visibleContext(runtime.agent.session).length === 0 && !validPulse) return { ...decision, messages }
         return this.withoutFacts(runtime, decision, messages, external, turn, step, state.binding === null ? 'left' : 'conflict', signal)
       }
       const capturedVersion = runtime.changeVersion
       const routeSignal = runtime.bindingAbort.signal
       const readSignal = AbortSignal.any([signal, this.lifetime.signal, routeSignal])
       let result: ScopeReadResult
-      try { result = await this.read(runtime, readSignal) } catch {
+      try { result = await this.read(runtime, readSignal, messages) } catch {
         signal.throwIfAborted()
         if (this.lifetime.signal.aborted) { this.requeue(runtime, external); return { kind: 'reject' } }
         if (routeSignal !== runtime.bindingAbort.signal) continue
-        const currentBinding = this.state(runtime).binding
-        if (currentBinding?.id !== state.binding.id
-          || (state.binding.kind !== 'local-task' && currentBinding.kind !== 'local-task'
-            && currentBinding.invitation.ownerAddress !== state.binding.invitation.ownerAddress)) continue
         this.pauseRuntime(runtime, 'failed')
         return this.withoutFacts(runtime, decision, messages, external, turn, step, 'failed', signal)
       }
@@ -1590,18 +1607,12 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         this.pauseRuntime(runtime, 'coverage')
         return this.withoutFacts(runtime, decision, messages, external, turn, step, 'failed', signal)
       }
-      let prepared: UserMessage[]
+      let prepared: ReturnType<typeof snapshotMessage>[]
       try { prepared = this.contextMessages(state.binding, result.projection) } catch {
         this.pauseRuntime(runtime, 'failed')
         return this.withoutFacts(runtime, decision, messages, external, turn, step, 'failed', signal)
       }
-      if (state.binding.kind === 'local-task' && visibleContext(runtime.agent).length > 0) prepared.push(withdrawalMessage('left'))
-      if (prepared.reduce((sum, message) => sum
-        + message.content.reduce((bytes, block) => bytes + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0),
-      this.extraContextBytes(runtime)) > this.config.maxContextBytes) {
-        this.pauseRuntime(runtime, 'failed')
-        return this.withoutFacts(runtime, decision, messages, external, turn, step, 'failed', signal)
-      }
+      if (state.binding.kind === 'local-task' && visibleContext(runtime.agent.session).length > 0) prepared.push(withdrawalMessage('left'))
       runtime.dirty = runtime.changeVersion !== capturedVersion
       if (validPulse && state.pendingActivation !== null && this.completed(runtime, result.projection)) {
         this.evaluate(runtime, 'suppress-reserved', result.projection, state.pendingActivation.id)
@@ -1610,15 +1621,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
         runtime.unsubmittedInputs = []
         if (external.length === 0) return { kind: 'reject' }
       }
-      const pending: UserMessage[] = []
-      for (const message of prepared) {
-        const local = message.source.kind === 'development-task-context'
-        const visible = local ? visibleLocalTaskContext(runtime.agent) : visibleContext(runtime.agent)
-        if (visible.length === 1 && isDeepStrictEqual(visible[0]?.data.source, message.source)) continue
-        const replacement = local ? replaceLocalTaskContext(runtime.agent, message) : replaceContext(runtime.agent, message)
-        if (replacement !== undefined) pending.push(replacement)
-      }
-      return { ...decision, messages: [...messages, ...pending] }
+      return { ...decision, messages: this.replaceManaged(runtime, messages, prepared) }
     }
   }
 
@@ -1628,38 +1631,25 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     const binding = this.state(runtime).binding
     const localWithdrawal = localContextWithdrawalMessage(reason)
     const remoteWithdrawal = withdrawalMessage(binding?.kind === 'local-task' ? 'left' : reason)
-    const departedRemote = binding?.kind === 'local-task' && visibleContext(runtime.agent).length > 0
-    if (!hasLocal(binding)) {
-      const bytes = remoteWithdrawal.content.reduce((sum, block) => sum
-        + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), this.extraContextBytes(runtime))
-      if (bytes > this.config.maxContextBytes) return { kind: 'reject' }
+    const departedRemote = binding?.kind === 'local-task' && visibleContext(runtime.agent.session).length > 0
+    const prepared = binding?.kind === 'local-task' ? [localWithdrawal] : [remoteWithdrawal]
+    if (departedRemote) prepared.push(remoteWithdrawal)
+    if ((hadPulse || runtime.activeTurn === turn) && external.length === 0) {
+      this.replaceManaged(runtime, remaining, prepared)
+      return { kind: 'reject' }
     }
-    if (binding?.kind === 'local-task') {
-      const withdrawals = departedRemote ? [localWithdrawal, remoteWithdrawal] : [localWithdrawal]
-      const bytes = withdrawals.reduce((sum, message) => message.content.reduce((total, block) => total
-        + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), sum), this.extraContextBytes(runtime))
-      if (bytes > this.config.maxContextBytes) return { kind: 'reject' }
-    }
-    const pending = binding?.kind === 'local-task'
-      ? replaceLocalTaskContext(runtime.agent, localWithdrawal)
-      : replaceContext(runtime.agent, remoteWithdrawal)
-    if ((hadPulse || runtime.activeTurn === turn) && external.length === 0) return { kind: 'reject' }
     runtime.activeTurn = undefined
     runtime.unsubmittedInputs = []
-    const additions = pending === undefined ? [] : [pending]
-    if (departedRemote) {
-      const remotePending = replaceContext(runtime.agent, remoteWithdrawal)
-      if (remotePending !== undefined) additions.push(remotePending)
-    }
     if (binding?.kind === 'local-task-scope') {
       let local = localContextWithdrawalMessage(reason)
-      const remoteBytes = remoteWithdrawal.content.reduce((sum, block) => sum + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0)
+      const remoteBytes = remoteWithdrawal.content.reduce((sum, block) => sum + Buffer.byteLength(block.text), 0)
       const routeSignal = runtime.bindingAbort.signal
       try {
-        if (!this.currentLocalTarget(runtime, binding.target) || !this.localAdmissionAvailable(runtime)
-          || runtime.localAdmissionSignal === undefined) throw new Error('scope-agent-context: local authority changed')
+        if (!this.currentLocalTarget(runtime, binding.target) || !this.localAdmissionAvailable(runtime)) {
+          throw new Error('scope-agent-context: local authority changed')
+        }
         const result = await readLocalTaskContext(this.ctx, binding.target,
-          this.config.maxContextBytes - remoteBytes - this.extraContextBytes(runtime),
+          this.config.maxContextBytes - remoteBytes,
           AbortSignal.any([signal, this.lifetime.signal, routeSignal, runtime.localAdmissionSignal]))
         if (result.status === 'active') local = localContextSnapshotMessage(result.projection)
       } catch {
@@ -1673,12 +1663,35 @@ export default class ScopeAgentContextService extends TypertRemoteService {
       if (this.state(runtime).binding?.id !== binding.id || routeSignal !== runtime.bindingAbort.signal) {
         return await this.admit(runtime, { ...decision, messages: remaining }, external, turn, step, signal)
       }
-      const bytes = local.content.reduce((sum, block) => sum + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), remoteBytes)
-      if (bytes + this.extraContextBytes(runtime) > this.config.maxContextBytes) return { kind: 'reject' }
-      const localPending = replaceLocalTaskContext(runtime.agent, local)
-      if (localPending !== undefined) additions.push(localPending)
+      prepared.push(local)
     }
-    return { ...decision, messages: [...remaining, ...additions] }
+    return { ...decision, messages: this.replaceManaged(runtime, remaining, prepared) }
+  }
+
+  private managedBytes(runtime: Runtime, messages: readonly UserMessage[], replacing: readonly UserMessage['source']['kind'][]): number {
+    const retained = [...visibleLocalTaskContext(runtime.agent).map(event => event.data),
+      ...visibleContext(runtime.agent.session).map(event => event.data), ...messages]
+    return retained.reduce((sum, message) => sum + ((message.source.kind === 'development-task-context'
+      || message.source.kind === 'scope-agent-context') && !replacing.includes(message.source.kind)
+      ? message.content.reduce((bytes, block) => bytes + (block.type === 'text' ? Buffer.byteLength(block.text) : 0), 0) : 0), 0)
+  }
+
+  private replaceManaged(
+    runtime: Runtime, messages: readonly UserMessage[], prepared: readonly ReturnType<typeof snapshotMessage>[],
+  ): UserMessage[] {
+    const replacing = prepared.map(message => message.source.kind)
+    const bytes = this.managedBytes(runtime, messages, replacing)
+      + prepared.reduce((sum, message) => sum + message.content.reduce((size, block) => size + Buffer.byteLength(block.text), 0), 0)
+    if (bytes > this.config.maxContextBytes) throw new Error('scope-agent-context: complete managed context byte budget exceeded')
+    const pending = messages.filter(message => !replacing.includes(message.source.kind))
+    for (const message of prepared) {
+      const local = message.source.kind === 'development-task-context'
+      const visible = local ? visibleLocalTaskContext(runtime.agent) : visibleContext(runtime.agent.session)
+      if (visible.length === 1 && isDeepStrictEqual(visible[0]?.data.source, message.source)) continue
+      const replacement = local ? replaceLocalTaskContext(runtime.agent, message) : replaceContext(runtime.agent.session, message)
+      if (replacement !== undefined) pending.push(replacement)
+    }
+    return pending
   }
 
   private requeue(runtime: Runtime, messages: readonly UserMessage[]): void {

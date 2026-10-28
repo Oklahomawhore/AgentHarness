@@ -1,10 +1,10 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { appendFile, cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, cp, lstat, mkdir, mkdtemp, open, readFile, readlink, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest'
 import { parseCredentialsDocument } from '@deepseek-ai/dsh-credentials-local'
 import { copyClusterRuntime } from './agentharness-portable-fixture.ts'
 import { collaborationBrowserUrl, renderMcpGuide } from './agentharness-portable-command.mjs'
@@ -398,6 +398,113 @@ describe('AgentHarness portable release staging', () => {
 })
 
 describe('AgentHarness LAN release server and installed command', () => {
+  it.each(['managed release', 'legacy current entry'])('adopts same-version release bytes after current changes from %s', async (initialLaunch) => {
+    const fixture = await mkdtemp(join(tmpdir(), 'agentharness same version '))
+    onTestFinished(() => rm(fixture, { recursive: true, force: true }))
+    const first = await portableCommandFixture(join(fixture, 'release-a'), { version: '9.8.7' })
+    const second = await portableCommandFixture(join(fixture, 'release-b'), { version: '9.8.7' })
+    const current = join(fixture, 'current')
+    const state = join(fixture, 'state')
+    await symlink(first, current, process.platform === 'win32' ? 'junction' : 'dir')
+    let childOrigin: string | undefined
+    const registered = Promise.withResolvers<undefined>()
+    // The management port stays bound while each actual runtime owns a separate listen(0) HTTP server.
+    const server = createServer((request, response) => {
+      if (request.url?.startsWith('/fixture-runtime/')) {
+        childOrigin = `http://127.0.0.1:${request.url.slice('/fixture-runtime/'.length)}`
+        response.end()
+        registered.resolve(undefined)
+        return
+      }
+      if (childOrigin === undefined) { response.writeHead(503); response.end(); return }
+      void fetch(childOrigin, { signal: AbortSignal.timeout(1_000) }).then(result => result.text())
+        .then((body) => { response.end(body) }, () => { response.writeHead(503); response.end() })
+    })
+    onTestFinished(async () => {
+      server.closeAllConnections()
+      await new Promise<void>((resolvePromise) => { server.close(() => { resolvePromise() }) })
+    })
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolvePromise)
+    })
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('fixture HTTP did not bind')
+    const origin = `http://127.0.0.1:${String(address.port)}`
+    for (const [release, marker] of [[first, 'release-a'], [second, 'release-b']] as const) {
+      await writeFile(join(release, 'start.mjs'), [
+        "import { createServer } from 'node:http'",
+        `const server = createServer((_request, response) => response.end(JSON.stringify({ marker: '${marker}', pid: process.pid, mcpNode: process.env.AGENTHARNESS_MCP_NODE })))`,
+        'server.listen(0, \'127.0.0.1\', async () => {',
+        '  const port = server.address().port',
+        '  await fetch(`${process.env.AGENTHARNESS_URL}/fixture-runtime/${port}`)',
+        '  console.log(`dsh web: ${process.env.AGENTHARNESS_URL}/?token=fixture-launch-token`)',
+        '})',
+        'process.on(\'SIGTERM\', () => server.close(() => process.exit(0)))',
+        '',
+      ].join('\n'))
+    }
+    const env = { ...process.env, AGENTHARNESS_ACTIVE_ROOT: current, AGENTHARNESS_RUNTIME_DIR: state,
+      AGENTHARNESS_PORT: String(address.port), AGENTHARNESS_NO_OPEN: '1', DSH_HOME: join(fixture, 'home') }
+    const installedCommand = join(current, 'agentharness.mjs')
+    let legacyExit: Promise<unknown> | undefined
+    onTestFinished(async () => {
+      const stopped = await runCommand(process.execPath, [installedCommand, 'stop'], env)
+      expect(stopped).toMatchObject({ status: 0, stderr: '' })
+      await legacyExit
+    })
+    if (initialLaunch === 'legacy current entry') {
+      await mkdir(state)
+      const logPath = join(state, 'server.log')
+      const log = await open(logPath, 'a')
+      let child: ReturnType<typeof spawn>
+      try {
+        child = spawn(process.execPath, [join(current, 'start.mjs')], {
+          cwd: first, detached: true, env: { ...env, AGENTHARNESS_URL: origin }, stdio: ['ignore', log.fd, log.fd],
+        })
+        legacyExit = new Promise((resolveExit, reject) => {
+          child.once('error', reject)
+          child.once('close', (code, signal) => { resolveExit({ code, signal }) })
+        })
+      } finally { await log.close() }
+      await writeFile(join(state, 'server.json'), JSON.stringify({ pid: child.pid, entry: join(current, 'start.mjs'),
+        version: '9.8.7', port: address.port, url: origin, logPath, logOffset: 0 }))
+      await registered.promise
+    } else {
+      expect(await runCommand(process.execPath, [installedCommand, 'start'], env)).toMatchObject({ status: 0, stderr: '' })
+    }
+    const before = await (await fetch(origin)).json() as { marker: string; pid: number }
+    expect(before.marker).toBe('release-a')
+    if (initialLaunch === 'managed release') {
+      expect((await runCommand(process.execPath, [installedCommand, 'start'], env)).stdout).toContain('already running')
+      expect(await (await fetch(origin)).json()).toMatchObject({ pid: before.pid })
+    }
+    await unlink(current)
+    await symlink(second, current, process.platform === 'win32' ? 'junction' : 'dir')
+    const upgraded = await runCommand(process.execPath, [installedCommand, 'start'], env)
+    expect(upgraded).toMatchObject({ status: 0, stderr: '' })
+    const after = await (await fetch(origin)).json() as { marker: string; pid: number; mcpNode: string }
+    expect(after, JSON.stringify({ initialLaunch, before, after })).toMatchObject({ marker: 'release-b' })
+    expect(after.pid).not.toBe(before.pid)
+    expect(() => process.kill(before.pid, 0)).toThrow()
+    const recorded = JSON.parse(await readFile(join(state, 'server.json'), 'utf8')) as { pid: number; entry: string }
+    expect(recorded).toMatchObject({ pid: after.pid, entry: join(await realpath(second), 'start.mjs') })
+    expect(after.mcpNode).toBe(join(current, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'))
+    expect((await runCommand(process.execPath, [installedCommand, 'start'], env)).stdout).toContain('already running')
+    expect(await (await fetch(origin)).json()).toMatchObject({ marker: 'release-b', pid: after.pid })
+    const guide = await runCommand(process.execPath, [installedCommand, 'mcp-guide'], env)
+    expect(guide.status).toBe(0)
+    if (process.platform !== 'win32') {
+      expect(guide.stdout).toContain(join(current, 'runtime', 'node'))
+      expect(guide.stdout).toContain(join(current, 'lib', 'bin.js'))
+      expect(guide.stdout).not.toContain(second)
+    }
+    if (legacyExit !== undefined) {
+      const exit = await legacyExit
+      if (process.platform !== 'win32') expect(exit).toEqual({ code: 0, signal: null })
+    }
+  })
+
   it('waits for this startup URL with HTTP ready, concurrent reuse, and a previous launch in the log', async () => {
     const fixture = await temporaryDirectory('agentharness startup generation ')
     const portable = await portableCommandFixture(fixture, { version: '9.8.7' })

@@ -24,8 +24,6 @@ kind: "package-group"
 | 包 | 角色 |
 |---|---|
 | `development-room` | 协作者名册、一份仅追加的创建／加入／离开日志及其房间投影。 |
-| `development-evidence` | 有界提供方注册表，明确区分可用、空结果、拒绝和失败。 |
-| `development-evidence-reviewed-file` | 面向无密钥和项目本地用途的严格审阅 JSON 知识提供方。 |
 | `development-room-agent-presence` | 把在线 Harness Agent 投影为参与者租约。 |
 | `development-room-storage-domain` | 持久化单个节点的仅追加房间日志，并在冷启动时恢复。 |
 | `development-mesh` | 定义带版本的 channel registry、peer 状态、发布和 owner command 操作。 |

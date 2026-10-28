@@ -2,7 +2,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
@@ -60,6 +60,28 @@ async function storedLocal(owner: TestHost, id: string) {
     || !('sessions' in raw.tables) || typeof raw.tables.sessions !== 'object' || raw.tables.sessions === null) throw new Error('local domain missing')
   return nativeLocalContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
+
+it('ends old local capture when a newer retained binding becomes current without renewing permission', async () => {
+  const { owner, remote, a, b, task, assignment, limits, capture } = await fixture()
+  const current = await rootTask(owner)
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1)
+  try {
+    await owner.ctx.developmentTasks.checkout({ taskId: current.id, participantId: developmentAgentParticipantId(a.id),
+      bindingId: `${assignment.bindingId}-newer` as typeof assignment.bindingId })
+  } finally { clock.mockRestore() }
+  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
+  expect((await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).assignment?.taskId).toBe(current.id)
+  expect((await owner.ctx.developmentTasks.localContributionStatus({ grant: capture.grant })).state).toBe('ended')
+  await expect(owner.ctx.scopeAgentContributions.requestLocal({ agentId: a.id, expectedCapture: null,
+    ...assignment, roots: [owner.workspace], tools: ['write'], limits }))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+  await run(owner, a, [toolCallResponse('unshared-new-task', 'write', { file_path: 'unshared.txt', content: 'NEW_TASK_PRIVATE' })])
+  expect(await readFile(join(owner.workspace, 'unshared.txt'), 'utf8')).toBe('NEW_TASK_PRIVATE')
+  for (const taskId of [task.id, current.id]) {
+    expect(owner.ctx.developmentTasks.get({ taskId }).context.filter(item => item.localToolObservation !== undefined)).toEqual([])
+  }
+  expect((await remote.ctx.scopeAgentContributions.status({ agentId: b.id })).capture?.collecting).toBe(true)
+})
 
 it('rejects restored local samples whose permission, execution or admitted receipt was substituted', async () => {
   const { owner, a } = await fixture()

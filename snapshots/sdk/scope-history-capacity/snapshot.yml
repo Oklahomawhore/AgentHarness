@@ -4,7 +4,7 @@ profile: sdk
 composition: sdk-scope-history-capacity
 recording: authored
 writer: separate
-writerRevision: 2
+writerRevision: 3
 header:
   class: scope-history-capacity
   pin: true

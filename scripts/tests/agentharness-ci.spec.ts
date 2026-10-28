@@ -65,6 +65,10 @@ describe('AgentHarness hosted CI', () => {
     expect(linux.steps).toContainEqual({ name: 'Prepare bubblewrap', if: "matrix.lane != 'static'", run: 'bash scripts/prepare-ci-bubblewrap.sh' })
     expect(linux.steps).toContainEqual({ name: 'Install Chromium', if: "matrix.lane == 'consumers'",
       run: 'pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium' })
+    expect(linux.steps).toContainEqual({ uses: 'actions/setup-python@v6.3.0', if: "matrix.lane == 'consumers'",
+      with: { 'python-version': '3.10', cache: 'pip' } })
+    expect(linux.steps).toContainEqual({ name: 'Install Python collaboration tooling', if: "matrix.lane == 'consumers'",
+      run: 'python -m pip install uv==0.11.23' })
     expect(linux.steps).toContainEqual({ name: 'Verify npm install layout', if: "matrix.lane == 'static'", run: 'pnpm run verify-npm-install-layout' })
     expect(linux.steps.at(-1)?.run).toBe('pnpm run ${{ matrix.command }}')
     expect(linux.steps.at(-1)?.env?.DSH_ARCHIVE_BASE_REF)
@@ -161,7 +165,7 @@ describe('AgentHarness hosted CI', () => {
   it('keeps benchmarks isolated with a browser and complete Python SDK tests', () => {
     const benchmarks = ci.jobs.benchmarks!
     expect(benchmarks['runs-on']).toBe('ubuntu-24.04')
-    expect(benchmarks['timeout-minutes']).toBe(15)
+    expect(benchmarks['timeout-minutes']).toBe(30)
     expect(benchmarks.needs).toBeUndefined()
     const setup = benchmarks.steps.find(step => step.uses === 'actions/setup-node@v6')
     expect(setup?.with?.cache).toBe('pnpm')

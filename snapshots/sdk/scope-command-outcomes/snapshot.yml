@@ -3,6 +3,8 @@ scenario: scope-command-outcomes
 profile: sdk
 composition: sdk-scope-command-outcomes
 recording: authored
+writer: separate
+writerRevision: 3
 header:
   class: scope-command-outcomes
   pin: true

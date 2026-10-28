@@ -138,9 +138,9 @@ Owner 本地报告在每个后端中使用同一区间撤回选择。文本后�
 
 已替代及已撤回的 publication 省略分别按精确 Task 修订号显示数量，不逐条增加 publication 来源行。终结撤回记录仍作为完整的必需证据。交付文本不能重建这些历史身份。完整来源处理结果仍保留在投影元数据和耐久捕获证据中；计数不改变授权、来源选择或激活。反复替换同一命令或文件的最新记录因此不会逐条增加显示引用，终结来源区间也不会重新添加这些历史行。当前证据、其他省略原因及完整捕获证据仍受各自字节限额约束；这不保证所有持续增长的历史都有界。
 
-Session binding 从 Task A 切换到 Task B 时，当前请求 surface 会用 B 替换 A。清除最后一个 binding 后，下一次获准进入的 pre-step 会用中性的断开标记替换注入的 Task 上下文。重新连接会用所选 Task 替换该标记。更早的耐久 Session 事件继续保留，可供回放。Room membership 不能选择上下文。
+Task 上下文变化时清除自有的先前节点，并在此前工作之后追加当前快照。清除最后一个 binding 后，下次准入 pre-step 按相同顺序追加中性断开标记；重新连接采用选中的 Task。空替换事件保留回放链接，不进入模型请求。Room 成员关系不能选择上下文。 注入器只接受所注入注册表中精确匹配的存活 Agent，并且只确认其精确注册 Session 中的快照。在另一个服务隔离范围中复用 ID 不会选中此 Task。 原生被动接收采用 Task 服务的[最后保留绑定](../development-task/README.zh.md#remote-api)。受管理的 `/local` 读取按调用者提供的精确参与者和绑定 ID 查找，再核对 Task 和代际。
 
-如果投影中的必需上下文无法放入预算，`maxContextBytesPerStep` 会拒绝该投影。消费者也会在采纳前检查后端的完整输出。后端失败或采纳前取消不会增加 Task 消息或确认。计算期间 binding 变化会丢弃过期结果，并在同一次 pre-step 中按当前 binding 重新计算，保留用户请求。
+如果投影中的必需上下文无法放入预算，`maxContextBytesPerStep` 会拒绝该投影。消费者也会在采纳前检查后端的完整输出。后端失败或采纳前取消不会增加 Task 消息或确认。读取、计算或检查上下文失败时保留尚未提交的输入并报告错误；后续明确继续时读取当前上下文，只提交一次保留的输入。计算期间 binding 变化会丢弃过期结果，并在同一次 pre-step 中按当前 binding 重新计算，保留用户请求。
 
 Provider 继承本包 `/backend` 入口的 `DevelopmentTaskContextBackend`。它接收获授权的 Task 视图、接收者 participant 与职责标签、字节预算和取消信号。消费者负责授权与交付身份；这些路由输入不授予访问权。外部适配器保留自己的耐久投影记录。消费者在 Session 中记录确切输出文本、后端身份、被选择与省略的来源引用以及 binding 区间。后端身份和字节预算未变时，已采纳且未变化的上下文直接复用；替换任一项会在下一次请求中重新计算上下文。配置变化可能影响输出时，Provider 必须改变其身份。消息记入日志后，后台确认会记录 Task revision 已投影，不证明模型使用了每一项事实。确认失败会被记录，不会拒绝用户请求。
 
@@ -152,9 +152,9 @@ Provider 继承本包 `/backend` 入口的 `DevelopmentTaskContextBackend`。它
 
 消费者在复用缓存前和计算后等待 `currentContextView`。到期 grant 必须先持久终结，才能交付当前证据；持久化失败会拒绝准入。新提交的终结通知会丢弃慢投影并触发重算。非 owner 的 Mesh 副本无法确立独立同伴或 owner 本地采集当前的授权。冻结父快照仍属于历史。
 
-受管理的 owner 本地接收通过 `/local` 捕获确切的 Root Task assignment，并计算有界上下文。结果记录 Task binding epoch、owner 节点、提供方、完整文本、覆盖情况及激活证据，不使用远端邀请或 subscription。消费者将这些投影记录为 version-3 Task 快照；现有 version-1 与 version-2 快照仍可读取。匹配的已记录快照通过相同的 Task assignment 检查确认其捕获 revision。受管理的撤回会记录当前事实不可用的原因，不声称 Task assignment 已被清除。
+受管理的 owner 本地接收通过 `/local` 捕获确切的 Root Task assignment，并计算有界上下文。替换 Task 服务会使未完成的读取失效，即使新实例恢复了同一 assignment。读取要求自身隔离域内的 Room 身份。结果记录 Task binding epoch、owner 节点、提供方、完整文本、覆盖情况及激活证据，不使用远端邀请或 subscription。消费者将这些投影记录为 version-3 Task 快照；现有 version-1 与 version-2 快照仍可读取。匹配的已记录快照通过相同的 Task assignment 检查确认其捕获 revision。受管理的撤回会记录当前事实不可用的原因，不声称 Task assignment 已被清除。本地快照与撤回构造函数返回一个文本块。
 
-`development-task-context/admit` waterfall 在被动计算前进行委托。管理原生接收的监听器消费该事件并负责本次准入；其他监听器调用 `next()`，保留被动行为。输入将真实 inbox claim 与 pre-step 监听器添加的上下文分开。消费者只在注入器安装期间提供 `developmentTaskContextAdmission`，卸载时永久中止该实例的 signal。自动接收者必须要求这一能力，在异步工作前后复核，并保证该 Session 只有一个 Task 注入器。
+`development-task-context/admit` waterfall 委托完整上下文准入。本地接收者负责 Task 计算；纯远端接收者先等待 `next()`，再与被动 Task 上下文组合。Task 消费者在委托返回后复核被动 assignment、后端与来源有效期。输入将真实 inbox claim 与添加的上下文分开；`retainInput` 选择失败或注入器卸载时应恢复的普通未提交输入，排除受管自动 pulse。消费者只在注入器安装期间提供 `developmentTaskContextAdmission`。`signalFor(agent)` 只为其注册表中精确匹配、且属于监听作用域的 Agent 返回生命周期信号；卸载会永久中止已发出的信号。自动接收者必须要求这一能力，在异步工作前后复核，并保证该 Session 只有一个 Task 注入器。 委托返回后，注入器先处理自身取消，再处理委托返回的拒绝。卸载只在原 Agent 请求仍存活时恢复保留输入；明确取消不会恢复已丢弃的输入。
 
 计算期间到达的普通 publication 不会使捕获的 revision 失效；下一次请求会选择较新的 revision。切换离开后再返回会创建新的 binding 区间，因此切换前开始的计算不能发布其结果。模型重试使用日志中记录的确切文本。
 
@@ -180,7 +180,7 @@ Claude-work 报告保留完整的来源选择。文件报告沿用 Write/Edit �
 
 #### KV Cache 影响
 
-Binding 变化、断开连接或 Task revision 变化会替换此前的 Task context surface node，并使该节点之后的请求后缀失效。上下文未变且已确认时不增加内容。
+Binding 变化、断开连接或 Task revision 变化会清除先前的 Task context 节点，并在此前工作之后追加当前上下文，使首个清除节点之后的请求后缀失效。上下文未变且已确认时不增加内容。
 
 ## 已知限制与延期工作
 

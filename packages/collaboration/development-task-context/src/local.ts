@@ -4,9 +4,9 @@ import { symbols, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-development-room'
 import type {} from '@deepseek-ai/dsh-development-task'
-import type { DevelopmentTaskAssignment } from '@deepseek-ai/dsh-development-task/types'
+import type { DevelopmentTaskAssignment, DevelopmentTaskContextView } from '@deepseek-ai/dsh-development-task/types'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
+import type { TextBlock, UserMessage } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from './backend.ts'
 import { isTerminalPublication } from './publication.ts'
@@ -18,8 +18,8 @@ export type * from './admission.ts'
 export { localContextTargetSchema, localContextProjectionSchema, localContextProjectionDigest } from './local-schema.ts'
 
 // Caller-context proxies preserve calls but do not provide stable service identity.
-function taskIdentity(tasks: Context['developmentTasks']): Context['developmentTasks'] {
-  return (tasks as Context['developmentTasks'] & { [symbols.original]?: Context['developmentTasks'] })[symbols.original] ?? tasks
+function taskIdentity(tasks: Context['developmentTasks']): unknown {
+  return (tasks as Context['developmentTasks'] & { [symbols.original]: unknown })[symbols.original]
 }
 
 function localTasks(ctx: Context) {
@@ -30,8 +30,9 @@ function localTasks(ctx: Context) {
 
 function assignmentFor(ctx: Context, target: DevelopmentTaskLocalContextTarget): DevelopmentTaskAssignment | undefined {
   const tasks = localTasks(ctx)
-  const assignment = tasks.assignmentList().find(item => item.participantId === target.participantId)
-  if (assignment?.taskId !== target.taskId || assignment.bindingId !== target.taskBindingId) return undefined
+  const assignment = tasks.assignmentList()
+    .find(item => item.participantId === target.participantId && item.bindingId === target.taskBindingId)
+  if (assignment?.taskId !== target.taskId) return undefined
   const epoch = tasks.assignmentLog().findLast(item => item.bindingId === target.taskBindingId
     && item.participantId === target.participantId && item.change.kind === 'task-bound')
   if (epoch?.nodeId !== target.bindingEpoch.nodeId || epoch.seq !== target.bindingEpoch.seq) return undefined
@@ -39,6 +40,19 @@ function assignmentFor(ctx: Context, target: DevelopmentTaskLocalContextTarget):
   if (rooms === undefined) throw new Error('development-task-context: local reads require developmentRooms')
   const task = tasks.get({ taskId: target.taskId })
   return task.ownerNodeId === rooms.list().nodeId && task.origin.kind === 'root' ? assignment : undefined
+}
+
+/**
+ * Capture the next contribution deadline before another asynchronous context read.
+ * @param context - publications in the captured Task view.
+ * @returns the next future deadline, or Infinity when no contribution can expire.
+ */
+export function nextTaskContextExpiry(context: DevelopmentTaskContextView['task']['context']): number {
+  const now = Date.now()
+  return context.reduce((nearest, item) => {
+    const expiresAt = item.localContribution?.grant.expiresAt ?? item.peerContribution?.grant.expiresAt
+    return expiresAt !== undefined && expiresAt > now ? Math.min(nearest, expiresAt) : nearest
+  }, Infinity)
 }
 
 /**
@@ -92,9 +106,9 @@ export async function readLocalTaskContext(ctx: Context, target: DevelopmentTask
 /**
  * Retain a complete local projection as one replayable model input without additional framing.
  * @param projection - result captured through the authoritative local reader.
- * @returns a version-3 Task snapshot whose text is exactly the recorded projection text.
+ * @returns a text-only version-3 Task snapshot matching the recorded projection text.
  */
-export function localContextSnapshotMessage(projection: DevelopmentTaskLocalContextProjection): UserMessage {
+export function localContextSnapshotMessage(projection: DevelopmentTaskLocalContextProjection): Omit<UserMessage, 'content'> & { readonly content: TextBlock[] } {
   return createUserMessage({ content: [{ type: 'text', text: projection.text }],
     source: { kind: 'development-task-context', form: 'snapshot', version: 3, projection } })
 }
@@ -122,15 +136,15 @@ export function visibleLocalTaskContext(agent: Agent): SessionEvent<'user/messag
 /**
  * Withdraw local Task facts without retaining their old body in the current surface.
  * @param reason - why current facts are unavailable; this does not claim that the Task assignment was cleared.
- * @returns a managed withdrawal message; the immutable source history remains unchanged.
+ * @returns a text-only managed withdrawal; the immutable source history remains unchanged.
  */
-export function localContextWithdrawalMessage(reason: DevelopmentTaskLocalContextWithdrawalReason): UserMessage {
+export function localContextWithdrawalMessage(reason: DevelopmentTaskLocalContextWithdrawalReason): Omit<UserMessage, 'content'> & { readonly content: TextBlock[] } {
   return createUserMessage({ content: [{ type: 'text', text: `## Task context withdrawn\n\nNo current Task context is available (${reason}). Previously injected Task snapshots must not be used as current facts.` }],
     source: { kind: 'development-task-context', form: 'withdrawn', version: 3, reason } })
 }
 
 /**
- * Replace the one current Task snapshot, retaining source sequence links for exact replay.
+ * Clear owned Task nodes and append current context after prior work, retaining exact replay links.
  * @param agent - receiving Agent whose current Task nodes are replaced.
  * @param message - exact snapshot or withdrawal to adopt.
  * @returns a first-admission message when no Task node exists; the Loop commits it with the accepted request.
@@ -138,10 +152,12 @@ export function localContextWithdrawalMessage(reason: DevelopmentTaskLocalContex
 export function replaceLocalTaskContext(agent: Agent, message: UserMessage): UserMessage | undefined {
   const visible = visibleLocalTaskContext(agent)
   if (visible.length === 0) return message
-  for (const [index, event] of visible.entries()) {
-    agent.session.append('user/message', index === 0 ? message : localContextWithdrawalMessage('left'), {
+  for (const event of visible) {
+    agent.session.append('user/message', createUserMessage({ content: [],
+      source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-development-task-context' } }), {
       surfaceOp: { op: 'replace', startSeq: event.seq, endSeq: event.seq }, sourceEventSeqs: [event.seq],
     })
   }
+  agent.session.append('user/message', message, { surfaceOp: 'append', sourceEventSeqs: visible.map(event => event.seq) })
   return undefined
 }

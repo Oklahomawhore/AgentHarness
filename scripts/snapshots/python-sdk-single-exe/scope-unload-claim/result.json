@@ -1,0 +1,24 @@
+{
+  "turnReasons": [
+    "blocked",
+    "completed",
+    "completed"
+  ],
+  "intervalTurnReasons": [
+    [
+      "blocked"
+    ],
+    [
+      "completed",
+      "completed"
+    ]
+  ],
+  "ordinaryInputs": [
+    "Keep this original ordinary request when Scope unloads.",
+    "Continue the retained ordinary request explicitly."
+  ],
+  "retainedOriginalIdentity": true,
+  "wirePreservesOrdinaryMessages": true,
+  "modelRequests": 2,
+  "scopeRequestsAfterUnload": 0
+}

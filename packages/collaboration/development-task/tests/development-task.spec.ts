@@ -4,6 +4,7 @@ import DevelopmentRoomService, {
   type DevelopmentParticipantId,
 } from '@deepseek-ai/dsh-development-room'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import DevelopmentTaskService, {
   type Config,
   type DevelopmentTaskAdmitObservedContextRequest,
@@ -479,6 +480,137 @@ describe('DevelopmentTaskService', () => {
         ],
       },
     })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it.each([10, 1])('selects the last retained binding by durable order when the later clock reads %s', async (laterTime) => {
+    const { tasks } = await setup()
+    const first = await tasks.create(rootRequest('First retained responsibility'))
+    const second = await tasks.create(rootRequest('Latest retained responsibility'))
+    const agent = participant('agent')
+    expect(tasks.latestAssignment(agent)).toBeUndefined()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(10)
+    let older: Awaited<ReturnType<typeof tasks.checkout>>
+    let newer: Awaited<ReturnType<typeof tasks.checkout>>
+    try {
+      older = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('z-older') })
+      clock.mockReturnValue(laterTime)
+      newer = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('a-newer') })
+    } finally { clock.mockRestore() }
+    await tasks.acknowledge({ bindingId: older.assignment.bindingId, participantId: agent,
+      taskId: first.id, revision: first.revision })
+    expect(tasks.latestAssignment(agent)).toEqual(newer.assignment)
+    expect(tasks.latestAssignment(participant('owner'))).toBeUndefined()
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    expect(restored.tasks.latestAssignment(agent)).toEqual(newer.assignment)
+    await restored.tasks.clear({ bindingId: newer.assignment.bindingId, participantId: agent })
+    expect(restored.tasks.latestAssignment(agent)).toMatchObject({ bindingId: older.assignment.bindingId, acknowledgedRevision: 1 })
+    await restored.tasks.clear({ bindingId: older.assignment.bindingId, participantId: agent })
+    expect(restored.tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('selects only retained bindings still owned by the participant after a cleared binding id is reused', async () => {
+    const { tasks, rooms } = await setup()
+    const agent = participant('agent')
+    const other = participant('another-agent')
+    await rooms.announce({ id: other, kind: 'agent', displayName: 'Another Agent' })
+    const first = await tasks.create(rootRequest('Retained original responsibility'))
+    const second = await tasks.create(rootRequest('Another participant responsibility'))
+    const retained = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('retained') })
+    const reusedId = binding('reused')
+    await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: reusedId })
+    await expect(tasks.checkout({ taskId: second.id, participantId: other, bindingId: reusedId }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(tasks.clear({ bindingId: reusedId, participantId: other })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await tasks.clear({ bindingId: reusedId, participantId: agent })
+    const reused = await tasks.checkout({ taskId: second.id, participantId: other, bindingId: reusedId })
+    const restored = await setup()
+    await restored.rooms.announce({ id: other, kind: 'agent', displayName: 'Another Agent' })
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    for (const current of [tasks, restored.tasks]) {
+      expect(current.latestAssignment(agent)).toEqual(retained.assignment)
+      expect(current.latestAssignment(other)).toEqual(reused.assignment)
+      expect(Object.isFrozen(current.latestAssignment(agent))).toBe(true)
+      await current.clear({ bindingId: retained.assignment.bindingId, participantId: agent })
+      expect(current.latestAssignment(agent)).toBeUndefined()
+      expect(current.latestAssignment(other)).toEqual(reused.assignment)
+    }
+  })
+
+  it('treats rebinding an existing session as newer than other retained sessions without letting acknowledgements reorder it', async () => {
+    const { tasks } = await setup()
+    const first = await tasks.create(rootRequest('First responsibility'))
+    const second = await tasks.create(rootRequest('Other session responsibility'))
+    const agent = participant('agent')
+    const original = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('original') })
+    const other = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('other') })
+    const rebound = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: original.assignment.bindingId })
+    await tasks.acknowledge({ bindingId: other.assignment.bindingId, participantId: agent, taskId: second.id, revision: second.revision })
+    expect(tasks.latestAssignment(agent)).toEqual(rebound.assignment)
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    expect(restored.tasks.latestAssignment(agent)).toEqual(rebound.assignment)
+  })
+
+  it('keeps the prior latest assignment when persistence rejects a new binding', async () => {
+    const { ctx, tasks } = await setup()
+    const first = await tasks.create(rootRequest('Confirmed responsibility'))
+    const second = await tasks.create(rootRequest('Unconfirmed responsibility'))
+    const agent = participant('agent')
+    const retained = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('confirmed') })
+    const before = tasks.assignmentLog()
+    ctx.on('development-task/assignment-persist', () => { throw new Error('persistence unavailable') })
+    await expect(tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('unconfirmed') }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(tasks.assignmentLog()).toEqual(before)
+    expect(tasks.latestAssignment(agent)).toEqual(retained.assignment)
+  })
+
+  it('keeps latest selection Host-only while assignment Remotes update the same retained state', async () => {
+    const { ctx, tasks } = await setup()
+    const remote = ctx.developmentTaskAssignments
+    expect(remoteMethods(tasks).some(method => method.method === 'latestAssignment')).toBe(false)
+    expect(remoteMethods(remote).map(method => method.method)).toEqual(['list', 'checkout', 'clear', 'acknowledge'])
+    const created = await tasks.createRemote(rootRequest('Remote responsibility'))
+    const agent = participant('agent')
+    const checked = await remote.checkout({ taskId: created.task.id, participantId: agent })
+    const acknowledged = await remote.acknowledge({
+      bindingId: checked.assignment.bindingId, participantId: agent, taskId: created.task.id, revision: created.task.revision,
+    })
+    expect(remote.list()).toEqual([acknowledged])
+    expect(tasks.latestAssignment(agent)).toEqual(acknowledged)
+    expect(tasks.context({ taskId: created.task.id }).task.id).toBe(created.task.id)
+    await remote.clear({ bindingId: checked.assignment.bindingId, participantId: agent })
+    expect(remote.list()).toEqual([])
+    expect(tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('restores reversed durable events and rejects logs missing their first dependency', async () => {
+    const { tasks } = await setup()
+    const task = await tasks.create(rootRequest('Restored dependency order'))
+    await tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Durable context' })
+    const agent = participant('agent')
+    const checked = await tasks.checkout({ taskId: task.id, participantId: agent })
+    await tasks.acknowledge({ bindingId: checked.assignment.bindingId, participantId: agent, taskId: task.id, revision: 2 })
+    const logs = tasks.log().map(entry => developmentTaskEventSchema.parse(JSON.parse(JSON.stringify(entry))))
+    const assignments = tasks.assignmentLog().map(entry => developmentTaskAssignmentEventSchema.parse(JSON.parse(JSON.stringify(entry))))
+    const restored = await setup()
+    restored.tasks.restoreLog([...logs].reverse())
+    restored.tasks.restoreAssignmentLog([...assignments].reverse())
+    expect(restored.tasks.log()).toEqual(logs)
+    expect(restored.tasks.assignmentLog()).toEqual(assignments)
+    expect(restored.tasks.latestAssignment(agent)).toEqual(tasks.latestAssignment(agent))
+    const missingTask = await setup()
+    expect(() => { missingTask.tasks.restoreLog(logs.slice(1)) }).toThrow('unresolved lineage or sequence dependencies')
+    expect(missingTask.tasks.log()).toEqual([])
+    const missingBinding = await setup()
+    missingBinding.tasks.restoreLog(logs)
+    expect(() => { missingBinding.tasks.restoreAssignmentLog(assignments.slice(1)) }).toThrow('sequence gap')
+    expect(missingBinding.tasks.assignmentLog()).toEqual([])
+    expect(missingBinding.tasks.latestAssignment(agent)).toBeUndefined()
   })
 
   it('keeps different sessions of the same Agent independently bound', async () => {

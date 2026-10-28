@@ -1142,6 +1142,17 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
+   * Read the most recently bound retained assignment, independently of timestamps and acknowledgements.
+   * @param participantId - participant whose retained bindings are considered.
+   * @returns frozen latest assignment still owned by the participant, or undefined when unbound.
+   */
+  latestAssignment(participantId: DevelopmentParticipantId): DevelopmentTaskAssignment | undefined {
+    const entry = this.assignmentEntries.findLast(item => item.participantId === participantId
+      && item.change.kind === 'task-bound' && this.assignments.get(item.bindingId)?.participantId === participantId)
+    return entry === undefined ? undefined : this.assignments.get(entry.bindingId)
+  }
+
+  /**
    * Bind one local online Agent session to a Task, then reconcile Rooms.
    * @param request - target Task, Agent participant, and optional existing session binding.
    * @returns committed session binding, Task context, and independent Room outcomes.
@@ -1332,8 +1343,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     while (pending.length > 0) {
       const index = pending.findIndex(entry => this.canRestore(entry))
       if (index < 0) throw new DevelopmentTaskError('durable Task events have unresolved lineage or sequence dependencies', 'REPLICA_CONFLICT')
-      const [entry] = pending.splice(index, 1)
-      if (entry === undefined) throw new DevelopmentTaskError('durable Task restore lost an event', 'REPLICA_CONFLICT')
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- findIndex located an element and pending has not changed
+      const entry = pending.splice(index, 1)[0]!
       this.append(entry, { kind: 'restored', nodeId: entry.nodeId }, 'REPLICA_CONFLICT')
     }
     for (const task of this.tasks.values()) {
@@ -1362,8 +1373,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     while (pending.length > 0) {
       const index = pending.findIndex(entry => entry.seq === (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0) + 1)
       if (index < 0) throw new DevelopmentTaskError('durable assignment events have a sequence gap', 'REPLICA_CONFLICT')
-      const [entry] = pending.splice(index, 1)
-      if (entry === undefined) throw new DevelopmentTaskError('durable assignment restore lost an event', 'REPLICA_CONFLICT')
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- findIndex located an element and pending has not changed
+      const entry = pending.splice(index, 1)[0]!
       this.appendAssignment(this.freezeAssignmentEntry(entry), { kind: 'restored', nodeId: entry.nodeId }, 'REPLICA_CONFLICT')
     }
   }

@@ -63,6 +63,7 @@ export default class FixtureTransport extends ScopeTransport {
     assert.ok(Number.isSafeInteger(payload.maxResponseBytes) && payload.maxResponseBytes > 0)
     assert.equal(payload.maxDecodedResponseBytes, 2097152)
     this.reads++
+    this.observeRead?.()
     const values = ['Initial declaration: orderCode is required.', 'Corrected declaration: sku is required.', 'Final declaration: itemId is required.']
     const evidence = values[Math.min(this.revision, 3) - 1]
     assert.ok(Buffer.byteLength(evidence, 'utf8') <= payload.maxContextBytes)

@@ -4,6 +4,7 @@ profile: sdk
 composition: sdk-scope-mixed-source
 recording: authored
 writer: separate
+writerRevision: 3
 header:
   class: scope-mixed-source
   pin: true

@@ -871,9 +871,14 @@ type DevelopmentTaskContextSource =
 ```
 
 ```ts type-equiv
-/** Live Task injector instance; unloading permanently aborts its signal and removes the service. */
+/** Task injector lifetimes selected by exact registered Agent and listener scope. */
 interface DevelopmentTaskContextAdmissionCapability {
-  readonly signal: AbortSignal
+  /**
+   * Select the lifecycle of the injector that handles this Agent's admission.
+   * @param agent - exact registered Agent whose pre-step needs Task admission.
+   * @returns the injector signal, permanently aborted on unload, or undefined outside its registry or listener scope.
+   */
+  signalFor(agent: Agent): AbortSignal | undefined
 }
 ```
 
@@ -887,6 +892,11 @@ interface DevelopmentTaskContextAdmission {
   readonly turn: number
   readonly step: number
   readonly signal: AbortSignal
+  /**
+   * Select unsubmitted inputs restored by the Task owner on failure or injector unload.
+   * @param messages - ordinary claimed inputs retained by the managing receiver.
+   */
+  retainInput(messages: readonly UserMessage[]): void
 }
 ```
 
@@ -3139,37 +3149,6 @@ Local authenticated management and command-hook service; no external Session is 
 
 Source: [`packages/collaboration/claude-scope/src/index.ts`](../../packages/collaboration/claude-scope/src/index.ts)
 
-<a id="ctxdevelopmentevidence--developmentevidenceservice"></a>
-
-### `ctx.developmentEvidence` — `DevelopmentEvidenceService`
-
-Service Definition for explicit, source-attributed development evidence retrieval.
-
-```ts cordis-catalog
-/**
- * Register one provider for its plugin lifetime.
- * @param provider - unique provider implementation.
- * @returns disposer that unregisters the provider.
- */
-registerProvider(provider: DevelopmentEvidenceProvider): () => void
-
-/**
- * Read the current provider directory in deterministic order.
- * @returns detached provider registrations sorted by id.
- */
-listProviders(): readonly DevelopmentEvidenceProviderRegistration[]
-
-/**
- * Query every selected provider while preserving empty, denied, and failed outcomes.
- * @param request - query, optional provider allowlist, and optional per-provider limit.
- * @param signal - optional caller cancellation.
- * @returns deterministic provider results with all citation fields bounded.
- */
-async query(request: DevelopmentEvidenceQueryRequest, signal?: AbortSignal): Promise<DevelopmentEvidenceQuerySnapshot>
-```
-
-Source: [`packages/collaboration/development-evidence/src/index.ts`](../../packages/collaboration/development-evidence/src/index.ts)
-
 <a id="ctxdevelopmentmesh--developmentmeshservice-abstract-seam"></a>
 
 ### `ctx.developmentMesh` — `DevelopmentMeshService` (abstract seam)
@@ -3424,7 +3403,18 @@ Source: [`packages/collaboration/development-task/src/index.ts`](../../packages/
 
 ### `ctx.developmentTaskContextAdmission` — `DevelopmentTaskContextAdmissionCapability`
 
-Live Task injector instance; unloading permanently aborts its signal and removes the service.
+Task injector lifetimes selected by exact registered Agent and listener scope.
+
+```ts cordis-catalog
+/**
+ * Select the lifecycle of the injector that handles this Agent's admission.
+ * @param agent - exact registered Agent whose pre-step needs Task admission.
+ * @returns the injector signal, permanently aborted on unload, or undefined outside its registry or listener scope.
+ */
+signalFor(agent: Agent): AbortSignal | undefined
+```
+
+Types: [Agent](core.zh.md)
 
 Source: [`packages/collaboration/development-task-context/src/admission.ts`](../../packages/collaboration/development-task-context/src/admission.ts)
 
@@ -3656,6 +3646,13 @@ revokeObservedArtifact(request: DevelopmentTaskRevokeObservedArtifactRequest): P
  * @returns detached assignments ordered by participant identity.
  */
 assignmentList(): readonly DevelopmentTaskAssignment[]
+
+/**
+ * Read the most recently bound retained assignment, independently of timestamps and acknowledgements.
+ * @param participantId - participant whose retained bindings are considered.
+ * @returns frozen latest assignment still owned by the participant, or undefined when unbound.
+ */
+latestAssignment(participantId: DevelopmentParticipantId): DevelopmentTaskAssignment | undefined
 
 /**
  * Bind one local online Agent session to a Task, then reconcile Rooms.
@@ -4235,28 +4232,6 @@ A locally observed session's durable management state changed after commit.
 
 Source: [`packages/collaboration/claude-scope/src/types.ts`](../../packages/collaboration/claude-scope/src/types.ts)
 
-<a id="development-evidence-events"></a>
-
-### `development-evidence/*` events
-
-<a id="development-evidenceprovider-changed--emit"></a>
-
-#### `development-evidence/provider-changed` — emit
-
-One evidence provider entered or left the runtime registry.
-
-```ts cordis-catalog
-/**
- * One evidence provider entered or left the runtime registry.
- * @param provider - stable provider identity and display label.
- * @param state - whether the provider is now registered or unregistered.
- * @mode emit
- */
-'development-evidence/provider-changed'( provider: DevelopmentEvidenceProviderRegistration, state: 'registered' | 'unregistered', ): void
-```
-
-Source: [`packages/collaboration/development-evidence/src/types.ts`](../../packages/collaboration/development-evidence/src/types.ts)
-
 <a id="development-mesh-events"></a>
 
 ### `development-mesh/*` events
@@ -4495,12 +4470,13 @@ Source: [`packages/collaboration/development-task/src/types.ts`](../../packages/
 
 #### `development-task-context/admit` — waterfall
 
-Delegate Task admission to one managed local receiver; unhandled requests use passive injection. A managing listener owns the decision without calling next; other listeners must delegate.
+Delegate complete context admission; unhandled requests use passive Task injection. Local receivers own Task computation; remote-only receivers compose after next returns. The Task owner rechecks passive input after delegates return and owns failure restoration.
 
 ```ts cordis-catalog
 /**
- * Delegate Task admission to one managed local receiver; unhandled requests use passive injection.
- * A managing listener owns the decision without calling next; other listeners must delegate.
+ * Delegate complete context admission; unhandled requests use passive Task injection.
+ * Local receivers own Task computation; remote-only receivers compose after next returns.
+ * The Task owner rechecks passive input after delegates return and owns failure restoration.
  * @param input - actual claims, accepted pre-step decision, Agent, and cancellation.
  * @param next - continue to another listener or the original passive Task consumer.
  * @mode waterfall

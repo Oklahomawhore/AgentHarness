@@ -81,6 +81,10 @@
     "@deepseek-ai/dsh-development-room": "workspace:^",
     "@deepseek-ai/dsh-development-task-context": "workspace:^",
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^"
+    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^",
+    "@deepseek-ai/dsh-session-projection-cache": "workspace:^",
+    "@deepseek-ai/dsh-storage": "workspace:^",
+    "@deepseek-ai/dsh-storage-json": "workspace:^",
+    "@deepseek-ai/dsh-storage-domain": "workspace:^"
   }
 }

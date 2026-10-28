@@ -1,6 +1,6 @@
 /** Original-capture attribution belongs to an explicit adoption interval, never a peer-wide identity. */
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { peerContributionGrantSchema } from '@deepseek-ai/dsh-development-task/schema'
 import { activationSchema, invitationSchema, originalCaptureSchema, projectionDigest, projectionSchema } from '@deepseek-ai/dsh-scope-access/schema'
@@ -9,6 +9,12 @@ import { routeEventSchema } from '../src/route.ts'
 import { contextSourceSchema, initialState, scopeAgentProjection, stateSchema } from '../src/state.ts'
 import { snapshotMessage } from '../src/messages.ts'
 import { completedMatches, evaluationSchema, goalDigest, requestEvidenceSchema } from '../src/evidence.ts'
+import { readLocalTaskContext } from '@deepseek-ai/dsh-development-task-context/local'
+import type { DevelopmentParticipantId } from '@deepseek-ai/dsh-development-task/types'
+import { compositeProjection } from '../src/composite.ts'
+import { cleanup, host } from '../../scope-access/tests/helpers.ts'
+
+afterEach(cleanup)
 import { blocksCurrentCoverage } from '../src/coverage.ts'
 import type { ScopeAccessCaptureProjection } from '@deepseek-ai/dsh-scope-access/types'
 import type { ScopeAgentActivationId, ScopeAgentCompletedEvidence } from '../src/types.ts'
@@ -51,6 +57,24 @@ function projection(): ScopeAccessCaptureProjection {
 }
 
 describe('capture-aware durable receiving', () => {
+  it.each(['left-bound', 'enabled-without-policy', 'pending-binding', 'pending-without-policy', 'unspent-pending'] as const)(
+    'rejects inconsistent scheduling fields at the durable parser: %s', (change) => {
+      const state = adopt(fixture())
+      if (state.binding === null) throw new Error('fixture must retain its adopted binding')
+      const input = { ...state, mode: 'enabled', automatic: { goal: 'Review shared work', activationLimit: 2,
+        maxStepsPerTurn: 2, minIntervalMs: 0 }, usedBudget: 1,
+      pendingActivation: { id: randomUUID(), bindingId: state.binding.id } }
+      expect(stateSchema.safeParse(JSON.parse(JSON.stringify(input))).success).toBe(true)
+      const altered = change === 'left-bound' ? { ...input, mode: 'left', pendingActivation: null }
+        : change === 'enabled-without-policy' ? { ...input, automatic: null, pendingActivation: null }
+          : change === 'pending-binding' ? { ...input, pendingActivation: { ...input.pendingActivation, bindingId: randomUUID() } }
+            : change === 'pending-without-policy' ? { ...input, mode: 'paused', automatic: null } : { ...input, usedBudget: 0 }
+      const result = stateSchema.safeParse(JSON.parse(JSON.stringify(altered)))
+      if (result.success) throw new Error('inconsistent persisted scheduling fields were accepted')
+      expect(result.error.issues.map(issue => issue.message)).toEqual(['native scope binding and scheduling state disagree'])
+    },
+  )
+
   it('keeps v1-v3 plans strict and requires an explicit kind plus capture subscription in v4', () => {
     const { plan } = fixture()
     for (const version of [1, 2, 3]) expect(joinReadEventSchema.safeParse({ ...plan, version }).success).toBe(false)
@@ -113,6 +137,26 @@ describe('capture-aware durable receiving', () => {
 })
 
 describe('capture-aware request evidence', () => {
+  it('requires both request anchors for capture-aware combined evidence before history validation', async () => {
+    const local = await host('combined-evidence-schema')
+    const task = await local.createTask('Existing local responsibility')
+    const participantId = `schema-agent-${randomUUID()}` as DevelopmentParticipantId
+    await local.ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Local recipient' })
+    const { assignment } = await local.tasks.checkout({ taskId: task.id, participantId })
+    const epoch = local.tasks.assignmentLog().at(-1)
+    if (epoch === undefined) throw new Error('actual local assignment epoch is missing')
+    const read = await readLocalTaskContext(local.ctx, { taskId: task.id, participantId,
+      taskBindingId: assignment.bindingId, bindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } },
+    4000, new AbortController().signal)
+    if (read.status !== 'active') throw new Error('actual local projection is missing')
+    const combined = compositeProjection(read.projection, projection(), 8000)
+    const request = { version: 4, turn: 1, step: 1, bindingId: randomUUID(), activationId: randomUUID(),
+      goalDigest: goalDigest('Maintain local work'), projection: combined, contextSeq: 1, localContextSeq: 2, maxContextBytes: 8000 }
+    expect(requestEvidenceSchema.parse(request)).toMatchObject({ projection: combined, contextSeq: 1, localContextSeq: 2 })
+    expect(requestEvidenceSchema.safeParse({ ...request, localContextSeq: undefined }).success).toBe(false)
+    expect(requestEvidenceSchema.safeParse({ ...request, projection: read.projection }).success).toBe(false)
+  })
+
   it('requires matching adopted attribution and a new snapshot version', () => {
     const state = adopt(fixture())
     if (state.binding === null || state.binding.kind === 'local-task') throw new Error('Missing captured binding')

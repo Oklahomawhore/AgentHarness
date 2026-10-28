@@ -218,9 +218,6 @@ flowchart LR
   pkg_dev_workbench["dev-workbench"]
   svc_devWorkbench["ctx.devWorkbench<br/>Profile-configured development task control"]
   pkg_api_remotes["api-remotes"]
-  pkg_development_evidence["development-evidence"]
-  svc_developmentEvidence["ctx.developmentEvidence<br/>Bounded development evidence retrieval"]
-  pkg_development_evidence_reviewed_file["development-evidence-reviewed-file"]
   pkg_mcp["mcp"]
   svc_mcp["ctx.mcp<br/>Host-side MCP call seam"]
   pkg_mcp_client["mcp-client"]
@@ -304,8 +301,6 @@ flowchart LR
   pkg_credentials_local --> svc_credentials
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
   pkg_dev_workbench --> svc_devWorkbench
-  pkg_development_evidence --> svc_developmentEvidence
-  pkg_development_evidence_reviewed_file --> svc_developmentEvidence
   pkg_development_mesh --> svc_developmentMesh
   pkg_development_mesh_websocket --> svc_developmentMesh
   pkg_development_room --> svc_developmentRooms
@@ -652,7 +647,6 @@ flowchart LR
 | `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse) | [`api-workspace-controller`](../packages/api/workspace-controller) | - | 带判别标记的交互能力：原生后端在 Host 显示设备上打开一个操作系统选择器，浏览后端为应用内浏览器提供列表与创建原语；双端后端通过其浏览器侧填充 ui-workspace 目录流程的 slot（不通过协议发布）。 |
 | `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`client-hmr`](../packages/client/hmr) | - | 普通的 node:http 载体：具名路由注册表、索引转换 tap，以及静态 dist 回退；Web 传输插件注册自己的路由。 |
 | `ctx.devWorkbench` | `core` | `dev-workbench` | - | [`api-remotes`](../packages/api/remotes) | - | Owns configured local process trees, bounded output snapshots, and browser-view metadata; deployment profiles provide repository commands and URLs. |
-| `ctx.developmentEvidence` | `seam` | [`development-evidence`](../packages/collaboration/development-evidence) | [`development-evidence-reviewed-file`](../packages/collaboration/development-evidence-reviewed-file) | - | - | Queries independent enterprise, project, and operational providers while preserving available, empty, denied, and failed outcomes; retrieval alone changes no room or Session state. |
 | `ctx.mcp` | `seam` | [`mcp`](../packages/mcp/mcp) | [`mcp-client`](../packages/mcp/mcp-client) | `agentharness-evidence-gitee-issue` | - | Publishes only connected MCP client generations for trusted Host Consumers; direct calls retain JSON protocol content and bypass model ToolRuntime presentation and approval behavior. |
 | `ctx.mcpClientSetup` | `core` | `mcp-client-setup` | - | [`api-remotes`](../packages/api/remotes) | - | Detects supported local AI clients, performs conflict-safe registration where a stable unattended mechanism exists, and reports each independent setup outcome. |
 | `ctx.developmentRooms` | `core` | [`development-room`](../packages/collaboration/development-room) | - | [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain), [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task`](../packages/collaboration/development-task), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | 拥有 Task 分配使用的协作者名册和仅追加 Room 成员关系；独立插件投影 Agent 在线状态、持久化本地日志，并通过通用 Mesh 复制日志。 |

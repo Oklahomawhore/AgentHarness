@@ -936,31 +936,6 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
-    key: 'developmentEvidence',
-    summary: 'Service Definition for explicit, source-attributed development evidence retrieval.',
-    description: 'Service Definition for explicit, source-attributed development evidence retrieval.',
-    methods: [
-      {
-        signature: 'registerProvider(provider: DevelopmentEvidenceProvider): () => void',
-        description: 'Register one provider for its plugin lifetime.',
-        parameters: [{ name: 'provider', description: 'unique provider implementation.' }],
-        returns: 'disposer that unregisters the provider.',
-      },
-      {
-        signature: 'listProviders(): readonly DevelopmentEvidenceProviderRegistration[]',
-        description: 'Read the current provider directory in deterministic order.',
-        parameters: [],
-        returns: 'detached provider registrations sorted by id.',
-      },
-      {
-        signature: 'async query(request: DevelopmentEvidenceQueryRequest, signal?: AbortSignal): Promise<DevelopmentEvidenceQuerySnapshot>',
-        description: 'Query every selected provider while preserving empty, denied, and failed outcomes.',
-        parameters: [{ name: 'request', description: 'query, optional provider allowlist, and optional per-provider limit.' }, { name: 'signal', description: 'optional caller cancellation.' }],
-        returns: 'deterministic provider results with all citation fields bounded.',
-      },
-    ],
-  },
-  {
     key: 'developmentMesh',
     summary: 'Provider-neutral registry and transport operations for development channels.',
     description: 'Provider-neutral registry and transport operations for development channels.',
@@ -1172,9 +1147,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'developmentTaskContextAdmission',
-    summary: 'Live Task injector instance; unloading permanently aborts its signal and removes the service.',
-    description: 'Live Task injector instance; unloading permanently aborts its signal and removes the service.',
-    methods: [],
+    summary: 'Task injector lifetimes selected by exact registered Agent and listener scope.',
+    description: 'Task injector lifetimes selected by exact registered Agent and listener scope.',
+    methods: [
+      {
+        signature: 'signalFor(agent: Agent): AbortSignal | undefined',
+        description: 'Select the lifecycle of the injector that handles this Agent\'s admission.',
+        parameters: [{ name: 'agent', description: 'exact registered Agent whose pre-step needs Task admission.' }],
+        returns: 'the injector signal, permanently aborted on unload, or undefined outside its registry or listener scope.',
+      },
+    ],
   },
   {
     key: 'developmentTaskContextBackend',
@@ -1363,6 +1345,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read all current Agent assignments.',
         parameters: [],
         returns: 'detached assignments ordered by participant identity.',
+      },
+      {
+        signature: 'latestAssignment(participantId: DevelopmentParticipantId): DevelopmentTaskAssignment | undefined',
+        description: 'Read the most recently bound retained assignment, independently of timestamps and acknowledgements.',
+        parameters: [{ name: 'participantId', description: 'participant whose retained bindings are considered.' }],
+        returns: 'frozen latest assignment still owned by the participant, or undefined when unbound.',
       },
       {
         signature: 'checkout(request: DevelopmentTaskCheckoutRequest): Promise<DevelopmentTaskCheckoutResult>',
@@ -4350,14 +4338,6 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'ref', description: 'the reference whose stored value changed.' }],
   },
   {
-    name: 'development-evidence/provider-changed',
-    mode: 'emit',
-    signature: '\'development-evidence/provider-changed\'( provider: DevelopmentEvidenceProviderRegistration, state: \'registered\' | \'unregistered\', ): void',
-    summary: 'One evidence provider entered or left the runtime registry.',
-    description: 'One evidence provider entered or left the runtime registry.',
-    parameters: [{ name: 'provider', description: 'stable provider identity and display label.' }, { name: 'state', description: 'whether the provider is now registered or unregistered.' }],
-  },
-  {
     name: 'development-mesh/channel-registered',
     mode: 'emit',
     signature: '\'development-mesh/channel-registered\'(name: string): void',
@@ -4417,8 +4397,8 @@ export const EVENT_API: readonly EventApiEntry[] = [
     name: 'development-task-context/admit',
     mode: 'waterfall',
     signature: '\'development-task-context/admit\'(input: DevelopmentTaskContextAdmission, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>',
-    summary: 'Delegate Task admission to one managed local receiver; unhandled requests use passive injection.',
-    description: 'Delegate Task admission to one managed local receiver; unhandled requests use passive injection. A managing listener owns the decision without calling next; other listeners must delegate.',
+    summary: 'Delegate complete context admission; unhandled requests use passive Task injection.',
+    description: 'Delegate complete context admission; unhandled requests use passive Task injection. Local receivers own Task computation; remote-only receivers compose after next returns. The Task owner rechecks passive input after delegates return and owns failure restoration.',
     parameters: [{ name: 'input', description: 'actual claims, accepted pre-step decision, Agent, and cancellation.' }, { name: 'next', description: 'continue to another listener or the original passive Task consumer.' }],
   },
   {
@@ -5446,46 +5426,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type DeepSeekLlmApiJson = null | boolean | number | string | DeepSeekLlmApiJson[] | {\n    [key: string]: DeepSeekLlmApiJson;\n};',
   },
   {
-    name: 'DevelopmentEvidenceItem',
-    declaration: 'export interface DevelopmentEvidenceItem {\n    readonly id: DevelopmentEvidenceItemId;\n    readonly title: string;\n    readonly summary: string;\n    readonly source: string;\n    readonly revision: string;\n    readonly tags?: readonly string[];\n}',
-  },
-  {
-    name: 'DevelopmentEvidenceItemId',
-    declaration: 'export type DevelopmentEvidenceItemId = Branded<\'DevelopmentEvidenceItemId\'>;',
-  },
-  {
-    name: 'DevelopmentEvidenceProvider',
-    declaration: 'export interface DevelopmentEvidenceProvider {\n    readonly id: DevelopmentEvidenceProviderId;\n    readonly label: string;\n    query(request: DevelopmentEvidenceProviderQuery, signal: AbortSignal): Promise<DevelopmentEvidenceProviderOutcome>;\n}',
-  },
-  {
-    name: 'DevelopmentEvidenceProviderId',
-    declaration: 'export type DevelopmentEvidenceProviderId = Branded<\'DevelopmentEvidenceProviderId\'>;',
-  },
-  {
-    name: 'DevelopmentEvidenceProviderOutcome',
-    declaration: 'export type DevelopmentEvidenceProviderOutcome = {\n    readonly status: \'available\';\n    readonly items: readonly DevelopmentEvidenceItem[];\n} | {\n    readonly status: \'empty\';\n} | {\n    readonly status: \'denied\';\n    readonly reason: string;\n} | {\n    readonly status: \'failed\';\n    readonly reason: string;\n    readonly retryable: boolean;\n};',
-  },
-  {
-    name: 'DevelopmentEvidenceProviderQuery',
-    declaration: 'export interface DevelopmentEvidenceProviderQuery {\n    readonly query: string;\n    readonly limit: number;\n}',
-  },
-  {
-    name: 'DevelopmentEvidenceProviderRegistration',
-    declaration: 'export interface DevelopmentEvidenceProviderRegistration {\n    readonly id: DevelopmentEvidenceProviderId;\n    readonly label: string;\n}',
-  },
-  {
-    name: 'DevelopmentEvidenceProviderSnapshot',
-    declaration: 'export type DevelopmentEvidenceProviderSnapshot = {\n    readonly providerId: DevelopmentEvidenceProviderId;\n    readonly label: string;\n    readonly status: \'available\';\n    readonly items: readonly DevelopmentEvidenceItem[];\n} | {\n    readonly providerId: DevelopmentEvidenceProviderId;\n    readonly label: string;\n    readonly status: \'empty\';\n} | {\n    readonly providerId: DevelopmentEvidenceProviderId;\n    readonly label: string;\n    readonly status: \'denied\';\n    readonly reason: string;\n} | {\n    readonly providerId: DevelopmentEvidenceProviderId;\n    readonly label: string;\n    readonly status: \'failed\';\n    readonly reason: string;\n    readonly retryable: boolean;\n};',
-  },
-  {
-    name: 'DevelopmentEvidenceQueryRequest',
-    declaration: 'export interface DevelopmentEvidenceQueryRequest {\n    readonly query: string;\n    readonly providerIds?: readonly DevelopmentEvidenceProviderId[];\n    readonly limit?: number;\n}',
-  },
-  {
-    name: 'DevelopmentEvidenceQuerySnapshot',
-    declaration: 'export interface DevelopmentEvidenceQuerySnapshot {\n    readonly query: string;\n    readonly providers: readonly DevelopmentEvidenceProviderSnapshot[];\n}',
-  },
-  {
     name: 'DevelopmentMeshChannel',
     declaration: 'export interface DevelopmentMeshChannel {\n    heads(): DevelopmentMeshHeads | Promise<DevelopmentMeshHeads>;\n    read(after: DevelopmentMeshHeads): readonly unknown[] | Promise<readonly unknown[]>;\n    receive(events: readonly unknown[], sourceNodeId: DevelopmentNodeId): void | Promise<void>;\n    command?(payload: unknown, sourceNodeId: DevelopmentNodeId): unknown;\n    peerOffline?(nodeId: DevelopmentNodeId): void | Promise<void>;\n}',
   },
@@ -5703,7 +5643,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DevelopmentTaskContextAdmission',
-    declaration: 'export interface DevelopmentTaskContextAdmission {\n    readonly agent: Agent;\n    readonly decision: Extract<PreStepDecision, {\n        kind: \'enter\';\n    }>;\n    readonly claimed: readonly UserMessage[];\n    readonly turn: number;\n    readonly step: number;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface DevelopmentTaskContextAdmission {\n    readonly agent: Agent;\n    readonly decision: Extract<PreStepDecision, {\n        kind: \'enter\';\n    }>;\n    readonly claimed: readonly UserMessage[];\n    readonly turn: number;\n    readonly step: number;\n    readonly signal: AbortSignal;\n    retainInput(messages: readonly UserMessage[]): void;\n}',
   },
   {
     name: 'DevelopmentTaskContextBlock',

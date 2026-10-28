@@ -10,16 +10,22 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
+import { localContributionGrantSchema, localContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
+import type { DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
 import * as TaskContext from '@deepseek-ai/dsh-development-task-context'
 import { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import { contributionProposalSchema } from '@deepseek-ai/dsh-scope-access/schema'
+import type { ScopeContributionSample } from '@deepseek-ai/dsh-scope-access/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, host, peer } from '../../scope-access/tests/helpers.ts'
 import ScopeAgentContext from '../src/index.ts'
+import { readComposite } from '../src/composite.ts'
 import { validateHistory, scopeContextFramingBytes } from '../src/messages.ts'
 import { scopeAgentActivitySchema } from '../src/activity.ts'
+import { requestEvidenceSchema } from '../src/evidence.ts'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentLocalTaskTarget, ScopeAgentJoinReadId } from '../src/types.ts'
 
 const directories: string[] = []
@@ -106,6 +112,122 @@ function texts(request: GenerateOptions) {
     (message.source.kind === 'scope-agent-context' || message.source.kind === 'development-task-context'))
     .flatMap(message => message.content).flatMap(block => block.type === 'text' ? [block.text] : [])
 }
+
+it.each(['before-local', 'after-remote'] as const)('ends a combined read when scheduling authority is withdrawn %s', async (stage) => {
+  const f = await fixture()
+  const { binding } = await f.bind()
+  if (binding?.kind !== 'local-task-scope') throw new Error('Expected combined receiving')
+  let current = stage !== 'before-local'
+  const compute = vi.spyOn(f.local.backend, 'compute')
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
+  const remote = vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementation(async (...args) => {
+    const result = await retrieve(...args)
+    current = false
+    return result
+  })
+  const result = await readComposite(f.ctx, binding, 8000, 4000, new AbortController().signal, () => current)
+  expect(result).toEqual({ status: 'left' })
+  expect(compute).toHaveBeenCalledTimes(stage === 'before-local' ? 0 : 1)
+  expect(remote).toHaveBeenCalledTimes(stage === 'before-local' ? 0 : 1)
+  expect(f.adapter.requests).toHaveLength(0)
+})
+
+it('ends a combined read when its local assignment leaves during computation, before querying the peer', async () => {
+  const f = await fixture()
+  const { binding } = await f.bind()
+  if (binding?.kind !== 'local-task-scope') throw new Error('Expected combined receiving')
+  const compute = f.local.backend.compute.bind(f.local.backend)
+  vi.spyOn(f.local.backend, 'compute').mockImplementationOnce(async (input) => {
+    await f.local.tasks.clear({ bindingId: f.target.taskBindingId,
+      participantId: developmentAgentParticipantId(f.agent.id), expectedBindingEpoch: f.target.expectedBindingEpoch })
+    return await compute(input)
+  })
+  const remote = vi.spyOn(f.local.access, 'retrieveWithinBudget')
+  const result = await readComposite(f.ctx, binding, 8000, 4000, new AbortController().signal,
+    () => f.local.tasks.latestAssignment(developmentAgentParticipantId(f.agent.id))?.bindingId === f.target.taskBindingId)
+  expect(result).toEqual({ status: 'left' })
+  expect(remote).not.toHaveBeenCalled()
+  expect(f.adapter.requests).toHaveLength(0)
+})
+
+it('rejects a remote projection that expires before the combined read returns', async () => {
+  const f = await fixture()
+  const { binding } = await f.bind()
+  if (binding?.kind !== 'local-task-scope') throw new Error('Expected combined receiving')
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
+  const clock = vi.spyOn(Date, 'now')
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementationOnce(async (...args) => {
+    const result = await retrieve(...args)
+    if (result.status !== 'active') throw new Error('Expected a current remote projection')
+    clock.mockReturnValue(result.projection.expiresAt)
+    return result
+  })
+  try {
+    expect(await readComposite(f.ctx, binding, 8000, 4000, new AbortController().signal, () => true))
+      .toEqual({ status: 'expired' })
+    expect(f.adapter.requests).toHaveLength(0)
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+it.each(['local', 'peer'] as const)('recomputes a %s contribution that expires while the peer read is pending', async (kind) => {
+  const f = await fixture()
+  const expiresAt = Date.now() + 10000
+  const sample: ScopeContributionSample = { sourceId: '1'.repeat(64) as DevelopmentTaskObservedSourceId, sequence: 1,
+    result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'success',
+      fields: { rootIndex: 0, path: 'local.ts', content: 'EXPIRING_LOCAL_FACT' }, omissions: [] } }
+  let expectEnded: () => Promise<void>
+  if (kind === 'local') {
+    const author = developmentAgentParticipantId(SessionId(randomUUID()))
+    await f.ctx.developmentRooms.announce({ id: author, kind: 'agent', displayName: 'Independent local contributor' })
+    const checked = await f.local.tasks.checkout({ taskId: f.task.id, participantId: author })
+    const epoch = f.local.tasks.assignmentLog().at(-1)!
+    const grant = localContributionGrantSchema.parse({ version: 1, taskId: f.task.id, participantId: author,
+      bindingId: checked.assignment.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq },
+      captureId: randomUUID(), captureGeneration: randomUUID(),
+      source: { kind: 'tool-observations', name: 'Expiring local implementation', tools: ['Write'] },
+      expiresAt, maxSamples: 2, maxSampleBytes: 4096 })
+    await f.local.tasks.openLocalContribution(grant)
+    await f.local.tasks.admitLocalContribution(localContributionRequestSchema.parse({ grant, ...sample }))
+    expectEnded = async () => { await expect(f.local.tasks.localContributionStatus({ grant })).resolves.toMatchObject({ state: 'ended' }) }
+  } else {
+    const proposal = contributionProposalSchema.parse({ contributorPeerId: f.remote.transport.peerId,
+      captureId: randomUUID(), captureGeneration: randomUUID(),
+      source: { kind: 'tool-observations', name: 'Expiring peer implementation', tools: ['Write'] } })
+    const { invitation } = await f.local.access.approveContribution({ taskId: f.task.id, proposal,
+      ownerAddress: (await f.local.access.identity()).addresses[0]!, expiresAt, maxSamples: 2, maxSampleBytes: 4096 })
+    await expect(f.remote.access.contribute({ invitation, sample }, new AbortController().signal))
+      .resolves.toMatchObject({ status: 'accepted' })
+    expectEnded = async () => {
+      await expect(f.remote.access.contributionStatus({ invitation }, new AbortController().signal))
+        .resolves.toMatchObject({ status: 'ended', reason: 'expired' })
+    }
+  }
+  const { binding } = await f.bind()
+  if (binding?.kind !== 'local-task-scope') throw new Error('Expected combined receiving')
+  const compute = vi.spyOn(f.local.backend, 'compute')
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
+  const clock = vi.spyOn(Date, 'now')
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementationOnce(async (...args) => {
+    const result = await retrieve(...args)
+    clock.mockReturnValue(expiresAt)
+    return result
+  })
+  try {
+    const result = await readComposite(f.ctx, binding, 8000, 4000, new AbortController().signal, () => true)
+    if (result.status !== 'active') throw new Error('Expected current combined context after local expiry')
+    const initial = await (compute.mock.results[0]!.value as ReturnType<typeof f.local.backend.compute>)
+    expect(initial.text).toContain('EXPIRING_LOCAL_FACT')
+    expect(result.projection.local.text).not.toContain('EXPIRING_LOCAL_FACT')
+    expect(result.projection.local.text).toContain('LOCAL_INITIAL')
+    expect(result.projection.remote.text).toContain('REMOTE_INITIAL')
+    expect(compute).toHaveBeenCalledTimes(2)
+    await expectEnded()
+  } finally {
+    clock.mockRestore()
+  }
+})
 
 it.each([false, true])('retains ordinary history, both exact contexts and one total byte budget with reverse order=%s', async (reverse) => {
   const f = await fixture(8000, reverse)
@@ -223,6 +345,13 @@ it('logs both actual request anchors and lets either Task revision break the com
   expect(detached.deriveMessages()).toEqual(f.agent.session.deriveMessages())
   expect(validateHistory({ ...f.agent, session: detached })).toEqual((await f.status()).state)
   const latest = requests.at(-1)!
+  expect(requestEvidenceSchema.safeParse({ ...latest.data, localContextSeq: undefined }).success).toBe(false)
+  const evaluation = events.findLast(event => event.type === 'scope-agent-context/evaluation' && event.seq < latest.seq)
+  if (evaluation === undefined) throw new Error('actual preceding evaluation is missing')
+  const wrongLocalAnchor = events.map(event => event === latest
+    ? { ...latest, data: { ...latest.data, localContextSeq: evaluation.seq } } : event)
+  expect(() => validateHistory({ ...f.agent, session: Session.create(f.agent.id, wrongLocalAnchor, f.agent.session.header) }))
+    .toThrow('both exact')
   const tampered = events.map(event => event === latest
     ? { ...event, data: { ...latest.data, localContextSeq: latest.data.contextSeq } } : event)
   expect(() => validateHistory({ ...f.agent, session: Session.create(f.agent.id, tampered, f.agent.session.header) })).toThrow('both exact')
@@ -232,6 +361,15 @@ it('logs both actual request anchors and lets either Task revision break the com
   const changedText = events.map(event => event.seq === latest.data.localContextSeq && event.type === 'user/message'
     ? { ...event, data: { ...event.data, content: [{ type: 'text' as const, text: 'FORGED_LOCAL_CONTEXT' }] } } : event)
   expect(() => validateHistory({ ...f.agent, session: Session.create(f.agent.id, changedText, f.agent.session.header) })).toThrow('both exact')
+  const missingContext = events.map(event => event === latest
+    ? { ...event, data: { ...latest.data, contextSeq: SessionSeq(events.length + 10) } } : event)
+  expect(() => validateHistory({ ...f.agent, session: Session.create(f.agent.id, missingContext, f.agent.session.header) })).toThrow('both exact')
+  for (const field of ['taskRevision', 'maxContextBytes'] as const) {
+    const changedProjection = events.map(event => event === latest ? { ...event, data: { ...latest.data,
+      projection: { ...latest.data.projection, [field]: latest.data.projection[field] + 1 } } } : event)
+    expect(() => validateHistory({ ...f.agent, session: Session.create(f.agent.id, changedProjection, f.agent.session.header) }))
+      .toThrow('combined projection identity differs from its exact inputs')
+  }
 })
 
 it('rechecks remote revocation after a slow local compute and preserves fresh local facts for ordinary work', async () => {
@@ -254,6 +392,40 @@ it('rechecks remote revocation after a slow local compute and preserves fresh lo
   expect(context).toContain('withdrawn')
   expect(context).not.toContain('REMOTE_INITIAL')
   expect((await f.status()).localTask).toEqual(f.target)
+})
+
+it('withdraws a remote projection that expires after retrieval while retaining ordinary local work', async () => {
+  const f = await fixture()
+  await f.bind()
+  const entered = barrier(), release = barrier()
+  const retrieve = f.local.access.retrieveWithinBudget.bind(f.local.access)
+  let expiresAt: number | undefined
+  vi.spyOn(f.local.access, 'retrieveWithinBudget').mockImplementationOnce(async (request, signal) => {
+    const result = await retrieve(request, signal)
+    if (result.status === 'active') expiresAt = result.projection.expiresAt
+    entered.resolve(undefined)
+    await release.promise
+    return result
+  })
+  const clock = vi.spyOn(Date, 'now')
+  const running = f.run()
+  const settled = Promise.allSettled([running])
+  try {
+    await entered.promise
+    expect(expiresAt).toBe(f.invitation.expiresAt)
+    clock.mockReturnValue(f.invitation.expiresAt)
+    release.resolve(undefined)
+    const request = await running
+    expect(texts(request).join('\n')).toContain('LOCAL_INITIAL')
+    expect(texts(request).join('\n')).not.toContain('REMOTE_INITIAL')
+    expect(request.messages.find(message => message.role === 'user' && message.source.kind === 'scope-agent-context'))
+      .toMatchObject({ source: { form: 'withdrawn', reason: 'expired' } })
+    expect((await f.status()).localTask).toEqual(f.target)
+  } finally {
+    clock.mockRestore()
+    release.resolve(undefined)
+    await settled
+  }
 })
 
 it.each(['remote departure', 'route replacement'] as const)('reads current facts for the original user request when %s interrupts local recovery', async (change) => {
@@ -320,7 +492,7 @@ it('retains the undispatched user claim once when the scope consumer is disposed
   const disposing = entry.fiber!.dispose()
   await aborted.promise
   expect(f.ctx.agents.get(f.agent.id)).toBe(f.agent)
-  expect(f.ctx.developmentTaskContextAdmission.signal.aborted).toBe(false)
+  expect(f.ctx.developmentTaskContextAdmission.signalFor(f.agent)!.aborted).toBe(false)
   release.resolve(undefined)
   await disposing
   await f.agent.whenIdle()
@@ -440,7 +612,7 @@ it('counts final UTF-8 bytes at exact fit and blocks one byte below the complete
   expect((await short.status()).state.usedBudget).toBe(0)
 })
 
-it('includes withdrawal framing for additional owned nodes in the total automatic budget', async () => {
+it('retires duplicate local and remote nodes before applying the complete automatic budget', async () => {
   const sample = await fixture()
   await sample.bind()
   const limit = texts(await sample.run()).reduce((sum, text) => sum + Buffer.byteLength(text), 0) + 20
@@ -459,11 +631,12 @@ it('includes withdrawal framing for additional owned nodes in the total automati
     }), { surfaceOp: 'append' })
   })
   await f.ctx.scopeAgentContext.resume({ agentId: f.agent.id, expectedBindingId: bound.binding!.id, automatic })
-  await expect.poll(async () => (await f.status()).state.mode).toBe('paused')
-  expect(f.adapter.requests).toHaveLength(1)
-  expect((await f.status()).state.usedBudget).toBe(0)
+  await expect.poll(() => f.adapter.requests.length).toBe(2)
+  await f.agent.whenIdle()
+  expect((await f.status()).state.mode).toBe('enabled')
+  expect((await f.status()).state.usedBudget).toBe(1)
   const context = texts(await f.run())
-  expect(context).toHaveLength(4)
+  expect(context).toHaveLength(2)
   expect(context.reduce((sum, text) => sum + Buffer.byteLength(text), 0)).toBeLessThanOrEqual(limit)
 })
 
@@ -471,7 +644,7 @@ it('replaces the owned local lifecycle listener when the remote route restarts i
   const f = await fixture(8000, false, true)
   const bound = await f.bind()
   await f.run()
-  const signal = f.ctx.developmentTaskContextAdmission.signal
+  const signal = f.ctx.developmentTaskContextAdmission.signalFor(f.agent)!
   const listeners = getEventListeners(signal, 'abort').length
   for (const port of [2, 3]) {
     await f.ctx.scopeAgentContext.updateRoute({ agentId: f.agent.id, expectedBindingId: bound.binding!.id,

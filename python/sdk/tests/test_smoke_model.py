@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import runpy
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -567,3 +568,64 @@ def test_reported_grant_refuses_boolean_versions(location: str) -> None:
     target["version"] = True
     with pytest.raises(AssertionError, match="version|derived publication"):
         SMOKE["expand_reported_grants"](body, "4")
+
+
+@pytest.mark.parametrize("selector", [*SMOKE["SCOPE_SCENARIOS"], "sdk-scope-all"])
+@pytest.mark.parametrize("update", [False, True])
+def test_collaboration_cli_dispatches_every_explicit_and_collective_route(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], selector: str, update: bool,
+) -> None:
+    calls: list[tuple[Path, bool, str]] = []
+
+    def run_scope(executable: Path, update_snapshots: bool, *, scenario: str) -> None:
+        calls.append((executable, update_snapshots, scenario))
+
+    monkeypatch.setitem(SMOKE["main"].__globals__, "smoke_sdk_scope_context", run_scope)
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", selector])
+    with pytest.raises(SystemExit) as missing:
+        SMOKE["main"]()
+    assert missing.value.code == 2
+    assert "--exe is required" in capsys.readouterr().err
+    assert calls == []
+
+    executable = Path(sys.executable).resolve()
+    arguments = ["smoke-python-runtime.py", "--scenario", selector, "--exe", str(executable)]
+    if update:
+        arguments.append("--update-snapshots")
+    monkeypatch.setattr(sys, "argv", arguments)
+    SMOKE["main"]()
+    selectors = list(SMOKE["SCOPE_SCENARIOS"]) if selector == "sdk-scope-all" else [selector]
+    expected = ["scope-context-live" if item == "sdk-scope-context" else item.removeprefix("sdk-")
+                for item in selectors]
+    assert calls == [(executable, update, scenario) for scenario in expected]
+    assert capsys.readouterr().out == f"smoke-python-runtime: {selector} passed\n"
+
+
+def test_collaboration_group_preserves_a_failed_smoke_without_continuing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original = RuntimeError("actual collaboration smoke failed")
+
+    def run_scope(_executable: Path, _update: bool, *, scenario: str) -> None:
+        calls.append(scenario)
+        if len(calls) == 3:
+            raise original
+
+    monkeypatch.setitem(SMOKE["main"].__globals__, "smoke_sdk_scope_context", run_scope)
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", "sdk-scope-all",
+                                     "--exe", sys.executable])
+    with pytest.raises(RuntimeError) as failure:
+        SMOKE["main"]()
+    assert failure.value is original
+    assert calls == list(SMOKE["SCOPE_SCENARIOS"].values())[:3]
+
+
+def test_collaboration_group_does_not_allow_snapshot_updates_for_plain_sdk_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", "sdk-default",
+                                     "--exe", sys.executable, "--update-snapshots"])
+    with pytest.raises(SystemExit) as failure:
+        SMOKE["main"]()
+    assert failure.value.code == 2

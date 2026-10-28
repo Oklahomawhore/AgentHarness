@@ -18,7 +18,7 @@ Status: implemented
 
 **通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。同一不可变事件标识出现冲突内容时会隔离 peer。认证提供节点身份和完整性，不提供传输保密。
 
-**原生与外部 Agent 通过按 Session 隔离的 binding 获得上下文。**原生 Harness Agent 在 `agent/pre-step` 收到可回放的 `user/message` Task 快照。外部 MCP Agent 无法接收编辑器之外的强制上下文推送，因此目标对话调用 `agentharness_task_connect`，保留自己的 binding id，并在后续调用中接收 context delta。同一客户端的多个 Session 可以绑定不同 Task。一个纯浏览器 projection 把安全 MCP 检测、在线状态、binding 和确认状态转换为一个当前状态与一个可执行下一步，不渲染原始诊断或 cluster secret。
+**原生与外部 Agent 通过按 Session 隔离的 binding 获得上下文。**原生 Harness Agent 在 `agent/pre-step` 收到可回放的 `user/message` Task 快照。外部 MCP Agent 无法接收编辑器之外的强制上下文推送，因此目标对话调用 `agentharness_task_connect`，保留自己的 binding id，并在后续调用中接收 context delta。同一客户端的多个 Session 可以绑定不同 Task。一个纯浏览器 projection 把安全 MCP 检测、在线状态、binding 和确认状态转换为一个当前状态与一个可执行下一步，不渲染原始诊断或 cluster secret。 MCP 目录重置会推进连接代际。尚未结束的配置操作仍返回已发送请求的结果，但只有该代际仍为当前值才发布配置；迟到回复不能覆盖重连后正在进行或已经完成的读取。 列表读取还保留开始时的快照身份。较新的成功配置会使该读取的成功和错误发布失效，不取消其他配置操作；已有在途读取仍需结束后才能再次刷新。
 
 **涌现协作中心呈现谱系，而不是聊天。**React Flow 渲染不可变边，Dagre 提供有界从左到右布局，Root/Fork/Merge 表单预览父 Task 上下文。Agent Session 连接是直接可见的重点区域，页头只有一个创建入口，侧栏徽标上限为 `99+`。MCP catalog 只提供 Task，不暴露面向模型的 Room 或 Mission 工具。
 

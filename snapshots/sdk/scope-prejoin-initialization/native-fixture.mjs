@@ -263,7 +263,8 @@ export async function apply(ctx) {
     } else if (turn === 6 && step === 1) {
       await ctx.scopeAgentContributions.leaveJoin({ agentId: b.agent.id, expectedCapture: b.remote.selection })
       await wait('B left remote', async () => (await ctx.scopeAgentContributions.status({ agentId: b.agent.id })).capture === null
-        && state(b).binding?.kind === 'local-task')
+        && state(b).binding?.kind === 'local-task'
+        && (await ctx.scopeAccess.list()).subscriptions.find(item => item.id === b.binding.subscriptionId).state === 'left')
       assert.equal((await ctx.scopeAccess.list()).subscriptions.find(item => item.id === b.binding.subscriptionId).state, 'left')
       await runC('withdrawn')
       assert.ok(!memberC.requests.at(-1).remoteText.includes('B_LIVE_LATEST'))

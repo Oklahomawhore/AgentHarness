@@ -76,7 +76,7 @@ export async function apply(ctx) {
   let localBinding
   let localCapture
   let remoteCapture
-  let originalAssignment
+  let originalAssignments
   let originalAuthority
   let ordinaryHistory
   let jointBinding
@@ -102,7 +102,7 @@ export async function apply(ctx) {
   const state = () => ctx.sessionProjections.stateOf(activeAgent.session, 'scopeAgentContext')
   const localReports = () => ctx.developmentTasks.get({ taskId: task.id }).context.filter(item => item.localToolObservation !== undefined)
   const remoteReports = () => owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).context.filter(item => item.peerToolObservation !== undefined)
-  const assertAssignment = () => assert.deepEqual(ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment), [originalAssignment])
+  const assertAssignment = () => assert.deepEqual(ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment), originalAssignments)
   ctx.on('agent/status', ({ agent, status }) => {
     if (agent !== activeAgent || status !== 'idle') return
     const end = agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
@@ -115,9 +115,6 @@ export async function apply(ctx) {
     } else if (end?.data.turn === 3 && initialApi === undefined) {
       assert.equal(end.data.reason.kind, 'completed')
       initialApi = own(writeApi(1))
-    } else if (end?.data.turn === 4 && correction === undefined) {
-      assert.equal(end.data.reason.kind, 'completed')
-      correction = own(writeApi(2))
     }
   })
   ctx.on('agent/pre-step', async ({ agent, turn, step, messages }, next) => {
@@ -130,11 +127,16 @@ export async function apply(ctx) {
       await ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Existing client Agent' })
       task = await ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'joint-client-human',
         objective: 'Maintain my existing client.', scope: 'Preserve my local responsibility and permission.' })
+      const older = await ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'joint-client-human',
+        objective: 'OLDER_RETAINED_TASK_DO_NOT_ADOPT', scope: 'A separate retained assignment without current consent.' })
+      await ctx.developmentTasks.checkout({ taskId: older.id, participantId, bindingId: 'aa-local-older-binding' })
       await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: 'joint-client-binding' })
       const epoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
       target = { taskId: task.id, taskBindingId: 'joint-client-binding', expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
-      const { acknowledgedRevision, ...assignment } = ctx.developmentTasks.assignmentList()[0]
-      originalAssignment = assignment
+      originalAssignments = ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment)
+      assert.equal(originalAssignments.length, 2)
+      assert.deepEqual((await ctx.scopeAgentContext.status({ agentId: agent.id })).localTask, target)
+      assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).assignment.taskId, task.id)
       await ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null, taskId: task.id,
         bindingId: target.taskBindingId, expectedBindingEpoch: target.expectedBindingEpoch, roots: [root], tools: ['write'], limits })
       await waitUntil('client local capture', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.collecting)
@@ -285,6 +287,7 @@ export async function apply(ctx) {
     assert.equal(local.source.projection.taskBindingId, target.taskBindingId)
     assert.deepEqual(local.source.projection.bindingEpoch, target.expectedBindingEpoch)
     assert.ok(body(local).includes('Maintain my existing client.'))
+    assert.ok(!body(local).includes('OLDER_RETAINED_TASK_DO_NOT_ADOPT'))
     if (currentTurn >= 3 && currentTurn <= 5) {
       assert.equal(visible.length, 2)
       assert.equal(remote.source.form, 'snapshot')
@@ -351,6 +354,10 @@ export async function apply(ctx) {
       assert.equal(requests, 10)
     }
     assertAssignment()
+    if (currentTurn === 4 && currentStep === 2) {
+      correction ??= own(writeApi(2))
+      return (async function* () { await correction; yield* next() })()
+    }
     return next()
   })
 }

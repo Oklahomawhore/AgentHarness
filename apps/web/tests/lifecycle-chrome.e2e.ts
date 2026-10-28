@@ -13,7 +13,7 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type { Browser, Page, WebSocketRoute } from 'playwright'
+import type { Browser, Page, Request, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -341,6 +341,44 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     const sockets: WebSocketRoute[] = []
     let rejectConnections = false
     let holdConnections = false
+    let generationReady = false
+    const workbenchRequests = new Set<Request>()
+    recoveryPage.on('request', (request) => {
+      if (generationReady && request.method() === 'POST'
+        && new URL(request.url()).pathname === '/api/devWorkbench/list') workbenchRequests.add(request)
+    })
+    const readyWire = recoveryPage.waitForEvent('websocket', {
+      predicate: async (socket) => {
+        if (new URL(socket.url()).pathname !== '/api/remote.mux') return false
+        let eventsStream: string | undefined
+        socket.on('framesent', (frame) => {
+          const message = JSON.parse(String(frame.payload)) as { type?: unknown; endpoint?: unknown; streamId?: unknown }
+          if (message.type === 'open' && message.endpoint === '$events' && typeof message.streamId === 'string') {
+            eventsStream = message.streamId
+          }
+        })
+        await socket.waitForEvent('framereceived', {
+          predicate: (frame) => {
+            const message = JSON.parse(String(frame.payload)) as {
+              type?: unknown
+              streamId?: unknown
+              value?: { type?: unknown; clientId?: unknown; host?: { home?: unknown } }
+            }
+            if (message.type !== 'item' || message.streamId !== eventsStream || message.value?.type !== 'ready'
+              || typeof message.value.clientId !== 'string' || typeof message.value.host?.home !== 'string') return false
+            generationReady = true
+            return true
+          },
+          timeout: 30_000,
+        })
+        return true
+      },
+      timeout: 30_000,
+    })
+    const inventoryBaseline = recoveryPage.waitForResponse(response => workbenchRequests.has(response.request()), {
+      timeout: 30_000,
+    })
+    const initialBaseline = Promise.allSettled([readyWire, inventoryBaseline])
     await recoveryPage.routeWebSocket('**/api/remote.mux', (route) => {
       sockets.push(route)
       if (rejectConnections || holdConnections) return
@@ -352,6 +390,14 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await recoveryPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await recoveryPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await expect.poll(() => sockets.length).toBe(1)
+      const [ready, inventory] = await initialBaseline
+      if (ready.status === 'rejected') throw new Error('Initial Host event generation did not become ready', { cause: ready.reason })
+      if (inventory.status === 'rejected') throw new Error('Current Workbench inventory did not complete', { cause: inventory.reason })
+      expect(inventory.value.ok()).toBe(true)
+      const body = await inventory.value.json() as { result?: { ok?: unknown; value?: { entries?: unknown } } }
+      expect(body.result?.ok).toBe(true)
+      expect(body.result?.value?.entries).toEqual([])
+      await recoveryPage.getByRole('button', { name: 'Open development workbench', exact: true }).waitFor({ state: 'hidden' })
       rejectConnections = true
       await recoveryPage.context().setOffline(true)
       await expect.poll(() => recoveryPage.evaluate(() => navigator.onLine)).toBe(false)
@@ -399,7 +445,7 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       expect(await connectionIndicatorGeometry(indicator)).toEqual(connectingGeometry)
       expect(await connectionIndicatorTextAlignment(indicator)).toBe('left')
       await indicator.hover()
-      // The empty workbench inventory settles independently of the connection stream.
+      // Failed connection attempts preserve the established empty workbench inventory.
       await recoveryPage.getByRole('button', { name: 'Open development workbench', exact: true })
         .waitFor({ state: 'hidden' })
       const snapshot = await captureStableAria(recoveryPage, '[class*="footArea"]', scaffold.workspaceCwd)

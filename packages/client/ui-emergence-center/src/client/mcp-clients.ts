@@ -23,11 +23,16 @@ export interface McpClientSetupState extends McpClientSetupSnapshot {
 export interface McpClientSetupDirectory extends HostObservable<McpClientSetupState> {
   refresh(): void
   reset(): void
+  /**
+   * Configure a client and publish its reply only in the connection that sent it.
+   * @param request - selected local client to configure.
+   * @returns the sent operation's result, including after a connection reset.
+   */
   setup(request: McpClientSetupRequest): Promise<McpClientSetupResult>
 }
 
 /**
- * Create one request-deduplicating client setup directory.
+ * Create one request-deduplicating client setup directory whose list replies preserve newer setup results.
  * @param port - Remote MCP client inspection and setup operations.
  * @param onError - observer for refresh failures.
  * @returns observable client setup state and mutation operations.
@@ -43,10 +48,11 @@ export function createMcpClientSetupDirectory(
   const refresh = (): void => {
     if (inFlight !== undefined) return
     const issued = generation
+    const observed = store.getSnapshot()
     inFlight = port.list().then(
-      (next) => { if (issued === generation) store.set({ ...next, read: true }) },
+      (next) => { if (issued === generation && store.getSnapshot() === observed) store.set({ ...next, read: true }) },
       (error: unknown) => {
-        if (issued !== generation) return
+        if (issued !== generation || store.getSnapshot() !== observed) return
         onError(error)
         // Refresh errors belong to each Host directory; participant leases and Task lineage keep
         // separate lifecycles.
@@ -75,8 +81,9 @@ export function createMcpClientSetupDirectory(
       refresh()
     },
     async setup(request) {
+      const issued = generation
       const result = await port.setup(request)
-      replaceClient(result.client)
+      if (issued === generation) replaceClient(result.client)
       return result
     },
   }

@@ -90,6 +90,25 @@ describe('derived-message cache', () => {
 })
 
 describe('Session.deriveEventMessage — the per-event projection', () => {
+  it('retires an injected user node without exposing an empty wire message or losing its history', () => {
+    const session = Session.create(SessionId('retired-context'))
+    session.append('turn/start', { turn: 1 })
+    const source = { kind: 'plugin' as const, plugin: 'context-fixture' }
+    const original = session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'Earlier facts' }], source,
+    }), { surfaceOp: 'append' })
+    expect(session.deriveMessages()).toHaveLength(1)
+    const retired = session.append('user/message', createUserMessage({ content: [], source }), {
+      surfaceOp: { op: 'replace', startSeq: original.seq, endSeq: original.seq }, sourceEventSeqs: [original.seq],
+    })
+    expect(session.deriveEventMessage(retired)).toBeNull()
+    expect(session.deriveMessages()).toEqual([])
+    userText(session, 'Current facts')
+    expect(session.eventAt(original.seq)).toBe(original)
+    expect(session.deriveMessages()).toEqual(scratch(session))
+    expect(session.deriveMessages().map(message => message.content)).toEqual([[{ type: 'text', text: 'Current facts' }]])
+  })
+
   it('projects one appended event exactly as the full derivation projects its node', () => {
     const session = Session.create(SessionId('per-event'))
     session.append('turn/start', { turn: 1 })

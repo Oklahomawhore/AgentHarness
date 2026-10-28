@@ -1,0 +1,15 @@
+{
+  "turns": 3,
+  "finalResponse": "Revoked completed answers no longer enter current context.",
+  "sourceTools": 0,
+  "samples": 2,
+  "completeTextDigests": [
+    "dbb52fc646d24b7b2ab020bf3329e57ae4d55bd9b329c3cf0e1f099325d02303",
+    "d5603cd0d3c6e02178a76ab547e4d9e69c64105c408b67e7a65fc033413e5341"
+  ],
+  "independentAnswersRetained": true,
+  "privateHistoryExcluded": true,
+  "exactWithdrawal": true,
+  "wirePreservesContext": true,
+  "noRecall": true
+}

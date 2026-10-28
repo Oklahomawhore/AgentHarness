@@ -25,7 +25,7 @@ Use `dsh-session-title` to give each session a client-visible title from the fir
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount the service to give sessions titles that clients can display and that never reach the model. The common path is explicit: load the session store, mount the service with its required limits, and optionally mount one provider plugin.
+Mount the service to give sessions titles that clients can display and that never reach the model. Automatic updates handle only exact live Sessions in this service’s store. The common path is explicit: load the session store, mount the service with its required limits, and optionally mount one provider plugin.
 
 ### Choosing a title source
 
@@ -54,7 +54,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Adding a provider
 
-One optional asynchronous provider may be registered through `ctx.sessionTitle.register(provider)`; a second registration throws. The shipped model-backed providers are [first-prompt](../session-title-first-prompt-llm/README.md) and [all-prompts](../session-title-all-prompts-llm/README.md), both using the shared [LLM generation policy](../session-title-llm/README.md). A provider starts only after a marked loop-built request's exact route matches the logged `request/header`, and a newer revision supersedes and aborts older work.
+One optional asynchronous provider may be registered through `ctx.sessionTitle.register(provider)`; a second registration throws. The shipped model-backed providers are [first-prompt](../session-title-first-prompt-llm/README.md) and [all-prompts](../session-title-all-prompts-llm/README.md), both using the shared [LLM generation policy](../session-title-llm/README.md). A committed `request/header` can release queued generation. With an unchanged route, the exact Session’s marked loop request must contain the pending human message before generation starts. A newer revision supersedes and aborts older work.
 
 ### Reading titles
 

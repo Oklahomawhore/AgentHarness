@@ -1,6 +1,6 @@
 /** Resolve direct third-party browser inputs through the shipping build configurations, without emitting files. */
 
-import { globSync, readFileSync } from 'node:fs'
+import { globSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -159,10 +159,11 @@ async function collectShell(
 
 /**
  * Direct third-party packages resolved by published browser builds.
- * @param root - Repository root with installed build dependencies; lib/ is not required.
+ * @param root - Repository root, including a filesystem alias, with installed build dependencies; lib/ is not required.
  * @returns Names of distributed browser inputs, excluding workspace packages and erased types.
  */
 export async function browserBundledExternals(root: string): Promise<Set<string>> {
+  root = realpathSync(root)
   const manifests = new Map<string, Manifest>()
   for (const glob of ['packages/*/*/package.json', 'vendor/*/package.json']) {
     for (const path of globSync(glob, { cwd: root }).sort()) {

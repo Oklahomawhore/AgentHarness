@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-02-recipient-task-context-backend.md
-2026-10-02-recipient-task-context-backend.md: 10d9997e4e516377953864a82dc215a6033ba269
-2026-10-02-recipient-task-context-backend.zh.md: 397ebdbc40806bcb15ad97233cb73a5226ed0c13
+2026-10-02-recipient-task-context-backend.md: d15630cc03a3079e25f850276eeac1cb260fb928
+2026-10-02-recipient-task-context-backend.zh.md: fcb531c52421fa974b577df00d6dbc11f4d886d9

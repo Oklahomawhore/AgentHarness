@@ -12,7 +12,7 @@ import type { ScopeAgentContributionRequest, ScopeAgentContributionSelection } f
 import { nativeContributionDomain } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
+import { createHost, requestText, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 import { captureColdInputs, writeColdInputs } from './fixtures/cold-input.ts'
 
 const hosts: TestHost[] = []
@@ -195,12 +195,12 @@ it('shares the global lease bound across both permissions without double admitti
   expect(other.capture?.selection).toEqual(remote.capture.selection)
 })
 
-it('ends only the old local capture on Task reassignment and preserves independently authorized remote sharing', async () => {
+it.each(['clear', 'retain'] as const)('ends only the old local capture when reassignment follows %s and preserves independent remote sharing', async (previous) => {
   const f = await fixture()
   const remote = await f.beginRemote()
   await remote.approve()
   const participantId = developmentAgentParticipantId(f.agent.id)
-  await f.source.ctx.developmentTasks.clear({ bindingId: f.assignment.bindingId, participantId })
+  if (previous === 'clear') await f.source.ctx.developmentTasks.clear({ bindingId: f.assignment.bindingId, participantId })
   const next = await rootTask(f.source)
   await f.source.ctx.developmentTasks.checkout({ taskId: next.id, participantId })
   await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture).toBeNull()
@@ -403,6 +403,44 @@ it.each([false, true])('adopts a joint scope (reusable: %s), retains local captu
   expect(disk.filter(event => event.type === 'scope-agent-context/join-read'))
     .toMatchObject([{ data: { version: 4, phase: 'planned' } }, { data: { version: 4, phase: 'adopted' } },
       { data: { version: 4, phase: 'ended', leaveAdopted: true } }])
+})
+
+it('restores the exact combined evidence of one bounded joint response without renewing its permission', async () => {
+  const f = await fixture()
+  await f.source.ctx.developmentTasks.publishContext({ taskId: f.localTask.id, participantId: f.localTask.createdBy,
+    text: 'LOCAL_RESPONSIBILITY_FACT' })
+  await f.owner.ctx.developmentTasks.publishContext({ taskId: f.task.id, participantId: f.task.createdBy,
+    text: 'REMOTE_TEAM_FACT' })
+  const automatic: ScopeAgentAutomaticPolicy = { goal: 'Update only my original local implementation.',
+    activationLimit: 1, maxStepsPerTurn: 2, minIntervalMs: 0 }
+  const joint = await beginJoint(f, automatic)
+  f.source.script.push(textResponse('One response within my local responsibility.'))
+  await joint.approve()
+  await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture?.receiving?.state).toBe('active')
+  await expect.poll(() => f.source.adapter.requests.length).toBe(1)
+  await f.agent.whenIdle()
+  const current = live(await f.source.ctx.scopeAgentContext.status({ agentId: f.agent.id }))
+  expect(current.state).toMatchObject({ usedBudget: 1, automatic, binding: { kind: 'local-task-scope' } })
+  expect(current.localTask).toMatchObject({ taskId: f.localTask.id, taskBindingId: f.assignment.bindingId })
+  const request = f.source.adapter.requests[0]!
+  expect(requestText(request)).toContain('LOCAL_RESPONSIBILITY_FACT')
+  expect(requestText(request)).toContain('REMOTE_TEAM_FACT')
+  expect(await f.source.ctx.sessions.flush(f.agent.session)).toBe(true)
+  const disk = await f.source.readEvents(f.agent)
+  const dispatch = disk.find(event => event.type === 'scope-agent-context/request' && event.data.version === 4)
+  if (dispatch?.type !== 'scope-agent-context/request') throw new Error('actual combined dispatch is missing')
+  expect(dispatch.data.localContextSeq).toBeLessThan(dispatch.seq)
+  expect(dispatch.data.projection).toMatchObject({ kind: 'local-task-scope', remote: { version: 3 } })
+  await f.source.ctx.fiber.dispose()
+  const restored = await createHost(f.network, 'source', 'native', {
+    receive: true, ownerLocal: true, root: f.source.root, peerId: f.source.peerId,
+  })
+  hosts.splice(hosts.indexOf(f.source), 1, restored)
+  const { agent } = await restored.ctx.agents.resume({ resumeSessionId: f.agent.id,
+    agentOptions: { provider: 'mock', model: 'mock' } })
+  expect(live(await restored.ctx.scopeAgentContext.status({ agentId: agent.id })).state)
+    .toMatchObject({ mode: 'paused', pauseReason: 'restored', usedBudget: 1, automatic, binding: current.state.binding })
+  expect(restored.adapter.requests).toHaveLength(0)
 })
 
 it('rejects a changed local epoch before recording joint consent', async () => {

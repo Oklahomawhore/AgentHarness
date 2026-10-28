@@ -630,50 +630,6 @@ export interface Config {
 
 Source: [`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
 
-<a id="deepseek-aidsh-development-evidence"></a>
-
-## `@deepseek-ai/dsh-development-evidence`
-
-```ts config-catalog
-/** Resource and latency policy enforced across every evidence provider. */
-export interface Config {
-  /** Maximum UTF-8 bytes accepted in a lookup query. */
-  readonly maxQueryBytes: number
-  /** Maximum citations retained from one provider. */
-  readonly maxItemsPerProvider: number
-  /** Maximum UTF-8 bytes accepted in each citation text field. */
-  readonly maxItemTextBytes: number
-  /** Maximum tags retained on one citation. */
-  readonly maxTagsPerItem: number
-  /** Maximum time allotted to one provider lookup. */
-  readonly providerTimeoutMs: number
-}
-```
-
-Source: [`packages/collaboration/development-evidence/src/index.ts:22`](../packages/collaboration/development-evidence/src/index.ts)
-
-<a id="deepseek-aidsh-development-evidence-reviewed-file"></a>
-
-## `@deepseek-ai/dsh-development-evidence-reviewed-file`
-
-Requires: `developmentEvidence`
-
-```ts config-catalog
-/** Reviewed-file provider deployment configuration. */
-export interface Config {
-  /** Unique lower-kebab provider identity. */
-  readonly providerId: string
-  /** Operator-facing provider label. */
-  readonly label: string
-  /** Absolute or process-relative reviewed JSON file path. */
-  readonly path: string
-  /** Maximum bytes read before JSON parsing. */
-  readonly maxFileBytes: number
-}
-```
-
-Source: [`packages/collaboration/development-evidence-reviewed-file/src/index.ts:23`](../packages/collaboration/development-evidence-reviewed-file/src/index.ts)
-
 <a id="deepseek-aidsh-development-mesh-websocket"></a>
 
 ## `@deepseek-ai/dsh-development-mesh-websocket`
@@ -832,7 +788,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task-context/src/index.ts:28`](../packages/collaboration/development-task-context/src/index.ts)
+Source: [`packages/collaboration/development-task-context/src/index.ts:27`](../packages/collaboration/development-task-context/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-contextconfigured"></a>
 

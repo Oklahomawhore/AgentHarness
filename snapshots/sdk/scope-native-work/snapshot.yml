@@ -4,6 +4,7 @@ profile: sdk
 composition: sdk-scope-native-work
 recording: authored
 writer: separate
+writerRevision: 3
 header:
   class: scope-native-work
   pin: true

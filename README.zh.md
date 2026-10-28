@@ -37,7 +37,7 @@
 
 默认后端投递有大小限制的工作报告，不调用摘要模型。所有者可以选择[模型摘要](docs/user/guide/collaboration-semantic.zh.md)，按接收方职责选择上下文。后端可通过插件替换；尚未实现 embedding 或潜在表示通信。摘要调用使用所配置的模型账户，可能产生独立于 Agent 普通请求的费用。
 
-主动发布仍适用于需求、决策，以及供其他 Task 继承的上下文。**Codex、Cursor 和其他 MCP 客户端**可以通过 `agentharness_task_connect` 连接一个具体 Session，并在后续 MCP 调用时接收更新。仅配置 MCP 不会加入 Session，也不提供原生的自动采集和空闲响应能力。**Claude Code hooks**支持另行选择的文件共享和接收流程，不会唤醒空闲 Claude Session。详见[客户端指南](docs/user/guide/index.zh.md)和 [Claude 协作控件](packages/collaboration/claude-scope/README.zh.md)。
+主动发布仍适用于需求、决策，以及供其他 Task 继承的上下文。**Codex、Cursor 和其他 MCP 客户端**可以通过 `agentharness_task_connect` 连接一个具体 Session，并在后续 MCP 调用时接收已存储的 Task 上下文。MCP 读取不会重新校验贡献授权，详见 [bridge 限制](packages/mcp/agentharness-bridge/README.zh.md#known-limitations-and-deferred-work)。仅配置 MCP 不会加入 Session，也不提供原生的自动采集和空闲响应能力。**Claude Code hooks**支持另行选择的文件共享和接收流程，不会唤醒空闲 Claude Session。详见[客户端指南](docs/user/guide/index.zh.md)和 [Claude 协作控件](packages/collaboration/claude-scope/README.zh.md)。
 
 <a id="run"></a>
 ## 立即体验

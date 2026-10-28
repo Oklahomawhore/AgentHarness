@@ -16,7 +16,7 @@ The dependency classifier collects build inputs from source imports and JSX. Thi
 
 Npm sections do not select browser bundling behavior. Dynamic plugins inline private libraries and obtain React and other shared modules from the platform table; static browser libraries retain bare imports and styles for the final Vite build. Static packages are Web-shell build inputs, not independently installed libraries with every rebundling dependency provided. Source builds need development dependencies; installed published Web artifacts do not.
 
-License classification follows distributed content. Dependency resolution through the real browser build configurations covers dynamic plugins and the Web shell; resolved third-party implementations remain [runtime disclosures](2026-07-30-generated-third-party-notices.md) even when manifests declare them for development. Test tools, erased type imports, and build tools do not become distributed code merely by appearing in `devDependencies`.
+License classification follows distributed content. Browser input discovery resolves the repository’s filesystem identity before loading build configurations, so Vite’s root and Rollup’s resolved HTML modules use the same path even through a directory alias. Dependency resolution through the real browser build configurations covers dynamic plugins and the Web shell; resolved third-party implementations remain [runtime disclosures](2026-07-30-generated-third-party-notices.md) even when manifests declare them for development. Test tools, erased type imports, and build tools do not become distributed code merely by appearing in `devDependencies`.
 
 ## Alternatives considered
 

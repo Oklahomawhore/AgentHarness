@@ -3,6 +3,8 @@ scenario: scope-turn-outcomes
 profile: sdk
 composition: sdk-scope-turn-outcomes
 recording: authored
+writer: separate
+writerRevision: 2
 header:
   class: scope-turn-outcomes
   pin: true

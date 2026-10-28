@@ -196,9 +196,6 @@ export async function apply(ctx) {
     } else if (end?.data.turn === 3 && firstC === undefined) {
       assert.equal(end.data.reason.kind, 'completed')
       firstC = own(writeC(1))
-    } else if (end?.data.turn === 4 && correctionC === undefined) {
-      assert.equal(end.data.reason.kind, 'completed')
-      correctionC = own(writeC(2))
     }
   })
   ctx.on('agent/pre-step', async ({ agent, turn, step }, next) => {
@@ -359,6 +356,10 @@ export async function apply(ctx) {
       assert.equal(c.adapter.requests.length, 8)
     }
     assertAssignment(ctx, bLocal)
+    if (currentTurn === 4 && currentStep === 2) {
+      correctionC ??= own(writeC(2))
+      return (async function* () { await correctionC; yield* next() })()
+    }
     return next()
   })
 }

@@ -212,7 +212,9 @@ export async function collaborationBrowserUrl(logPath, origin, logOffset) {
 
 async function startRuntime(args, environment) {
   const root = commandRoot(environment)
-  const version = await installedVersion(root)
+  const releaseRoot = realpathSync(root)
+  const entry = join(releaseRoot, 'start.mjs')
+  const version = await installedVersion(releaseRoot)
   const port = parsePort(args, environment)
   const url = `http://127.0.0.1:${port}`
   const runtimeState = await readRuntimeState(environment)
@@ -220,7 +222,7 @@ async function startRuntime(args, environment) {
     if (!isOwnedProcess(runtimeState)) {
       throw new Error(`process ${runtimeState.pid} does not match the recorded AgentHarness entry; refusing to reuse it`)
     }
-    if (runtimeState.version === version && runtimeState.port === port) {
+    if (runtimeState.version === version && runtimeState.port === port && runtimeState.entry === entry) {
       const offset = requireLogOffset(runtimeState.logOffset)
       let browserUrl
       const ready = await waitFor(async () => {
@@ -257,8 +259,8 @@ async function startRuntime(args, environment) {
   let child
   try {
     const runtimeArguments = hasPortOption(args) ? ['--no-open', ...args] : ['--no-open', '--port', String(port), ...args]
-    child = spawn(process.execPath, [join(root, 'start.mjs'), ...runtimeArguments], {
-      cwd: root,
+    child = spawn(process.execPath, [entry, ...runtimeArguments], {
+      cwd: releaseRoot,
       detached: true,
       env: {
         ...environment,
@@ -278,7 +280,7 @@ async function startRuntime(args, environment) {
   }
   await writeFile(join(directory, 'server.json'), `${JSON.stringify({
     pid: child.pid,
-    entry: join(root, 'start.mjs'),
+    entry,
     port,
     url,
     version,
@@ -291,7 +293,7 @@ async function startRuntime(args, environment) {
   let browserUrl
   const ready = await waitFor(async () => {
     if (exitResult !== undefined) return true
-    if (!isOwnedProcess({ pid: child.pid, entry: join(root, 'start.mjs') }) || !await endpointReady(port)) return false
+    if (!isOwnedProcess({ pid: child.pid, entry }) || !await endpointReady(port)) return false
     browserUrl = authenticatedBrowserUrl(await runtimeOutput(logPath, logOffset), url)
     return browserUrl !== undefined
   }, STARTUP_TIMEOUT_MS)

@@ -4,7 +4,7 @@ profile: sdk
 composition: sdk-scope-completed-file
 recording: authored
 writer: separate
-writerRevision: 5
+writerRevision: 7
 header:
   class: scope-completed-file
   pin: true

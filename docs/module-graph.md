@@ -195,8 +195,6 @@ flowchart TD
   end
   subgraph group_collaboration["packages/collaboration"]
     pkg_claude_scope["claude-scope"]
-    pkg_development_evidence["development-evidence"]
-    pkg_development_evidence_reviewed_file["development-evidence-reviewed-file"]
     pkg_development_mesh["development-mesh"]
     pkg_development_mesh_websocket["development-mesh-websocket"]
     pkg_development_room["development-room"]
@@ -404,9 +402,6 @@ flowchart TD
   pkg_scope --> pkg_invariants
   pkg_web --> pkg_llm
   pkg_attachment --> pkg_brand
-  pkg_development_evidence --> pkg_brand
-  pkg_development_evidence --> pkg_invariants
-  pkg_development_evidence --> pkg_timeout
   pkg_development_room --> pkg_brand
   pkg_development_room --> pkg_invariants
   pkg_development_room --> pkg_typert_protocol
@@ -458,7 +453,6 @@ flowchart TD
   pkg_attachment_local --> pkg_attachment
   pkg_attachment_local --> pkg_home_paths
   pkg_client_file_upload --> pkg_scope
-  pkg_development_evidence_reviewed_file --> pkg_development_evidence
   pkg_development_mesh --> pkg_development_room
   pkg_development_room_storage_domain --> pkg_development_room
   pkg_development_room_storage_domain --> pkg_invariants
@@ -1422,7 +1416,6 @@ flowchart TD
 | [`scope`](../packages/core/scope) | `core` | [`invariants`](../packages/runtime-diagnostics/invariants) |
 | [`web`](../packages/web/web) | `web` | [`llm`](../packages/llm/llm) |
 | [`attachment`](../packages/attachment/attachment) | `attachment` | [`brand`](../packages/util/brand) |
-| [`development-evidence`](../packages/collaboration/development-evidence) | `collaboration` | [`brand`](../packages/util/brand), [`invariants`](../packages/runtime-diagnostics/invariants), [`timeout`](../packages/util/timeout) |
 | [`development-room`](../packages/collaboration/development-room) | `collaboration` | [`brand`](../packages/util/brand), [`invariants`](../packages/runtime-diagnostics/invariants), [`typert-protocol`](../packages/typert/protocol) |
 | [`credentials`](../packages/credentials/credentials) | `credentials` | [`invariants`](../packages/runtime-diagnostics/invariants) |
 | [`e2b`](../packages/e2b/e2b) | `e2b` | [`http-proxy`](../packages/util/http-proxy) |
@@ -1448,7 +1441,6 @@ flowchart TD
 | [`api-remotes`](../packages/api/remotes) | `api` | [`scope`](../packages/core/scope) |
 | [`attachment-local`](../packages/attachment/attachment-local) | `attachment` | [`attachment`](../packages/attachment/attachment), [`home-paths`](../packages/util/home-paths) |
 | [`client-file-upload`](../packages/client/file-upload) | `client` | [`scope`](../packages/core/scope) |
-| [`development-evidence-reviewed-file`](../packages/collaboration/development-evidence-reviewed-file) | `collaboration` | [`development-evidence`](../packages/collaboration/development-evidence) |
 | [`development-mesh`](../packages/collaboration/development-mesh) | `collaboration` | [`development-room`](../packages/collaboration/development-room) |
 | [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain) | `collaboration` | [`development-room`](../packages/collaboration/development-room), [`invariants`](../packages/runtime-diagnostics/invariants), [`storage-domain`](../packages/storage/storage-domain) |
 | [`authorization`](../packages/credentials/authorization) | `credentials` | [`credentials`](../packages/credentials/credentials), [`invariants`](../packages/runtime-diagnostics/invariants), [`llm`](../packages/llm/llm) |

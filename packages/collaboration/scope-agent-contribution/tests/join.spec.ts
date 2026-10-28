@@ -1,14 +1,19 @@
 /** Joint source consent preserves independent reading and optional finite local automatic work. */
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from '@deepseek-ai/dsh-session'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import type { ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { nativeContributionDomain } from '../src/state.ts'
 import type { ScopeAgentContributionRequest } from '../src/types.ts'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
+import { readLocalTaskContext } from '@deepseek-ai/dsh-development-task-context/local'
+import { contributionApplicationResultSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentStatusResult } from '@deepseek-ai/dsh-scope-agent-context/types'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, requestText, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
@@ -457,13 +462,52 @@ describe('joint native receiving and contribution consent', () => {
   })
 
   it.each([false, true])('restores automatic source consent without reauthorizing a new live Agent; adopted=%s', async (adopted) => {
-    const { network, source, b, approve, status } = await fixture(automaticPolicy)
+    const { network, owner, source, a, b, approve, status } = await fixture(automaticPolicy)
     if (adopted) {
       source.script.push(textResponse('Finish before the real Host restart.'))
       await approve()
       await expect.poll(() => source.adapter.requests.length).toBe(1)
       await b.whenIdle()
       await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+      expect(await source.ctx.sessions.flush(b.session)).toBe(true)
+      const disk = await source.readEvents(b)
+      // Adoption names the original Session, so each recovery uses its id in a separate Host.
+      const history = await createHost(network, 'receiver')
+      hosts.push(history)
+      const restored = await history.ctx.agents.create({ sessionId: b.id, seed: disk,
+        agentOptions: { provider: 'mock', model: 'mock' } })
+      expect(live(await history.ctx.scopeAgentContext.status({ agentId: restored.agent.id })).state.mode).toBe('paused')
+      const pulse = disk.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-pulse')
+      const request = disk.find(event => event.type === 'scope-agent-context/request' && event.data.version === 4)
+      const context = disk.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context'
+        && event.data.source.form === 'snapshot' && event.data.source.version === 2)
+      if (pulse === undefined || request?.type !== 'scope-agent-context/request' || context === undefined) {
+        throw new Error('missing actual capture request evidence')
+      }
+      const invalidAnchor = disk.map(event => event === request ? { ...request, data: { ...request.data, contextSeq: pulse.seq } } : event)
+      if (context.type !== 'user/message') throw new Error('expected actual capture message')
+      const invalidSubscription = disk.map(event => event === context ? { ...context, data: { ...context.data,
+        source: { ...context.data.source, subscriptionId: brandString<ScopeSubscriptionId>(randomUUID()) } } } : event)
+      const evaluation = disk.find(event => event.type === 'scope-agent-context/evaluation' && event.data.version === 4
+        && event.data.decision === 'activate')
+      const assignment = (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).assignment
+      if (evaluation?.type !== 'scope-agent-context/evaluation' || assignment === null) throw new Error('missing actual evaluated capture or local assignment')
+      const local = await readLocalTaskContext(owner.ctx, { taskId: assignment.taskId, taskBindingId: assignment.bindingId,
+        bindingEpoch: assignment.expectedBindingEpoch, participantId: developmentAgentParticipantId(a.id) },
+      evaluation.data.maxContextBytes, new AbortController().signal)
+      if (local.status !== 'active') throw new Error('expected actual owner-local projection')
+      const invalidEvaluation = disk.map(event => event === evaluation
+        ? { ...evaluation, data: { ...evaluation.data, version: 2 as const, projection: local.projection } } : event)
+      for (const [seed, failure] of [
+        [invalidAnchor, 'capture request lacks its exact adopted context'],
+        [invalidSubscription, 'capture snapshot lacks its current adopted binding'],
+        [invalidEvaluation, 'capture evaluation lacks its remote projection'],
+      ] as const) {
+        const corrupt = await createHost(network, 'receiver')
+        hosts.push(corrupt)
+        await expect(corrupt.ctx.agents.create({ sessionId: b.id, seed,
+          agentOptions: { provider: 'mock', model: 'mock' } })).rejects.toThrow(failure)
+      }
     }
     expect(await source.ctx.sessions.flush(b.session)).toBe(true)
     expect((await storedSource(source, b.id)).capture?.receiving?.automatic).toEqual(automaticPolicy)
@@ -695,8 +739,25 @@ describe('joint native receiving and contribution consent', () => {
     await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
     const current = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding
     if (current === null) throw new Error('Missing adopted reading')
-    if (action === 'leave') await source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: current.id })
-    else {
+    if (action === 'leave') {
+      if (current.kind === 'local-task') throw new Error('Expected the adopted remote reading')
+      const withdrawn = barrier()
+      const original = source.ctx.scopeAccess.leave.bind(source.ctx.scopeAccess)
+      vi.spyOn(source.ctx.scopeAccess, 'leave').mockImplementationOnce(async (request) => {
+        await original(request)
+        await withdrawn.wait()
+      })
+      let returned = false
+      const leaving = source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: current.id })
+        .then((value) => { returned = true; return value })
+      await withdrawn.entered
+      expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).toBeNull()
+      expect((await source.ctx.scopeAccess.list()).subscriptions.find(item => item.id === current.subscriptionId)?.state).toBe('left')
+      await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('ended')
+      expect(returned).toBe(false)
+      withdrawn.release()
+      expect(await leaving).toMatchObject({ mode: 'left', binding: null })
+    } else {
       const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id, recipientPeerId: source.peerId, ownerAddress,
         expiresAt: Date.now() + 30000, responsibility: 'Later manual reading.' })
       await source.ctx.scopeAgentContext.bind({ agentId: b.id, expectedBindingId: current.id, invitation, automatic: null })
@@ -704,6 +765,30 @@ describe('joint native receiving and contribution consent', () => {
     await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('ended')
     expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding === null).toBe(action === 'leave')
     expect((await status()).capture?.collecting).toBe(true)
+  })
+
+  it('rejects an authenticated owner approval that exceeds the retained sample permission', async () => {
+    const { source, owner, task, b, approve, status } = await fixture()
+    const request = source.transport.request.bind(source.transport)
+    vi.spyOn(source.transport, 'request').mockImplementation(async (...args) => {
+      const response = await request(...args)
+      if (typeof response !== 'object' || response === null || !('result' in response)) return response
+      const parsed = contributionApplicationResultSchema.safeParse(response.result)
+      if (!parsed.success || parsed.data.status !== 'approved') return response
+      return { ...response, result: { ...parsed.data, invitation: { ...parsed.data.invitation,
+        grant: { ...parsed.data.invitation.grant, maxSamples: parsed.data.invitation.grant.maxSamples + 1 } } } }
+    })
+    const warnings = vi.spyOn(source.ctx.logger, 'warn').mockImplementation(() => {})
+    const approval = await approve()
+    await expect.poll(() => warnings.mock.calls.some(args => args.map(String).join(' ')
+      .includes('Approval exceeds the locally accepted contribution limits'))).toBe(true)
+    expect((await status()).capture).toMatchObject({ collecting: false, application: 'waiting' })
+    expect((await status()).capture?.invitation).toBeNull()
+    expect((await storedSource(source, b.id)).capture?.application?.limits.maxSamples).toBe(approval.invitation.grant.maxSamples)
+    await run(source, b, [toolCallResponse('unapproved-limit', 'write', { file_path: 'private-limit.txt', content: 'PRIVATE_LIMIT_FACT' })])
+    expect(await readFile(join(source.workspace, 'private-limit.txt'), 'utf8')).toBe('PRIVATE_LIMIT_FACT')
+    expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
+    expect((await storedSource(source, b.id)).samples).toEqual([])
   })
 
   it('persists another Session stop while the original receiving cancellation is still held', async () => {
