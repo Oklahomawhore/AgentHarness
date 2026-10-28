@@ -12,7 +12,7 @@ import type {
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { BootPage } from './boot-page.ts'
 import { getStaticModules } from './seed.ts'
-import { STATE_LABELS } from './loader-status.ts'
+import { FIBER_STATE, STATE_LABELS } from './loader-status.ts'
 import './base.css'
 
 /** Module transport hook replaced by jsdom tests. */
@@ -92,10 +92,34 @@ export class AppWebEntry {
     this.page.dispose()
   }
 
-  /** Mount through a dependency fiber so replacing uiRenderer remounts the application. */
+  /** Keep the application mounted only while its enabled client roster is active. */
   private async mountApp(ctx: Context): Promise<void> {
     const mounted = ctx.inject(['uiRenderer'], (scope) => {
-      scope.effect(() => scope.uiRenderer.mount(this.container), 'web boot: application mount')
+      const renderer = scope.uiRenderer
+      let unmount: (() => void) | undefined
+      const active = (): boolean => [...ctx.loader.entries()].every(entry =>
+        entry.disabled || entry.fiber?.state === FIBER_STATE.ACTIVE)
+      const withdraw = (): void => {
+        unmount?.()
+        unmount = undefined
+        this.page.show()
+      }
+      const reconcile = (): void => {
+        if (active()) unmount ??= renderer.mount(this.container)
+        else withdraw()
+      }
+      const changed = (): void => {
+        if (!active()) withdraw()
+        queueMicrotask(() => {
+          if (scope.fiber.state === FIBER_STATE.ACTIVE && ctx.get('uiRenderer') === renderer) reconcile()
+        })
+      }
+      scope.on('internal/status', changed)
+      scope.on('internal/service', (name) => { if (name === 'loader') changed() })
+      scope.effect(() => {
+        reconcile()
+        return withdraw
+      }, 'web boot: application mount')
     })
     await mounted
   }
@@ -119,6 +143,13 @@ export class AppWebEntry {
       const entry = fiber.entry
       if (entry === undefined || entry.fiber === undefined) return
       this.page.setState(entry.options.name, STATE_LABELS[entry.fiber.state])
+    })
+    ctx.on('internal/service', (name) => {
+      if (name !== 'loader' || loader.getTasks().length > 0) return
+      for (const entry of loader.entries()) {
+        this.page.setState(entry.options.name, entry.fiber === undefined
+          ? entry.disabled ? 'disposed' : 'failed' : STATE_LABELS[entry.fiber.state])
+      }
     })
 
     const rows = this.manifest.plugins.map(row => row.id)

@@ -68,6 +68,8 @@ Host 会快照每个已构建插件产物，并把每个调度阶段的有序 ro
 4. `settled` = 每个 entry 已创建 + `loader.await()` 完全停稳 + 一次全 ACTIVE 扫描。扫描列出每个 import 失败、FAILED 或 PENDING 的 fiber 及其缺失的服务。它存在的理由：cordis 的 inject 等待没有超时——这次扫描就是大声失败的兜底线。
 5. 不依赖框架的 loading 页经 `internal/status` 投影真实 fiber 状态。检查完成后，内核调用 `ctx.uiRenderer.mount(container)`，一次切换到真实 UI。
 
+启动后，应用挂载仍跟随已启用客户端名册：`internal/status` 在 entry 释放资源前撤下 React 根，排队的激活检查只在每个已启用 entry 均为 ACTIVE 时重新挂载当前渲染器。React 本地状态重置，未变更 fiber 拥有的 store 保留。重建后的 bundle 与 source map 字节相同时保留已公布的版本，避免把不透明启动版本转换为伪重载。
+
 ### 热重载：一个驱动插件，自行监视的 bundle
 
 热重载是一项组合决策：web 组合包无条件挂载 `client-hmr` 行（一个常规的插件包），其 node 半带来 bundle 监视与 SSE（Server-Sent Events）通道；没有重建 watcher 改写客户端 bundle 时链路保持空闲。不应暴露它的组合可以禁用该行。

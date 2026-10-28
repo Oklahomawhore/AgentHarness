@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { appendFile, cp, lstat, mkdir, mkdtemp, open, readFile, readlink, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, cp, lstat, mkdir, mkdtemp, open, readFile, readlink, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -488,7 +488,10 @@ describe('AgentHarness LAN release server and installed command', () => {
     expect(after.pid).not.toBe(before.pid)
     expect(() => process.kill(before.pid, 0)).toThrow()
     const recorded = JSON.parse(await readFile(join(state, 'server.json'), 'utf8')) as { pid: number; entry: string }
-    expect(recorded).toMatchObject({ pid: after.pid, entry: join(await realpath(second), 'start.mjs') })
+    expect(recorded.pid).toBe(after.pid)
+    // Windows can preserve an 8.3 alias in the synchronous realpath used by the installed command.
+    const expectedEntry = await stat(join(second, 'start.mjs'), { bigint: true })
+    expect(await stat(recorded.entry, { bigint: true })).toMatchObject({ dev: expectedEntry.dev, ino: expectedEntry.ino })
     expect(after.mcpNode).toBe(join(current, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'))
     expect((await runCommand(process.execPath, [installedCommand, 'start'], env)).stdout).toContain('already running')
     expect(await (await fetch(origin)).json()).toMatchObject({ marker: 'release-b', pid: after.pid })

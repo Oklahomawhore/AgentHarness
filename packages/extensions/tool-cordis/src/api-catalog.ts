@@ -729,7 +729,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'rebuilt(id: string): string | undefined',
         description: 'Re-hash one bundle (the HMR watch\'s registration hook — the only entry point through which bundle content changes reach the graph).',
         parameters: [{ name: 'id', description: 'entry id (package name).' }],
-        returns: 'the new rev, or undefined for an unknown id.',
+        returns: 'advertised revision, retained for identical bytes, or undefined for an unknown id.',
       },
       {
         signature: 'onRebuilt(listener: (id: string, rev: string) => void): () => void',
