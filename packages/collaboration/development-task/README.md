@@ -111,7 +111,7 @@ Binding-change notifications carry `null` after a clear so the complete event ca
 
 ## Configuration
 
-All retention and retry fields are required. The Web bundle uses 10,000 Tasks, 2,000 events per Task, 16 Merge parents, 256 KiB inherited blocks, a 500-Task lineage result, and a five-second hidden-Room retry interval.
+All retention and retry fields are required. An omitted catalog limit uses the smaller of 200 and `maxLineageTasks`; an omitted lineage limit uses `maxLineageTasks`. Explicit limits above that configured capacity are rejected. The Web bundle uses 10,000 Tasks, 2,000 events per Task, 16 Merge parents, 256 KiB inherited blocks, a 500-Task lineage result, and a five-second hidden-Room retry interval.
 
 Startup rejects a reduced `maxEventsPerTask` that cannot hold restored local events plus revocation reservations for live local artifact grants, active remote intervals, independent peer contributions, and owner-local captures. Increase the configured capacity; restoration does not delete or rewrite records to fit it.
 

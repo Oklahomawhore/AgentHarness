@@ -1,0 +1,9 @@
+- id: development-task
+  config:
+    maxTasks: 16
+    maxEventsPerTask: 64
+    maxMergeParents: 4
+    maxContextBlockBytes: 65536
+    maxLineageTasks: 2
+    maxTextBytes: 8192
+    roomRetryIntervalMs: 5000

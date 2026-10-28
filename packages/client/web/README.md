@@ -57,7 +57,7 @@ This section explains how the boot kernel is built; observable behavior is cover
 
 ### Design concept
 
-The kernel owns exactly three things: the module system, the Cordis Loader, and the boot page. The Host owns the graph, batch preload, and loader facade, so `AppWebEntry` never knows the bootstrap package id or parses the wire format. The dynamic UI renderer receives the mount point only after every client entry activates. During entry replacement, the kernel unmounts the React application before the old entry releases its resources and remounts after the complete roster activates. The existing loading and failure view stays visible while unmounted. React-local state resets; stores owned by unchanged fibers remain live.
+The kernel owns exactly three things: the module system, the Cordis Loader, and the boot page. The Host owns the graph, batch preload, and loader facade, so `AppWebEntry` never knows the bootstrap package id or parses the wire format. The dynamic UI renderer receives the mount point only after every client entry activates. During entry replacement, the kernel unmounts the React application before the old entry releases its resources and remounts after the complete roster activates. The existing loading and failure view stays visible while unmounted. Completed entry removal also reconciles the remaining roster, so stopping a dynamic plugin restores the application. React-local state resets; stores owned by unchanged fibers remain live.
 
 ### Two-stage boot
 

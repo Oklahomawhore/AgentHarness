@@ -119,6 +119,7 @@
     "tests/pwsh-terminal.e2e.ts",
     "tests/workflow-run.e2e.ts",
     "tests/emergence-center.e2e.ts",
+    "tests/participant-recovery.e2e.ts",
     "tests/independent-scope.e2e.ts",
     "tests/native-scope.e2e.ts",
     "tests/native-contribution.e2e.ts",

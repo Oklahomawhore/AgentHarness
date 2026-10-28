@@ -115,6 +115,7 @@ export class AppWebEntry {
         })
       }
       scope.on('internal/status', changed)
+      scope.on('loader/partial-dispose', changed)
       scope.on('internal/service', (name) => { if (name === 'loader') changed() })
       scope.effect(() => {
         reconcile()

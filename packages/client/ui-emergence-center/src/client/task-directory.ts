@@ -88,7 +88,7 @@ export function createDevelopmentTaskDirectory(
   const refresh = (): void => {
     if (inFlight !== undefined) return
     const issued = generation
-    inFlight = Promise.all([port.list({ limit: 200 }), port.assignmentList()]).then(
+    inFlight = Promise.all([port.list({}), port.assignmentList()]).then(
       ([tasks, assignments]) => {
         if (issued === generation) store.set({ tasks, graphTasks: tasks, boundaryTaskIds: [], assignments, read: true })
       },
@@ -113,7 +113,7 @@ export function createDevelopmentTaskDirectory(
     },
     async focus(taskId) {
       const issued = generation
-      const lineage = await port.lineage({ taskId, ancestorDepth: 4, descendantDepth: 2, limit: 500 })
+      const lineage = await port.lineage({ taskId })
       if (issued !== generation) return
       store.set({
         ...store.getSnapshot(),

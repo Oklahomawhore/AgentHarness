@@ -291,7 +291,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
    */
   @Remote('list')
   list(request: DevelopmentTaskListRequest): readonly DevelopmentTaskSnapshot[] {
-    const limit = this.limit(request.limit, 200)
+    const limit = this.limit(request.limit, Math.min(200, this.config.maxLineageTasks))
     return Object.freeze([...this.tasks.values()]
       .filter(task => request.participantId === undefined
         || task.createdBy === request.participantId

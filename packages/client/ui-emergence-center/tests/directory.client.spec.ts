@@ -78,20 +78,24 @@ describe('Emergence Center directories', () => {
     expect(withdraw).toHaveBeenCalledWith({ participantId: HUMAN })
   })
 
-  it('loads 200 current Tasks and expands a bounded 4/2 lineage neighborhood', async () => {
+  it('uses Host defaults for the Task catalog and focused lineage neighborhood', async () => {
     const remote = taskPort()
     const { lineage, list } = remote
     const sibling = task('task-sibling' as DevelopmentTaskId)
     list.mockResolvedValueOnce([task(), sibling])
     const directory = createDevelopmentTaskDirectory(remote, vi.fn())
     await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
-    expect(list).toHaveBeenCalledWith({ limit: 200 })
+    const changes = vi.fn()
+    const unsubscribe = directory.subscribe(changes)
+    expect(list).toHaveBeenCalledWith({})
 
     await directory.focus(ROOT)
-    expect(lineage).toHaveBeenCalledWith({ taskId: ROOT, ancestorDepth: 4, descendantDepth: 2, limit: 500 })
+    expect(lineage).toHaveBeenCalledWith({ taskId: ROOT })
     expect(directory.getSnapshot().boundaryTaskIds).toEqual(['task-parent'])
     expect(directory.getSnapshot().graphTasks.map(item => item.id)).toEqual([ROOT])
     expect(directory.getSnapshot().tasks.map(item => item.id)).toEqual([ROOT, sibling.id])
+    expect(changes).toHaveBeenCalledOnce()
+    unsubscribe()
   })
 
   it('tracks independent session bindings instead of replacing every binding for one Agent', async () => {
@@ -148,6 +152,144 @@ describe('Emergence Center directories', () => {
     expect(remote.withdraw).not.toHaveBeenCalled()
   })
 
+  it('retries a failed automatic announcement only when refreshed', async () => {
+    vi.useFakeTimers()
+    const remote = participantPort()
+    const failure = new Error('participant limit reached')
+    remote.announce.mockRejectedValueOnce(failure)
+    const report = vi.fn()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: 'Jet' }, report)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(directory.getSnapshot().error).toBe(failure.message)
+    expect(report).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(remote.announce).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+
+    directory.refresh()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(remote.announce).toHaveBeenCalledTimes(2)
+    expect(directory.getSnapshot().error).toBeUndefined()
+    expect(directory.getSnapshot().participants[0]?.displayName).toBe('Jet')
+    await directory.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['success', 'failure'])('drains an in-flight heartbeat after disposal begins with %s', async (outcome) => {
+    vi.useFakeTimers()
+    const pending = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const remote = participantPort()
+    remote.heartbeat.mockReturnValueOnce(pending.promise)
+    const report = vi.fn()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: 'Jet' }, report)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(remote.heartbeat).toHaveBeenCalledOnce()
+    const retained = directory.getSnapshot()
+    let closed = false
+    const closing = directory.dispose().then(() => { closed = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(closed).toBe(false)
+    expect(remote.withdraw).not.toHaveBeenCalled()
+    if (outcome === 'success') pending.resolve(EMPTY)
+    else pending.reject(new Error('connection closed'))
+    await closing
+    expect(directory.getSnapshot()).toBe(retained)
+    expect(report).not.toHaveBeenCalled()
+    expect(remote.withdraw).toHaveBeenCalledExactlyOnceWith({ participantId: HUMAN })
+    directory.refresh()
+    directory.reset()
+    directory.applyPresence({ id: AGENT, nodeId: NODE, kind: 'agent', displayName: 'Late Agent', presence: 'online', lastSeenAt: 2 })
+    await directory.setProfile({ id: HUMAN, displayName: 'Late profile' })
+    await directory.dispose()
+    await vi.advanceTimersByTimeAsync(18_000)
+    expect(remote.heartbeat).toHaveBeenCalledOnce()
+    expect(remote.list).toHaveBeenCalledOnce()
+    expect(remote.announce).toHaveBeenCalledOnce()
+    expect(remote.withdraw).toHaveBeenCalledOnce()
+    expect(directory.getSnapshot()).toBe(retained)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['automatic', 'explicit'] as const)('withdraws only after an in-flight %s announcement settles', async (kind) => {
+    vi.useFakeTimers()
+    const pending = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const remote = participantPort()
+    remote.announce.mockReturnValueOnce(pending.promise)
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: kind === 'automatic' ? 'Jet' : '' }, vi.fn())
+    await vi.advanceTimersByTimeAsync(0)
+    const announced = kind === 'explicit' ? directory.setProfile({ id: HUMAN, displayName: 'Jet' }) : Promise.resolve()
+    expect(remote.announce).toHaveBeenCalledOnce()
+    const retained = directory.getSnapshot()
+    const closing = directory.dispose()
+    expect(directory.dispose()).toBe(closing)
+    let closed = false
+    void closing.then(() => { closed = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(closed).toBe(false)
+    expect(remote.withdraw).not.toHaveBeenCalled()
+    pending.resolve(EMPTY)
+    await Promise.all([announced, closing])
+    expect(closed).toBe(true)
+    expect(directory.getSnapshot()).toBe(retained)
+    expect(remote.withdraw).toHaveBeenCalledExactlyOnceWith({ participantId: HUMAN })
+    await vi.advanceTimersByTimeAsync(18_000)
+    expect(remote.heartbeat).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['announcement', 'heartbeat'] as const)('discards a previous connection’s in-flight %s after reset', async (kind) => {
+    vi.useFakeTimers()
+    const stale = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const remote = participantPort()
+    if (kind === 'announcement') remote.announce.mockReturnValueOnce(stale.promise)
+    else remote.heartbeat.mockReturnValueOnce(stale.promise)
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: 'Jet' }, vi.fn())
+    await vi.advanceTimersByTimeAsync(kind === 'heartbeat' ? 3_000 : 0)
+    directory.reset()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(remote.announce).toHaveBeenCalledTimes(2)
+    const retained = directory.getSnapshot()
+    stale.resolve({ ...EMPTY, nodeId: 'old-node' as DevelopmentNodeId })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(directory.getSnapshot()).toBe(retained)
+    expect(vi.getTimerCount()).toBe(1)
+    await directory.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['read', 'announcement', 'heartbeat', 'heartbeat failure'] as const)(
+    'keeps a reset triggered by a %s observer free of the previous renewal timer', async (kind) => {
+      vi.useFakeTimers()
+      const pending = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+      const remote = participantPort()
+      const report = vi.fn(() => { if (kind === 'heartbeat failure') directory.reset() })
+      const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: 'Jet' }, report)
+      await vi.advanceTimersByTimeAsync(0)
+      if (kind === 'read') remote.list.mockResolvedValueOnce(EMPTY)
+      remote.list.mockReturnValueOnce(pending.promise)
+      if (kind === 'heartbeat failure') remote.heartbeat.mockRejectedValueOnce(new Error('connection changed'))
+      let reset = false
+      const unsubscribe = directory.subscribe(() => {
+        if (!reset && kind !== 'heartbeat failure') { reset = true; directory.reset() }
+      })
+      try {
+        if (kind === 'read') directory.refresh()
+        else if (kind === 'announcement') await directory.setProfile({ id: HUMAN, displayName: 'Updated' })
+        await vi.advanceTimersByTimeAsync(kind.startsWith('heartbeat') ? 3_000 : 0)
+        expect(directory.getSnapshot().read).toBe(false)
+        expect(vi.getTimerCount()).toBe(0)
+        pending.resolve(EMPTY)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(directory.getSnapshot().read).toBe(true)
+        expect(vi.getTimerCount()).toBe(1)
+      } finally {
+        unsubscribe()
+        pending.resolve(EMPTY)
+        await directory.dispose()
+      }
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
   it.each(['success', 'failure'])('discards a participant read from a reset connection after %s', async (outcome) => {
     const stale = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
     const current = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
@@ -175,6 +317,21 @@ describe('Emergence Center directories', () => {
     const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: '' }, vi.fn())
     await vi.waitFor(() => { expect(directory.getSnapshot().error).toBe('offline') })
     await directory.dispose()
+  })
+
+  it('releases the participant refresh lock when the Remote call throws before returning a Promise', async () => {
+    const remote = participantPort()
+    remote.list.mockImplementationOnce(() => { throw new Error('connection context is inactive') })
+    const report = vi.fn()
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: '' }, report)
+    try {
+      await vi.waitFor(() => { expect(directory.getSnapshot().error).toBe('connection context is inactive') })
+      directory.refresh()
+      await vi.waitFor(() => { expect(directory.getSnapshot().error).toBeUndefined() })
+      expect(remote.list).toHaveBeenCalledTimes(2)
+      expect(directory.getSnapshot().read).toBe(true)
+      expect(report).toHaveBeenCalledOnce()
+    } finally { await directory.dispose() }
   })
 
   it('updates current Task cards and appends created Tasks to the bounded graph', async () => {

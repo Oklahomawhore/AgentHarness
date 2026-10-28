@@ -2061,6 +2061,7 @@ interface DevelopmentTaskSnapshot {
 interface DevelopmentTaskListRequest {
   /** Include Tasks created by or currently bound to this participant. */
   readonly participantId?: DevelopmentParticipantId
+  /** Maximum results; omission uses the smaller of 200 and configured maxLineageTasks. */
   readonly limit?: number
 }
 ```
@@ -2076,6 +2077,7 @@ interface DevelopmentTaskLineageRequest {
   readonly taskId: DevelopmentTaskId
   readonly ancestorDepth?: number
   readonly descendantDepth?: number
+  /** Maximum results; omission uses the Host's configured maxLineageTasks. */
   readonly limit?: number
 }
 ```

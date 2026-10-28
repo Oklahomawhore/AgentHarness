@@ -264,6 +264,18 @@ describe('owner-approved remote observation intervals', () => {
 })
 
 describe('DevelopmentTaskService', () => {
+  it.each([1, 64, 250])('defaults Task catalog reads within the configured %i result limit', async (maxLineageTasks) => {
+    const { tasks } = await setup({ maxLineageTasks })
+    const first = await tasks.create(rootRequest('Catalog first'))
+    await tasks.create(rootRequest('Catalog second'))
+    await tasks.create(rootRequest('Catalog third'))
+    expect(tasks.list({})).toHaveLength(Math.min(3, maxLineageTasks))
+    expect(tasks.list({ limit: 1 })).toHaveLength(1)
+    expect(tasks.lineage({ taskId: first.id }).tasks).toEqual([first])
+    expect(() => tasks.list({ limit: maxLineageTasks + 1 })).toThrow('limit must be between')
+    expect(() => tasks.lineage({ taskId: first.id, limit: maxLineageTasks + 1 })).toThrow('limit must be between')
+  })
+
   it('admits typed artifact evidence without promoting publication text that copies its JSON', async () => {
     const { tasks } = await setup()
     const task = await tasks.create(rootRequest('Artifact admission'))

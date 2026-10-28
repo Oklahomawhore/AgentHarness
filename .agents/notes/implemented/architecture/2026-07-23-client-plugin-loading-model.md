@@ -68,7 +68,7 @@ Why is the roster yml rows and not a scan? Because which plugins compose into a 
 4. `settled` = every entry created + `loader.await()` quiescent + an all-ACTIVE sweep. The sweep lists each import-failed, FAILED, or PENDING fiber with its missing services. It exists because cordis inject waits have no timeout — the sweep is the fail-loud floor.
 5. The framework-free loading page projects real fiber states via `internal/status`. After the sweep, the kernel calls `ctx.uiRenderer.mount(container)` and replaces the page with the real UI in one pass.
 
-The application mount follows the enabled client roster after startup as well: `internal/status` withdraws the React root before an entry releases its resources, and a queued activation check remounts only the current renderer after every enabled entry is ACTIVE. React-local state resets; stores belonging to unchanged fibers survive. Identical rebuilt bundle and source-map bytes retain the advertised revision instead of turning opaque startup revisions into false reloads.
+The application mount follows the enabled client roster after startup as well: `internal/status` withdraws the React root before an entry releases its resources, and a queued activation check remounts only the current renderer after every enabled entry is ACTIVE. The Loader's `loader/partial-dispose` notification reconciles a removed row after it leaves the tree. React-local state resets; stores belonging to unchanged fibers survive. Identical rebuilt bundle and source-map bytes retain the advertised revision instead of turning opaque startup revisions into false reloads.
 
 ### Hot reload: one driver plugin, self-watched bundles
 

@@ -14,6 +14,7 @@
     "apps/web/tests/support.ts",
     "apps/web/tests/dev-workbench.e2e.ts",
     "apps/web/tests/emergence-center.e2e.ts",
+    "apps/web/tests/participant-recovery.e2e.ts",
     "apps/web/tests/independent-scope.e2e.ts",
     "apps/web/tests/native-scope.e2e.ts",
     "apps/web/tests/native-contribution.e2e.ts",

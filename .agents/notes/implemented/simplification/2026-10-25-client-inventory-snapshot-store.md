@@ -12,7 +12,9 @@ Workbench, participant, Task, and MCP-client inventories need stable snapshots a
 
 The [workbench inventory](../../../../packages/client/ui-dev-workbench/README.md) and three [collaboration directories](../../../../packages/client/ui-emergence-center/README.md) use the existing synchronous [Client snapshot store](../../../../packages/client/store/README.md). Subscriber exceptions are reported without interrupting other subscribers. Repeated registrations of the same callback own independent unsubscribe functions. Wholesale publication deep-freezes draftable values outside production; the initial value is not implicitly frozen.
 
-The renderer owns subscription cleanup. Consumers read nested DTOs without mutation, and Task graph layout creates separate node and position objects. Refresh ordering, stale-response generations, mutations, and participant lease disposal remain directory-owned. A scheduled heartbeat captures its confirmed profile before registration; profile replacement cancels and reschedules that timer. Disposal retains its existing lease behavior and does not acquire a second subscriber lifecycle.
+The renderer owns subscription cleanup. Consumers read nested DTOs without mutation, and Task graph layout creates separate node and position objects. Refresh ordering, stale-response generations, mutations, and participant lease disposal remain directory-owned. Participant refresh reports failures from both listing and announcement and releases its read lock after settlement. Lease replies must still belong to the current connection generation and selected profile. Closing stops new work and drains sent lease requests before attempting withdrawal. Timers are installed before notifying observers, so a synchronous reset or disposal cancels the scheduled renewal.
+
+Task catalog and lineage queries use the Host's configured result defaults; the browser does not copy a second set of limits.
 
 [Read-authorization invalidation](../bug-fix/2026-10-24-owner-read-inventory-synchronization.md) retains its independent notification and permission decisions; the inventory engine does not replace Host authority or the contribution directory.
 

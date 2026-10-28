@@ -111,7 +111,7 @@ Task 投影和上下文变更使用 `developmentTasks/list`、`get`、`lineage`�
 
 ## 配置
 
-所有留存和重试字段都必填。Web bundle 使用 10,000 个 Task、每 Task 2,000 个事件、16 个 Merge 父节点、256 KiB 继承 block、500 个 Task 的谱系查询上限，以及五秒隐藏 Room 重试间隔。
+所有留存和重试字段都必填。目录查询省略限额时使用 200 与 `maxLineageTasks` 中的较小值；谱系查询省略限额时使用 `maxLineageTasks`。显式限额超过该配置容量时会拒绝请求。Web bundle 使用 10,000 个 Task、每 Task 2,000 个事件、16 个 Merge 父节点、256 KiB 继承 block、500 个 Task 的谱系查询上限，以及五秒隐藏 Room 重试间隔。
 
 如果降低后的 `maxEventsPerTask` 无法容纳恢复的本地事件，以及活跃本地工件授权、活跃远端区间、独立 peer 贡献和 owner 本地采集所需的撤销名额，启动会拒绝该配置。应增大配置容量；恢复不会删除或重写记录来适配上限。
 

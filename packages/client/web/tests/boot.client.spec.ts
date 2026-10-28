@@ -90,7 +90,7 @@ describe('bootstrap failure rendering', () => {
 })
 
 describe('mounted client lifecycle', () => {
-  it.each(['replacement', 'optional disable', 'failed replacement', 'failed import', 'disable after failure'] as const)('follows client entry %s without mounting a partial application', async (operation) => {
+  it.each(['replacement', 'optional disable', 'remove', 'failed replacement', 'failed import', 'disable after failure'] as const)('follows client entry %s without mounting a partial application', async (operation) => {
     const events: string[] = []
     let failApply = false
     let failImport = false
@@ -135,6 +135,12 @@ describe('mounted client lifecycle', () => {
         await owner.update({ disabled: true })
         expect(events).toEqual(['mount', 'provider-unload'])
         expect(container.textContent).toBe('mounted')
+        return
+      }
+      if (operation === 'remove') {
+        await loader.remove(owner.id)
+        await expect.poll(() => container.textContent).toBe('mounted')
+        expect(events).toEqual(['mount', 'unmount', 'provider-unload', 'mount'])
         return
       }
       const oldFiber = owner.fiber
