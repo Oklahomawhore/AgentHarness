@@ -14,7 +14,7 @@ Member cards and independent reading controls describe the same read permission 
 
 The [Client plugin](../../../../packages/client/ui-emergence-center/README.md) owns independent reading inventory through the existing contribution directory. The same Host notification invalidates both this inventory and the affected Task's member inventory. Framework-generated hooks deliver confirmed data to components; form inputs and transient presentation remain local. Directory generations reject stale responses, mutations retain their pending state across panel dismissal, and connection reset reads a fresh baseline.
 
-The directory retains uncertain mutation outcomes separately from failed status reads. Automatic read recovery clears its read error while retaining a lost mutation warning, including through a failed confirmation read; an explicit reread or a subsequent mutation clears that warning.
+The directory retains uncertain mutation outcomes separately from failed status reads. Automatic read recovery clears its read error while retaining a lost mutation warning, including through a failed confirmation read; an explicit reread or a subsequent mutation clears that warning. An explicit reread retains this acknowledgement when it joins an automatic read already in flight, without issuing another request.
 
 Task acknowledgements update Task progress without refreshing every previously viewed Native local permission. Only binding and clearing change its assignment identity. Those events invalidate the matching participant and unresolved identities, while confirmed unrelated Sessions keep their observations.
 

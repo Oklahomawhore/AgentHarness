@@ -61,6 +61,24 @@ describe('contribution management directory', () => {
     directory.dispose()
   })
 
+  it('acknowledges an uncertain mutation when explicit Refresh joins the automatic read already in flight', async () => {
+    const confirmation = Promise.withResolvers<string>()
+    const read = vi.fn().mockResolvedValue('confirmed')
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    try {
+      await directory.refresh('s')
+      await directory.mutate('s', async () => { throw new Error('reply lost') })
+      expect(directory.getSnapshot().s?.error).toBe('contribution/unknown-outcome')
+      read.mockReturnValueOnce(confirmation.promise)
+      directory.invalidate('s')
+      const refresh = directory.refresh('s')
+      confirmation.resolve('current authority')
+      await refresh
+      expect(directory.getSnapshot().s).toEqual({ status: 'ready', pending: false, value: 'current authority' })
+      expect(read).toHaveBeenCalledTimes(3)
+    } finally { confirmation.resolve('current authority'); directory.dispose() }
+  })
+
   it('discards reads started before and during a mutation and recovers a committed lost reply', async () => {
     const old = Promise.withResolvers<string>()
     const during = Promise.withResolvers<string>()
@@ -138,6 +156,77 @@ describe('contribution management directory', () => {
     await directory.refresh('task')
     expect(directory.getSnapshot().task?.value).toEqual([1])
     directory.dispose()
+  })
+
+  it.each(['refresh', 'more'] as const)('replaces the opposite in-flight paging mode with %s', async (mode) => {
+    const stale = Promise.withResolvers<readonly number[]>()
+    const read = vi.fn().mockResolvedValueOnce([1]).mockReturnValueOnce(stale.promise).mockResolvedValue([4])
+    const directory = createContributionDirectory<string, readonly number[]>(read, vi.fn())
+    try {
+      await directory.refresh('task')
+      const old = mode === 'refresh' ? directory.more('task') : directory.refresh('task')
+      await Promise.resolve()
+      await directory[mode]('task')
+      expect(read).toHaveBeenLastCalledWith('task', mode === 'more' ? [1] : undefined)
+      stale.resolve([2]); await old
+      expect(directory.getSnapshot().task?.value).toEqual([4])
+      expect(read).toHaveBeenCalledTimes(3)
+    } finally { stale.resolve([2]); directory.dispose() }
+  })
+
+  it('confirms an action on a selection without an earlier observation', async () => {
+    const directory = createContributionDirectory<string, string>(async () => 'committed', vi.fn())
+    try {
+      expect(await directory.mutate('new', async () => 'acknowledged')).toBe('acknowledged')
+      expect(directory.getSnapshot().new).toEqual({ status: 'ready', pending: false, value: 'committed' })
+    } finally { directory.dispose() }
+  })
+
+  it.each(['reply', 'lost-reply'] as const)('keeps a disposed directory silent when a sent mutation settles with %s', async (outcome) => {
+    const gate = Promise.withResolvers<string>()
+    const read = vi.fn(async () => 'confirmed')
+    const report = vi.fn()
+    const directory = createContributionDirectory<string, string>(read, report)
+    try {
+      await directory.refresh('s')
+      const mutation = directory.mutate('s', () => gate.promise)
+      const listener = vi.fn()
+      directory.subscribe(listener)
+      directory.dispose()
+      const snapshot = directory.getSnapshot()
+      if (outcome === 'reply') gate.resolve('acknowledged')
+      else gate.reject(new Error('late lost reply'))
+      expect(await mutation).toBeUndefined()
+      directory.reset()
+      expect(directory.getSnapshot()).toBe(snapshot)
+      expect(listener).not.toHaveBeenCalled()
+      expect(report).not.toHaveBeenCalled()
+      expect(read).toHaveBeenCalledOnce()
+    } finally { gate.resolve('acknowledged'); directory.dispose() }
+  })
+
+  it('stops mutation confirmation after disposal while its status read is unfinished', async () => {
+    const confirmation = Promise.withResolvers<string>()
+    const entered = Promise.withResolvers<undefined>()
+    const read = vi.fn().mockResolvedValueOnce('before').mockImplementationOnce(() => {
+      entered.resolve(undefined)
+      return confirmation.promise
+    })
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    try {
+      await directory.refresh('s')
+      const mutation = directory.mutate('s', async () => 'acknowledged')
+      await entered.promise
+      const listener = vi.fn()
+      directory.subscribe(listener)
+      directory.dispose()
+      const snapshot = directory.getSnapshot()
+      confirmation.resolve('committed')
+      expect(await mutation).toBeUndefined()
+      expect(directory.getSnapshot()).toBe(snapshot)
+      expect(listener).not.toHaveBeenCalled()
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally { confirmation.resolve('committed'); directory.dispose() }
   })
 
   it.each(['reply', 'lost-reply'])('retains the sent-mutation lock across reset and confirms its eventual %s', async (outcome) => {

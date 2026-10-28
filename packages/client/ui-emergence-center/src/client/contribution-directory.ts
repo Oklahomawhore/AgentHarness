@@ -64,11 +64,11 @@ export function createContributionDirectory<K extends string, T>(
   const load = (key: K, clearError: boolean, append = false): Promise<void> => {
     if (!active) return Promise.resolve()
     const state = record(key)
+    if (clearError) delete state.mutationError
     if (state.read?.revision === state.revision) {
       if (state.read.append === append) return state.read.promise
       state.revision += 1
     }
-    if (clearError) delete state.mutationError
     const issued = generation
     const revision = state.revision
     const current = (): boolean => active && generation === issued && state.revision === revision
@@ -79,7 +79,8 @@ export function createContributionDirectory<K extends string, T>(
     const promise = (async () => {
       try {
         const value = await Promise.resolve().then(() => read(key, append ? snapshot[key]?.value : undefined))
-        if (current()) publish(key, { ...snapshot[key], value, status: 'ready', pending: state.pending })
+        if (current()) publish(key, { value, status: 'ready', pending: state.pending,
+          ...(state.mutationError === undefined ? {} : { error: state.mutationError }) })
       } catch (error) {
         if (current()) { report(error); publish(key, { ...snapshot[key], status: 'error', pending: state.pending, error: code(error) }) }
       } finally {

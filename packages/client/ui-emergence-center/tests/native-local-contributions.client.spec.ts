@@ -13,6 +13,63 @@ function fixture(initial = unbound) {
 }
 
 describe('owner-local contribution directory', () => {
+  it('requires a confirmed eligible assignment before requesting a local contribution', async () => {
+    const { port, source } = fixture()
+    try {
+      await source.request(localRequest)
+      await source.directory.refresh(agentId)
+      await source.request(localRequest)
+      expect(port.request).not.toHaveBeenCalled()
+    } finally { source.dispose() }
+  })
+
+  it('rereads a stale stop selection without sending it to a capture that is absent or replaced', async () => {
+    const { port, source } = fixture(assigned)
+    try {
+      await source.directory.refresh(agentId)
+      await source.stop({ agentId, expectedCapture: localCapture.selection })
+      expect(port.stopLocal).not.toHaveBeenCalled()
+      await source.directory.refresh(agentId)
+      expect(port.status).toHaveBeenCalledTimes(2)
+      vi.mocked(port.status).mockResolvedValue({ ...assigned, capture: localCapture })
+      await source.directory.refresh(agentId)
+      await source.stop({ agentId, expectedCapture: { ...localCapture.selection,
+        captureGeneration: 'replaced-generation' as typeof localCapture.selection.captureGeneration } })
+      expect(port.stopLocal).not.toHaveBeenCalled()
+      await source.directory.refresh(agentId)
+      expect(port.status).toHaveBeenCalledTimes(4)
+    } finally { source.dispose() }
+  })
+
+  it('rejects status older than a notified revision and refreshes unversioned live changes without opening unknown Sessions', async () => {
+    const { port, source } = fixture(assigned)
+    try {
+      source.changed(agentId, 5)
+      expect(port.status).not.toHaveBeenCalled()
+      await source.directory.refresh(agentId)
+      source.changed(agentId, 5)
+      await source.directory.refresh(agentId)
+      expect(source.directory.getSnapshot()[agentId]?.status).toBe('error')
+      vi.mocked(port.status).mockResolvedValue({ ...assigned, revision: 4 })
+      source.changed(agentId, 4)
+      await source.directory.refresh(agentId)
+      expect(source.directory.getSnapshot()[agentId]?.status).toBe('error')
+      vi.mocked(port.status).mockResolvedValue({ ...assigned, revision: 5 })
+      source.changed(agentId, 5)
+      await source.directory.refresh(agentId)
+      expect(source.directory.getSnapshot()[agentId]).toMatchObject({ status: 'ready', value: { revision: 5 } })
+      vi.mocked(port.status).mockResolvedValue({ ...assigned, revision: 5, eligibility: 'not-live' })
+      source.changed(agentId)
+      await source.directory.refresh(agentId)
+      expect(source.directory.getSnapshot()[agentId]?.value?.eligibility).toBe('not-live')
+      vi.mocked(port.status).mockResolvedValue(assigned)
+      source.reset()
+      await source.directory.refresh(agentId)
+      expect(source.directory.getSnapshot()[agentId]).toMatchObject({ status: 'ready', value: assigned })
+      expect(port.status).toHaveBeenCalledTimes(6)
+    } finally { source.dispose() }
+  })
+
   it('stops local and peer captures independently and keeps only the unresolved destination pending across reset', async () => {
     const localCaptureId = 'independent-local-capture' as typeof localCapture.selection.captureId
     const distinctLocalCapture = { ...localCapture, selection: { ...localCapture.selection, captureId: localCaptureId },

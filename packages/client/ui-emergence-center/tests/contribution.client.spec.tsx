@@ -98,6 +98,34 @@ function OwnerHarness({ directory, actions }: {
 }
 
 describe('source contribution onboarding', () => {
+  it('clears the lost-reply notice when Refresh joins an automatic read without repeating the source action', async () => {
+    const confirmation = Promise.withResolvers<ClaudeScopeContributionDetail>()
+    const read = vi.fn(async () => captured)
+    const operation = vi.fn(async () => { throw new Error('reply lost') })
+    const directory = createContributionDirectory(read, vi.fn())
+    disposers.push(() => { confirmation.resolve(captured); directory.dispose() })
+    const actions = sourceActions({
+      readContribution: (key) => { void directory.refresh(key) },
+      stopContribution: async ({ sessionKey }) => { await directory.mutate(sessionKey, operation) },
+    })
+    render(<SourceHarness directory={directory} actions={actions} />)
+    const stop = await screen.findByRole('button', { name: zh['contribution.stop'] })
+    await waitFor(() => { expect(stop).toHaveProperty('disabled', false) })
+    fireEvent.click(stop)
+    await screen.findByText(zh['contribution.error.unknown'])
+    read.mockReturnValueOnce(confirmation.promise)
+    act(() => { directory.invalidate(session.sessionKey) })
+    expect(screen.getByText(zh['contribution.loading'])).toBeTruthy()
+    const refresh = screen.getByRole('button', { name: zh['contribution.refresh'] })
+    expect(refresh).toHaveProperty('disabled', false)
+    fireEvent.click(refresh)
+    await act(async () => { confirmation.resolve(captured); await confirmation.promise })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(zh['contribution.loading'])).toBeNull()
+    expect(operation).toHaveBeenCalledOnce()
+    expect(read).toHaveBeenCalledTimes(3)
+  })
+
   it('uses one directory permission for tool observations without asking for an API file or operation', async () => {
     const toolEntry: ScopeContributionEntry = { ...applicationEntry, kind: 'contribution-entry', sourceKind: 'tool-observations' }
     const actions = sourceActions({ previewContributionText: vi.fn(async () => toolEntry) })
