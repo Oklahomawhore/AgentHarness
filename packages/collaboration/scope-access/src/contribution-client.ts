@@ -155,9 +155,10 @@ export class ContributionController<R extends ContributionRecord> {
    * @param store - serialized current local capture and other permission checks.
    * @param input - invitation matching the prepared capture.
    * @param signal - source management generation and lifetime.
-   * @returns the persisted selection, which is not newly active yet.
+   * @returns the persisted selection with its validated invitation, which is not newly active yet.
    */
-  async selectActivation(store: ContributionStore<R>, input: ScopeContributionInvitation, signal: AbortSignal): Promise<R> {
+  async selectActivation(store: ContributionStore<R>, input: ScopeContributionInvitation,
+    signal: AbortSignal): Promise<R & { readonly invitation: ScopeContributionInvitation }> {
     signal.throwIfAborted()
     const { capture, ended } = store.current()
     if (ended || capture === undefined || capture.state === 'ending') {
@@ -179,17 +180,17 @@ export class ContributionController<R extends ContributionRecord> {
   /**
    * Adopt online verification only for the same selected grant and current local permission.
    * @param store - serialized current records; local read/capture relationships are checked again here.
-   * @param selected - grant persisted before verification.
+   * @param selected - invitation-bearing selection persisted before verification.
    * @param result - current owner's status response.
    * @param signal - source management generation and lifetime.
    * @returns after activation, visible failure, or verified terminal cleanup commits.
    */
-  async adoptActivation(store: ContributionStore<R>, selected: R,
+  async adoptActivation(store: ContributionStore<R>, selected: R & { readonly invitation: ScopeContributionInvitation },
     result: ScopeContributionStatusResult, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const current = this.expected(store, selected)
     if (store.current().ended || current.state === 'ending' || current.invitation === undefined
-      || selected.invitation === undefined || !isDeepStrictEqual(current.invitation, selected.invitation)) {
+      || !isDeepStrictEqual(current.invitation, selected.invitation)) {
       throw store.error('grant-ended', 'Contribution changed before activation')
     }
     store.requireCompatible(current.invitation)
@@ -197,7 +198,7 @@ export class ContributionController<R extends ContributionRecord> {
       validateContributionReceipt(current.invitation, result.receipt, undefined, 'peer-contribution-opened')
       const { issue: _issue, application: _application, ...retained } = current
       await store.save({ ...retained, state: 'active' } as R)
-    } else if (result.status === 'ended') await this.confirmEnd(store, current, result.receipt)
+    } else if (result.status === 'ended') await this.confirmEnd(store, current, current.invitation, result.receipt)
     else await this.issue(store, current, result.status)
   }
 
@@ -219,9 +220,9 @@ export class ContributionController<R extends ContributionRecord> {
     await store.save(ending)
   }
 
-  private async confirmEnd(store: ContributionStore<R>, capture: R, receipt: DevelopmentTaskPeerContributionReceipt): Promise<void> {
-    if (capture.invitation === undefined) throw new Error('contribution: terminal receipt has no invitation')
-    validateContributionReceipt(capture.invitation, receipt, undefined, 'peer-contribution-ended')
+  private async confirmEnd(store: ContributionStore<R>, capture: R, invitation: ScopeContributionInvitation,
+    receipt: DevelopmentTaskPeerContributionReceipt): Promise<void> {
+    validateContributionReceipt(invitation, receipt, undefined, 'peer-contribution-ended')
     const { application: _application, ...retained } = capture
     const ending = { ...retained, state: 'ending', endReceipt: receipt } as R
     await store.save(ending)
@@ -305,7 +306,7 @@ export class ContributionController<R extends ContributionRecord> {
       }
       if (result.status === 'ended') {
         const invitation = this.selectInvitation(store, current, result.invitation)
-        await this.confirmEnd(store, { ...this.expected(store, current), invitation }, result.receipt)
+        await this.confirmEnd(store, { ...this.expected(store, current), invitation }, invitation, result.receipt)
       } else if (result.status === 'cancelled' || (current.state === 'ending' && (result.status === 'rejected' || result.status === 'expired'))) {
         await store.clear(current)
       } else if (result.status === 'rejected' || result.status === 'expired') {
@@ -354,7 +355,7 @@ export class ContributionController<R extends ContributionRecord> {
         }
         if (capture.state === 'ending') {
           if (capture.invitation === undefined) await store.clear(capture)
-          else if (capture.endReceipt !== undefined) await this.confirmEnd(store, capture, capture.endReceipt)
+          else if (capture.endReceipt !== undefined) await this.confirmEnd(store, capture, capture.invitation, capture.endReceipt)
           else return { kind: 'end' as const, capture, invitation: capture.invitation }
           return { kind: 'done' as const, active: false }
         }
@@ -381,7 +382,7 @@ export class ContributionController<R extends ContributionRecord> {
           signal.throwIfAborted()
           const current = this.currentRecovery(store, pending.capture)
           if (current?.state !== 'ending') return
-          if (result.status === 'ended') await this.confirmEnd(store, current, result.receipt)
+          if (result.status === 'ended') await this.confirmEnd(store, current, pending.invitation, result.receipt)
           else await this.issue(store, current, result.status)
         })
         return false
@@ -401,7 +402,7 @@ export class ContributionController<R extends ContributionRecord> {
           else if (!isDeepStrictEqual(item.receipt, result.receipt)) throw new Error('contribution: exact retry returned a different receipt')
           return true
         }
-        if (result.status === 'ended') await this.confirmEnd(store, current, result.receipt)
+        if (result.status === 'ended') await this.confirmEnd(store, current, pending.invitation, result.receipt)
         else if (item.receipt !== undefined) return true
         else await this.issue(store, current, result.status)
         return false

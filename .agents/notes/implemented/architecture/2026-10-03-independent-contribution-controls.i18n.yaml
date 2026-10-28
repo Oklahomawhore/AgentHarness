@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-03-independent-contribution-controls.md
-2026-10-03-independent-contribution-controls.md: 4ccbab7ce97b844c02fb9ae0e2491194df96f479
-2026-10-03-independent-contribution-controls.zh.md: 42d8c2b6fbfc7055eb66888d5d151b265cf376e1
+2026-10-03-independent-contribution-controls.md: b6215b95cb0c2d8435f43f973f0da86cfe80baf2
+2026-10-03-independent-contribution-controls.zh.md: 842013965c6897e5f500d74ab16caaab3c2f3c80
