@@ -142,6 +142,36 @@ function remoteSample(identity: DevelopmentTaskObservedIntervalIdentity, sequenc
 }
 
 describe('development-task SQLite storage composition', () => {
+  it('keeps SQLite assignment rows restorable after a delayed context acknowledgement is rejected', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Ordered context', scope: 'api', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text: 'Revision two' })
+    const { assignment } = await first.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+    const request = { taskId: task.id, participantId: agent, bindingId: assignment.bindingId }
+    await first.developmentTasks.acknowledge({ ...request, revision: 2 })
+    const rows = () => {
+      const database = new DatabaseSync(join(root!, 'tasks.sqlite'))
+      try { return database.prepare('SELECT key, value FROM u_development_context_tasks_assignments ORDER BY key').all() }
+      finally { database.close() }
+    }
+    const retained = rows()
+    expect(retained).toHaveLength(2)
+    await expect(first.developmentTasks.acknowledge({ ...request, revision: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(rows()).toEqual(retained)
+    const acknowledged = await first.developmentTasks.acknowledge({ ...request, revision: 2 })
+    const committed = rows()
+    expect(committed).toHaveLength(3)
+    expect(committed.slice(0, 2)).toEqual(retained)
+    await close(first)
+    const restored = await boot()
+    expect(restored.developmentTasks.assignmentList()).toEqual([acknowledged])
+    expect(rows()).toEqual(committed)
+  })
+
   it('restores owner receipts and terminal remote evidence without rewriting prior SQLite rows', async () => {
     const first = await boot()
     const peer = await boot(undefined, 'node-b')

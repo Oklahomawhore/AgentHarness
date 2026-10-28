@@ -9,6 +9,7 @@ import DevelopmentTaskService, {
   type Config,
   type DevelopmentTaskAdmitObservedContextRequest,
   type DevelopmentTaskBindingId,
+  type DevelopmentTaskAssignmentLogEntry,
   type DevelopmentTaskId,
   type DevelopmentTaskObservedSourceId,
   type DevelopmentTaskArtifactId,
@@ -623,6 +624,50 @@ describe('DevelopmentTaskService', () => {
     expect(() => { missingBinding.tasks.restoreAssignmentLog(assignments.slice(1)) }).toThrow('sequence gap')
     expect(missingBinding.tasks.assignmentLog()).toEqual([])
     expect(missingBinding.tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('rejects delayed acknowledgements before persistence and leaves the next durable assignment restorable', async () => {
+    const { ctx, tasks } = await setup()
+    const task = await tasks.create(rootRequest('Acknowledgement ordering'))
+    await tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Second revision' })
+    const checked = await tasks.checkout({ taskId: task.id, participantId: participant('agent') })
+    const request = { bindingId: checked.assignment.bindingId, participantId: checked.assignment.participantId, taskId: task.id }
+    await tasks.acknowledge({ ...request, revision: 2 })
+    const retained = tasks.assignmentLog()
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    ctx.on('development-task/assignment-persist', persisted)
+
+    await expect(tasks.acknowledge({ ...request, revision: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(tasks.assignmentLog()).toEqual(retained)
+    const latest = await tasks.acknowledge({ ...request, revision: 2 })
+    expect(persisted).toHaveBeenCalledOnce()
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog([...retained, ...persisted.mock.calls.map(([entry]) => entry)])
+    expect(restored.tasks.assignmentList()).toEqual([latest])
+  })
+
+  it.each(['regression', 'gap', 'conflicting-duplicate'] as const)('rejects replicated assignment %s before persistence', async (failure) => {
+    const { owner, source, task, bound } = await remoteObservationScenario()
+    const sourceNodeId = 'node-b' as DevelopmentNodeId
+    await owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Revision two' })
+    await source.tasks.acceptLogReplica(owner.tasks.log().at(-1)!, 'node-a' as DevelopmentNodeId)
+    const request = { taskId: task.id, bindingId: bound.bindingId, participantId: bound.participantId, revision: 2 }
+    await source.tasks.acknowledge(request)
+    const acknowledged = source.tasks.assignmentLog().at(-1)!
+    await owner.tasks.acceptAssignmentReplica(acknowledged, sourceNodeId)
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    owner.ctx.on('development-task/assignment-persist', persisted)
+    const invalid = { ...acknowledged,
+      seq: acknowledged.seq + (failure === 'gap' ? 2 : failure === 'regression' ? 1 : 0),
+      change: { kind: 'context-acknowledged' as const, taskId: task.id, revision: 1 } }
+    await expect(owner.tasks.acceptAssignmentReplica(invalid, sourceNodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    const valid = await source.tasks.acknowledge(request)
+    await expect(owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)).resolves.toEqual(valid)
+    expect(persisted).toHaveBeenCalledOnce()
   })
 
   it('keeps different sessions of the same Agent independently bound', async () => {

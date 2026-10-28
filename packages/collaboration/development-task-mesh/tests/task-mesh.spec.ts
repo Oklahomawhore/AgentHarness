@@ -9,6 +9,7 @@ import DevelopmentRoomService, {
 import DevelopmentTaskService from '@deepseek-ai/dsh-development-task'
 import type {
   DevelopmentTaskAdmitRemoteObservedContextRequest,
+  DevelopmentTaskAssignmentLogEntry,
   DevelopmentTaskBindingId,
   DevelopmentTaskId,
   DevelopmentTaskLogEntry,
@@ -241,6 +242,59 @@ describe('development Task Mesh channel', () => {
 
     await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
     expect(ctx.developmentTasks.get({ taskId: TASK })).toMatchObject({ revision: 2, context: [{ text: 'arrived out of order' }] })
+  })
+
+  it('buffers a cross-owner assignment until its referenced Task arrives without persisting incomplete state', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const home = 'participant-home' as DevelopmentNodeId
+    const bound: DevelopmentTaskAssignmentLogEntry = {
+      nodeId: home, seq: 1, at: 1, bindingId: 'cross-owner-binding' as DevelopmentTaskBindingId,
+      participantId: 'cross-owner-agent' as DevelopmentParticipantId, change: { kind: 'task-bound', taskId: TASK },
+    }
+    const persisted = vi.fn()
+    ctx.on('development-task/assignment-persist', persisted)
+
+    await expect(channel.receive([{ kind: 'assignment-event', entry: bound }], home)).resolves.toBeUndefined()
+    expect(persisted).not.toHaveBeenCalled()
+    expect(ctx.developmentTasks.assignmentLog()).toEqual([])
+    expect(await channel.heads()).not.toHaveProperty(`assignment:${home}`)
+
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    expect(ctx.developmentTasks.assignmentList()).toEqual([{
+      bindingId: bound.bindingId, participantId: bound.participantId, taskId: TASK, assignedAt: bound.at,
+    }])
+    expect(persisted).toHaveBeenCalledExactlyOnceWith(bound)
+    await channel.receive([{ kind: 'assignment-event', entry: bound }], home)
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('buffers a cross-owner acknowledgement until its referenced Task revision arrives', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const home = 'participant-home' as DevelopmentNodeId
+    const bound: DevelopmentTaskAssignmentLogEntry = {
+      nodeId: home, seq: 1, at: 1, bindingId: 'cross-owner-binding' as DevelopmentTaskBindingId,
+      participantId: 'cross-owner-agent' as DevelopmentParticipantId, change: { kind: 'task-bound', taskId: TASK },
+    }
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    await channel.receive([{ kind: 'assignment-event', entry: bound }], home)
+    const acknowledged: DevelopmentTaskAssignmentLogEntry = {
+      ...bound, seq: 2, at: 2, change: { kind: 'context-acknowledged', taskId: TASK, revision: 2 },
+    }
+    const persisted = vi.fn()
+    ctx.on('development-task/assignment-persist', persisted)
+
+    await channel.receive([{ kind: 'assignment-event', entry: acknowledged }], home)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(ctx.developmentTasks.assignmentLog()).toEqual([bound])
+    expect(ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBeUndefined()
+    expect(await channel.heads()).toHaveProperty(`assignment:${home}`, 1)
+
+    await channel.receive([{ kind: 'task-event', entry: contextPublished() }], REMOTE)
+    expect(ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBe(2)
+    expect(persisted).toHaveBeenCalledExactlyOnceWith(acknowledged)
+    expect(await channel.heads()).toHaveProperty(`assignment:${home}`, 2)
   })
 
   it('rejects a different payload for an already committed event identity', async () => {

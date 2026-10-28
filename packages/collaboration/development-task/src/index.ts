@@ -1423,6 +1423,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated assignment event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
+      this.prepareAssignment(entry, 'REPLICA_CONFLICT')
       await this.persistAssignment(entry)
       return this.appendAssignment(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })
@@ -1952,6 +1953,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       participantId,
       change,
     })
+    this.prepareAssignment(entry, 'INVALID_REQUEST')
     await this.persistAssignment(entry)
     return this.appendAssignment(entry, { kind: 'local', nodeId: entry.nodeId }, 'INVALID_REQUEST')
   }
@@ -1967,6 +1969,20 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private appendAssignment(
     entry: DevelopmentTaskAssignmentLogEntry,
     origin: DevelopmentTaskEventOrigin,
+    code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
+  ): DevelopmentTaskAssignment | undefined {
+    const assignment = this.prepareAssignment(entry, code)
+    if (entry.seq <= (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0)) return assignment
+    if (assignment === undefined) this.assignments.delete(entry.bindingId)
+    else this.assignments.set(entry.bindingId, assignment)
+    this.assignmentEntries.push(entry)
+    this.lastAssignmentSeqByNode.set(entry.nodeId, entry.seq)
+    this.ctx.emit('development-task/assignment-changed', assignment ?? null, entry, origin)
+    return assignment
+  }
+
+  private prepareAssignment(
+    entry: DevelopmentTaskAssignmentLogEntry,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): DevelopmentTaskAssignment | undefined {
     const lastSeq = this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0
@@ -1997,24 +2013,18 @@ export class DevelopmentTaskService extends TypertRemoteService {
           ...(entry.change.sessionLabel === undefined ? {} : { sessionLabel: entry.change.sessionLabel }),
           assignedAt: entry.at,
         })
-        this.assignments.set(entry.bindingId, assignment)
         break
       case 'task-cleared':
         if (current?.taskId !== entry.change.previousTaskId) throw new DevelopmentTaskError('assignment clear does not match current Task', code)
-        this.assignments.delete(entry.bindingId)
         break
       case 'context-acknowledged':
         if (current?.taskId !== entry.change.taskId || entry.change.revision < (current.acknowledgedRevision ?? 0)) {
           throw new DevelopmentTaskError('context acknowledgement does not match current assignment', code)
         }
         assignment = Object.freeze({ ...current, acknowledgedRevision: entry.change.revision })
-        this.assignments.set(entry.bindingId, assignment)
         break
       default: return this.assertNever(entry.change)
     }
-    this.assignmentEntries.push(entry)
-    this.lastAssignmentSeqByNode.set(entry.nodeId, entry.seq)
-    this.ctx.emit('development-task/assignment-changed', assignment ?? null, entry, origin)
     return assignment
   }
 

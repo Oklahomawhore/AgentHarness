@@ -16,7 +16,9 @@ Status: implemented
 
 **仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
 
-**通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。同一不可变事件标识出现冲突内容时会隔离 peer。认证提供节点身份和完整性，不提供传输保密。
+**分配校验先于持久发布。**本地和复制的变更在持久化前使用同一投影校验；内存绑定和通知只在写入成功后改变。倒退的确认版本、序号缺口和冲突身份不会占用持久日志位置。Task Mesh 会等待绑定的目标 Task 和确认引用的 Task revision 从其 owner 到达。
+
+**通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。同一不可变事件标识出现冲突内容时会隔离 peer。认证提供节点身份和完整性，不提供传输保密。Socket 清理先于显式拨号和发现服务启动注册，因此初始化失败会释放已取得的 peer 和重连定时器。
 
 **原生与外部 Agent 通过按 Session 隔离的 binding 获得上下文。**原生 Harness Agent 在 `agent/pre-step` 收到可回放的 `user/message` Task 快照。外部 MCP Agent 无法接收编辑器之外的强制上下文推送，因此目标对话调用 `agentharness_task_connect`，保留自己的 binding id，并在后续调用中接收 context delta。同一客户端的多个 Session 可以绑定不同 Task。一个纯浏览器 projection 把安全 MCP 检测、在线状态、binding 和确认状态转换为一个当前状态与一个可执行下一步，不渲染原始诊断或 cluster secret。 MCP 目录重置会推进连接代际。尚未结束的配置操作仍返回已发送请求的结果，但只有该代际仍为当前值才发布配置；迟到回复不能覆盖重连后正在进行或已经完成的读取。 列表读取还保留开始时的快照身份。较新的成功配置会使该读取的成功和错误发布失效，不取消其他配置操作；已有在途读取仍需结束后才能再次刷新。
 

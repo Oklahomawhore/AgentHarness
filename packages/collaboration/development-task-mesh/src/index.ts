@@ -199,7 +199,7 @@ export class DevelopmentTaskMeshService extends Service {
         }
         const assignmentHead = this.ctx.developmentTasks.assignmentLog().filter(entry => entry.nodeId === sourceNodeId).at(-1)?.seq ?? 0
         const assignment = this.pendingAssignments.get(`${sourceNodeId}:${String(assignmentHead + 1)}`)
-        if (assignment !== undefined) {
+        if (assignment !== undefined && this.assignmentDependenciesAvailable(assignment)) {
           await this.ctx.developmentTasks.acceptAssignmentReplica(assignment, sourceNodeId)
           this.pendingAssignments.delete(`${sourceNodeId}:${String(assignment.seq)}`)
           progressed = true
@@ -207,6 +207,22 @@ export class DevelopmentTaskMeshService extends Service {
       }
     }
     if (this.pendingTasks.size + this.pendingAssignments.size > 20_000) throw Object.assign(new Error('Task Mesh dependency queue exceeded its bound'), { code: 'LIMIT_EXCEEDED' })
+  }
+
+  private assignmentDependenciesAvailable(entry: DevelopmentTaskAssignmentLogEntry): boolean {
+    const change = entry.change
+    let revision: number
+    switch (change.kind) {
+      case 'task-cleared': return true
+      case 'task-bound': revision = 1; break
+      case 'context-acknowledged': revision = change.revision; break
+      default: return this.assertNever(change)
+    }
+    try { return this.ctx.developmentTasks.get({ taskId: change.taskId }).revision >= revision }
+    catch (error) {
+      if (error instanceof DevelopmentTaskError && error.code === 'TASK_NOT_FOUND') return false
+      throw error
+    }
   }
 
   private dependenciesAvailable(entry: DevelopmentTaskLogEntry): boolean {

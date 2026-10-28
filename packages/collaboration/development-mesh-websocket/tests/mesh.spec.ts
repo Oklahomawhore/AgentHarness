@@ -8,12 +8,12 @@ import DevelopmentRoomService, {
 import DevelopmentTaskService from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentTaskId } from '@deepseek-ai/dsh-development-task'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import DevelopmentMeshWebSocketService, { type Config, type PeerConfig } from '../src/index.ts'
 import DevelopmentRoomMeshService from '../../development-room-mesh/src/index.ts'
 import DevelopmentTaskMeshService from '../../development-task-mesh/src/index.ts'
-import { isMulticastAddress, ownsDial } from '../src/discovery.ts'
+import { isMulticastAddress, LanPeerDiscovery, ownsDial } from '../src/discovery.ts'
 
 const SHARED_SECRET = 'one-test-mesh-secret-with-at-least-thirty-two-bytes'
 const contexts: Context[] = []
@@ -99,8 +99,8 @@ async function baseNode(nodeId: string, secret: string | null = SHARED_SECRET): 
   return { ctx, nodeId: nodeId as DevelopmentNodeId, humanId }
 }
 
-async function startMesh(node: TestNode, peers: readonly PeerConfig[]): Promise<void> {
-  const provider = await node.ctx.plugin(DevelopmentMeshWebSocketService, config(peers))
+async function startMesh(node: TestNode, peers: readonly PeerConfig[], overlay: Partial<Config> = {}): Promise<void> {
+  const provider = await node.ctx.plugin(DevelopmentMeshWebSocketService, { ...config(peers), ...overlay })
   const room = await node.ctx.plugin(DevelopmentRoomMeshService)
   const task = await node.ctx.plugin(DevelopmentTaskMeshService)
   node.stopMesh = async () => {
@@ -186,6 +186,130 @@ async function introduce(target: TestNode, socket: WebSocket): Promise<void> {
 }
 
 describe('authenticated generic development Mesh', () => {
+  it('catches up a real Room and Task backlog through bounded frames before routing a later owner command', async () => {
+    const source = await baseNode('node-backlog-source')
+    const receiver = await baseNode('node-backlog-receiver')
+    const first = await source.ctx.developmentTasks.create({
+      origin: { kind: 'root' }, objective: 'First offline Task', scope: 'source role', createdBy: source.humanId,
+    })
+    const second = await source.ctx.developmentTasks.create({
+      origin: { kind: 'root' }, objective: 'Second offline Task', scope: 'source role', createdBy: source.humanId,
+    })
+    const published = await source.ctx.developmentTasks.publishContext({
+      taskId: first.id, participantId: source.humanId, text: 'Published before the receiver joined',
+    })
+    expect(source.ctx.developmentTasks.log().length).toBeGreaterThan(2)
+    await startMesh(source, [peer(receiver, true)], {
+      maxEventsPerFrame: 2, reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 1_000,
+    })
+    await startMesh(receiver, [peer(source, false)])
+    await Promise.all([waitForTask(receiver, first.id, published.revision), waitForTask(receiver, second.id)])
+    expect(receiver.ctx.developmentTasks.contextView(first.id).task.context)
+      .toContainEqual(expect.objectContaining({ text: 'Published before the receiver joined' }))
+    const routed = await receiver.ctx.developmentTasks.publishContext({
+      taskId: first.id, participantId: source.humanId, text: 'Owner command after catch-up',
+    })
+    expect(routed.ownerNodeId).toBe(source.nodeId)
+    expect(routed.revision).toBe(published.revision + 1)
+    await waitForTask(source, first.id, routed.revision)
+  })
+
+  it('preserves multibyte Task context across byte-bounded signed frames and keeps small owner commands usable', async () => {
+    const source = await baseNode('node-byte-source')
+    const receiver = await baseNode('node-byte-receiver')
+    const task = await source.ctx.developmentTasks.create({
+      origin: { kind: 'root' }, objective: 'Multibyte offline context', scope: 'source role', createdBy: source.humanId,
+    })
+    const commandTarget = await source.ctx.developmentTasks.create({
+      origin: { kind: 'root' }, objective: 'Small owner command', scope: 'source role', createdBy: source.humanId,
+    })
+    const texts = Array.from({ length: 3 }, (_, index) => `第${String(index + 1)}轮事实同步🙂`.repeat(100))
+    for (const text of texts) await source.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: source.humanId, text })
+    const limit = 5_000
+    const sending = vi.spyOn(WebSocket.prototype, 'send')
+    try {
+      await startMesh(source, [peer(receiver, true)], {
+        maxMessageBytes: limit, reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 1_000,
+      })
+      await startMesh(receiver, [peer(source, false)])
+      await Promise.all([waitForTask(receiver, task.id, 4), waitForTask(receiver, commandTarget.id)])
+      expect(receiver.ctx.developmentTasks.contextView(task.id).task.context.map(item => item.text)).toEqual(texts)
+      const routed = await receiver.ctx.developmentTasks.publishContext({
+        taskId: commandTarget.id, participantId: source.humanId, text: 'Bounded command after multibyte catch-up',
+      })
+      expect(routed.ownerNodeId).toBe(source.nodeId)
+      expect(routed.revision).toBe(2)
+      const frames = sending.mock.calls.map(([bytes]) => {
+        if (typeof bytes !== 'string') throw new Error('Mesh sent a non-text frame')
+        const outer = JSON.parse(bytes) as { payload: string; mac: string }
+        expect(outer.mac).toBe(signature(outer.payload))
+        const frame = JSON.parse(Buffer.from(outer.payload, 'base64url').toString('utf8')) as {
+          nodeId: string
+          body: { type: string; channel?: string }
+        }
+        return { bytes, frame }
+      }).filter(item => item.frame.nodeId === source.nodeId)
+      expect(frames.filter(item => item.frame.body.type === 'events' && item.frame.body.channel === 'development-task/v1').length)
+        .toBeGreaterThan(1)
+      for (const { bytes } of frames) expect(Buffer.byteLength(bytes, 'utf8')).toBeLessThanOrEqual(limit)
+    } finally { sending.mockRestore() }
+  })
+
+  it('reports an indivisible oversized Task event and permits bounded Room commands after the faulty channel is unloaded', async () => {
+    const source = await baseNode('node-single-source')
+    const receiver = await baseNode('node-single-receiver')
+    const task = await source.ctx.developmentTasks.create({
+      origin: { kind: 'root' }, objective: 'One oversized publication', scope: 'source role', createdBy: source.humanId,
+    })
+    await startMesh(receiver, [peer(source, false)])
+    await source.ctx.plugin(DevelopmentMeshWebSocketService, {
+      ...config([peer(receiver, true)]), maxMessageBytes: 2_048, reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 1_000,
+    })
+    await source.ctx.plugin(DevelopmentRoomMeshService)
+    const taskChannel = await source.ctx.plugin(DevelopmentTaskMeshService)
+    await waitForTask(receiver, task.id)
+    const failures: string[] = []
+    source.ctx.on('development-mesh/peer-changed', (snapshot) => {
+      if (snapshot.state === 'offline' && snapshot.lastError?.includes('maxMessageBytes')) failures.push(snapshot.lastError)
+    })
+    const text = '不可分割的事实🙂'.repeat(200)
+    await source.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: source.humanId, text })
+    await waitFor(() => failures.length > 0, () => source.ctx.developmentMesh.list())
+    expect(source.ctx.developmentTasks.contextView(task.id).task.context.map(item => item.text)).toEqual([text])
+    expect(receiver.ctx.developmentTasks.contextView(task.id).task.context).toEqual([])
+    await taskChannel.dispose()
+    await waitFor(() => [source, receiver].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online')
+      && source.ctx.developmentRooms.list().participants.some(item => item.id === receiver.humanId && item.presence === 'online'))
+    await receiver.ctx.developmentRoomMesh.join({ roomId: task.hiddenRoomId, participantId: receiver.humanId })
+    expect(source.ctx.developmentRooms.list().rooms.find(item => item.id === task.hiddenRoomId)?.participantIds)
+      .toContain(receiver.humanId)
+  })
+
+  it('continues Room offline reconciliation and later callbacks after one channel fails', async () => {
+    const source = await baseNode('node-offline-source')
+    const receiver = await baseNode('node-offline-receiver')
+    await startMesh(receiver, [peer(source, false)])
+    await source.ctx.plugin(DevelopmentMeshWebSocketService, {
+      ...config([peer(receiver, true)]), reconnectInitialDelayMs: 1_000, reconnectMaxDelayMs: 1_000,
+    })
+    const failure = vi.fn(async () => { throw new Error('one channel refused offline reconciliation') })
+    const observed = vi.fn(async () => undefined)
+    source.ctx.effect(() => source.ctx.developmentMesh.register('a-offline-failure/v1', {
+      heads: () => ({}), read: () => [], receive: () => {}, peerOffline: failure,
+    }))
+    await source.ctx.plugin(DevelopmentRoomMeshService)
+    source.ctx.effect(() => source.ctx.developmentMesh.register('z-offline-observer/v1', {
+      heads: () => ({}), read: () => [], receive: () => {}, peerOffline: observed,
+    }))
+    await waitFor(() => source.ctx.developmentRooms.list().participants
+      .some(item => item.id === receiver.humanId && item.presence === 'online'))
+    await receiver.stopMesh?.()
+    await waitFor(() => source.ctx.developmentRooms.list().participants
+      .some(item => item.id === receiver.humanId && item.presence === 'offline') && observed.mock.calls.length > 0)
+    expect(failure).toHaveBeenCalledExactlyOnceWith(receiver.nodeId)
+    expect(observed).toHaveBeenCalledExactlyOnceWith(receiver.nodeId)
+  })
+
   it('replicates a three-node Root/Fork/Merge DAG, routes owner commands, and resumes after disconnect', async () => {
     const first = await baseNode('node-a')
     const second = await baseNode('node-b')
@@ -287,6 +411,44 @@ describe('authenticated generic development Mesh', () => {
     expect(first.ctx.developmentMesh.list().peers[0]).toMatchObject({ state: 'offline' })
     expect(first.ctx.developmentMesh.list().clusterId).not.toBe(second.ctx.developmentMesh.list().clusterId)
     expect(JSON.stringify(first.ctx.developmentMesh.list())).not.toContain(SHARED_SECRET)
+  })
+
+  it('closes an established configured peer when discovery initialization fails', async () => {
+    const owner = await baseNode('node-startup-owner')
+    const source = await baseNode('node-startup-source')
+    await startMesh(owner, [peer(source, false)])
+    const entered = Promise.withResolvers<undefined>()
+    const failure = Promise.withResolvers<undefined>()
+    const start = vi.spyOn(LanPeerDiscovery.prototype, 'start').mockImplementationOnce(async () => {
+      entered.resolve(undefined)
+      await failure.promise
+    })
+    const starting = source.ctx.plugin(DevelopmentMeshWebSocketService, {
+      ...config([peer(owner, true)]), discovery: { ...discovery, enabled: true },
+    })
+    const rejected = expect(starting).rejects.toThrow('discovery setup refused')
+    let service: DevelopmentMeshWebSocketService | undefined
+    try {
+      await entered.promise
+      const observed = source.ctx.developmentMesh
+      if (!(observed instanceof DevelopmentMeshWebSocketService)) throw new Error('Mesh startup instance is missing')
+      service = observed
+      await waitFor(() => owner.ctx.developmentMesh.list().peers[0]?.state === 'online')
+      failure.reject(new Error('discovery setup refused'))
+      await rejected
+      await source.ctx.fiber.dispose()
+      await waitFor(() => owner.ctx.developmentMesh.list().peers[0]?.state === 'offline',
+        () => owner.ctx.developmentMesh.list())
+    } finally {
+      failure.reject(new Error('discovery setup refused'))
+      await Promise.resolve(starting).catch(() => undefined)
+      // Failure cleanup must also reclaim sockets when startup never installs its disposer.
+      if (service !== undefined) {
+        const close: unknown = Reflect.get(service, 'close')
+        if (typeof close === 'function') await Reflect.apply(close, service, [])
+      }
+      start.mockRestore()
+    }
   })
 
   it('rejects tampered and replayed envelopes and isolates replica conflicts', async () => {

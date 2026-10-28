@@ -97,6 +97,8 @@ interface SignedFrame {
 
 interface WireEnvelope { readonly payload: string; readonly mac: string }
 
+class MeshFrameSizeError extends Error {}
+
 interface PeerRuntime {
   config: ResolvedPeer
   socket: WebSocket | undefined
@@ -246,7 +248,10 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
   /** Push a channel's committed delta to every online peer. */
   publish(channel: string): void {
     if (this.channel(channel) === undefined) throw new Error(`development-mesh-websocket: unknown channel "${channel}"`)
-    for (const peer of this.peers.values()) if (peer.state === 'online') void this.sendDelta(peer, channel)
+    for (const peer of this.peers.values()) if (peer.state === 'online') {
+      const socket = peer.socket
+      void this.sendDelta(peer, channel, socket).catch((error: unknown) => { this.failed(peer, socket, error) })
+    }
   }
 
   /**
@@ -297,11 +302,11 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     this.ctx.on('development-mesh/channel-registered', (name) => {
       for (const peer of this.peers.values()) {
         if (peer.state === 'online') {
-          void this.requestChannel(peer, name)
-          void this.sendDelta(peer, name)
+          this.synchronize(peer, name)
         }
       }
     })
+    this.ctx.effect(() => async () => { await this.close() }, 'development Mesh sockets')
     for (const peer of this.peers.values()) if (peer.config.connect) this.connect(peer)
     if (this.config.discovery.enabled) {
       this.discovery = new LanPeerDiscovery(
@@ -320,7 +325,6 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
       )
       await this.discovery.start()
     }
-    this.ctx.effect(() => async () => { await this.close() }, 'development Mesh sockets')
   }
 
   private resolvePeer(peer: PeerConfig, source: ResolvedPeer['source']): ResolvedPeer {
@@ -410,13 +414,15 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     peer.receiveSeq = 0
     peer.heads.clear()
     let introduced = false
+    let receiving = Promise.resolve()
     const introduce = (): void => {
-      void this.send(peer, { type: 'hello' }).catch((error: unknown) => {
+      void this.send(peer, { type: 'hello' }, socket).catch((error: unknown) => {
         socket.close(1011, errorMessage(error))
       })
     }
     if (socket.readyState === WebSocket.OPEN) introduce(); else socket.once('open', introduce)
     socket.on('message', (data: RawData, isBinary: boolean) => {
+      if (peer.socket !== socket) return
       if (isBinary) { socket.close(1003, 'text frames only'); return }
       const bytes = Buffer.isBuffer(data) ? data : data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.concat(data)
       if (bytes.byteLength > this.config.maxMessageBytes) { socket.close(1009, 'frame too large'); return }
@@ -434,16 +440,17 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
       }
       if (frame.body.type === 'hello') { socket.close(1008, 'duplicate hello'); return }
       peer.lastSeenAt = Date.now()
-      void this.receive(peer, frame.body).catch((error: unknown) => {
-        peer.lastError = errorMessage(error)
-        if (errorCode(error) === 'REPLICA_CONFLICT') this.isolate(peer, error)
-        else socket.close(1011, 'frame failed')
-      })
+      const body = frame.body
+      if (body.type === 'events') {
+        receiving = receiving.then(async () => {
+          if (peer.socket === socket && socket.readyState === WebSocket.OPEN) await this.receive(peer, body, socket)
+        }).catch((error: unknown) => { this.failed(peer, socket, error) })
+      } else void this.receive(peer, body, socket).catch((error: unknown) => { this.failed(peer, socket, error) })
     })
     socket.once('close', (code, reason) => {
       this.disconnected(peer, socket, code === 1000 ? undefined : new Error(`WebSocket closed with ${String(code)}${reason.length === 0 ? '' : `: ${reason.toString()}`}`))
     })
-    socket.once('error', (error) => { peer.lastError = error.message })
+    socket.once('error', (error) => { if (peer.socket === socket) peer.lastError = error.message })
   }
 
   private online(peer: PeerRuntime): void {
@@ -451,10 +458,23 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     peer.lastError = undefined
     peer.lastSeenAt = Date.now()
     this.setState(peer, 'online')
-    for (const channel of this.channelNames()) { void this.requestChannel(peer, channel); void this.sendDelta(peer, channel) }
+    for (const channel of this.channelNames()) this.synchronize(peer, channel)
   }
 
-  private async receive(peer: PeerRuntime, body: Exclude<Body, { type: 'hello' }>): Promise<void> {
+  private synchronize(peer: PeerRuntime, channel: string): void {
+    const socket = peer.socket
+    void Promise.all([this.requestChannel(peer, channel, socket), this.sendDelta(peer, channel, socket)])
+      .catch((error: unknown) => { this.failed(peer, socket, error) })
+  }
+
+  private failed(peer: PeerRuntime, socket: WebSocket | undefined, error: unknown): void {
+    if (this.stopping || peer.socket !== socket) return
+    peer.lastError = errorMessage(error)
+    if (errorCode(error) === 'REPLICA_CONFLICT') this.isolate(peer, error)
+    else socket?.close(1011, 'frame failed')
+  }
+
+  private async receive(peer: PeerRuntime, body: Exclude<Body, { type: 'hello' }>, socket: WebSocket): Promise<void> {
     if (body.type === 'result') {
       const pending = this.pending.get(body.commandId)
       if (pending === undefined) return
@@ -464,54 +484,63 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
       else pending.reject(Object.assign(new Error(body.message), { code: body.code }))
       return
     }
-    if (body.type === 'command') { await this.execute(peer, body); return }
+    if (body.type === 'command') { await this.execute(peer, body, socket); return }
     const channel = this.channel(body.channel)
     if (channel === undefined) return
     if (body.type === 'pull') {
       peer.heads.set(body.channel, Object.freeze({ ...body.heads }))
-      await this.sendDelta(peer, body.channel)
+      await this.sendDelta(peer, body.channel, socket)
       return
     }
     if (body.type === 'ack') { peer.heads.set(body.channel, Object.freeze({ ...body.heads })); return }
     await channel.receive(body.events, peer.config.nodeId)
-    await this.send(peer, { type: 'ack', channel: body.channel, heads: await channel.heads() })
+    await this.send(peer, { type: 'ack', channel: body.channel, heads: await channel.heads() }, socket)
   }
 
-  private async execute(peer: PeerRuntime, body: Extract<Body, { type: 'command' }>): Promise<void> {
+  private async execute(peer: PeerRuntime, body: Extract<Body, { type: 'command' }>, socket: WebSocket): Promise<void> {
     const channel = this.channel(body.channel)
     try {
       if (channel?.command === undefined) throw Object.assign(new Error('Mesh channel has no command handler'), { code: 'INVALID_REQUEST' })
       const value = await channel.command(body.payload, peer.config.nodeId)
-      await this.send(peer, { type: 'result', commandId: body.commandId, ok: true, value: value ?? null })
+      await this.send(peer, { type: 'result', commandId: body.commandId, ok: true, value: value ?? null }, socket)
     } catch (error) {
-      await this.send(peer, { type: 'result', commandId: body.commandId, ok: false, code: errorCode(error), message: errorMessage(error) })
+      await this.send(peer, { type: 'result', commandId: body.commandId, ok: false, code: errorCode(error), message: errorMessage(error) }, socket)
     }
   }
 
-  private async requestChannel(peer: PeerRuntime, channelName: string): Promise<void> {
+  private async requestChannel(peer: PeerRuntime, channelName: string, socket: WebSocket | undefined): Promise<void> {
     const channel = this.channel(channelName)
     if (channel === undefined || peer.state !== 'online') return
-    await this.send(peer, { type: 'pull', channel: channelName, heads: await channel.heads() })
+    await this.send(peer, { type: 'pull', channel: channelName, heads: await channel.heads() }, socket)
   }
 
-  private async sendDelta(peer: PeerRuntime, channelName: string): Promise<void> {
+  private async sendDelta(peer: PeerRuntime, channelName: string, socket: WebSocket | undefined): Promise<void> {
     const channel = this.channel(channelName)
     if (channel === undefined || peer.state !== 'online') return
     peer.pendingSync += 1
     this.emitPeer(peer)
     try {
       const events = await channel.read(peer.heads.get(channelName) ?? {})
-      if (events.length > this.config.maxEventsPerFrame) throw new Error(`development-mesh-websocket: channel ${channelName} produced too many events for one frame`)
-      if (events.length > 0) await this.send(peer, { type: 'events', channel: channelName, events })
+      const sendBatch = async (batch: readonly unknown[]): Promise<void> => {
+        try { await this.send(peer, { type: 'events', channel: channelName, events: batch }, socket) }
+        catch (error) {
+          if (!(error instanceof MeshFrameSizeError) || batch.length < 2) throw error
+          const middle = Math.floor(batch.length / 2)
+          await sendBatch(batch.slice(0, middle))
+          await sendBatch(batch.slice(middle))
+        }
+      }
+      for (let offset = 0; offset < events.length; offset += this.config.maxEventsPerFrame) {
+        await sendBatch(events.slice(offset, offset + this.config.maxEventsPerFrame))
+      }
     } finally {
       peer.pendingSync -= 1
       this.emitPeer(peer)
     }
   }
 
-  private send(peer: PeerRuntime, body: Body): Promise<void> {
-    const socket = peer.socket
-    if (socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('development Mesh socket is not open'))
+  private send(peer: PeerRuntime, body: Body, socket = peer.socket): Promise<void> {
+    if (socket !== peer.socket || socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('development Mesh socket is not open'))
     const frame: SignedFrame = {
       version: PROTOCOL_VERSION,
       nodeId: this.nodeId,
@@ -525,7 +554,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     const envelope: WireEnvelope = { payload, mac: this.hmac(payload) }
     const bytes = JSON.stringify(envelope)
     if (Buffer.byteLength(bytes, 'utf8') > this.config.maxMessageBytes) {
-      return Promise.reject(new Error('development Mesh frame exceeds maxMessageBytes'))
+      return Promise.reject(new MeshFrameSizeError('development Mesh frame exceeds maxMessageBytes'))
     }
     peer.sendSeq = frame.seq
     return new Promise((resolve, reject) => {
@@ -597,7 +626,10 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
   }
 
   private async peerOffline(nodeId: DevelopmentNodeId): Promise<void> {
-    for (const name of this.channelNames()) await this.channel(name)?.peerOffline?.(nodeId)
+    for (const name of this.channelNames()) {
+      try { await this.channel(name)?.peerOffline?.(nodeId) }
+      catch (error) { this.ctx.logger.warn('development Mesh channel %s offline notification failed: %s', name, errorMessage(error)) }
+    }
   }
 
   private setState(peer: PeerRuntime, state: DevelopmentMeshPeerSnapshot['state']): void {

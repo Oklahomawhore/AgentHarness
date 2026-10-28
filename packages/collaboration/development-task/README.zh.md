@@ -105,7 +105,7 @@ Task 投影和上下文变更使用 `developmentTasks/list`、`get`、`lineage`�
 
 绑定变更通知在清除后携带 `null`，使完整事件可通过 JSON Remote 传输。本地 assignment 查询对未绑定会话仍返回 `undefined`；持久绑定日志记录 `task-cleared`。Host-only 的 `latestAssignment(participantId)` 按持久日志顺序选择最后一个当前绑定仍属于该参与者的 `task-bound` 事件。时间戳相同或倒退、绑定名称顺序及之后的确认记录都不会改变选择。清除该绑定后会选中前一个保留绑定；另一参与者复用已清除的绑定 ID 不会让查询选中其 assignment。选择本身不授予读取、采集或自动工作许可。
 
-`acknowledge` 接受可选的 `expectedBindingEpoch: { nodeId, seq }`，标识预期 binding 区间的 `task-bound` 事件。串行执行器在记录确认前以 `INVALID_REQUEST` 拒绝不匹配的区间，包括 Session 切换离开后又返回同一 Task 的情况。原生上下文消费者始终提供此校验字段。确认记录 revision 的交付，不证明模型读过每一项事实。
+`acknowledge` 接受可选的 `expectedBindingEpoch: { nodeId, seq }`，标识预期 binding 区间的 `task-bound` 事件。串行执行器在记录确认前以 `INVALID_REQUEST` 拒绝不匹配的区间，包括 Session 切换离开后又返回同一 Task 的情况。原生上下文消费者始终提供此校验字段。分配变更在持久化前校验，包括序号、绑定身份和确认版本的单调性；拒绝的变更不消耗持久日志位置。确认记录 revision 的交付，不证明模型读过每一项事实。
 
 <a id="configuration"></a>
 
