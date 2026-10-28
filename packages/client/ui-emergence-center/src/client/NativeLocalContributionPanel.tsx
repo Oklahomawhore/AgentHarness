@@ -92,7 +92,8 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
   return <section data-native-local-contribution className={css.form}>
     <p className={css.hint}>{t(nativeWork || capture?.sourceKind === 'native-work' ? 'native.work.hint' : turnOutcomes || capture?.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.localHint' : 'native.local.hint')}</p>
     {entry?.status === 'loading' && <p role="status">{t('contribution.loading')}</p>}
-    {entry?.error !== undefined && <p role="alert" className={css.notice}>{t(contributionErrorKey(entry.error))}</p>}
+    {entry?.error !== undefined && (contributionErrorKey(entry.error) !== 'contribution.error.unknown' || !entry.pending)
+      && <p role="alert" className={css.notice}>{t(contributionErrorKey(entry.error))}</p>}
     {status !== undefined && status.eligibility !== 'eligible' && status.eligibility !== 'no-local-task'
       && <p className={css.notice}>{t(`native.local.eligibility.${status.eligibility}`)}</p>}
     {receivingElsewhere && <p className={css.notice}>{t('native.local.remoteRead')}</p>}

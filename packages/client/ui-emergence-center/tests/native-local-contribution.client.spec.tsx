@@ -38,6 +38,23 @@ function fillPermission(): void {
 }
 
 describe('current Session owner-local consent', () => {
+  it.each(['loading', 'error'] as const)('delays gateway recovery advice until the local confirmation settles from %s', (status) => {
+    const value = { ...assigned, capture: localCapture }
+    const f = fixture(value)
+    f.rerender(<NativeLocalContributionPanel {...f.props}
+      entry={{ value, status, pending: true, error: 'gateway/internal' }} />)
+    expect(screen.queryByText(zh['contribution.error.unknown'])).toBeNull()
+    expect(screen.getByRole('button', { name: zh['native.share.refresh'] })).toHaveProperty('disabled', true)
+    f.rerender(<NativeLocalContributionPanel {...f.props}
+      entry={{ value, status: 'ready', pending: false, error: 'gateway/internal' }} />)
+    expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+    const refresh = screen.getByRole('button', { name: zh['native.share.refresh'] })
+    expect(refresh).toHaveProperty('disabled', false)
+    const reads = vi.mocked(f.actions.readNativeLocalContribution).mock.calls.length
+    fireEvent.click(refresh)
+    expect(f.actions.readNativeLocalContribution).toHaveBeenCalledTimes(reads + 1)
+  })
+
   it('applies local workspace suggestions as editable fields and requires fresh consent after edits', async () => {
     const f = fixture(assigned)
     vi.mocked(f.actions.suggestNativeContributionPermission).mockResolvedValue({

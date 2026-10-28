@@ -51,6 +51,22 @@ async function consentFields(): Promise<void> {
 const submit = (): HTMLButtonElement => screen.getByRole('button', { name: zh['native.share.request'] })
 
 describe('native file-work consent', () => {
+  it.each(['loading', 'error'] as const)('delays gateway recovery advice until the native confirmation settles from %s', (status) => {
+    const f = fixture(capturedStatus)
+    f.rerender(<NativeContributionPanel {...f.props}
+      entry={{ value: capturedStatus, status, pending: true, error: 'gateway/internal' }} />)
+    expect(screen.queryByText(zh['contribution.error.unknown'])).toBeNull()
+    expect(screen.getByRole('button', { name: zh['native.share.refresh'] })).toHaveProperty('disabled', true)
+    f.rerender(<NativeContributionPanel {...f.props}
+      entry={{ value: capturedStatus, status: 'ready', pending: false, error: 'gateway/internal' }} />)
+    expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+    const refresh = screen.getByRole('button', { name: zh['native.share.refresh'] })
+    expect(refresh).toHaveProperty('disabled', false)
+    const reads = vi.mocked(f.actions.readNativeContribution).mock.calls.length
+    fireEvent.click(refresh)
+    expect(f.actions.readNativeContribution).toHaveBeenCalledTimes(reads + 1)
+  })
+
   it('suggests an editable remote permission without applying, then requires explicit collection consent', async () => {
     const f = fixture()
     f.rerender(<NativeContributionPanel {...f.props}

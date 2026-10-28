@@ -64,7 +64,7 @@ function ownerActions(overrides: Partial<OwnerContributionActions> = {}): OwnerC
 }
 function paste(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }) }
 
-it.each(['source', 'owner'] as const)('offers unknown-result recovery after the %s confirmation read settles', (role) => {
+it.each(['source', 'owner'] as const)('offers mapped unknown-result recovery after the %s confirmation read settles', (role) => {
   const panel = (pending: boolean, error: string) => role === 'source'
     ? <SourceContributionPanel session={session} entry={{ status: pending ? 'loading' : 'ready', pending, error, value: captured }}
       {...sourceActions()} t={t} />
@@ -78,11 +78,20 @@ it.each(['source', 'owner'] as const)('offers unknown-result recovery after the 
   view.rerender(panel(false, 'contribution/unknown-outcome'))
   expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
   expect(screen.getByRole('button', { name: refreshName })).toHaveProperty('disabled', false)
+  view.rerender(panel(true, 'gateway/internal'))
+  expect(screen.queryByText(zh['contribution.error.unknown'])).toBeNull()
+  expect(screen.getByRole('button', { name: refreshName })).toHaveProperty('disabled', true)
+  view.rerender(panel(false, 'gateway/internal'))
+  expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+  expect(screen.getByRole('button', { name: refreshName })).toHaveProperty('disabled', false)
   view.rerender(panel(true, 'scope-contribution/invalid-permission'))
   expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.permission'])
   view.rerender(panel(true, 'scope-contribution/future-denial'))
-  expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+  expect(screen.queryByText(zh['contribution.error.unknown'])).toBeNull()
   expect(screen.getByRole('button', { name: refreshName })).toHaveProperty('disabled', true)
+  view.rerender(panel(false, 'scope-contribution/future-denial'))
+  expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+  expect(screen.getByRole('button', { name: refreshName })).toHaveProperty('disabled', false)
 })
 
 function SourceHarness({ directory, actions }: { directory: ContributionDirectory<ClaudeScopeSessionSummary['sessionKey'], ClaudeScopeContributionDetail>; actions: SourceContributionActions }) {

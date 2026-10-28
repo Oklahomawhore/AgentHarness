@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-24-owner-read-inventory-synchronization.md
-2026-10-24-owner-read-inventory-synchronization.md: 5a5e47af0fcb322130bc43fe22c0efa15c5b99f6
-2026-10-24-owner-read-inventory-synchronization.zh.md: 2e787d17112da0a935c44300f7d546898fa85d41
+2026-10-24-owner-read-inventory-synchronization.md: 2d8a153c7099ea3e8d0c65fe845a9e63a5501fab
+2026-10-24-owner-read-inventory-synchronization.zh.md: bd1af35ba1ec0157483bf0cea52b3a1fc51e787c

@@ -258,6 +258,8 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     actionPending.current = true
     try { await operation() } finally { actionPending.current = false }
   }
+  const errorKey = entry?.status === 'error' || entry?.error !== undefined ? issueKey(entry.error ?? 'unknown') : undefined
+  const visibleError = entry?.pending && errorKey === 'contribution.error.unknown' ? undefined : errorKey
   const stateKey: EmergenceCenterKey = capture == null ? turnOutcomes ? 'native.outcomes.none' : 'native.share.none'
     : capture.state === 'ending' ? 'contribution.ending'
       : capture.state === 'active' ? capture.collecting ? capture.sourceKind === 'native-work' ? 'native.work.active' : capture.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.active' : capture.commands === undefined ? 'native.share.active' : 'native.commands.active' : 'native.share.paused'
@@ -267,7 +269,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
     <div className={css.form}>
       <p className={css.hint}>{t(nativeWork || capture?.sourceKind === 'native-work' ? 'native.work.hint' : turnOutcomes || capture?.sourceKind === 'completed-turn-outcomes' ? 'native.outcomes.hint' : 'native.share.hint')}</p>
       {entry?.status === 'loading' && <p role="status" className={css.hint}>{t('contribution.loading')}</p>}
-      {entry?.status === 'error' && <p role="alert" className={css.notice}>{t(issueKey(entry.error ?? 'unknown'))}</p>}
+      {entry?.status === 'error' && visibleError !== undefined && <p role="alert" className={css.notice}>{t(visibleError)}</p>}
       {ready && <p role="status" className={css.state}>{t(stateKey)}</p>}
       {status !== undefined && status.eligibility !== 'eligible' && <p className={css.hint}>{t(status.eligibility === 'not-live'
         ? 'native.share.notLive' : 'native.share.ineligible')}</p>}
@@ -434,7 +436,7 @@ function SessionContributionPanel({ agentId, entry, readNativeContribution, requ
         agentId={agentId} current={recoverable} ready={ready && !scope.pending && ((recoverable.entry.kind !== 'scope-join-entry' && recoverable.entry.kind !== 'scope-group-entry') || scope.phase === 'ready')} t={t}
         {...((recoverable.entry.kind === 'scope-join-entry' || recoverable.entry.kind === 'scope-group-entry') && routeReadSeq !== undefined ? { receive: { expectedReadStateSeq: routeReadSeq } } : {})}
         preview={previewNativeContribution} recover={request => perform(() => recoverNativeContributionRoute(request))} />}
-      {entry?.status !== 'error' && entry?.error !== undefined && <p role="alert" className={css.notice}>{t(issueKey(entry.error))}</p>}
+      {entry?.status !== 'error' && visibleError !== undefined && <p role="alert" className={css.notice}>{t(visibleError)}</p>}
       <Button size="sm" disabled={entry?.pending} onClick={() => { readNativeContribution(agentId) }}>{t('native.share.refresh')}</Button>
     </div>
   </details>
