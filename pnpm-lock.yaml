@@ -913,6 +913,9 @@ importers:
       '@deepseek-ai/dsh-client-connection':
         specifier: workspace:^
         version: link:../../client/connection
+      '@deepseek-ai/dsh-host-mcp-client-setup':
+        specifier: workspace:^
+        version: link:../../host/mcp-client-setup
       '@deepseek-ai/dsh-host-webserver':
         specifier: workspace:^
         version: link:../../host/webserver

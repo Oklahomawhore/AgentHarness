@@ -1368,7 +1368,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/mcp-client-setup/src/index.ts:44`](../packages/host/mcp-client-setup/src/index.ts)
+Source: [`packages/host/mcp-client-setup/src/index.ts:43`](../packages/host/mcp-client-setup/src/index.ts)
 
 <a id="deepseek-aidsh-host-open-in-app"></a>
 

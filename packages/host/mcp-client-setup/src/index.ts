@@ -26,7 +26,6 @@ export type * from './types.ts'
 
 const runFile = promisify(execFile)
 const SERVER_NAME = 'agentharness'
-const CLIENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/
 
 /** Runtime facts shared by the installed command and Host Remote service. */
 export interface McpClientSetupOptions extends Config {
@@ -290,7 +289,7 @@ async function inspectJson(path: string, expected: McpEntry): Promise<{ state: M
     raw = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'not-configured' }
-    return { state: 'failed', detail: error instanceof Error ? error.message : String(error) }
+    return { state: 'failed', detail: (error as Error).message }
   }
   try {
     const document: unknown = JSON.parse(raw)
@@ -356,7 +355,7 @@ async function inspectClient(
     else if (!isDetected) observation = { state: 'not-installed' }
     else if (definition.mechanism === 'manual') observation = {
       state: 'manual',
-      ...(definition.manualDetail === undefined ? {} : { detail: definition.manualDetail }),
+      detail: definition.manualDetail as string,
     }
     else if (definition.mechanism === 'cli' && command === undefined) observation = {
       state: 'manual',
@@ -365,10 +364,10 @@ async function inspectClient(
     else if (definition.id === 'codex' && command !== undefined) {
       observation = await inspectCodex(command, entry, options.environment, options.commandTimeoutMs)
     }
-    else if (path !== undefined) observation = await inspectJson(path, entry)
-    else observation = { state: 'manual', detail: 'No supported registration mechanism is available.' }
+    // Remaining registry entries declare the JSON path used for inspection.
+    else observation = await inspectJson(path as string, entry)
   } catch (error) {
-    observation = { state: 'failed', detail: error instanceof Error ? error.message : String(error) }
+    observation = { state: 'failed', detail: (error as Error).message }
   }
   return {
     definition,
@@ -403,8 +402,8 @@ export async function listMcpClients(options: McpClientSetupOptions): Promise<Mc
 }
 
 async function configureJson(client: InspectedClient): Promise<void> {
-  const path = client.configPath
-  if (path === undefined) throw new Error('client has no JSON configuration path')
+  // JSON setup is admitted only after inspection resolves its configuration path.
+  const path = client.configPath as string
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await withFileLock(path, async () => {
     let document: Record<string, unknown> = {}
@@ -434,10 +433,10 @@ async function configureJson(client: InspectedClient): Promise<void> {
 }
 
 async function configureCli(client: InspectedClient, environment: NodeJS.ProcessEnv, commandTimeoutMs: number): Promise<void> {
-  if (client.executable === undefined || client.definition.addArguments === undefined) {
-    throw new Error('supported registration command is unavailable')
-  }
-  await runFile(client.executable, [...client.definition.addArguments(client.entry)], {
+  // CLI preflight retains a command from the fixed registry's registration mechanism.
+  await runFile(client.executable as string, [
+    ...(client.definition.addArguments as NonNullable<ClientDefinition['addArguments']>)(client.entry),
+  ], {
     encoding: 'utf8',
     env: environment,
     timeout: commandTimeoutMs,
@@ -454,9 +453,8 @@ export async function setupMcpClient(
   options: McpClientSetupOptions,
   request: McpClientSetupRequest,
 ): Promise<McpClientSetupResult> {
-  if (!CLIENT_ID_PATTERN.test(request.clientId)) throw new TypeError('mcp-client-setup: invalid client id')
   const definition = CLIENTS.find(client => client.id === request.clientId)
-  if (definition === undefined) throw new TypeError(`mcp-client-setup: unsupported client ${request.clientId}`)
+  if (definition === undefined) throw new TypeError('mcp-client-setup: unsupported client')
   const resolved = resolveOptions(options)
   const before = await inspectClient(definition, resolved, request.displayName)
   if (before.snapshot.state === 'unsupported') return { outcome: 'unsupported', client: before.snapshot }
@@ -483,7 +481,7 @@ export async function setupMcpClient(
         detail: definition.mechanism === 'cli'
           ? 'Client MCP registration command failed.'
           : error instanceof SyntaxError ? 'Configuration is not strict JSON.'
-            : error instanceof Error ? error.message : String(error),
+            : (error as Error).message,
       },
     }
   }

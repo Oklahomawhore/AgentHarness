@@ -30,6 +30,8 @@ Windows reports `unsupported`, disables setup, and publishes no descriptor. The 
 
 A matching Codex registration with `enabled=false` remains manual-only; setup preserves it and requires the user to enable it in Codex MCP settings.
 
+Unknown client ids reject before discovery or configuration writes; the error does not repeat the supplied id.
+
 Discovery and configuration-read errors remain `failed` states for the affected client. Listing and batch setup continue for other clients without modifying the failed client's files.
 
 

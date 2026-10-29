@@ -1,11 +1,16 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { describe, expect, it } from 'vitest'
+import fs from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { apply as applyConnection, inject as connectionInject } from '@deepseek-ai/dsh-client-connection'
 import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import { McpClientSetupService, type Config as McpClientSetupConfig } from '@deepseek-ai/dsh-host-mcp-client-setup'
 import {
   bindTypertRemote,
   Remote,
@@ -1170,6 +1175,71 @@ describe('TypertGatewayService', () => {
     await observedFiber.dispose()
     expect(connection.matches?.('observed-claim/run')).toBe(false)
     await unrelatedFiber.dispose()
+  })
+
+  it('rejects malformed and unknown MCP client ids inside the actual SRC Service before inspecting or writing settings', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'gateway-mcp-client-'))
+    const ctx = new Context()
+    let server: Awaited<ReturnType<typeof serveRoute>> | undefined
+    const restore: (() => void)[] = []
+    try {
+      const privateHome = join(root, 'client-home')
+      const settings = join(privateHome, '.cursor', 'mcp.json')
+      const original = Buffer.from('{"mcpServers":{"keep":{"command":"fixture-command"}}}\n')
+      await fs.mkdir(join(privateHome, '.cursor'), { recursive: true })
+      await fs.writeFile(settings, original)
+      class FixtureSetup extends McpClientSetupService {
+        constructor(context: Context, config: McpClientSetupConfig) {
+          const options = { ...config, home: privateHome, path: '', environment: { HOME: privateHome, PATH: '' },
+            username: 'Wire fixture', applicationRoots: [] }
+          super(context, options)
+        }
+      }
+      const routes: WebRoute[] = []
+      provideBrowserCredentials(ctx)
+      ctx.provide('webServer', fakeHttpServer(routes) as WebServer)
+      await ctx.plugin({ inject: [...connectionInject], apply: applyConnection })
+      await ctx.plugin(TypertRegistry)
+      await ctx.plugin(TypertGatewayService)
+      const descriptorPath = join(root, 'connection', 'host.json')
+      await ctx.plugin(FixtureSetup, { nodePath: process.execPath, dshPath: join(root, 'dsh.js'),
+        nodeArgs: [], commandTimeoutMs: 1000, descriptorPath, harnessHome: root })
+      const observed = ctx.mcpClientSetup as McpClientSetupService & { [symbols.original]?: McpClientSetupService }
+      const service = observed[symbols.original] ?? observed
+      const setup = vi.spyOn(service, 'setup')
+      restore.push(() => { setup.mockRestore() })
+      const filesystem = (['access', 'lstat', 'readFile', 'writeFile', 'mkdir'] as const).map((name) => {
+        const spy = vi.spyOn(fs, name)
+        restore.push(() => { spy.mockRestore() })
+        return spy
+      })
+      syncBuiltinESMExports()
+      server = await serveRoute(routes[0]!)
+      const cookie = browserCookie(ctx.connection, server.origin)
+      for (const clientId of ['../private-client', 'unknown-client']) {
+        const response = await fetch(`${server.origin}/api/mcpClientSetup/setup`, {
+          method: 'POST', headers: { 'content-type': 'application/json', cookie },
+          body: JSON.stringify({ type: 'client-request', rpcId: 'client-guard', method: 'mcpClientSetup/setup',
+            payload: { args: { request: { clientId } } } }),
+        })
+        expect(response.status).toBe(200)
+        const result: unknown = await response.json()
+        expect(result).toMatchObject({ type: 'server-response', rpcId: 'client-guard',
+          result: { ok: false, error: { code: 'gateway/internal', message: 'mcp-client-setup: unsupported client' } } })
+        expect(JSON.stringify(result)).not.toContain(clientId)
+      }
+      expect(setup.mock.calls.map(([request]) => request)).toEqual([{ clientId: '../private-client' }, { clientId: 'unknown-client' }])
+      for (const spy of filesystem) expect(spy.mock.calls.filter(([path]) => typeof path === 'string'
+        && (path === privateHome || path.startsWith(`${privateHome}${sep}`)))).toEqual([])
+      for (const undo of restore.splice(0).reverse()) undo()
+      syncBuiltinESMExports()
+      expect(await fs.readFile(settings)).toEqual(original)
+    } finally {
+      for (const undo of restore.splice(0).reverse()) undo()
+      syncBuiltinESMExports()
+      try { await server?.close() }
+      finally { try { await ctx.fiber.dispose() } finally { await fs.rm(root, { recursive: true, force: true }) } }
+    }
   })
 
   it('dispatches claimed invocations through /api and leaves unclaimed endpoints to its fallback', async () => {

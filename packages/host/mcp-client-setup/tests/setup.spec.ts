@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -117,6 +117,39 @@ describe('MCP client setup', () => {
     expect(await readFile(log, 'utf8')).toBe('mcp list --json')
   })
 
+  // Supported POSIX hosts preserve the exact case-sensitive PATH entry during this deployment check.
+  it.skipIf(process.platform === 'win32')('discovers private JSON client settings in a restricted Linux deployment without PATH or application roots', async () => {
+    const { root, options } = await fixture()
+    const home = join(root, 'home')
+    const cursor = join(home, '.cursor', 'mcp.json')
+    await mkdir(join(home, '.cursor'))
+    const original = '{"preference":"retained","mcpServers":{"sibling":{"command":"existing"}}}\n'
+    await writeFile(cursor, original)
+    const resources = join(home, 'Applications', 'ChatGPT.app', 'Contents', 'Resources')
+    await mkdir(resources, { recursive: true })
+    const calls = join(root, 'unexpected-cli-call')
+    const cli = '#!/bin/sh\nprintf "unexpected" > "$MCP_SETUP_CALLS"\nprintf "[]"\n'
+    await fakeExecutable(join(resources, 'codex'), cli)
+    await fakeExecutable(join(root, 'bin', 'codex'), cli)
+    const { path: _path, applicationRoots: _applicationRoots, ...deployment } = options
+    const inheritedPath = process.env.PATH
+    try {
+      delete process.env.PATH
+      const listed = await listMcpClients({ ...deployment, platform: 'linux',
+        environment: { ...deployment.environment, MCP_SETUP_CALLS: calls } })
+      expect(listed.clients.filter(client => client.detected).map(client => client.id)).toEqual(['cursor'])
+      expect(listed.clients.find(client => client.id === 'cursor')).toMatchObject({
+        configPath: cursor, state: 'not-configured', canSetup: true, restartRequired: false,
+      })
+      expect(listed.clients.find(client => client.id === 'codex')).toMatchObject({ state: 'not-installed', canSetup: false })
+      expect(await readFile(cursor, 'utf8')).toBe(original)
+      await expect(readFile(calls)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      if (inheritedPath === undefined) delete process.env.PATH
+      else process.env.PATH = inheritedPath
+    }
+  })
+
   it('keeps one account’s clients distinct across separate Hosts and stable on the same Host', async () => {
     const { options } = await fixture()
     machine.name = 'first-host'
@@ -162,6 +195,38 @@ describe('MCP client setup', () => {
     expect(snapshot.clients.find(client => client.id === 'doubao')).toMatchObject({ detected: true, state: 'manual', canSetup: false })
     expect(snapshot.clients.find(client => client.id === 'claude-code')).toMatchObject({ detected: false, state: 'not-installed' })
   })
+
+  // Windows has no POSIX executable permission bits and setup is unsupported there.
+  it.skipIf(process.platform === 'win32').each(['PATH', 'application bundle'] as const)(
+    'preserves a nonexecutable Codex candidate in %s while reporting its available registration mechanism', async (location) => {
+      const { root, options } = await fixture()
+      const bundled = join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources', 'codex')
+      await mkdir(join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources'), { recursive: true })
+      const blocked = location === 'PATH' ? join(root, 'bin', 'codex') : bundled
+      const contents = 'retained nonexecutable client command\n'
+      await writeFile(blocked, contents)
+      await chmod(blocked, 0o600)
+      const calls = join(root, 'client-command-calls.txt')
+      if (location === 'PATH') {
+        await fakeExecutable(bundled, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MCP_SETUP_CALLS"\nprintf "%s" "[]"\n')
+      }
+      const settings = join(root, 'home', '.codex', 'config.toml')
+      await mkdir(join(root, 'home', '.codex'))
+      await writeFile(settings, 'model = "retained-user-model"\n')
+      const deployment = { ...options, environment: { ...options.environment, MCP_SETUP_CALLS: calls } }
+      const result = await listMcpClients(deployment)
+      expect(result.clients.find(client => client.id === 'codex')).toMatchObject({ detected: true,
+        state: location === 'PATH' ? 'not-configured' : 'manual', canSetup: location === 'PATH' })
+      if (location === 'PATH') expect(await readFile(calls, 'utf8')).toBe('mcp list --json\n')
+      else {
+        expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({ outcome: 'manual' })
+        await expect(readFile(calls)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      expect(await readFile(blocked, 'utf8')).toBe(contents)
+      expect((await lstat(blocked)).mode & 0o111).toBe(0)
+      expect(await readFile(settings, 'utf8')).toBe('model = "retained-user-model"\n')
+    },
+  )
 
   // Windows setup is unsupported and creating symlinks can require elevated privileges.
   it.skipIf(process.platform === 'win32').each(['PATH', 'application bundle'] as const)(
