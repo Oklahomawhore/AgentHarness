@@ -1,0 +1,13 @@
+version: 1
+scenario: task-lineage-parent-revisions
+profile: sdk
+composition: sdk-task-lineage-parent-revisions
+recording: authored
+writer: separate
+header:
+  class: task-lineage-parent-revisions
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+  toolSchemasSource: sdk/task-context-disconnect
+replay:
+  override: true

@@ -144,6 +144,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'RECOVERED_ORIGINAL_REQUEST',
     expectedTurnReasons: ['error', 'completed'],
   },
+  'task-lineage-parent-revisions': {
+    expectedFinalResponse: 'LINEAGE_PARENT_VERIFIED: FROZEN_PARENT_FACT',
+  },
   'scope-claude-work': {
     expectedFinalResponse: 'The Claude reports are withdrawn; original review history remains.',
   },

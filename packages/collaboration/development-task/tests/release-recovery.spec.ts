@@ -196,6 +196,60 @@ async function generatedLineage() {
 }
 
 describe('Task inherited-context replica validation', () => {
+  it.each((['replica', 'restore'] as const).flatMap(admission =>
+    (['objective', 'scope', 'publication', 'later-publication', 'publication-order'] as const).map(mismatch => ({ admission, mismatch }))))(
+    'rejects $admission of a self-consistent inherited snapshot changing parent $mismatch', async ({ admission, mismatch }) => {
+      const source = await setup('snapshot-source')
+      const recipient = await setup('snapshot-recipient')
+      const parent = await source.tasks.create({ origin: { kind: 'root' }, objective: 'Original parent objective',
+        scope: 'Original parent scope', createdBy: source.owner })
+      await source.tasks.publishContext({ taskId: parent.id, participantId: source.owner, text: 'First parent fact' })
+      const selected = await source.tasks.publishContext({ taskId: parent.id, participantId: source.owner, text: 'Second parent fact' })
+      const child = await source.tasks.create({ origin: { kind: 'fork', parent: { taskId: parent.id, revision: selected.revision } },
+        objective: 'Child responsibility', scope: 'Frozen parent selection', createdBy: source.owner })
+      const later = await source.tasks.publishContext({ taskId: parent.id, participantId: source.owner, text: 'Later parent fact' })
+      const original = source.tasks.blocks().find(block => block.id === child.inheritedContextBlockId)
+      const creation = source.tasks.log().find(entry => entry.taskId === child.id)
+      const laterPublication = later.context.at(-1)
+      if (original === undefined || creation?.change.kind !== 'task-created' || laterPublication === undefined) {
+        throw new Error('Generated parent snapshot evidence is missing')
+      }
+      const sources = original.sources.map(item => ({ ...item,
+        ...(mismatch === 'objective' ? { objective: 'Different parent objective' } : {}),
+        ...(mismatch === 'scope' ? { scope: 'Different parent scope' } : {}),
+        context: mismatch === 'publication' ? item.context.map(publication => ({ ...publication, text: 'Rewritten parent fact' }))
+          : mismatch === 'later-publication' ? [...item.context, laterPublication]
+            : mismatch === 'publication-order' ? [...item.context].reverse() : item.context,
+      }))
+      const block = developmentTaskContextBlockSchema.parse({ ...original, sources,
+        id: `context-${createHash('sha256').update(JSON.stringify({ version: 1, sources })).digest('hex')}` })
+      const wire = developmentTaskEventSchema.parse({ ...creation,
+        change: { ...creation.change, inheritedContextBlockId: block.id } })
+      const previous = source.tasks.log().filter(entry => entry.seq < creation.seq)
+      if (admission === 'restore') {
+        recipient.tasks.restoreContextBlocks([block, original])
+        recipient.tasks.restoreLog(previous)
+      } else {
+        await recipient.tasks.acceptContextReplica(block)
+        await recipient.tasks.acceptContextReplica(original)
+        for (const entry of previous) await recipient.tasks.acceptLogReplica(entry, entry.nodeId)
+      }
+      const retainedBlocks = recipient.tasks.blocks()
+      const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+      recipient.ctx.on('development-task/persist', persisted)
+      if (admission === 'restore') expect(() => { recipient.tasks.restoreLog([wire]) })
+        .toThrow(expect.objectContaining({ code: 'REPLICA_CONFLICT' }))
+      else await expect(recipient.tasks.acceptLogReplica(wire, wire.nodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+      expect(persisted).not.toHaveBeenCalled()
+      expect(recipient.tasks.log()).toEqual(previous)
+      expect(recipient.tasks.blocks()).toEqual(retainedBlocks)
+      if (admission === 'restore') recipient.tasks.restoreLog([creation])
+      else await recipient.tasks.acceptLogReplica(creation, creation.nodeId)
+      expect(recipient.tasks.contextView(child.id).inherited?.sources[0]?.context).toEqual(selected.context)
+      expect(recipient.tasks.log()).toEqual([...previous, creation])
+    },
+  )
+
   it('waits for a missing inherited block during restore and rejects its replica until the block arrives', async () => {
     const { source, fork, forkBlock } = await generatedLineage()
     const recipient = await setup('recipient-node')

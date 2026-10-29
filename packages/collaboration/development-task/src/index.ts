@@ -1531,7 +1531,18 @@ export class DevelopmentTaskService extends TypertRemoteService {
     if (entry.revision !== (current?.revision ?? 0) + 1) {
       throw new DevelopmentTaskError('Task revision is not the exact next revision', code)
     }
-    return this.projectEntry(current, entry, code)
+    const projected = this.projectEntry(current, entry, code)
+    if (entry.change.kind === 'task-created') {
+      const block = projected.inheritedContextBlockId === undefined ? undefined : this.contextBlocks.get(projected.inheritedContextBlockId)
+      if (block !== undefined) for (const source of block.sources) {
+        const parent = this.inheritedSource(source.parent)
+        const selected = new Set(source.context.map(publication => publication.id))
+        if (!isDeepStrictEqual(source, { ...parent, context: parent.context.filter(publication => selected.has(publication.id)) })) {
+          throw new DevelopmentTaskError('Task inherited context changes its selected parent snapshot', code)
+        }
+      }
+    }
+    return projected
   }
 
   /** Every projected creation ties its inherited sources to the immutable origin before persistence or recovery. */

@@ -94,6 +94,75 @@ describe('DevWorkbenchPanel', () => {
     }
   })
 
+  it('discards a pending inventory failure after its plugin is disposed', async () => {
+    const runtime = await SlotTestRuntime.create()
+    const read = Promise.withResolvers<RemoteResult<DevWorkbenchSnapshot>>()
+    const list = vi.fn(async (): Promise<RemoteResult<DevWorkbenchSnapshot>> => ({ ok: true, value: { entries: [entry()] } }))
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const locale = new LocaleRuntime(runtime.ctx)
+      locale.setLocale('zh')
+      runtime.ctx.provide('locale', locale)
+      runtime.slots.installLocale(locale)
+      new TestRemote(runtime.ctx, { devWorkbench: { list } })
+      await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
+      const feature = await runtime.mount({ inject, apply })
+      runtime.renderSlot('sidebar.footer.action', { wide: true })
+      fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      await runtime.flush()
+      const earlierReads = list.mock.calls.length
+      list.mockReturnValueOnce(read.promise)
+      fireEvent.click(screen.getByTitle(zh['action.refresh']))
+      expect(list).toHaveBeenCalledTimes(earlierReads + 1)
+      const readsAtDisposal = list.mock.calls.length
+      await feature.dispose()
+      await act(async () => {
+        read.resolve({ ok: false, error: new RemoteError('gateway/internal', 'Disposed inventory read failed', {}) })
+        await read.promise
+      })
+      expect(diagnostics).not.toHaveBeenCalled()
+      expect(list).toHaveBeenCalledTimes(readsAtDisposal)
+    } finally {
+      read.resolve({ ok: true, value: { entries: [] } })
+      await runtime.dispose()
+      diagnostics.mockRestore()
+    }
+  })
+
+  it.each(['start', 'stop'] as const)('does not read Host state after a pending %s settles following plugin disposal', async (operation) => {
+    const runtime = await SlotTestRuntime.create()
+    const action = Promise.withResolvers<RemoteResult<DevWorkbenchEntrySnapshot>>()
+    const row = entry(operation === 'start' ? 'idle' : 'running')
+    const list = vi.fn(async () => ({ ok: true as const, value: { entries: [row] } }))
+    const mutate = vi.fn(async () => await action.promise)
+    try {
+      const locale = new LocaleRuntime(runtime.ctx)
+      locale.setLocale('zh')
+      runtime.ctx.provide('locale', locale)
+      runtime.slots.installLocale(locale)
+      new TestRemote(runtime.ctx, { devWorkbench: { list, start: mutate, stop: mutate } })
+      await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
+      const feature = await runtime.mount({ inject, apply })
+      runtime.renderSlot('sidebar.footer.action', { wide: true })
+      fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      await runtime.flush()
+      fireEvent.click(screen.getByRole('button', { name: zh[operation === 'start' ? 'action.start' : 'action.stop'] }))
+      expect(mutate).toHaveBeenCalledExactlyOnceWith(ENTRY)
+      await feature.dispose()
+      expect(document.querySelector('[data-dev-workbench]')).toBeNull()
+      const readsAtDisposal = list.mock.calls.length
+      await act(async () => {
+        action.resolve({ ok: true, value: entry(operation === 'start' ? 'running' : 'stopped') })
+        await action.promise
+      })
+      expect(list).toHaveBeenCalledTimes(readsAtDisposal)
+      expect(mutate).toHaveBeenCalledOnce()
+    } finally {
+      action.resolve({ ok: true, value: row })
+      await runtime.dispose()
+    }
+  })
+
   it.each(['success', 'failure'] as const)('keeps the replacement Host task visible after an old start %s', async (outcome) => {
     const runtime = await SlotTestRuntime.create()
     const oldStart = Promise.withResolvers<RemoteResult<DevWorkbenchEntrySnapshot>>()

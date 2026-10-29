@@ -30,7 +30,7 @@ kind: "package-reference"
 
 - Root 没有父节点；Fork 固定一个准确的父 revision；Merge 固定至少两个不同父 Task 的精确 revision，创建时受 `maxMergeParents` 限制。父边创建后永不修改；复制准入和恢复都会拒绝重复的父 Task id。
 - Fork 和 Merge 创建独立 Task，不修改父 Task，也不改变父 Task 状态。
-- 继承 block 包含每个父 Task 在所选 revision 的名称、初始上下文和已准入 publication。创建、复制准入与恢复都要求 Root 不带继承块，Fork/Merge 带有继承块，且块中父任务 id 与 revision 的顺序必须匹配创建关系。本 service 不采集私有 Session、工具或编辑器历史，也不采集模型推理。
+- 继承 block 包含每个父 Task 在所选 revision 的名称、初始上下文和已准入 publication。创建、复制准入与恢复都要求 Root 不带继承块，Fork/Merge 带有继承块，且块中父任务 id 与 revision 的顺序必须匹配创建关系。 每个来源的名称、初始上下文及保留的 publication 都必须匹配该父版本；保留的 publication 必须是内容不变且顺序一致的子集。本 service 不采集私有 Session、工具或编辑器历史，也不采集模型推理。
 - 调用方可在执行默认 256 KiB block 限制前排除部分 publication。超限返回 `LIMIT_EXCEEDED`，不会截断内容。
 - 每个 Agent Session 持有一个不透明 binding id。同一 Cursor、Codex 或 Claude 身份的多个 Session 可以连接不同 Task，互不替换。
 - Binding 先于 Room 协调提交。已提交的分配副本精确重试会返回当前绑定，不再次写入或通知；确认或清除后也遵守此规则。加入新 Room 与离开不再使用的旧 Room 分别报告结果；模型上下文只读取 binding。退出命令可以要求界面所显示的 checkout 代际；所有者队列会在终结本地贡献或清除新绑定前拒绝过期命令。
