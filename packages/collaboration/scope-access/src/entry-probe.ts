@@ -134,7 +134,9 @@ export class ContributionEntryProbe {
       }
       if (record.decision === 'expired') return this.response(request, { status: 'expired' })
       if (record.decision !== 'open' && record.decision !== 'pending') return this.response(request, { status: 'closed' })
-      if (record.entry.expiresAt <= Date.now()) return this.response(request, { status: 'expired' })
+      if (record.entry.expiresAt <= Date.now() || (record.limits !== null && record.limits.expiresAt <= Date.now())) {
+        return this.response(request, { status: 'expired' })
+      }
       return this.response(request, { status: record.proposal === null ? 'ready' : 'claimed' })
     } finally { release() }
   }

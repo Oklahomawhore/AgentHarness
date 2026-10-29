@@ -412,6 +412,18 @@ const verifyEntry = async () => {
 
 describe('one native collaboration entrance', () => {
 
+  it('shows expired source consent before asking for any native collection or read permission', async () => {
+    const entry = { ...applicationEntry, kind: 'scope-join-entry' } satisfies ScopeContributionEntry
+    const f = entranceFixture(entry)
+    f.probe.mockResolvedValueOnce({ status: 'expired' })
+    paste(JSON.stringify(entry))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+    await screen.findByText(zh['native.share.probe.expired'])
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: zh['native.join.readConsent'] })).toBeNull()
+    expect(f.request).not.toHaveBeenCalled()
+  })
+
   it.each([
     { ...applicationEntry, sourceKind: 'native-work' },
     { ...applicationEntry, kind: 'scope-join-entry', sourceKind: 'native-work' },

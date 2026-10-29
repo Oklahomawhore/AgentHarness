@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
-import { applicationRecordSchema } from '../src/application-schema.ts'
+import { applicationRecordSchema, groupRecordSchema } from '../src/application-schema.ts'
 import { contributionProposalSchema } from '../src/contribution-schema.ts'
 import { cleanup, host, peer } from './helpers.ts'
 
@@ -70,5 +70,63 @@ it('keeps a durably expired application expired after a wall-clock rollback with
     expect(await source.access.probeContributionEntry({ entry })).toEqual({ status: 'expired' })
     expect([owner.pool.media, source.pool.media]).toEqual(before)
     expect(writes).not.toHaveBeenCalled()
+  } finally { clock.mockRestore() }
+})
+
+it.each(['live', 'restored'] as const)('observes expired source consent on a %s pending single entry without persisting its decision', async (lifecycle) => {
+  const { owner, source, entry } = await fixture()
+  const observer = await host('release-probe-observer')
+  await observer.access.identity()
+  const proposal = contributionProposalSchema.parse({ contributorPeerId: source.transport.peerId, captureId: randomUUID(),
+    captureGeneration: randomUUID(), source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } })
+  const expiresAt = entry.expiresAt - 10_000
+  const request = { entry, proposal, limits: { expiresAt, maxSamples: 4, maxSampleBytes: 2048 } }
+  expect(await source.access.applyContribution(request, new AbortController().signal)).toEqual({ status: 'pending' })
+  await source.ctx.fiber.dispose()
+  let current = owner
+  if (lifecycle === 'restored') {
+    const events = owner.tasks.log()
+    await owner.ctx.fiber.dispose()
+    current = await host('release-probe-owner', owner.pool, {}, events, ownerPeer)
+    await current.access.identity()
+  }
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(expiresAt)
+  try {
+    const before = structuredClone([current.pool.media, observer.pool.media])
+    const writes = vi.spyOn(current.pool, 'consumeInjectedFailure')
+    expect(await observer.access.probeContributionEntry({ entry })).toEqual({ status: 'expired' })
+    expect(applicationRecordSchema.parse(current.pool.media.get('scope_access')?.tables.get('applications')?.get(entry.entryId)).decision).toBe('pending')
+    expect([current.pool.media, observer.pool.media]).toEqual(before)
+    expect(writes).not.toHaveBeenCalled()
+  } finally { clock.mockRestore() }
+})
+
+it('keeps a reusable entry available for another member after one pending source consent expires', async () => {
+  const { owner, source, entry: single } = await fixture()
+  const observer = await host('release-probe-observer')
+  await observer.access.identity()
+  const { entry } = await owner.access.createGroupEntry({ taskId: single.taskId, ownerAddress: single.ownerAddress,
+    expiresAt: single.expiresAt, maxMembers: 2 })
+  const proposal = contributionProposalSchema.parse({ contributorPeerId: source.transport.peerId, captureId: randomUUID(),
+    captureGeneration: randomUUID(), source: { kind: 'tool-observations', name: 'session-work', tools: ['Write'] } })
+  const expiresAt = entry.expiresAt - 10_000
+  const limits = { expiresAt, maxSamples: 4, maxSampleBytes: 2048 }
+  const signal = new AbortController().signal
+  expect(await source.access.applyContribution({ entry, proposal, limits }, signal)).toEqual({ status: 'pending' })
+  await source.ctx.fiber.dispose()
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(expiresAt)
+  try {
+    const before = structuredClone([owner.pool.media, observer.pool.media])
+    const writes = vi.spyOn(owner.pool, 'consumeInjectedFailure')
+    expect(await observer.access.probeContributionEntry({ entry })).toEqual({ status: 'ready' })
+    expect([owner.pool.media, observer.pool.media]).toEqual(before)
+    expect(writes).not.toHaveBeenCalled()
+    const other = contributionProposalSchema.parse({ ...proposal, contributorPeerId: observer.transport.peerId, captureId: randomUUID() })
+    expect(await observer.access.applyContribution({ entry, proposal: other,
+      limits: { ...limits, expiresAt: entry.expiresAt } }, signal)).toEqual({ status: 'pending' })
+    const record = groupRecordSchema.parse(owner.pool.media.get('scope_group_applications')?.tables.get('entries')?.get(entry.entryId))
+    expect(record.members).toHaveLength(2)
+    expect(record.members[0]?.decision).toBe('pending')
+    expect(await observer.access.probeContributionEntry({ entry })).toEqual({ status: 'capacity' })
   } finally { clock.mockRestore() }
 })

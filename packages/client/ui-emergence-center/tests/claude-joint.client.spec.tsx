@@ -96,7 +96,7 @@ describe('Claude joint collaboration controls', () => {
     expect(port.requestContribution).not.toHaveBeenCalled()
   })
 
-  it.each(['denied', 'unavailable'] as const)('does not authorize a %s entry', async (status) => {
+  it.each(['denied', 'unavailable', 'expired'] as const)('does not authorize a %s entry', async (status) => {
     const port = actions({ probeContributionEntry: vi.fn(async () => ({ status })) })
     render(<SourceContributionPanel session={session} entry={value()} {...port} t={t} />)
     change(zh['contribution.application.paste'], 'entry')
