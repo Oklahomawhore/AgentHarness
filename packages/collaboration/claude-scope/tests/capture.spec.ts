@@ -1,14 +1,21 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { authorizeClaudeScopeTool, parseClaudeScopeHook, renderClaudeScopeObservation, renderClaudeScopeToolContribution } from '../src/capture.ts'
 import type { ClaudeScopeHookInput, ClaudeScopePolicy, ClaudeScopePreparedInput } from '../src/types.ts'
 
+vi.mock('node:fs/promises', async (original) => {
+  const actual = await original<typeof import('node:fs/promises')>()
+  return { ...actual, realpath: vi.fn(actual.realpath) }
+})
+
 const directories: string[] = []
 const sourceId = 'a'.repeat(64) as DevelopmentTaskObservedSourceId
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
 })
 
@@ -89,13 +96,53 @@ describe('authorized original Claude tool observations', () => {
     expect(await authorizeClaudeScopeTool(tool, root, policy)).toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
   })
 
-  it('omits a target whose existing ancestor is a regular file instead of a directory', async () => {
+  it.each(['Write', 'Edit'])('omits a %s target whose existing ancestor is a regular file instead of a directory', async (tool) => {
     const { root, policy } = await fixture()
     const file = join(root, 'regular-file')
     await writeFile(file, 'existing file')
-    expect(await authorizeClaudeScopeTool({ id: 'blocked-target', name: 'Write',
-      input: { file_path: join(file, 'child.txt'), content: 'PRIVATE_INPUT' } }, root, policy))
+    expect(await authorizeClaudeScopeTool({ id: 'blocked-target', name: tool,
+      input: tool === 'Write' ? { file_path: join(file, 'child.txt'), content: 'PRIVATE_INPUT' }
+        : { file_path: join(file, 'child.txt'), old_string: 'before', new_string: 'after' } }, root, policy))
       .toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+  })
+
+  it.each(['Write', 'Edit'])('refuses a %s file-parent target when the operating system reports ENOENT', async (tool) => {
+    const { root, policy } = await fixture()
+    const file = join(root, 'regular-file')
+    await writeFile(file, 'existing file')
+    const target = join(file, 'child.txt')
+    const { realpath: original } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let missing = false
+    const paths = vi.spyOn(fs, 'realpath').mockImplementation(async (path, options) => {
+      try { return await original(path, options) }
+      catch (error) {
+        if (path === target && error instanceof Error && 'code' in error && (error.code === 'ENOTDIR' || error.code === 'ENOENT')) {
+          missing = true
+          // Windows reports ENOENT for this actual file-as-parent path.
+          throw Object.assign(error, { code: 'ENOENT' })
+        }
+        throw error
+      }
+    })
+    try {
+      const result = await authorizeClaudeScopeTool({ id: 'missing-file-parent', name: tool,
+        input: tool === 'Write' ? { file_path: target, content: 'PRIVATE_INPUT' }
+          : { file_path: target, old_string: 'before', new_string: 'after' } }, root, policy)
+      expect(missing).toBe(true)
+      expect(result).toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+    } finally { paths.mockRestore() }
+  })
+
+  it.each(['Write', 'Edit'])('authorizes a %s existing leaf and an arbitrarily missing directory suffix', async (tool) => {
+    const { root, policy } = await fixture()
+    const existing = join(root, 'existing.txt')
+    await writeFile(existing, 'existing file')
+    for (const target of [existing, join(root, 'not-created', 'also-not-created', 'new.txt')]) {
+      const result = await authorizeClaudeScopeTool({ id: 'valid-target', name: tool,
+        input: tool === 'Write' ? { file_path: target, content: 'new content' }
+          : { file_path: target, old_string: 'before', new_string: 'after' } }, root, policy)
+      expect(result).toMatchObject({ kind: 'eligible', toolName: tool })
+    }
   })
 
   it.skipIf(process.platform === 'win32')('omits a target whose live ancestor contains a symlink loop', async () => {

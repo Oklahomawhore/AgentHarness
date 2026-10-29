@@ -1,7 +1,7 @@
 /** Parse external hooks and retain only explicitly authorized original tool fields. */
 
 import { createHash } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { toolObservationResultSchema } from '@deepseek-ai/dsh-development-task/schema'
 import type { DevelopmentTaskToolObservationResult, DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
@@ -72,15 +72,21 @@ function within(root: string, path: string): boolean {
   return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`))
 }
 
-/** Resolve existing ancestors so a new Write target still respects symlinked directories. */
-async function resolvedTarget(path: string): Promise<string> {
-  try { return await realpath(path) }
+/** Resolve existing directory ancestors so a new Write target still respects symlinked directories. */
+async function resolvedTarget(path: string, ancestor = false): Promise<string> {
+  try {
+    const canonical = await realpath(path)
+    if (ancestor && !(await stat(canonical)).isDirectory()) {
+      throw Object.assign(new Error('claude-scope: file ancestor must be a directory'), { code: 'ENOTDIR' })
+    }
+    return canonical
+  }
   catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
   }
   const parent = dirname(path)
   if (parent === path) throw new Error('claude-scope: file target has no existing ancestor')
-  return resolve(await resolvedTarget(parent), basename(path))
+  return resolve(await resolvedTarget(parent, true), basename(path))
 }
 
 async function scopedPath(path: string | undefined, policy: ClaudeScopePolicy): Promise<{ rootIndex: number; path: string } | undefined> {

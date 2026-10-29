@@ -123,6 +123,23 @@ async function setupThroughRemote(fixture: CommandHost, projectPath: string): Pr
 }
 
 describe.skipIf(process.platform === 'win32')('Claude command through built dsh and a real Host Loader tree', () => {
+  it('keeps reported writes below a regular-file ancestor out of shared Task context', async () => {
+    const fixture = await host()
+    const { task } = await joinScope(fixture)
+    const ancestor = join(fixture.directory, 'regular-file')
+    await writeFile(ancestor, 'existing local file')
+    const before = fixture.ctx.developmentTasks.get({ taskId: task.id }).context
+    const tool = { session_id: 'external-main', cwd: fixture.directory, tool_use_id: 'invalid-descendant',
+      tool_name: 'Write', tool_input: { file_path: join(ancestor, 'child.txt'), content: 'PRIVATE_ATTEMPTED_INPUT' } }
+    for (const hook_event_name of ['PreToolUse', 'PostToolUse']) {
+      const result = await run(fixture, { ...tool, hook_event_name })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toBe(await readFile(new URL('./expected/empty.stdout.json', import.meta.url), 'utf8'))
+      expect(result.stderr).toBe('')
+    }
+    expect(fixture.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual(before)
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('installs project hooks and runs their ordinary dsh profile without PATH tools or per-change sharing', async () => {
     const fixture = await host()
     const projectPath = join(fixture.directory, "project 'with $ spaces")

@@ -12,7 +12,7 @@ Status: implemented
 
 [Claude scope 适配器](../../../../packages/collaboration/claude-scope/README.zh.md) 只有在经认证的本地加入操作选择职责、Task、允许目录根和精确 Bash 命令后，才连接已观察到的主会话。稳定的本地会话身份由安装身份与 Claude session id 组合而成，不使用工作目录。Task 成员身份和采集授权共享一个耐久区间。SessionEnd 清除授权；恢复会话不会静默恢复采集权限。
 
-PreToolUse 保留摘要和起始 Task 区间，不持久化完整工具输入。完成时先独立重新授权规范路径与精确输入，再调用[观察式 Task 准入](2026-10-02-observed-task-context-admission.zh.md)。A-to-B-to-A 重新绑定、输入变化、符号链接目标变化和撤销策略都不能把迟到结果改投新任务。Subagent 和不支持的工具不在本适配器的采集策略内。
+PreToolUse 保留摘要和起始 Task 区间，不持久化完整工具输入。完成时先独立重新授权规范路径与精确输入，再调用[观察式 Task 准入](2026-10-02-observed-task-context-admission.zh.md)。适配器在追加不存在的路径分量前检查现存规范祖先路径的类型；仅凭后代不存在的错误不能授权该路径。A-to-B-to-A 重新绑定、输入变化、符号链接目标变化和撤销策略都不能把迟到结果改投新任务。Subagent 和不支持的工具不在本适配器的采集策略内。
 
 Write 和 Edit 发布有界的原始请求字段及 Claude 报告的结果。前台 Bash 只发布支持的原始输出字段。这些是来源观察，不是经独立验证的事实。整字段省略在完整 UTF-8 预算内保留原始内容与归属。终结结果和正文摘要拒绝矛盾重试；Task publication 仍是提交与去重权威，因此准入失败后可以重试。
 
