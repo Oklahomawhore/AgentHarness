@@ -811,6 +811,58 @@ describe('DevelopmentTaskService', () => {
     expect(created.runtime).toBe('degraded')
     await vi.waitFor(() => { expect(tasks.get({ taskId: created.id }).runtime).toBe('ready') })
   })
+
+  it.each(['failed retry', 'disposal'] as const)('owns one blocked hidden Room repair across %s', async (mode) => {
+    const gate = Promise.withResolvers<undefined>()
+    const entered = Promise.withResolvers<undefined>()
+    vi.useFakeTimers()
+    try {
+      const { ctx, rooms, tasks } = await setup({ roomRetryIntervalMs: 10 })
+      const ensure = vi.spyOn(rooms, 'ensure')
+      let attempts = 0
+      ctx.on('development-room/persist', async (entry) => {
+        if (entry.change.kind !== 'room-created') return
+        attempts++
+        if (attempts === 1) throw new Error('initial Room write unavailable')
+        if (attempts === 2) {
+          entered.resolve(undefined)
+          await gate.promise
+          if (mode === 'failed retry') throw new Error('background Room write unavailable')
+        }
+      })
+      const task = await tasks.create(rootRequest('One background repair'))
+      expect(task.runtime).toBe('degraded')
+      await vi.advanceTimersByTimeAsync(10)
+      await entered.promise
+      await vi.advanceTimersByTimeAsync(50)
+      expect(attempts).toBe(2)
+      expect(ensure).toHaveBeenCalledTimes(2)
+      if (mode === 'failed retry') {
+        gate.resolve(undefined)
+        await vi.advanceTimersByTimeAsync(10)
+        expect(attempts).toBe(3)
+        expect(ensure).toHaveBeenCalledTimes(3)
+        expect(tasks.get({ taskId: task.id }).runtime).toBe('ready')
+      } else {
+        let disposed = false
+        const closing = ctx.fiber.dispose().then(() => { disposed = true })
+        await vi.advanceTimersByTimeAsync(50)
+        expect(disposed).toBe(false)
+        expect(attempts).toBe(2)
+        gate.resolve(undefined)
+        await closing
+        await vi.advanceTimersByTimeAsync(100)
+        expect(attempts).toBe(2)
+        expect(rooms.log().filter(entry => entry.change.kind === 'room-created')).toHaveLength(1)
+      }
+    } finally {
+      gate.resolve(undefined)
+      try {
+        await vi.advanceTimersByTimeAsync(0)
+        await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+      } finally { vi.restoreAllMocks(); vi.useRealTimers() }
+    }
+  })
 })
 
 describe('observed Task context admission', () => {

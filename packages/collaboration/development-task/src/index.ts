@@ -255,8 +255,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private readonly lastAssignmentSeqByNode = new Map<DevelopmentNodeId, number>()
   private readonly config: Config
   private operationTail: Promise<void> = Promise.resolve()
-  private roomReconcileTail: Promise<void> = Promise.resolve()
-  private roomReconcileRunning = false
+  private roomReconcileTail: Promise<void> | undefined
 
   /** Validate all deployment bounds before accepting Task state. */
   constructor(ctx: Context, config: Config) {
@@ -1446,14 +1445,10 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   private scheduleDegradedRoomRetry(): void {
-    if (this.roomReconcileRunning || ![...this.tasks.values()].some(task => task.ownerNodeId === this.nodeId()
+    if (this.roomReconcileTail !== undefined || ![...this.tasks.values()].some(task => task.ownerNodeId === this.nodeId()
       && this.ctx.developmentRooms.list().rooms.every(room => room.id !== task.hiddenRoomId))) return
-    this.roomReconcileRunning = true
     this.roomReconcileTail = this.reconcileAllRooms()
-      .catch((error: unknown) => {
-        this.ctx.logger.warn('development-task: hidden Room retry failed: %s', this.failureMessage(error))
-      })
-      .finally(() => { this.roomReconcileRunning = false })
+      .finally(() => { this.roomReconcileTail = undefined })
   }
 
   private async reconcileTaskRoom(taskId: DevelopmentTaskId): Promise<void> {

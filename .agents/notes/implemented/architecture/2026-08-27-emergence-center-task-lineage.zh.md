@@ -14,7 +14,7 @@ Status: implemented
 
 **继承内容是显式的内容寻址快照。**Fork 和 Merge 把每个父 Task 的名称、初始共享上下文和显式 publication 写成 canonical JSON，并以 SHA-256 寻址。调用方可在评估大小限制前删除单条显式 publication。私聊、完整 Session、编辑器与工具历史、内部推理永远不是快照输入。Merge 标注每个来源，但要求填写新的 Task 名称和初始共享上下文，不宣称自动解决语义冲突。
 
-**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。恢复在接纳值前校验行键是否匹配 block id 或事件的来源节点与序号。Task service 在持久化前派生或验证 block digest，并在恢复时再次校验；存储适配器为已验证的 digest 保留首个行。事件和分配行仍独立检查身份冲突，因为结果未知的写入可能已持久化，却尚未发布投影。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
+**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。后台 Room 修复以在途 Promise 排除重叠；停用会先清除重试定时器，再等待该次修复。每个 Task 的协调分别报告自身失败。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。恢复在接纳值前校验行键是否匹配 block id 或事件的来源节点与序号。Task service 在持久化前派生或验证 block digest，并在恢复时再次校验；存储适配器为已验证的 digest 保留首个行。事件和分配行仍独立检查身份冲突，因为结果未知的写入可能已持久化，却尚未发布投影。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
 
 **SQLite 一次性接管当前格式 JSON。**Web 路由使用 `development_context_tasks`；新 SQLite 单元在同一事务中复制 JSON 快照并写入单元标记。单元行记录已完成接管，后续打开不再读取 JSON，也不会恢复已删除行。复制失败会回滚记录和标记。来源字节保留以供检查；恢复仍负责记录 schema、行身份与 Task 重放校验。接管期间必须停止其他写入方。旧生命周期 domain 和 Session generation 不会被导入或改写。迁移由拥有目标事务的后端负责，不增加双写、回退读取或存储层的领域专用解析。浏览器 Worker 显式把当前 Task domain 路由到既有 JSON 后端；若禁用原生 SQLite 却保留指向它的路由，存储 facility 及其依赖项将无法激活。
 
