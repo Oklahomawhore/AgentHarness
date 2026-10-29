@@ -2040,7 +2040,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
         if (current?.taskId !== entry.change.previousTaskId) throw new DevelopmentTaskError('assignment clear does not match current Task', code)
         break
       case 'context-acknowledged':
-        if (current?.taskId !== entry.change.taskId || entry.change.revision < (current.acknowledgedRevision ?? 0)) {
+        if (current?.taskId !== entry.change.taskId || entry.change.revision < (current.acknowledgedRevision ?? 0)
+          || entry.change.revision > this.requireTask(entry.change.taskId).revision) {
           throw new DevelopmentTaskError('context acknowledgement does not match current assignment', code)
         }
         assignment = Object.freeze({ ...current, acknowledgedRevision: entry.change.revision })

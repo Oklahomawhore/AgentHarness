@@ -181,3 +181,48 @@ it.each(['left', 'superseded', 'cancelled'] as const)('discards decoded output a
   else expect(await pending).toEqual({ status: ending === 'left' ? 'left' : 'unavailable' })
   expect(saved(f.b).size).toBe(ending === 'superseded' ? 1 : 0)
 })
+
+it('persists expiry crossed during real compressed-response decoding without retaining or retrying its projection', async () => {
+  const f = await fixture(500)
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  const decode = codec.decodeReadResponse
+  const decoded = vi.spyOn(codec, 'decodeReadResponse').mockImplementationOnce(async (...args) => {
+    expect(args[0]).toMatchObject({ encoding: 'gzip-base64' })
+    const result = await decode(...args)
+    expect(result.result.status).toBe('active')
+    entered.resolve(undefined)
+    await release.promise
+    return result
+  })
+  const clock = vi.spyOn(Date, 'now')
+  const request = vi.spyOn(f.b.transport, 'request')
+  const pending = f.b.access.retrieveWithinBudget({ subscriptionId: f.subscription.id, maxContextBytes: 6000 }, signal())
+    .catch((error: unknown) => error)
+  try {
+    await entered.promise
+    expect(saved(f.a).size).toBe(1)
+    expect(saved(f.b).size).toBe(0)
+    clock.mockReturnValue(f.invitation.expiresAt)
+    release.resolve(undefined)
+    expect(await pending).toEqual({ status: 'expired' })
+    expect((await f.b.access.list()).subscriptions).toEqual([{ ...f.subscription, state: 'expired' }])
+    expect(saved(f.b).size).toBe(0)
+    clock.mockRestore()
+    expect(await f.b.access.retrieve(f.subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(request).toHaveBeenCalledOnce()
+    await f.b.ctx.fiber.dispose()
+    const restored = await host('history-source', f.b.pool)
+    const restoredRequest = vi.spyOn(restored.transport, 'request')
+    expect((await restored.access.list()).subscriptions).toEqual([{ ...f.subscription, state: 'expired' }])
+    expect(await restored.access.retrieve(f.subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(saved(restored).size).toBe(0)
+    expect(restoredRequest).not.toHaveBeenCalled()
+  } finally {
+    release.resolve(undefined)
+    await Promise.allSettled([pending])
+    decoded.mockRestore()
+    clock.mockRestore()
+  }
+})

@@ -35,6 +35,8 @@ export interface DevelopmentTaskDirectoryState {
 export interface DevelopmentTaskDirectory extends HostObservable<DevelopmentTaskDirectoryState> {
   refresh(): void
   reset(): void
+  /** Discard pending reads and creation replies when the owning plugin unloads. */
+  dispose(): void
   /**
    * Retain the selected neighborhood across refresh and connection reset.
    * @param taskId - Task whose lineage replaces the graph after the latest request succeeds.
@@ -149,6 +151,7 @@ export function createDevelopmentTaskDirectory(
     getSnapshot: () => store.getSnapshot(),
     subscribe: listener => store.subscribe(listener),
     refresh,
+    dispose() { generation += 1 },
     reset() {
       generation += 1
       inFlight = undefined

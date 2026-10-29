@@ -102,6 +102,6 @@ MCP 客户端卡片区分配置、进程在线、按 Session 的 Task 连接和�
 
 ### 开发备注
 
-参与者、Task 与 MCP 客户端快照使用同步的 [Client 快照 store](../store/README.zh.md)。渲染器负责每次订阅的清理，消费者须以只读方式使用快照中的嵌套值。刷新与重置仍由各目录负责，参与者目录保留其租约生命周期；[状态所有权决策](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.zh.md)记录通知及开发环境冻结语义。
+参与者、Task 与 MCP 客户端快照使用同步的 [Client 快照 store](../store/README.zh.md)。渲染器负责每次订阅的清理，消费者须以只读方式使用快照中的嵌套值。刷新与重置仍由各目录负责。插件卸载使未结算的 Task 与 MCP 检查或配置响应失效，不再发起新的读取；参与者目录保留其租约生命周期；[状态所有权决策](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.zh.md)记录通知及开发环境冻结语义。
 
 本包不发布运行时 invariant companion，因为 Task 与 scope 的权威状态由 Host 服务负责；本包只管理浏览器呈现与交互状态。

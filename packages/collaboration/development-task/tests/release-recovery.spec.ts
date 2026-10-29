@@ -4,8 +4,9 @@ import DevelopmentMeshService, { type DevelopmentMeshSnapshot } from '@deepseek-
 import DevelopmentRoomService, { type DevelopmentNodeId, type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room'
 import DevelopmentTaskMeshService from '@deepseek-ai/dsh-development-task-mesh'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import DevelopmentTaskService, { type DevelopmentTaskLogEntry, type DevelopmentTaskObservedIntervalIdentity } from '../src/index.ts'
-import { developmentTaskAdmitRemoteObservedContextRequestSchema, developmentTaskContextBlockSchema, developmentTaskEventSchema } from '../src/schema.ts'
+import DevelopmentTaskService, { type DevelopmentTaskAssignmentLogEntry, type DevelopmentTaskLogEntry, type DevelopmentTaskObservedIntervalIdentity } from '../src/index.ts'
+import { developmentTaskAdmitRemoteObservedContextRequestSchema, developmentTaskAssignmentEventSchema,
+  developmentTaskContextBlockSchema, developmentTaskEventSchema } from '../src/schema.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {
@@ -194,6 +195,73 @@ async function generatedLineage() {
   if (forkBlock === undefined || reverseBlock === undefined) throw new Error('Generated inherited blocks are missing')
   return { source, firstContext, secondContext, fork, merge, root, forkBlock, reverseBlock }
 }
+
+async function generatedAcknowledgement() {
+  const f = await routedSource()
+  await f.owner.tasks.publishContext({ taskId: f.task.id, participantId: f.owner.owner, text: 'Second owner revision' })
+  await f.owner.tasks.publishContext({ taskId: f.task.id, participantId: f.owner.owner, text: 'Third owner revision' })
+  const events = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(f.owner.tasks.log())))
+  for (const event of events.slice(1)) await f.source.tasks.acceptLogReplica(event, f.ownerNodeId)
+  const assignment = await f.source.tasks.acknowledge({ taskId: f.task.id, bindingId: f.bound.bindingId,
+    participantId: f.bound.participantId, revision: 3 })
+  const entries = developmentTaskAssignmentEventSchema.array().parse(JSON.parse(JSON.stringify(f.source.tasks.assignmentLog())))
+  const [bound, acknowledged] = entries
+  const missingRevision = events[2]
+  if (bound === undefined || acknowledged === undefined || missingRevision === undefined) {
+    throw new Error('Generated cross-owner acknowledgement history is missing')
+  }
+  return { ...f, events, entries, bound, acknowledged, missingRevision, assignment }
+}
+
+describe('Task acknowledgement revision dependencies', () => {
+  it.each(['replica', 'restore'] as const)('rejects a real future acknowledgement during %s until its Task revision arrives', async (admission) => {
+    const f = await generatedAcknowledgement()
+    const recipient = await setup('acknowledgement-recipient')
+    const previous = f.events.slice(0, 2)
+    if (admission === 'restore') {
+      recipient.tasks.restoreLog(previous)
+      recipient.tasks.restoreAssignmentLog([f.bound])
+    } else {
+      for (const event of previous) await recipient.tasks.acceptLogReplica(event, event.nodeId)
+      await recipient.tasks.acceptAssignmentReplica(f.bound, f.sourceNodeId)
+    }
+    const blocks = recipient.tasks.blocks()
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    recipient.ctx.on('development-task/assignment-persist', persisted)
+    expect(recipient.tasks.get({ taskId: f.task.id }).revision).toBe(2)
+    expect(f.acknowledged.change).toMatchObject({ kind: 'context-acknowledged', revision: 3 })
+    if (admission === 'restore') expect(() => { recipient.tasks.restoreAssignmentLog([f.acknowledged]) })
+      .toThrow(expect.objectContaining({ code: 'REPLICA_CONFLICT' }))
+    else await expect(recipient.tasks.acceptAssignmentReplica(f.acknowledged, f.sourceNodeId))
+      .rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(recipient.tasks.assignmentLog()).toEqual([f.bound])
+    expect(recipient.tasks.assignmentList()[0]?.acknowledgedRevision).toBeUndefined()
+    expect(recipient.tasks.log()).toEqual(previous)
+    expect(recipient.tasks.blocks()).toEqual(blocks)
+    if (admission === 'restore') {
+      recipient.tasks.restoreLog([f.missingRevision])
+      recipient.tasks.restoreAssignmentLog([f.acknowledged])
+      expect(persisted).not.toHaveBeenCalled()
+    } else {
+      await recipient.tasks.acceptLogReplica(f.missingRevision, f.missingRevision.nodeId)
+      await expect(recipient.tasks.acceptAssignmentReplica(f.acknowledged, f.sourceNodeId)).resolves.toEqual(f.assignment)
+      expect(persisted).toHaveBeenCalledExactlyOnceWith(f.acknowledged)
+    }
+    expect(recipient.tasks.assignmentLog()).toEqual(f.entries)
+    expect(recipient.tasks.assignmentList()).toEqual([f.assignment])
+  })
+
+  it('restores a complete cross-owner history before its reversed acknowledgement batch', async () => {
+    const f = await generatedAcknowledgement()
+    const recipient = await setup('acknowledgement-recipient')
+    recipient.tasks.restoreLog([...f.events].reverse())
+    recipient.tasks.restoreAssignmentLog([...f.entries].reverse())
+    expect(recipient.tasks.assignmentLog()).toEqual(f.entries)
+    expect(recipient.tasks.assignmentList()).toEqual([f.assignment])
+    expect(recipient.tasks.get({ taskId: f.task.id }).revision).toBe(3)
+  })
+})
 
 describe('Task inherited-context replica validation', () => {
   it.each((['replica', 'restore'] as const).flatMap(admission =>

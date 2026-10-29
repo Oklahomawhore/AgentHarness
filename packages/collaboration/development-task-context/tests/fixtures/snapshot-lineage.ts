@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
-import { developmentTaskContextBlockSchema, developmentTaskEventSchema } from '@deepseek-ai/dsh-development-task/schema'
+import { developmentTaskAssignmentEventSchema, developmentTaskContextBlockSchema,
+  developmentTaskEventSchema } from '@deepseek-ai/dsh-development-task/schema'
 import type { DevelopmentTaskBindingId } from '@deepseek-ai/dsh-development-task/types'
 
 /** Loader fixture identity. */
@@ -29,6 +30,15 @@ export async function apply(ctx: Context): Promise<void> {
     change: { kind: 'context-published', publication: { id: 'context-lineage-parent-fact',
       text: 'FROZEN_PARENT_FACT', publishedBy: owner, publishedAt: 2 } } })
   ctx.developmentTasks.restoreLog([root, publication])
+  const bound = developmentTaskAssignmentEventSchema.parse({ nodeId: root.nodeId, seq: 1, at: 2,
+    bindingId: 'binding-lineage-parent-snapshot', participantId: owner,
+    change: { kind: 'task-bound', taskId: root.taskId } })
+  const acknowledged = developmentTaskAssignmentEventSchema.parse({ ...bound, seq: 2, at: 4,
+    change: { kind: 'context-acknowledged', taskId: root.taskId, revision: 3 } })
+  ctx.developmentTasks.restoreAssignmentLog([bound])
+  assert.throws(() => { ctx.developmentTasks.restoreAssignmentLog([acknowledged]) }, { code: 'REPLICA_CONFLICT' })
+  assert.deepEqual(ctx.developmentTasks.assignmentLog(), [bound])
+  assert.equal(ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision, undefined)
   const parent = ctx.developmentTasks.get({ taskId: root.taskId })
   const parentRef = { taskId: parent.id, revision: parent.revision }
   const sources = [{ parent: parentRef,
@@ -59,6 +69,9 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.developmentTasks.restoreLog([developmentTaskEventSchema.parse({ ...publication, seq: 4, at: 4, revision: 3,
     change: { kind: 'context-published', publication: { id: 'context-lineage-later-fact',
       text: 'LATER_PARENT_FACT', publishedBy: owner, publishedAt: 4 } } })])
+  ctx.developmentTasks.restoreAssignmentLog([acknowledged])
+  assert.deepEqual(ctx.developmentTasks.assignmentLog(), [bound, acknowledged])
+  assert.equal(ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision, 3)
   const bindingId = 'binding-lineage-snapshot' as DevelopmentTaskBindingId
   let requests = 0
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {

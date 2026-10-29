@@ -23,6 +23,8 @@ export interface McpClientSetupState extends McpClientSetupSnapshot {
 export interface McpClientSetupDirectory extends HostObservable<McpClientSetupState> {
   refresh(): void
   reset(): void
+  /** Discard pending inspection and setup replies when the owning plugin unloads. */
+  dispose(): void
   /**
    * Configure a client and publish its reply only in the connection that sent it.
    * @param request - selected local client to configure.
@@ -74,6 +76,7 @@ export function createMcpClientSetupDirectory(
     getSnapshot: () => store.getSnapshot(),
     subscribe: listener => store.subscribe(listener),
     refresh,
+    dispose() { generation += 1 },
     reset() {
       generation += 1
       inFlight = undefined

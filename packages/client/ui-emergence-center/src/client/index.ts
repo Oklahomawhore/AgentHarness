@@ -193,6 +193,7 @@ export function apply(ctx: Context): void {
   }), 'ui-emergence-center: source permission changes')
   ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset(); scopeAccess.reset() })
   ctx.effect(() => () => participants.dispose(), 'ui-emergence-center: human lease')
+  ctx.effect(() => () => { tasks.dispose(); mcpClients.dispose() }, 'ui-emergence-center: Host directories')
   ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose(); scopeAccess.dispose() }, 'ui-emergence-center: contribution management')
   ctx.effect(() => () => { claudeScopes.dispose() }, 'ui-emergence-center: Claude session directory')
 

@@ -14,7 +14,7 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer,
   ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
   ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest,
-  McpClientSetupRequest, McpClientSetupResult } from '@deepseek-ai/dsh-api-remotes/client'
+  McpClientSetupRequest, McpClientSetupResult, McpClientSetupSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { apply, inject } from '../src/client/index.ts'
 import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
@@ -56,7 +56,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     runtime.slots.installLocale(locale)
     const connection = observable({ id: 1, host: { home: '/home/test-owner' } })
     runtime.ctx.provide('connection', { generation: connection })
-    const tasksList = vi.fn(async () => ok([task]))
+    const tasksList = vi.fn(async (): Promise<RemoteResult<readonly DevelopmentTaskSnapshot[]>> => ok([task]))
     const roomsList = vi.fn(async (): Promise<RemoteResult<DevelopmentRoomDirectorySnapshot>> => ok({
       nodeId: task.ownerNodeId, participants: [], rooms: [], presenceTtlMs: 15_000,
     }))
@@ -167,6 +167,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       return ok(localContribution)
     })
     let currentClient: McpClientSnapshot = { ...mcpClient, state: mcpState, canSetup: mcpState === 'not-configured' }
+    const clientsList = vi.fn(async (): Promise<RemoteResult<McpClientSetupSnapshot>> => ok({ clients: mcp ? [currentClient] : [] }))
     const setupClient = vi.fn(async (_request: McpClientSetupRequest): Promise<RemoteResult<McpClientSetupResult>> => {
       currentClient = { ...currentClient, state: 'configured', canSetup: false, restartRequired: true }
       return ok({ outcome: 'configured', client: currentClient })
@@ -182,7 +183,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       developmentTasks: { list: tasksList, lineage, publishContext, create,
         observedCandidates: async () => ok([]), observedIntervals: async () => ok([]) },
       developmentTaskAssignments: { list: assignmentsList, checkout },
-      mcpClientSetup: { list: async () => ok({ clients: mcp ? [currentClient] : [] }), setup: setupClient },
+      mcpClientSetup: { list: clientsList, setup: setupClient },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
         prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource, requestContribution: requestSource,
         contributionDetail: async () => ok({ ...sourceDetail, session: currentSessions[0] ?? session }) },
@@ -221,7 +222,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
     await screen.findByText(zh['observed.empty'])
     await runtime.flush()
-    return { runtime, feature, remote, connection, tasksList, roomsList, assignmentsList, lineage, sessions,
+    return { runtime, feature, remote, connection, tasksList, clientsList, roomsList, assignmentsList, lineage, sessions,
       setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
@@ -236,6 +237,29 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it.each(['tasks', 'clients'] as const)('discards a pending %s inventory failure after plugin disposal', async (inventory) => {
+    const subject = await mountPanel()
+    const read = Promise.withResolvers<RemoteResult<never>>()
+    const failure: RemoteResult<never> = { ok: false, error: new RemoteError('gateway/internal', 'Disposed inventory failed', {}) }
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const list = inventory === 'tasks' ? subject.tasksList : subject.clientsList
+      const previousReads = list.mock.calls.length
+      list.mockReturnValueOnce(read.promise)
+      refreshPanel()
+      expect(list).toHaveBeenCalledTimes(previousReads + 1)
+      const readsAtDisposal = list.mock.calls.length
+      await subject.feature.dispose()
+      await act(async () => { read.resolve(failure); await read.promise })
+      expect(diagnostics).not.toHaveBeenCalled()
+      expect(list).toHaveBeenCalledTimes(readsAtDisposal)
+    } finally {
+      read.resolve(failure)
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
+    }
+  })
+
   it.each(['join', 'leave'] as const)('confirms the original Claude Session after a committed %s loses its reply', async (method) => {
     const initial: ClaudeScopeSessionSummary = method === 'join' ? session : {
       ...session, taskId: task.id, responsibility: 'Frontend integration',
