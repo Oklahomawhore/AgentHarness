@@ -96,6 +96,29 @@ describe('createDevWorkbenchInventory', () => {
     expect(source.getSnapshot().entries).toEqual([row('running'), other])
   })
 
+  it.each(['start', 'stop'] as const)('keeps the replacement Host baseline when an older %s response completes', async (method) => {
+    const oldAction = Promise.withResolvers<DevWorkbenchEntrySnapshot>()
+    const laterRead = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const replacement = { ...row('idle'), label: 'Replacement Host task', stdout: 'NEW_HOST' }
+    const list = vi.fn(() => laterRead.promise)
+      .mockResolvedValueOnce({ entries: [row('idle')] }).mockResolvedValueOnce({ entries: [replacement] })
+    const source = createDevWorkbenchInventory({ list, start: () => oldAction.promise, stop: () => oldAction.promise }, vi.fn())
+    source.refresh()
+    await vi.waitFor(() => { expect(source.getSnapshot().read).toBe(true) })
+    const acting = source[method](ENTRY)
+    source.reset()
+    source.refresh()
+    await vi.waitFor(() => { expect(source.getSnapshot().entries).toEqual([replacement]) })
+    oldAction.resolve({ ...row(method === 'start' ? 'running' : 'stopped'), stdout: 'OLD_HOST' })
+    try {
+      await acting
+      expect(source.getSnapshot().entries).toEqual([replacement])
+      expect(list).toHaveBeenCalledTimes(2)
+    } finally {
+      laterRead.resolve({ entries: [replacement] })
+    }
+  })
+
   it('isolates subscriber errors and keeps each repeated subscription independently removable', async () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {

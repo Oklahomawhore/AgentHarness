@@ -59,7 +59,9 @@ export function createDevWorkbenchInventory(
     operation: (id: DevWorkbenchEntryId) => Promise<DevWorkbenchEntrySnapshot>,
     id: DevWorkbenchEntryId,
   ): Promise<void> => {
+    const issued = generation
     const entry = await operation(id)
+    if (issued !== generation) return
     store.set({
       entries: store.getSnapshot().entries.map(current => current.id === id ? entry : current),
       read: true,

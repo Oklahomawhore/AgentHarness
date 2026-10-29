@@ -67,6 +67,9 @@ export function DevWorkbenchPanel({
     : preferences.selectedViewByEntry[selectedEntry.id]
   const selectedView = selectedEntry?.views.find(view => view.id === selectedViewId)
     ?? selectedEntry?.views[0]
+  const active = selectedEntry?.phase === 'running' || selectedEntry?.phase === 'stopping'
+  const canStop = active || (selectedEntry?.startedAt !== undefined
+    && (selectedEntry.phase === 'exited' || selectedEntry.phase === 'failed'))
 
   useEffect(() => { refresh() }, [refresh])
   useEffect(() => {
@@ -198,13 +201,14 @@ export function DevWorkbenchPanel({
                 {selectedView !== undefined && (
                   <a href={selectedView.url} target="_blank" rel="noreferrer">{t('action.open')}</a>
                 )}
-                {selectedEntry.phase === 'running' || selectedEntry.phase === 'stopping' ? (
+                {canStop && (
                   <button
                     type="button"
                     disabled={pending !== undefined}
                     onClick={() => { void perform(selectedEntry.id, () => stop(selectedEntry.id)) }}
                   >{t('action.stop')}</button>
-                ) : (
+                )}
+                {!active && (
                   <button
                     type="button"
                     disabled={pending !== undefined}
@@ -221,7 +225,8 @@ export function DevWorkbenchPanel({
                     : selectedEntry.readiness !== undefined && selectedEntry.readiness.state !== 'ready'
                       ? <div className={css.readiness}>
                         <strong>{t(READINESS_LABELS[selectedEntry.readiness.state])}</strong>
-                        <span>{selectedEntry.readiness.error ?? t('readiness.waiting')}</span>
+                        <span>{selectedEntry.readiness.error
+                          ?? t(selectedEntry.phase === 'running' ? 'readiness.waiting' : 'readiness.stopped')}</span>
                       </div>
                       : <iframe
                         key={`${selectedView.url}:${frameVersion}`}

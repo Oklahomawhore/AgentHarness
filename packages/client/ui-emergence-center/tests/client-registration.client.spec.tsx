@@ -11,12 +11,15 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ScopeAgentBindingRequest,
   ScopeAgentResumeRequest, ScopeAgentContributionStatus, ScopeAgentContributionRequest, ClaudeScopeContributionDetail,
   ClaudeScopePrepareContributionRequest, ClaudeScopeActivateContributionRequest, ScopeContributionApproval,
-  ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
+  ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer,
+  ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
+  ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest,
+  McpClientSetupRequest, McpClientSetupResult } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { apply, inject } from '../src/client/index.ts'
 import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
 import { zh } from '../src/client/locales.ts'
-import { binding, localCapture, unbound } from './native-local-contribution-fixture.client.ts'
+import { assigned, binding, localCapture, unbound } from './native-local-contribution-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
 import { agentId, applicationEntry, capture, emptyStatus } from './native-contribution-fixture.client.ts'
 
@@ -42,7 +45,8 @@ const mcpClient: McpClientSnapshot = { id: 'codex', label: 'Codex', detected: tr
 const mcpPresence: DevelopmentParticipantSnapshot = { id: mcpParticipant, nodeId: task.ownerNodeId, kind: 'agent',
   displayName: 'Codex', presence: 'online', lastSeenAt: 2 }
 
-async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] = [], native = false, mcp = false) {
+async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] = [], native = false, mcp = false,
+  mcpState: McpClientSnapshot['state'] = 'configured') {
   const runtime = await SlotTestRuntime.create()
   try {
     localStorage.setItem('dsh.emergence-center.profile.v1', JSON.stringify({ id: task.createdBy, displayName: '' }))
@@ -88,6 +92,17 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       return ok(active)
     })
     const stopSource = vi.fn(async () => { currentSessions = [session]; sourceDetail = { session, capture: null }; return ok(session) })
+    const requestSource = vi.fn(async (
+      request: ClaudeScopeRequestContributionRequest,
+    ): Promise<RemoteResult<ClaudeScopeSessionSummary>> => {
+      const waiting: ClaudeScopeSessionSummary = { ...session,
+        contributionState: 'prepared', contributionApplicationState: 'waiting' }
+      currentSessions = [waiting]
+      sourceDetail = { session: waiting, capture: { selection: capture.selection, proposal: capture.proposal,
+        proposalText: JSON.stringify(proposalDocument), roots: request.roots, source: request.source, invitation: null,
+        application: { entry: request.entry, limits: request.limits, state: 'waiting' } } }
+      return ok(waiting)
+    })
     let approved: ScopeContributionApproval | undefined
     const approve = vi.fn(async (request: ScopeContributionApproveRequest) => {
       const issued: ScopeContributionInvitation = { version: 1, kind: 'tool-contribution', ownerAddress: request.ownerAddress,
@@ -133,15 +148,41 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       return ok(contribution)
     })
     const stopNative = vi.fn(async () => { contribution = { ...emptyStatus, revision: 2 }; return ok(contribution) })
+    let localContribution = unbound
+    const checkout = vi.fn(async (request: DevelopmentTaskCheckoutRequest) => {
+      localContribution = assigned
+      return ok({ assignment: { bindingId: binding.bindingId, ...request, assignedAt: 1 }, context: { task },
+        runtime: { targetJoined: true, previousLeft: true, warnings: [] } })
+    })
+    const requestLocal = vi.fn(async (request: ScopeAgentLocalContributionRequest) => {
+      if (request.sourceKind === 'completed-turn-outcomes' || request.sourceKind === 'native-work') throw new Error('Fixture expects file permission')
+      localContribution = { ...assigned, revision: 1, capture: { ...localCapture, roots: request.roots, tools: request.tools,
+        grant: { ...localCapture.grant, ...request.limits } } }
+      return ok(localContribution)
+    })
+    const stopLocal = vi.fn(async (_request: ScopeAgentContributionStopRequest) => {
+      localContribution = { ...assigned, revision: 2 }
+      return ok(localContribution)
+    })
+    let currentClient: McpClientSnapshot = { ...mcpClient, state: mcpState, canSetup: mcpState === 'not-configured' }
+    const setupClient = vi.fn(async (_request: McpClientSetupRequest): Promise<RemoteResult<McpClientSetupResult>> => {
+      currentClient = { ...currentClient, state: 'configured', canSetup: false, restartRequired: true }
+      return ok({ outcome: 'configured', client: currentClient })
+    })
+    const previewContributionText = vi.fn(async ({ text }: { text: string }): Promise<RemoteResult<ScopeContributionTransfer>> => {
+      if (text === JSON.stringify(proposalDocument)) return ok(proposalDocument)
+      if (text === approved?.text) return ok(approved.invitation)
+      return ok(applicationEntry)
+    })
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
       developmentTasks: { list: tasksList, lineage, publishContext, create,
         observedCandidates: async () => ok([]), observedIntervals: async () => ok([]) },
-      developmentTaskAssignments: { list: assignmentsList },
-      mcpClientSetup: { list: async () => ok({ clients: mcp ? [mcpClient] : [] }) },
+      developmentTaskAssignments: { list: assignmentsList, checkout },
+      mcpClientSetup: { list: async () => ok({ clients: mcp ? [currentClient] : [] }), setup: setupClient },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
-        prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource,
+        prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource, requestContribution: requestSource,
         contributionDetail: async () => ok({ ...sourceDetail, session: currentSessions[0] ?? session }) },
       scopeAccess: {
         identity: async () => ok({ peerId: applicationEntry.ownerPeerId, addresses: [applicationEntry.ownerAddress] }),
@@ -150,11 +191,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
         groupEntries: async () => ok({ entries: [], nextEntryId: null }),
         groupApplications: async () => ok({ entries: [], nextApplicationId: null }),
-        previewContributionText: async ({ text }: { text: string }): Promise<RemoteResult<ScopeContributionTransfer>> => {
-          if (text === JSON.stringify(proposalDocument)) return ok(proposalDocument)
-          if (text === approved?.text) return ok(approved.invitation)
-          return ok(applicationEntry)
-        },
+        previewContributionText,
         approveContribution: approve,
         probeContributionEntry: async () => ok({ status: 'ready' }),
       },
@@ -164,8 +201,8 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         bind, pause, resume, leave: leaveScope,
       },
       scopeAgentContributions: {
-        status: async () => ok(contribution), localStatus: async () => ok(unbound), permissionDraft: async () => ok(null),
-        request: requestNative, stop: stopNative,
+        status: async () => ok(contribution), localStatus: async () => ok(localContribution), permissionDraft: async () => ok(null),
+        request: requestNative, stop: stopNative, requestLocal, stopLocal,
       },
     })
     if (native) {
@@ -185,7 +222,8 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     return { runtime, feature, remote, connection, tasksList, roomsList, assignmentsList, lineage, sessions,
       setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
-      prepare, approve, activate, stopSource, issuedApproval: () => approved }
+      prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
+      issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
 
@@ -196,6 +234,30 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it('retries an explicitly refused MCP setup while keeping configuration separate from online and context receipt', async () => {
+    const subject = await mountPanel([], false, true, 'not-configured')
+    try {
+      const connections = within(screen.getByRole('region', { name: zh['agents.connectTitle'] }))
+      const configure = () => connections.getByRole<HTMLButtonElement>('button', { name: zh['agent.configure'] })
+      subject.setupClient.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'private setup detail', {}) })
+      fireEvent.click(configure())
+      await screen.findByRole('alert')
+      expect(screen.getByRole('alert').textContent).toContain(zh['error.generic'])
+      expect(screen.queryByText('private setup detail')).toBeNull()
+      expect(configure().disabled).toBe(false)
+      expect(connections.getByRole('list', { name: zh['agents.progress'] }).querySelectorAll('[data-state="complete"]')).toHaveLength(0)
+      fireEvent.click(configure())
+      await connections.findByText(zh['agent.status.offline'].replace('{client}', 'Codex'))
+      expect(subject.setupClient).toHaveBeenNthCalledWith(1, { clientId: 'codex' })
+      expect(subject.setupClient).toHaveBeenNthCalledWith(2, { clientId: 'codex' })
+      expect(connections.queryByRole('button', { name: zh['agent.configure'] })).toBeNull()
+      const steps = connections.getByRole('list', { name: zh['agents.progress'] })
+      expect([...steps.querySelectorAll('li')].map(step => step.dataset.state)).toEqual(['complete', 'pending', 'pending', 'pending'])
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(subject.publishContext).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
   it.each(['bound', 'cleared'] as const)('keeps a newer %s Session notification when an older assignment read settles', async (change) => {
     const subject = await mountPanel([], false, true)
     const stale = Promise.withResolvers<RemoteResult<readonly DevelopmentTaskAssignment[]>>()
@@ -361,6 +423,50 @@ describe('Collaboration client registration lifecycle', () => {
     } finally { await subject.runtime.dispose() }
   })
 
+  it('retains a rejected Claude application draft, retries explicitly and corrects the owner route on the same capture', async () => {
+    const subject = await mountPanel([session])
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      const sourceElement = screen.getByRole('heading', { name: zh['contribution.sourceTitle'] }).closest('section')
+      if (sourceElement === null) throw new Error('Source contribution panel missing')
+      const source = within(sourceElement)
+      await source.findByText(zh['contribution.stopped'])
+      fireEvent.change(source.getByLabelText(zh['contribution.application.paste']), { target: { value: 'original-owner-entry' } })
+      fireEvent.click(source.getByRole('button', { name: zh['contribution.application.verify'] }))
+      await source.findByText(applicationEntry.ownerPeerId)
+      for (const [key, value] of [['contribution.hours', '1'], ['contribution.maxSamples', '8'], ['contribution.maxBytes', '4096']] as const) {
+        fireEvent.change(source.getByLabelText(zh[key]), { target: { value } })
+      }
+      subject.requestSource.mockResolvedValueOnce({ ok: false, error: new RemoteError('scope-contribution/capacity', 'private Host diagnostic', {}) })
+      fireEvent.click(source.getByRole('button', { name: zh['contribution.application.request'] }))
+      await source.findByText(zh['contribution.error.capacity'])
+      expect(source.queryByText('private Host diagnostic')).toBeNull()
+      expect(source.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).value).toBe('original-owner-entry')
+      expect(source.getByLabelText<HTMLInputElement>(zh['contribution.maxSamples']).value).toBe('8')
+      await waitFor(() => { expect(source.getByRole('button', { name: zh['contribution.application.request'] })).toHaveProperty('disabled', false) })
+      fireEvent.click(source.getByRole('button', { name: zh['contribution.application.request'] }))
+      await source.findByText(zh['contribution.application.waiting'])
+      expect(subject.requestSource).toHaveBeenCalledTimes(2)
+      const initial = subject.requestSource.mock.calls[1]?.[0]
+      expect(initial).toEqual({ sessionKey: session.sessionKey, expectedCapture: null, roots: ['/project'],
+        source: { kind: 'tool-observations', tools: ['Write', 'Edit'] }, entry: applicationEntry,
+        limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 8, maxSampleBytes: 4096 } })
+      const relocated = { ...applicationEntry, ownerAddress: '/ip4/192.0.2.22/tcp/40123/p2p/owner-peer' }
+      subject.previewContributionText.mockResolvedValueOnce(ok(relocated))
+      fireEvent.click(source.getByText(zh['contribution.application.reconnect']))
+      fireEvent.change(source.getByLabelText(zh['contribution.application.paste']), { target: { value: 'relocated-owner-entry' } })
+      fireEvent.click(source.getByRole('button', { name: zh['contribution.application.verify'] }))
+      fireEvent.click(await source.findByRole('button', { name: zh['contribution.application.retryAddress'] }))
+      await waitFor(() => { expect(subject.requestSource).toHaveBeenCalledTimes(3) })
+      expect(subject.requestSource).toHaveBeenLastCalledWith({ ...initial, expectedCapture: capture.selection, entry: relocated })
+      await subject.runtime.flush()
+      expect(source.queryByRole('alert')).toBeNull()
+      expect(subject.prepare).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
   it('binds finite automatic permission in the original native Session and pauses, resumes, then leaves that exact binding', async () => {
     const subject = await mountPanel([], true)
     try {
@@ -423,6 +529,38 @@ describe('Collaboration client registration lifecycle', () => {
       await controls.findByText(zh['native.share.none'])
       expect(subject.stopNative).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })
       expect(subject.bind).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
+  it('connects the original native Session to an owned Task and separately authorizes and stops local file collection', async () => {
+    const subject = await mountPanel([], true)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+      const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+      fireEvent.click(controls.getByRole('radio', { name: zh['native.target.local'] }))
+      const choose = await controls.findByLabelText<HTMLSelectElement>(zh['native.local.task'])
+      fireEvent.change(choose, { target: { value: task.id } })
+      fireEvent.click(controls.getByRole('button', { name: zh['native.local.connect'] }))
+      await controls.findByText(zh['native.local.connected'].replace('{task}', task.objective))
+      expect(subject.checkout).toHaveBeenCalledExactlyOnceWith({ taskId: task.id, participantId: localCapture.grant.participantId })
+      expect(subject.requestLocal).not.toHaveBeenCalled()
+      for (const [key, value] of [['contribution.roots', '/project'], ['contribution.hours', '1'],
+        ['contribution.maxSamples', '8'], ['contribution.maxBytes', '4096']] as const) {
+        fireEvent.change(controls.getByLabelText(zh[key]), { target: { value } })
+      }
+      fireEvent.click(controls.getByRole('checkbox', { name: zh['native.share.write'] }))
+      const enable = controls.getByRole<HTMLButtonElement>('button', { name: zh['native.local.enable'] })
+      expect(enable.disabled).toBe(true)
+      fireEvent.click(controls.getByRole('checkbox', { name: zh['native.local.consent'] }))
+      fireEvent.click(enable)
+      await controls.findByRole('button', { name: zh['native.share.stop'] })
+      expect(subject.requestLocal).toHaveBeenCalledExactlyOnceWith({ ...binding, agentId, expectedCapture: null,
+        roots: ['/project'], tools: ['write'], limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 8, maxSampleBytes: 4096 } })
+      fireEvent.click(controls.getByRole('button', { name: zh['native.share.stop'] }))
+      await controls.findByRole('button', { name: zh['native.local.enable'] })
+      expect(subject.stopLocal).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: localCapture.selection })
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(subject.requestNative).not.toHaveBeenCalled()
     } finally { await subject.runtime.dispose() }
   })
 

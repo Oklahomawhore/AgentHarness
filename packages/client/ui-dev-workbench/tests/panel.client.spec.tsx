@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -56,7 +56,43 @@ function props(
 }
 
 describe('DevWorkbenchPanel', () => {
-  it('updates the mounted plugin through its real inventory and releases open-panel polling on disposal', async () => {
+  it('keeps the replacement Host task visible when an earlier start finishes after connection reset', async () => {
+    const runtime = await SlotTestRuntime.create()
+    const oldStart = Promise.withResolvers<DevWorkbenchEntrySnapshot>()
+    const laterList = Promise.withResolvers<{ readonly entries: readonly DevWorkbenchEntrySnapshot[] }>()
+    let current = entry()
+    let holdReads = false
+    try {
+      const locale = new LocaleRuntime(runtime.ctx)
+      locale.setLocale('zh')
+      runtime.ctx.provide('locale', locale)
+      runtime.slots.installLocale(locale)
+      new TestRemote(runtime.ctx, { devWorkbench: {
+        list: async () => ({ ok: true as const, value: holdReads ? await laterList.promise : { entries: [current] } }),
+        start: async () => ({ ok: true as const, value: await oldStart.promise }),
+        stop: async () => ({ ok: true as const, value: current }),
+      } })
+      await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
+      await runtime.mount({ inject, apply })
+      runtime.renderSlot('sidebar.footer.action', { wide: true })
+      fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      fireEvent.click(screen.getByRole('button', { name: zh['action.start'] }))
+      current = { ...entry(), label: 'Replacement Host task', stdout: 'NEW_HOST' }
+      await act(async () => { runtime.ctx.emit('connection/reset') })
+      await screen.findByText('Replacement Host task')
+      holdReads = true
+      await act(async () => { oldStart.resolve({ ...entry('running'), stdout: 'OLD_HOST' }) })
+      expect(screen.queryByText('AgentHarness Agent')?.textContent ?? null).toBeNull()
+      expect(screen.getByText('Replacement Host task')).toBeTruthy()
+      expect(screen.queryByText('OLD_HOST')).toBeNull()
+    } finally {
+      oldStart.resolve(entry('running'))
+      await act(async () => { laterList.resolve({ entries: [current] }) })
+      await runtime.dispose()
+    }
+  })
+
+  it.each(['idle', 'exited', 'failed'] as const)('controls %s task ranges and releases panel polling on disposal', async (phase) => {
     const runtime = await SlotTestRuntime.create()
     const clearInterval = vi.spyOn(window, 'clearInterval')
     try {
@@ -64,13 +100,18 @@ describe('DevWorkbenchPanel', () => {
       locale.setLocale('zh')
       runtime.ctx.provide('locale', locale)
       runtime.slots.installLocale(locale)
-      let current = entry()
+      let current: DevWorkbenchEntrySnapshot = phase === 'idle' ? entry() : {
+        ...entry(phase), startedAt: 1, finishedAt: 2,
+        readiness: { url: entry().views[0]!.url, state: 'checking' },
+        ...phase === 'exited' ? { outcome: { exitCode: 0, signal: null } } : { error: 'Task startup failed' },
+      }
       const start = vi.fn(async () => {
-        current = entry('running')
+        current = { ...entry('running'), startedAt: 3,
+          ...current.readiness === undefined ? {} : { readiness: { url: current.readiness.url, state: 'checking' as const } } }
         return { ok: true as const, value: current }
       })
       const stop = vi.fn(async () => {
-        current = entry('stopped')
+        current = { ...current, phase: 'stopped', finishedAt: 4 }
         return { ok: true as const, value: current }
       })
       new TestRemote(runtime.ctx, {
@@ -80,11 +121,21 @@ describe('DevWorkbenchPanel', () => {
       await runtime.mount({ inject, apply })
       runtime.renderSlot('sidebar.footer.action', { wide: true })
       fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
-      fireEvent.click(screen.getByRole('button', { name: zh['action.start'] }))
-      await screen.findByText(zh['status.running'])
+      if (phase !== 'idle') {
+        expect(screen.queryByText(zh['readiness.waiting'])).toBeNull()
+        expect(screen.getByText(zh['readiness.stopped'])).toBeTruthy()
+        expect(document.querySelector('iframe')).toBeNull()
+        expect(screen.getByRole('link', { name: zh['action.open'] }).getAttribute('href')).toBe(current.views[0]?.url)
+        expect(screen.getByRole('button', { name: zh['action.restart'] })).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: zh['action.stop'] }))
+        await screen.findByRole('button', { name: new RegExp(zh['status.stopped']) })
+        expect(stop).toHaveBeenCalledWith(ENTRY)
+      }
+      fireEvent.click(screen.getByRole('button', { name: phase === 'idle' ? zh['action.start'] : zh['action.restart'] }))
+      await screen.findByRole('button', { name: new RegExp(zh['status.running']) })
       expect(start).toHaveBeenCalledWith(ENTRY)
       fireEvent.click(screen.getByRole('button', { name: zh['action.stop'] }))
-      await screen.findByText(zh['status.stopped'])
+      await screen.findByRole('button', { name: new RegExp(zh['status.stopped']) })
       expect(stop).toHaveBeenCalledWith(ENTRY)
       await runtime.dispose()
       expect(document.querySelector('[data-dev-workbench]')).toBeNull()
@@ -155,7 +206,7 @@ describe('DevWorkbenchPanel', () => {
 
   it('waits for configured readiness before loading the browser view', () => {
     const checking = entry('running')
-    render(<DevWorkbenchPanel {...props({
+    const view = render(<DevWorkbenchPanel {...props({
       ...checking,
       readiness: { url: checking.views[0]!.url, state: 'checking', error: 'fetch failed' },
     })} />)
@@ -163,5 +214,11 @@ describe('DevWorkbenchPanel', () => {
     expect(screen.getByText(zh['readiness.checking'])).toBeTruthy()
     expect(screen.getByText('fetch failed')).toBeTruthy()
     expect(document.querySelector('iframe')).toBeNull()
+    view.rerender(<DevWorkbenchPanel {...props({
+      ...checking, phase: 'exited', startedAt: 1, finishedAt: 2, outcome: { exitCode: 0, signal: null },
+      readiness: { url: checking.views[0]!.url, state: 'ready', checkedAt: 1, statusCode: 200 },
+    })} />)
+    expect(screen.getByTitle('Agent').getAttribute('src')).toBe(checking.views[0]?.url)
+    expect(screen.getByRole('link', { name: zh['action.open'] }).getAttribute('href')).toBe(checking.views[0]?.url)
   })
 })

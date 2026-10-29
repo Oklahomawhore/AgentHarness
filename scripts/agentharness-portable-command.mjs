@@ -368,22 +368,8 @@ function renderMcpStatus(clients) {
   }).join('\n')
 }
 
-async function loadMcpSetup() {
-  try {
-    return await import('@deepseek-ai/dsh-host-mcp-client-setup')
-  } catch (error) {
-    if (error?.code === 'ERR_MODULE_NOT_FOUND') return undefined
-    throw error
-  }
-}
-
 async function configureMcpClients(root, environment) {
-  const setup = await loadMcpSetup()
-  if (setup === undefined) {
-    process.stdout.write('\nMCP automatic setup is unavailable in this payload; use the manual guide below.\n')
-    process.stdout.write(renderMcpGuide(root, environment))
-    return
-  }
+  const setup = await import('@deepseek-ai/dsh-host-mcp-client-setup')
   const results = await setup.setupAllMcpClients(mcpSetupOptions(root, environment))
   process.stdout.write('\nMCP automatic setup:\n')
   for (const result of results) {
@@ -406,11 +392,9 @@ async function printStatus(environment) {
   const ready = isOwnedProcess(state) && await endpointReady(state.port)
     && authenticatedBrowserUrl(await runtimeOutput(state.logPath, offset), state.url) !== undefined
   process.stdout.write(`AgentHarness ${state.version} process ${state.pid}: ${ready ? `ready at ${state.url}` : 'running without completed startup'}\n`)
-  const setup = await loadMcpSetup()
-  if (setup !== undefined) {
-    const clients = await setup.listMcpClients(mcpSetupOptions(commandRoot(environment), environment))
-    process.stdout.write(`MCP clients:\n${renderMcpStatus(clients.clients)}\n`)
-  }
+  const setup = await import('@deepseek-ai/dsh-host-mcp-client-setup')
+  const clients = await setup.listMcpClients(mcpSetupOptions(commandRoot(environment), environment))
+  process.stdout.write(`MCP clients:\n${renderMcpStatus(clients.clients)}\n`)
   if (!ready) process.exitCode = 1
 }
 

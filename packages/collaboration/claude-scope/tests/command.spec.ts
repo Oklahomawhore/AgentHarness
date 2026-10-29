@@ -10,6 +10,7 @@ import type { Config } from '../src/command.ts'
 import type { ClaudeScopeSetupResult } from '../src/types.ts'
 import { readBoundedUtf8 } from '../src/transport.ts'
 import { commandHost, type CommandHost } from './fixtures/command-host.ts'
+import * as OpenApi from '../src/openapi.ts'
 
 const disposers: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -184,7 +185,7 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
       } } },
     })
     await writeFile(filePath, document(['old_field'], '200'))
-    for (const sessionId of ['backend', 'frontend', 'qa']) {
+    for (const sessionId of ['backend', 'frontend', 'qa', 'leaving']) {
       expect((await run(fixture, { hook_event_name: 'SessionStart', session_id: sessionId, cwd: fixture.directory })).exitCode).toBe(0)
     }
     const owner = 'api-owner' as DevelopmentParticipantId
@@ -200,7 +201,29 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     const tool = { session_id: 'backend', cwd: fixture.directory, tool_use_id: 'ordinary-write', tool_name: 'Write', tool_input: { file_path: filePath, content } }
     expect((await run(fixture, { ...tool, hook_event_name: 'PreToolUse' })).exitCode).toBe(0)
     await writeFile(filePath, content)
-    expect((await run(fixture, { ...tool, hook_event_name: 'PostToolUse' })).exitCode).toBe(0)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const sample = OpenApi.sampleOpenApiSource
+    vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
+      const result = await sample(...args)
+      entered.resolve(undefined)
+      await release.promise
+      return result
+    })
+    const completion = run(fixture, { ...tool, hook_event_name: 'PostToolUse' })
+    let leaving: Promise<unknown> | undefined
+    try {
+      await entered.promise
+      const session = (await fixture.ctx.claudeScope.sessions()).find(item => item.sessionId === 'leaving')
+      if (session === undefined) throw new Error('Missing independently joined session')
+      leaving = fixture.ctx.claudeScope.leave({ sessionKey: session.sessionKey })
+      release.resolve(undefined)
+      expect((await completion).exitCode).toBe(0)
+      await leaving
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
     const received: string[] = []
     for (const sessionId of ['frontend', 'qa']) {
       const result = await run(fixture, { hook_event_name: 'UserPromptSubmit', session_id: sessionId, prompt: 'Continue normal work.' })

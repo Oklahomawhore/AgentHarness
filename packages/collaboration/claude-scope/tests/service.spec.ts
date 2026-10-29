@@ -754,6 +754,39 @@ describe('Claude scope service', () => {
     expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation?.state === 'valid')).toHaveLength(1)
   })
 
+  it('publishes an authorized in-flight sample while another session leaves the same Task', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    const input = scenario.tool('other-session-leaves', apiDocument(['independent_author_fact'], ['299']))
+    await host.hook('api-author', 'PreToolUse', input)
+    await writeFile(scenario.source.filePath, apiDocument(['independent_author_fact'], ['299']))
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const actual = OpenApi.sampleOpenApiSource
+    vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
+      const sample = await actual(...args)
+      entered.resolve(undefined)
+      await release.promise
+      return sample
+    })
+    const completion = host.hook('api-author', 'PostToolUse', input)
+    let leaving: Promise<unknown> | undefined
+    try {
+      await entered.promise
+      leaving = host.scope.leave({ sessionKey: scenario.b })
+      release.resolve(undefined)
+      expect((await completion).receipt.status).toBe('published')
+      await leaving
+      const evidence = (await host.hook('api-qa', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+      expect(evidence).toContain('"responseStatuses":["299"]')
+      expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation?.state === 'valid')).toHaveLength(1)
+      expect((await host.scope.sessions()).find(session => session.sessionKey === scenario.b)?.taskId).toBeUndefined()
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
+  })
+
   it('captures ordinary authorized tools and resends exact recipient context without automatic join or self echo', async () => {
     const host = await boot()
     const task = await host.createTask('Two existing Claude sessions')

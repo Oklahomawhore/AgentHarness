@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-26-agentharness-internal-productization-boundary.md
-2026-08-26-agentharness-internal-productization-boundary.md: 0b1c7f6a3d64782cac6a36836be8bd0a2388556f
-2026-08-26-agentharness-internal-productization-boundary.zh.md: 94a1927ca65a4546a44abf59edbd865ca3d82374
+2026-08-26-agentharness-internal-productization-boundary.md: 84a47c46d8f35a6742f095125493d4c08bab66af
+2026-08-26-agentharness-internal-productization-boundary.zh.md: 129d6978283094fcb2afb3e4e91d6b703ceb0d37

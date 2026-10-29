@@ -26,7 +26,7 @@ Five deployment fields are required. `nodePath` and `dshPath` are absolute paths
 
 The service requires `connection` and `webServer`. On macOS/Linux its plugin activation waits for descriptor publication using the Host's actual port; publication failure rejects startup. Disposal removes only its own descriptor. The [Connection local-access helper](../../client/connection/README.md) owns file permissions, exclusive publication, and authentication. The file grants the same local user's full Connection authority; it is not a Task-specific permission. Keep its directory private.
 
-Windows reports `unsupported`, disables setup, and publishes no descriptor. The ordinary Web application remains available. A successful client write means the launch configuration matches, including `DSH_HOME`; a different existing entry is a conflict and is never overwritten.
+Windows reports `unsupported`, disables setup, and publishes no descriptor. The ordinary Web application remains available. Participant identities combine a stable 128-bit digest of hostname and username with the complete client id; identical host/account names are not distinguished. A successful client write means the launch configuration matches, including `DSH_HOME` and participant identity. A different existing entry remains a conflict, including after a hostname or account change; remove that registration explicitly before rerunning setup.
 
 
 ## Model Experience

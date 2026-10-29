@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest'
 import { parseCredentialsDocument } from '@deepseek-ai/dsh-credentials-local'
-import { copyClusterRuntime } from './agentharness-portable-fixture.ts'
+import { copyPortableCommandRuntime } from './agentharness-portable-fixture.ts'
 import { collaborationBrowserUrl, renderMcpGuide } from './agentharness-portable-command.mjs'
 import { createLanReleaseServer, detectLanAddress, parseLanArguments } from './agentharness-serve-lan-release.mjs'
 import {
@@ -68,14 +68,42 @@ async function portableCommandFixture(root: string, metadata: { version: string;
   const portable = join(root, 'portable')
   await mkdir(portable, { recursive: true })
   await cp(commandScript, join(portable, 'agentharness.mjs'))
-  await copyClusterRuntime(portable)
+  await copyPortableCommandRuntime(portable)
   await writeFile(join(portable, 'agentharness-portable.json'), JSON.stringify(metadata))
   return portable
 }
 
 function installerEnvironment(home: string): NodeJS.ProcessEnv {
-  return { ...process.env, HOME: home, AGENTHARNESS_NO_START: '1', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
+  return { ...portableClientEnvironment(home), AGENTHARNESS_NO_START: '1', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
 }
+
+function portableClientEnvironment(home: string): NodeJS.ProcessEnv {
+  return { ...process.env, HOME: home, CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    XDG_CONFIG_HOME: join(home, '.config'), DSH_HOME: join(home, '.dsh') }
+}
+
+it.each(['package', 'entry'] as const)('fails MCP setup when its mandatory helper %s is missing while keeping the manual guide available', async (missing) => {
+  const fixture = await temporaryDirectory()
+  const portable = await portableCommandFixture(fixture, { product: 'AgentHarness', version: '9.8.7' })
+  const home = join(fixture, 'home')
+  await mkdir(home)
+  const env = { ...portableClientEnvironment(home), PATH: '' }
+  const script = join(portable, 'agentharness.mjs')
+  const healthy = await runCommand(process.execPath, [script, 'mcp-setup'], env)
+  expect(healthy).toMatchObject({ status: 0, stderr: '' })
+  expect(healthy.stdout).toContain('MCP automatic setup:')
+  expect(healthy.stdout).toContain('Codex:')
+  const helper = join(portable, 'node_modules', '@deepseek-ai', 'dsh-host-mcp-client-setup')
+  await rm(missing === 'package' ? helper : join(helper, 'index.js'), { recursive: true })
+  const broken = await runCommand(process.execPath, [script, 'mcp-setup'], env)
+  expect(broken.status).not.toBe(0)
+  expect(broken.stderr).toContain('dsh-host-mcp-client-setup')
+  expect(broken.stdout).not.toContain('manual guide')
+  expect(broken.stdout).not.toContain('Configured or already configured:')
+  const guide = await runCommand(process.execPath, [script, 'mcp-guide'], env)
+  expect(guide).toMatchObject({ status: 0, stderr: '' })
+  expect(guide.stdout).toContain('MCP setup')
+})
 
 async function freePort(): Promise<number> {
   const server = createServer()
@@ -99,7 +127,7 @@ async function portableArchive(root: string, version = '1.2.3', platform = proce
   else if (platform !== process.platform) await writeFile(join(payload, 'runtime', runtimeName), 'fake POSIX runtime', { mode: 0o755 })
   else await symlink(process.execPath, join(payload, 'runtime', runtimeName))
   await cp(commandScript, join(payload, 'agentharness.mjs'))
-  await copyClusterRuntime(payload)
+  await copyPortableCommandRuntime(payload)
   await writeFile(join(payload, 'start.mjs'), '')
   await writeFile(join(payload, 'agentharness-portable.json'), `${JSON.stringify({
     formatVersion: 1,
@@ -698,7 +726,7 @@ describe('AgentHarness LAN release server and installed command', () => {
     ].join('\n'))
     const port = await freePort()
     const env = {
-      ...process.env,
+      ...portableClientEnvironment(join(fixture, 'client-home')),
       AGENTHARNESS_RUNTIME_DIR: state,
       AGENTHARNESS_NO_OPEN: '1',
       AGENTHARNESS_PORT: String(port),
@@ -735,6 +763,10 @@ describe('AgentHarness LAN release server and installed command', () => {
       const clusterStatus = execFileSync(process.execPath, [installedCommand, 'cluster', 'status'], { env, encoding: 'utf8' })
       expect(clusterStatus).toContain('Fingerprint: sha256:')
       expect(clusterStatus).not.toContain(TEST_CLUSTER_SECRET)
+      await rm(join(portable, 'node_modules', '@deepseek-ai', 'dsh-host-mcp-client-setup', 'index.js'))
+      const brokenStatus = await runCommand(process.execPath, [installedCommand, 'status'], env)
+      expect(brokenStatus.status).not.toBe(0)
+      expect(brokenStatus.stderr).toContain('dsh-host-mcp-client-setup')
     } finally {
       execFileSync(process.execPath, [installedCommand, 'stop'], { env, encoding: 'utf8' })
     }

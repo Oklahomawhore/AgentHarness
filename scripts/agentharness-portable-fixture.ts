@@ -1,4 +1,4 @@
-/** Package the real cluster helper and its dependencies for isolated command tests. */
+/** Package production helpers and dependencies for isolated portable command tests. */
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,11 +20,24 @@ export async function copyClusterRuntime(destination: string): Promise<void> {
   const source = await readFile(join(import.meta.dirname, '../packages/util/atomic-write/src/index.ts'), 'utf8')
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } })
   await writeFile(join(atomic, 'index.js'), compiled.outputText)
-  const provider = join(modules, '@deepseek-ai', 'dsh-credentials-local')
+  await bundleRuntimePackage(join(modules, '@deepseek-ai', 'dsh-credentials-local'),
+    '../packages/credentials/credentials-local/src/index.ts')
+}
+
+/** Copy installed-command dependencies, including the mandatory MCP setup helper.
+ * @param destination - private fixture runtime directory.
+ */
+export async function copyPortableCommandRuntime(destination: string): Promise<void> {
+  await copyClusterRuntime(destination)
+  await bundleRuntimePackage(join(destination, 'node_modules', '@deepseek-ai', 'dsh-host-mcp-client-setup'),
+    '../packages/host/mcp-client-setup/src/index.ts')
+}
+
+async function bundleRuntimePackage(destination: string, entry: string): Promise<void> {
   await build({
     config: false,
-    entry: { index: join(import.meta.dirname, '../packages/credentials/credentials-local/src/index.ts') },
-    outDir: provider,
+    entry: { index: join(import.meta.dirname, entry) },
+    outDir: destination,
     tsconfig: join(import.meta.dirname, '../tsconfig.base.json'),
     platform: 'node',
     format: 'esm',
@@ -32,7 +45,15 @@ export async function copyClusterRuntime(destination: string): Promise<void> {
     fixedExtension: false,
     dts: false,
     deps: { alwaysBundle: [/.*/], onlyBundle: false },
+    plugins: [{
+      name: 'portable-fixture-typescript',
+      transform(source, id) {
+        if (!id.endsWith('.ts')) return null
+        return ts.transpileModule(source, { fileName: id,
+          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+      },
+    }],
     logLevel: 'silent',
   })
-  await writeFile(join(provider, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }))
+  await writeFile(join(destination, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }))
 }

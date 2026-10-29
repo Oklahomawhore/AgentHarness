@@ -1,11 +1,12 @@
 /** Safe local AI-client detection and AgentHarness MCP registration. */
 
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, lstat, mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { homedir, userInfo } from 'node:os'
+import { homedir, hostname, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -172,10 +173,9 @@ function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
   }
 }
 
-function identity(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '')
-  const prefixed = /^[a-z]/u.test(normalized) ? normalized : `agent-${normalized || 'local'}`
-  return prefixed.slice(0, 80)
+function clientParticipantId(username: string, clientId: McpClientId): string {
+  const account = createHash('sha256').update(JSON.stringify([hostname(), username])).digest('hex').slice(0, 32)
+  return `agentharness-${account}-${clientId}`
 }
 
 function entryEnvironment(entry: McpEntry): string[] {
@@ -187,7 +187,7 @@ function entryFor(definition: ClientDefinition, options: ResolvedOptions, reques
   participantId: string
   displayName: string
 } {
-  const participantId = identity(`agentharness-${options.username}-${definition.id}`)
+  const participantId = clientParticipantId(options.username, definition.id)
   const displayName = requestedDisplayName?.trim() || `${options.username} / ${definition.label}`
   return {
     participantId,

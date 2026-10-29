@@ -217,6 +217,25 @@ describe('source contribution onboarding', () => {
       roots: ['/project', '/project/api'], source: { filePath: '/project/api.json', name: 'Orders', method: 'post', path: '/orders' } })
   })
 
+  it.each(['put', 'patch'] as const)('requires an explicit root when preparing a %s source without an observed cwd', (method) => {
+    const { cwd: _cwd, ...withoutCwd } = session
+    const actions = sourceActions()
+    render(<SourceContributionPanel session={withoutCwd} entry={{ status: 'ready', pending: false,
+      value: { session: withoutCwd, capture: null } }} {...actions} t={t} />)
+    paste(zh['contribution.sourceKind'], 'openapi')
+    paste(zh['contribution.file'], '/workspace/api.json'); paste(zh['contribution.sourceName'], 'Orders')
+    paste(zh['contribution.apiPath'], '/orders'); paste(zh['contribution.method'], method)
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
+    const prepare = screen.getByRole<HTMLButtonElement>('button', { name: zh['contribution.prepare'] })
+    expect(prepare.disabled).toBe(true)
+    fireEvent.click(prepare)
+    expect(actions.prepareContribution).not.toHaveBeenCalled()
+    paste(zh['contribution.roots'], '/workspace')
+    fireEvent.click(prepare)
+    expect(actions.prepareContribution).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey,
+      expectedCapture: null, roots: ['/workspace'], source: { filePath: '/workspace/api.json', name: 'Orders', method, path: '/orders' } })
+  })
+
   it('recovers an existing capture after a lost reply and uses its exact selection to activate', async () => {
     const directory = createContributionDirectory<ClaudeScopeSessionSummary['sessionKey'], ClaudeScopeContributionDetail>(async () => captured, vi.fn())
     disposers.push(() => { directory.dispose() })
@@ -334,6 +353,20 @@ describe('source contribution onboarding', () => {
     expect(screen.queryByRole('button', { name: zh['contribution.activate'] })).toBeNull()
   })
 
+  it('retries pending withdrawal through its retained route without requiring another invitation preview', () => {
+    const actions = sourceActions()
+    render(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false,
+      value: { ...captured, session: { ...session, ended: true,
+        contributionState: 'withdrawal-pending', contributionIssue: 'owner-unavailable' },
+      capture: { ...captured.capture!, invitation } } }} {...actions} t={t} />)
+    expect(screen.getByText(zh['claude.issue.owner-unavailable'])).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['contribution.retryEnd'] }))
+    expect(actions.stopContribution).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey,
+      expectedCapture: captured.capture!.selection })
+    expect(actions.previewContributionText).not.toHaveBeenCalled()
+    expect(actions.activateContribution).not.toHaveBeenCalled()
+  })
+
   it('stops a local preparation without adopting a merely previewed owner grant', async () => {
     const actions = sourceActions()
     render(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false, value: captured }} {...actions} t={t} />)
@@ -347,7 +380,7 @@ describe('source contribution onboarding', () => {
     expect(actions.activateContribution).not.toHaveBeenCalled()
   })
 
-  it('discards a delayed invitation preview after the capture is replaced', async () => {
+  it.each(['accepted', 'rejected'] as const)('discards an %s invitation preview after the capture is replaced', async (outcome) => {
     const gate = Promise.withResolvers<ScopeContributionTransfer>()
     const actions = sourceActions({ previewContributionText: () => gate.promise })
     const view = render(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false, value: captured }} {...actions} t={t} />)
@@ -355,8 +388,13 @@ describe('source contribution onboarding', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['contribution.verifyInvitation'] }))
     const replacement = { ...captured, capture: { ...captured.capture!, selection: { ...captured.capture!.selection, captureId: 'capture-b' as typeof G.captureId } } }
     view.rerender(<SourceContributionPanel session={session} entry={{ status: 'ready', pending: false, value: replacement }} {...actions} t={t} />)
-    await act(async () => { gate.resolve(invitation); await gate.promise })
+    await act(async () => {
+      if (outcome === 'accepted') gate.resolve(invitation)
+      else gate.reject(new Error('Previous invitation was invalid'))
+      await Promise.allSettled([gate.promise])
+    })
     expect(screen.queryByRole('button', { name: zh['contribution.activate'] })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.pasteInvitation']).value).toBe('old-capture-document')
   })
 })

@@ -1,13 +1,19 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { McpClientSetupService, listMcpClients, setupAllMcpClients, setupMcpClient, type McpClientSetupOptions } from '../src/index.ts'
 
 const roots: string[] = []
+const machine = vi.hoisted(() => ({ name: undefined as string | undefined }))
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, hostname: () => machine.name ?? actual.hostname() }
+})
 
 afterEach(async () => {
+  machine.name = undefined
   const { rm } = await import('node:fs/promises')
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -48,6 +54,41 @@ async function fakeExecutable(path: string, body = '#!/bin/sh\nexit 0\n'): Promi
 }
 
 describe('MCP client setup', () => {
+  it('keeps one account’s clients distinct across separate Hosts and stable on the same Host', async () => {
+    const { options } = await fixture()
+    machine.name = 'first-host'
+    const first = await listMcpClients(options)
+    machine.name = 'second-host'
+    const second = await listMcpClients(options)
+    machine.name = 'first-host'
+    const again = await listMcpClients(options)
+    expect(again.clients.map(client => client.participantId)).toEqual(first.clients.map(client => client.participantId))
+    for (const client of first.clients) {
+      expect(second.clients.find(item => item.id === client.id)?.participantId).not.toBe(client.participantId)
+    }
+  })
+
+  it('retains distinct client identities when a deployment username exceeds the participant limit', async () => {
+    const { root, options } = await fixture()
+    const deployment = { ...options, username: 'long-deployment-user-'.repeat(8) }
+    const listed = await listMcpClients(deployment)
+    expect(new Set(listed.clients.map(client => client.participantId)).size).toBe(listed.clients.length)
+    for (const client of listed.clients) {
+      expect(client.participantId.length).toBeLessThanOrEqual(80)
+      expect(client.participantId.endsWith(`-${client.id}`)).toBe(true)
+    }
+    for (const [clientId, application] of [['cursor', 'Cursor.app'], ['workbuddy', 'WorkBuddy.app']] as const) {
+      await mkdir(join(root, 'Applications', application))
+      const configured = await setupMcpClient(deployment, { clientId })
+      expect(configured.outcome).toBe('configured')
+      const document: unknown = JSON.parse(await readFile(join(root, 'home', `.${clientId}`, 'mcp.json'), 'utf8'))
+      expect(document).toMatchObject({ mcpServers: { agentharness: { args: [
+        options.dshPath, '--profile', 'mcp', '--connection', options.descriptorPath,
+        '--participant-id', configured.client.participantId, '--display-name', configured.client.displayName,
+      ] } } })
+    }
+  })
+
   it('detects clients independently and leaves unsupported clients manual-only', async () => {
     const { root, options } = await fixture()
     await mkdir(join(root, 'Applications', 'Cursor.app'))
@@ -79,6 +120,21 @@ describe('MCP client setup', () => {
         'agentharness': { command: '/opt/agentharness/runtime/node' },
       },
     })
+  })
+
+  it('reports a different registered participant as a conflict without rewriting client settings', async () => {
+    const { root, options } = await fixture()
+    await mkdir(join(root, 'Applications', 'Cursor.app'))
+    expect((await setupMcpClient(options, { clientId: 'cursor' })).outcome).toBe('configured')
+    const path = join(root, 'home', '.cursor', 'mcp.json')
+    const configured = await listMcpClients(options)
+    const participant = configured.clients.find(client => client.id === 'cursor')?.participantId
+    if (participant === undefined) throw new Error('Missing Cursor client definition')
+    const legacy = (await readFile(path, 'utf8')).replace(participant, 'agentharness-test-user-cursor')
+    await writeFile(path, legacy)
+    expect((await listMcpClients(options)).clients.find(client => client.id === 'cursor')?.state).toBe('conflict')
+    expect((await setupMcpClient(options, { clientId: 'cursor' })).outcome).toBe('conflict')
+    expect(await readFile(path, 'utf8')).toBe(legacy)
   })
 
   it.each([
@@ -116,12 +172,14 @@ describe('MCP client setup', () => {
   // These fake CLI executables require native POSIX shebang execution; Windows setup is unsupported.
   it.skipIf(process.platform === 'win32')('uses official CLI arguments and continues when another client fails', async () => {
     const { root, options } = await fixture()
+    const codexIdentity = (await listMcpClients(options)).clients.find(client => client.id === 'codex')
+    if (codexIdentity === undefined) throw new Error('Missing Codex client definition')
     const codexLog = join(root, 'codex.log')
     const codex = join(root, 'bin', 'codex')
     const transport = {
       type: 'stdio', command: options.nodePath,
       args: [options.dshPath, '--profile', 'mcp', '--connection', options.descriptorPath,
-        '--participant-id', 'agentharness-test-user-codex', '--display-name', 'Test User / Codex'],
+        '--participant-id', codexIdentity.participantId, '--display-name', 'Test User / Codex'],
       env: { DSH_HOME: options.harnessHome },
     }
     await fakeExecutable(codex, `#!/bin/sh\nif [ "$1" = mcp ] && [ "$2" = list ]; then\n  if [ -f "${codexLog}" ]; then printf '%s' '${JSON.stringify([{ name: 'agentharness', transport }])}'; else printf '[]'; fi\n  exit 0\nfi\nprintf '%s\\n%s\\n' "$CODEX_HOME" "$*" > "${codexLog}"\n`)
@@ -146,13 +204,13 @@ describe('MCP client setup', () => {
       dshPath: '/opt/source/apps/cli/src/bin.ts', sourceTsconfigPath: '/opt/source/tsconfig.base.json',
     }
     const first = await setupMcpClient(source, { clientId: 'cursor' })
-    expect(first.client.participantId).toBe('agentharness-test-user-cursor')
+    expect(first.client.participantId.endsWith('-cursor')).toBe(true)
     expect(first.client.displayName).toBe('Test User / Cursor')
     const path = join(root, 'home', '.cursor', 'mcp.json')
     const before = await readFile(path, 'utf8')
     expect(JSON.parse(before)).toMatchObject({ mcpServers: { agentharness: {
       args: ['--import', 'file:///opt/tsx/esm.mjs', source.dshPath, '--profile', 'mcp', '--connection',
-        options.descriptorPath, '--participant-id', 'agentharness-test-user-cursor', '--display-name', 'Test User / Cursor'],
+        options.descriptorPath, '--participant-id', first.client.participantId, '--display-name', 'Test User / Cursor'],
       env: { DSH_HOME: options.harnessHome, TSX_TSCONFIG_PATH: '/opt/source/tsconfig.base.json' },
     } } })
     const conflict = await setupMcpClient({ ...source, harnessHome: join(root, 'different-home') }, { clientId: 'cursor' })
@@ -170,9 +228,9 @@ describe('MCP client setup', () => {
     expect(document).toMatchObject({ mcpServers: { agentharness: {
       args: nodeArgs.length === 1 ? [`--import=${import.meta.resolve('tsx/esm')}`, options.dshPath,
         '--profile', 'mcp', '--connection', options.descriptorPath, '--participant-id',
-        'agentharness-test-user-cursor', '--display-name', 'Test User / Cursor'] : ['--import',
+        result.client.participantId, '--display-name', 'Test User / Cursor'] : ['--import',
         import.meta.resolve('tsx/esm'), options.dshPath, '--profile', 'mcp', '--connection',
-        options.descriptorPath, '--participant-id', 'agentharness-test-user-cursor', '--display-name', 'Test User / Cursor'],
+        options.descriptorPath, '--participant-id', result.client.participantId, '--display-name', 'Test User / Cursor'],
       env: { DSH_HOME: options.harnessHome, TSX_TSCONFIG_PATH: sourceTsconfigPath },
     } } })
     await expect(setupMcpClient({ ...options, nodeArgs }, { clientId: 'cursor' }))

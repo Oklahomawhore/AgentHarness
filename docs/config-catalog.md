@@ -1265,7 +1265,7 @@ export interface Config {
   readonly entries: Record<string, DevWorkbenchEntryConfig>
   /** Per-stream in-memory output cap. */
   readonly maxOutputBytes: number
-  /** TERM-to-KILL grace for each task's complete process tree. */
+  /** TERM-to-KILL grace for each task's complete process tree, at most 2,147,483,647 milliseconds. */
   readonly graceMs: number
 }
 
@@ -1301,9 +1301,9 @@ export interface DevWorkbenchReadinessConfig {
   readonly url: string
   /** Status codes that establish service readiness. */
   readonly acceptedStatusCodes: number[]
-  /** Delay between attempts. */
+  /** Delay between attempts, at most 2,147,483,647 milliseconds. */
   readonly intervalMs: number
-  /** Per-request timeout. */
+  /** Per-request timeout, at most 2,147,483,647 milliseconds. */
   readonly requestTimeoutMs: number
   /** Elapsed time after which an unresolved probe is reported as delayed. */
   readonly warnAfterMs: number
@@ -1366,7 +1366,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/mcp-client-setup/src/index.ts:44`](../packages/host/mcp-client-setup/src/index.ts)
+Source: [`packages/host/mcp-client-setup/src/index.ts:45`](../packages/host/mcp-client-setup/src/index.ts)
 
 <a id="deepseek-aidsh-host-open-in-app"></a>
 

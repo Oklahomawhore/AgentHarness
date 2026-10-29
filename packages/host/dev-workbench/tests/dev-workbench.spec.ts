@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createServer, type Server } from 'node:http'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import type { SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, TestRunner, vi } from 'vitest'
 import DevWorkbenchService from '../src/index.ts'
@@ -69,6 +69,37 @@ async function waitForReadiness(service: DevWorkbenchService, state: string): Pr
 }
 
 describe('DevWorkbenchService', () => {
+  it.each(['intervalMs', 'requestTimeoutMs'] as const)('rejects readiness %s that Node would clamp to one millisecond', async (field) => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(LocalSubprocessRuntime)
+    const load = async (): Promise<void> => {
+      await ctx.plugin(DevWorkbenchService, config(['-e', ''], {
+        url: 'http://127.0.0.1:1/never-requested', acceptedStatusCodes: [200],
+        intervalMs: 10, requestTimeoutMs: 100, warnAfterMs: 1000, [field]: 2_147_483_648,
+      }))
+    }
+    await expect(load()).rejects.toThrow(field)
+  })
+
+  it('accepts the maximum timer delay without limiting the elapsed warning threshold to the timer range', async () => {
+    const { service } = await bench(['-e', ''], {
+      url: 'http://127.0.0.1:1/never-requested', acceptedStatusCodes: [200],
+      intervalMs: 2_147_483_647, requestTimeoutMs: 2_147_483_647, warnAfterMs: Number.MAX_SAFE_INTEGER,
+    })
+    expect(service.list().entries).toMatchObject([{ phase: 'idle' }])
+  })
+
+  it('rejects a grace period outside the subprocess timer range before accepting task controls', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(LocalSubprocessRuntime)
+    const load = async (): Promise<void> => {
+      await ctx.plugin(DevWorkbenchService, { ...config([]), graceMs: 2_147_483_648 })
+    }
+    await expect(load()).rejects.toThrow('graceMs')
+  })
+
   it('publishes direct list/start/stop Remote methods', async () => {
     const { service } = await bench(['-e', ''])
     expect(service.typertRemote).toMatchObject({ serviceKey: 'devWorkbench', namespace: 'devWorkbench' })
@@ -99,6 +130,47 @@ describe('DevWorkbenchService', () => {
       stderr: 'diagnostic\n',
     })
     expect(settled?.pid).toBeUndefined()
+  })
+
+  it.each(['stop', 'restart', 'unload'] as const)('quiesces surviving child work on %s after the task leader exits', async (action) => {
+    const child = `const server = require('node:http').createServer((_request, response) => response.end('owned child'));
+      server.listen(0, '127.0.0.1', () => process.send(server.address().port));`
+    const leader = `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      child.once('message', port => { console.log(port); child.disconnect(); process.exit(0) });`
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(LocalSubprocessRuntime)
+    const plugin = await ctx.plugin(DevWorkbenchService, config(['-e', leader]))
+    const service = ctx.devWorkbench
+    const handles: SubprocessHandle[] = []
+    const spawn = ctx.subprocess.spawn.bind(ctx.subprocess)
+    const observed = vi.spyOn(ctx.subprocess, 'spawn').mockImplementation((spec) => {
+      const handle = spawn(spec)
+      handles.push(handle)
+      return handle
+    })
+    try {
+      await service.start(id('fixture'))
+      await expect.poll(() => service.list().entries[0]?.phase, { timeout: TestRunner.getCurrentTest()!.timeout }).toBe('exited')
+      const port = Number(service.list().entries[0]?.stdout.trim())
+      expect(Number.isInteger(port) && port > 0).toBe(true)
+      const response = await fetch(`http://127.0.0.1:${String(port)}/`, { signal: AbortSignal.timeout(2000) })
+      expect(await response.text()).toBe('owned child')
+      const original = handles[0]
+      if (original === undefined) throw new Error('Missing actual managed subprocess handle')
+      if (action === 'unload') {
+        await plugin.dispose()
+        expect(ctx.get('subprocess') !== undefined).toBe(true)
+      } else if (action === 'restart') {
+        await service.start(id('fixture'))
+        expect(handles).toHaveLength(2)
+      } else await service.stop(id('fixture'))
+      expect(await original.waitForExit(AbortSignal.timeout(1000))).toBe(true)
+      await expect(fetch(`http://127.0.0.1:${String(port)}/`, { signal: AbortSignal.timeout(2000) })).rejects.toThrow()
+    } finally {
+      observed.mockRestore()
+    }
   })
 
   it('single-flights repeated starts and waits for process-tree stop', async () => {

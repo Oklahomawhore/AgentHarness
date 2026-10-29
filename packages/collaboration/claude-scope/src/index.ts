@@ -118,7 +118,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
   private backendGeneration = ''
   private installationId = ''
   private recovery: Promise<void> | undefined
-  private controlRevision = 0
   private readonly contributionWorkers = new Map<ClaudeScopeSessionKey, Promise<void>>()
   private readonly contribution: IndependentContribution
 
@@ -858,12 +857,11 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (grant?.remote === undefined) return session
     if (session.ended || !this.bindingCurrent(session, grant)) return this.revoke(domain, session, session.ended)
     const change = this.changes.get(session.sessionKey)
-    const control = this.controlRevision
     let intervals: readonly DevelopmentTaskObservedInterval[]
     try { intervals = await this.ctx.developmentTasks.observedIntervals({ taskId: grant.taskId }) } catch (error) {
       return this.remoteFailure(domain, session, error)
     }
-    if (control !== this.controlRevision || !this.current(domain, session, grant, change)) {
+    if (!this.current(domain, session, grant, change)) {
       return this.requireSession(domain, session.sessionKey)
     }
     const interval = intervals.find(item => item.sourceNodeId === grant.epoch.nodeId
@@ -880,7 +878,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
     await domain.table('sessions').put(session.sessionKey, refreshed)
     if (interval === undefined || refreshed.grant === undefined) return refreshed
     try {
-      const current = () => control === this.controlRevision && this.current(domain, refreshed, refreshed.grant, change)
+      const current = () => this.current(domain, refreshed, refreshed.grant, change)
       if (await flushArtifactSamples(this.ctx, domain, refreshed, refreshed.grant, this.lifetime.signal, current)) {
         await flushCompletionSamples(this.ctx, domain, refreshed, refreshed.grant, this.lifetime.signal, current)
       }
@@ -919,8 +917,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
       return this.contribution.capture(domain, input, key, AbortSignal.any([signal, contributionSignal]))
     }
     const grant = session.grant
-    const control = this.controlRevision
-    const current = () => control === this.controlRevision && this.current(domain, session, grant, change)
+    const current = () => this.current(domain, session, grant, change)
     if (grant === undefined || session.ended || !current()) return omitted('session-not-joined')
     if (grant.remote !== undefined && (grant.remote.intervalId === undefined || session.sharingIssue !== undefined)) {
       return omitted(session.sharingIssue ?? 'owner-approval-pending')
@@ -1142,7 +1139,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
   }
 
   private invalidate(key: ClaudeScopeSessionKey): void {
-    this.controlRevision += 1
     this.changes.set(key, (this.changes.get(key) ?? 0) + 1)
   }
 

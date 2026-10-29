@@ -238,6 +238,11 @@ describe('EmergenceCenterPanel', () => {
     fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
     fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Merged context' } })
     fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Combined findings' } })
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
+    expect(screen.getByRole('button', { name: zh['create.submit'] })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText<HTMLInputElement>(zh['create.objective']).value).toBe('Merged context')
+    expect(props.createTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
     fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
 
     await waitFor(() => {
@@ -260,6 +265,10 @@ describe('EmergenceCenterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
     fireEvent.click(screen.getByRole('button', { name: zh['create.forkAction'] }))
     fireEvent.click(screen.getByLabelText('Root: Public decision'))
+    expect(screen.getByLabelText('Root: Public decision')).toHaveProperty('checked', false)
+    fireEvent.click(screen.getByLabelText('Root: Public decision'))
+    expect(screen.getByLabelText('Root: Public decision')).toHaveProperty('checked', true)
+    fireEvent.click(screen.getByLabelText('Root: Public decision'))
     fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Fork context' } })
     fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Independent exploration' } })
     fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
@@ -270,6 +279,45 @@ describe('EmergenceCenterPanel', () => {
         excludedContextIds: ['context-public'],
       }))
     })
+  })
+
+  it('confirms the name entered in the creation form before creating the first Task', async () => {
+    const props = { ...panelProps([]), initialProfile: { id: HUMAN, displayName: '' } }
+    openPanel(props)
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+    const form = screen.getByRole('button', { name: zh['create.submit'] }).closest('form')
+    if (form === null) throw new Error('Task creation form missing')
+    const controls = within(form)
+    fireEvent.change(controls.getByLabelText(zh['profile.name']), { target: { value: '  Frontend owner  ' } })
+    fireEvent.change(controls.getByLabelText(zh['create.objective']), { target: { value: 'Connect shared work' } })
+    fireEvent.change(controls.getByLabelText(zh['create.scope']), { target: { value: 'Approved API decisions' } })
+    fireEvent.click(controls.getByRole('button', { name: zh['create.submit'] }))
+    await waitFor(() => { expect(props.createTask).toHaveBeenCalledOnce() })
+    expect(props.setProfile).toHaveBeenCalledExactlyOnceWith({ id: HUMAN, displayName: 'Frontend owner' })
+    expect(props.createTask).toHaveBeenCalledExactlyOnceWith({ origin: { kind: 'root' },
+      objective: 'Connect shared work', scope: 'Approved API decisions', createdBy: HUMAN })
+    expect(vi.mocked(props.setProfile).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(props.createTask).mock.invocationCallOrder[0]!)
+    expect(screen.queryByLabelText(zh['create.objective'])).toBeNull()
+  })
+
+  it('filters the Task chooser by owner and search without changing the selected context', () => {
+    const root = task(ROOT, 'My frontend work', { kind: 'root' })
+    const foreign = { ...task(FORK_ONE, 'Backend contract', { kind: 'root' }), createdBy: AGENT }
+    openPanel(panelProps([root, foreign]))
+    const card = (name: string) => screen.queryByRole('button', { name: new RegExp(`^独立.*${name}`) })
+    expect(card(root.objective)).toBeTruthy()
+    expect(card(foreign.objective)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['filter.all'] }))
+    expect(card(foreign.objective)).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText(zh['filter.searchContext']), { target: { value: '  BACKEND  ' } })
+    expect(card(root.objective)).toBeNull()
+    expect(card(foreign.objective)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: root.objective })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['filter.mine'] }))
+    expect(card(foreign.objective)).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText(zh['filter.searchContext']), { target: { value: '' } })
+    expect(card(root.objective)).toBeTruthy()
   })
 
   it('shows Agent Session connection as a prominent section without a hidden tab or global join button', () => {

@@ -28,7 +28,7 @@ Cursor、WorkBuddy 和 CodeBuddy 使用公开说明的用户级 JSON 文件。�
 
 服务要求 `connection` 和 `webServer`。macOS/Linux 的插件激活会等待使用 Host 实际端口发布的描述文件；发布失败会拒绝启动。卸载时仅删除自身发布的文件。[Connection local-access helper](../../client/connection/README.zh.md) 负责文件权限、独占发布和认证。该文件授予同一本机用户完整的 Connection 权限，不是 Task 级许可；所在目录必须保持私有。
 
-Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普通 Web 应用仍可使用。客户端写入成功表示启动配置（包括 `DSH_HOME`）匹配；已有不同条目会被报告为冲突，绝不覆盖。
+Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普通 Web 应用仍可使用。参与者身份由主机名与用户名的稳定 128 位摘要及完整客户端 id 组成；相同主机名与账户名无法区分。客户端写入成功表示启动配置匹配，包括 `DSH_HOME` 和参与者身份。已有不同条目始终报告为冲突，包括更改主机名或账户后的条目；须显式移除该注册后再运行配置。
 
 
 <a id="model-experience"></a>
