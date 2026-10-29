@@ -144,5 +144,29 @@ describe('agentMcpView', () => {
       phase: 'conflict',
       next: { key: 'agent.next.conflictCodex', params: { command: 'agentharness mcp-guide' } },
     })
+    expect(view({ client: client({ id: 'cursor', label: 'Cursor', mechanism: 'json', state: 'conflict' }) })).toMatchObject({
+      next: { key: 'agent.next.conflict', params: { client: 'Cursor', command: 'agentharness mcp-guide' } },
+    })
+  })
+
+  it.each(['manual', 'failed'] as const)('points %s setup recovery to the inspected configuration file', (state) => {
+    const path = '/safe/home/.cursor/mcp.json'
+    const projected = view({ client: client({ id: 'cursor', label: 'Cursor', mechanism: 'json', state, configPath: path }) })
+    expect(projected.next).toMatchObject({ key: state === 'manual' ? 'agent.next.manualPath' : 'agent.next.failedPath',
+      params: { path, command: state === 'manual' ? 'agentharness mcp-guide' : 'agentharness mcp-setup' } })
+    expect(projected.action).toBeUndefined()
+  })
+
+  it('requires every selected Task session to acknowledge its current revision', () => {
+    const second = { ...assignment(TASK, 2), bindingId: 'other-session' as DevelopmentTaskBindingId }
+    const unrelated = { ...assignment(OTHER_TASK, 3), bindingId: 'other-task-session' as DevelopmentTaskBindingId }
+    expect(view({ assignments: [assignment(TASK, 3), second, unrelated] })).toMatchObject({
+      phase: 'assigned', status: { params: { revision: 3, sessions: 2 } },
+      steps: [{ complete: true }, { complete: true }, { complete: true }, { complete: false }],
+    })
+    const acknowledged = [assignment(TASK, 3), { ...second, acknowledgedRevision: 3 }, { ...unrelated, acknowledgedRevision: 1 }]
+    expect(view({ assignments: acknowledged })).toMatchObject({
+      phase: 'acknowledged', status: { params: { revision: 3, sessions: 2 } },
+    })
   })
 })

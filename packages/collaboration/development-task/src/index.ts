@@ -363,6 +363,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     if (this.tasks.size >= this.config.maxTasks) throw new DevelopmentTaskError('Task limit reached', 'LIMIT_EXCEEDED')
     this.requireKnownParticipant(request.createdBy)
     const origin = this.normalizeOrigin(request.origin)
+    const objective = this.text(request.objective, 'objective')
+    const scope = this.text(request.scope, 'scope')
     const block = this.createContextBlock(origin, request.excludedContextIds ?? [])
     if (block !== undefined) await this.persistContextBlock(block)
     const taskId = `task-${randomUUID()}` as DevelopmentTaskId
@@ -370,8 +372,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     const created = await this.publish(taskId, hiddenRoomId, {
       kind: 'task-created',
       origin,
-      objective: this.text(request.objective, 'objective'),
-      scope: this.text(request.scope, 'scope'),
+      objective,
+      scope,
       createdBy: request.createdBy,
       ...(block === undefined ? {} : { inheritedContextBlockId: block.id }),
     })
@@ -1170,10 +1172,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (previous !== undefined && previous.participantId !== request.participantId) {
         throw new DevelopmentTaskError('Task binding belongs to a different Agent participant', 'INVALID_REQUEST')
       }
+      const sessionLabel = request.sessionLabel === undefined ? undefined : this.text(request.sessionLabel, 'sessionLabel')
       await this.endLocalBindingNow(bindingId)
       const assignment = await this.publishAssignment(bindingId, request.participantId, {
         kind: 'task-bound', taskId: task.id,
-        ...(request.sessionLabel === undefined ? {} : { sessionLabel: this.text(request.sessionLabel, 'sessionLabel') }),
+        ...(sessionLabel === undefined ? {} : { sessionLabel }),
       })
       if (assignment === undefined) throw new DevelopmentTaskError('binding event did not create an assignment', 'INVALID_REQUEST')
       const warnings: string[] = []
@@ -1239,7 +1242,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       const assignment = this.assignments.get(request.bindingId)
       const task = this.requireTask(request.taskId)
       if (assignment?.participantId !== request.participantId || assignment.taskId !== task.id
-        || request.revision < 1 || request.revision > task.revision) {
+        || !Number.isSafeInteger(request.revision) || request.revision < 1 || request.revision > task.revision) {
         throw new DevelopmentTaskError('context acknowledgement does not match the Agent session binding', 'INVALID_REQUEST')
       }
       if (request.expectedBindingEpoch !== undefined) {

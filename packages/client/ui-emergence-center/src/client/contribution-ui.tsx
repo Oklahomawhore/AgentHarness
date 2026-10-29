@@ -1,5 +1,5 @@
 /** Shared presentation for locally confirmed contribution permissions. */
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import type { ScopeContributionInvitation } from '@deepseek-ai/dsh-api-remotes/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -25,15 +25,21 @@ export function contributionErrorKey(code: string): EmergenceCenterKey {
   }
 }
 
+type TransferTextProps = PropsLocale<'emergenceCenter'> & { text: string; label: string }
+
 /** Copy a Host-produced transfer document without requiring JSON editing.
  * @param props - canonical text, localized label and dictionary.
  * @returns selectable transfer text and clipboard feedback.
  */
-export function ContributionTransferText({ text, label, t }: PropsLocale<'emergenceCenter'> & { text: string; label: string }) {
+export function ContributionTransferText(props: TransferTextProps) {
+  return <TransferText key={props.text} {...props} />
+}
+
+/** Keep clipboard feedback within the lifetime of one transfer document. */
+function TransferText({ text, label, t }: TransferTextProps) {
   const id = useId()
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
-  useEffect(() => { setCopied(false); setFailed(false) }, [text])
   return <div className={css.form}>
     <label className={css.field} htmlFor={id}>{label}
       <textarea id={id} readOnly rows={3} value={text} onFocus={(event) => { event.currentTarget.select() }} />

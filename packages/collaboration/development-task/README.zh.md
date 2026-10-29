@@ -93,7 +93,7 @@ Host 消费者在延迟投影前后调用 `currentContextView`。它先提交本
 
 Host-only 的 `openLocalContribution`、`admitLocalContribution`、`localContributionStatus` 和 `endLocalContribution` 授权 Task owner 自己的 Agent，不经过 self-peer transport。许可绑定一个本地 Root Task、参与者、binding epoch、capture 代际和明确的单类或组合原生来源选择。有效期、样本数和完整样本字节均有上限。来源消费者另行负责来源同意和采集；Task 准入核对原 assignment，且新样本必须仍属于同一本地 Agent 的当前 binding。
 
-每个 capture 预留一个终结事件。状态及当前上下文读取先提交到期或失效绑定的终结再返回；clear 和 checkout 先结束 capture 再改变 binding。Agent 离开或 binding 改变后仍可显式终结。先于打开的终结留下关闭的代际。终结后，已准入内容的精确重试仍返回原 receipt，但修改许可或新样本不能重开该代际。持久化失败时，不会把受影响的授权变更报告为已完成。
+每个 capture 预留一个终结事件。状态及当前上下文读取先提交到期或失效绑定的终结再返回；clear 和 checkout 先结束 capture 再改变 binding。Checkout 在终结任何 capture 前先校验可选的会话标签。Agent 离开或 binding 改变后仍可显式终结。先于打开的终结留下关闭的代际。终结后，已准入内容的精确重试仍返回原 receipt，但修改许可或新样本不能重开该代际。持久化失败时，不会把受影响的授权变更报告为已完成。
 
 本地 publication 保留真实的 `publishedBy` 参与者、原 binding epoch 和 `localContribution` 授权；有序的 `localToolObservation` 报告保留文件路径或命令选择及整字段省略。这些标识可能派生自 Session 身份，已授权的 Task 读取者可以看到。绝对采集根目录不属于元数据字段；工具文本本身仍可能包含私有数据。报告描述观察到的操作，不代表完整当前文件。终结通过上下文后端撤回区间中的所有当前报告，同时保留存储历史与冻结的继承快照。来源消费者负责在卸载或重启时终结；Task 准入自身不采集工具，也不调度空闲 Agent。
 
@@ -105,7 +105,7 @@ Task 投影和上下文变更使用 `developmentTasks/list`、`get`、`lineage`�
 
 绑定变更通知在清除后携带 `null`，使完整事件可通过 JSON Remote 传输。本地 assignment 查询对未绑定会话仍返回 `undefined`；持久绑定日志记录 `task-cleared`。Host-only 的 `latestAssignment(participantId)` 按持久日志顺序选择最后一个当前绑定仍属于该参与者的 `task-bound` 事件。时间戳相同或倒退、绑定名称顺序及之后的确认记录都不会改变选择。清除该绑定后会选中前一个保留绑定；另一参与者复用已清除的绑定 ID 不会让查询选中其 assignment。选择本身不授予读取、采集或自动工作许可。
 
-`acknowledge` 接受可选的 `expectedBindingEpoch: { nodeId, seq }`，标识预期 binding 区间的 `task-bound` 事件。串行执行器在记录确认前以 `INVALID_REQUEST` 拒绝不匹配的区间，包括 Session 切换离开后又返回同一 Task 的情况。原生上下文消费者始终提供此校验字段。分配变更在持久化前校验，包括序号、绑定身份和确认版本的单调性；拒绝的变更不消耗持久日志位置。Task 复制事件也在持久化前拒绝冲突的重复身份；与已保留内容相同的事件返回当前投影，不再次触发持久化通知。Invariant 对照保留日志和当前投影校验 Task 身份与 revision，时间戳相同也适用。确认记录 revision 的交付，不证明模型读过每一项事实。
+`acknowledge` 要求 revision 为正安全整数，并接受可选的 `expectedBindingEpoch: { nodeId, seq }`，标识预期 binding 区间的 `task-bound` 事件。串行执行器在记录确认前以 `INVALID_REQUEST` 拒绝不匹配的区间，包括 Session 切换离开后又返回同一 Task 的情况。原生上下文消费者始终提供此校验字段。分配变更在持久化前校验，包括序号、绑定身份和确认版本的单调性；拒绝的变更不消耗持久日志位置。Task 名称与初始上下文在持久化继承 block 前校验。Task 复制事件也在持久化前拒绝冲突的重复身份；与已保留内容相同的事件返回当前投影，不再次触发持久化通知。Invariant 对照保留日志和当前投影校验 Task 身份与 revision，时间戳相同也适用。确认记录 revision 的交付，不证明模型读过每一项事实。
 
 <a id="configuration"></a>
 
