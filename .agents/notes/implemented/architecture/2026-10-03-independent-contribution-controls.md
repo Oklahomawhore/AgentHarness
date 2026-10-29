@@ -24,6 +24,8 @@ A replacement address cannot change any grant field. The source retains the new 
 
 **Treat an invitation as live authority.** Pasted text can be stale, revoked, or intended for a different capture. Preview validates its representation; activation still requires exact local selection and online owner verification.
 
+**Separate restoration and activation validators.** Rejected because both operations select the same immutable grant fields. The shared controller also reselects current outbox items within serialized source operations before validation and receipt writes; adapter absence checks would duplicate that selection guarantee.
+
 **Hide terminal records or reject address changes.** A contributor may have stopped locally while the owner's terminal receipt was lost. Recovering the exact ended grant at a confirmed address permits cleanup without restoring collection or publication.
 
 ## Consequences

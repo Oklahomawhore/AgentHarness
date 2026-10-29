@@ -3493,6 +3493,13 @@ describe('independent Claude durable contribution validation', () => {
 
   it.each(['peer', 'invitation'] as const)('rejects a restored contribution with a changed %s identity', async (changed) => {
     const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    const input = f.tool('retained-identity')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    await f.source.hook('contribution-session', 'PostToolUse', input)
+    const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+    const [leaseId, value] = [...leases.entries()][0]!
+    const { receipt: _receipt, ...pending } = value as ScopeContributionLease
+    await leases.put(leaseId, pending)
     const sessions = f.source.facility.get('claude_scope')!.table('sessions')
     const session = sessions.get(f.key) as ScopeSession
     const capture = session.contribution!
@@ -3501,7 +3508,12 @@ describe('independent Claude durable contribution validation', () => {
         : { invitation: { ...f.invitation, grant: { ...f.invitation.grant, captureGeneration: 'other-generation' } } }),
     } })
     await f.source.ctx.fiber.dispose()
-    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('does not match its local identity')
+    const requests = vi.spyOn(ReadScopeTransport.prototype, 'request')
+    try {
+      await expect.soft(f.host('contribution-source', f.source.pool, f.source.directory).then(() => undefined)).rejects.toThrow(changed === 'peer'
+        ? 'does not match its local identity' : 'The invitation changes the local capture selection')
+      expect(requests).not.toHaveBeenCalled()
+    } finally { requests.mockRestore() }
   })
 
   it('rejects duplicate persisted API sample sequences even when each source id matches its own lease', async () => {

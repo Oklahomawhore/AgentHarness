@@ -34,12 +34,6 @@ export interface ContributionLimits {
 
 function omitted(reason: string): ClaudeScopeHookResult { return { output: {}, receipt: { status: 'omitted', reason } } }
 
-function sameProposal(proposal: ClaudeScopeContributionProposal, invitation: ScopeContributionInvitation): boolean {
-  const grant = invitation.grant
-  return proposal.contributorPeerId === grant.contributorPeerId && proposal.captureId === grant.captureId
-    && proposal.captureGeneration === grant.captureGeneration && isDeepStrictEqual(proposal.source, grant.source)
-}
-
 /**
  * Own cancellation of independently granted capture; callers serialize all record mutations.
  * Network failure preserves samples and pending termination instead of authorizing retries from changed bytes.
@@ -318,19 +312,18 @@ export class IndependentContribution {
         ...[...domain.table('work_leases').entries()].flatMap(([id, lease]) => lease.sessionKey !== key || lease.kind === 'prompt'
           ? [] : [{ id, sample: lease.sample, receipt: lease.receipt }]),
       ],
+      // The controller selects current outbox items within the serialized source operation.
       validateOutbox: (item, capture) => {
         const work = domain.table('work_leases').get(item.id)
         if (work !== undefined) { validateWorkLease(item.id, work, capture); return }
-        const lease = domain.table('contribution_leases').get(item.id)
-        if (lease === undefined) throw new Error('claude-scope: selected contribution lease is missing')
+        const lease = domain.table('contribution_leases').get(item.id) as ScopeContributionLease
         this.validateLease(item.id, lease, capture)
       },
       saveReceipt: async (item, receipt) => {
         const work = domain.table('work_leases').get(item.id)
         if (work !== undefined && work.kind !== 'prompt') { await domain.table('work_leases').put(item.id, { ...work, receipt }); return }
         const leases = domain.table('contribution_leases')
-        const lease = leases.get(item.id)
-        if (lease === undefined) throw new Error('claude-scope: selected contribution lease is missing')
+        const lease = leases.get(item.id) as ScopeContributionLease
         await leases.put(item.id, { ...lease, receipt })
       },
       requireCompatible: (invitation) => { this.requireCompatibleRead(this.session(domain, key), invitation) },
@@ -437,7 +430,7 @@ export class IndependentContribution {
   }
 
   /**
-   * Validate restored local identity and exact outbox associations, then settle pending work.
+   * Validate restored identity, shared invitation selection, and outbox ownership before retrying.
    * @param domain - parsed durable adapter records whose work rows already belong to generation-3 sessions, before accepting Hook traffic.
    * @param session - the restored observed session.
    * @returns after exact samples or pending termination are retried; unavailable owners remain visible.
@@ -447,8 +440,7 @@ export class IndependentContribution {
     if (capture === undefined) return
     const peer = await this.access(session.sessionKey).identity()
     this.lifetime.throwIfAborted()
-    if (peer.peerId !== capture.proposal.contributorPeerId
-      || (capture.invitation !== undefined && !sameProposal(capture.proposal, capture.invitation))) {
+    if (peer.peerId !== capture.proposal.contributorPeerId) {
       throw new Error('claude-scope: stored contribution does not match its local identity')
     }
     if (session.grant !== undefined || session.pendingEnd !== undefined) throw new Error('claude-scope: independent and Task capture grants overlap')
