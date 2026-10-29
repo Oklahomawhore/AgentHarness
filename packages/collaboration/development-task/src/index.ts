@@ -509,10 +509,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
         if (observation.sequence >= Number.MAX_SAFE_INTEGER) {
           throw new DevelopmentTaskError('remote artifact sequence must reserve its terminal successor', 'LIMIT_EXCEEDED')
         }
-        const withdrawal = this.withdrawal(publication, interval.id, publication.publishedAt)
-        if (Buffer.byteLength(JSON.stringify(withdrawal.observation), 'utf8') > this.config.maxTextBytes) {
-          throw new DevelopmentTaskError('remote artifact must fit its complete terminal observation', 'LIMIT_EXCEEDED')
-        }
       }
       await this.publish(task.id, task.hiddenRoomId, { kind: 'context-published', publication })
       return this.remoteAdmission(this.requireTask(task.id), interval.id, publication, 'published')

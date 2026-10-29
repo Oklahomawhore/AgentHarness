@@ -8,7 +8,8 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type {
   ClaudeScopeContributionDetail, ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, RemoteResult, ScopeAccessList,
   ScopeContributionApplicationApprovalRequest, ScopeContributionApplicationRejectRequest, ScopeContributionEntryRecoverRequest,
-  ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupEntry, ScopeGroupEntrySelection, ScopeGroupEntryStatus, ScopeInvitation,
+  ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupApplicationsRequest, ScopeGroupEntry, ScopeGroupEntries,
+  ScopeGroupEntriesRequest, ScopeGroupEntryRequest, ScopeGroupEntryResult, ScopeGroupEntrySelection, ScopeGroupEntryStatus, ScopeInvitation,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { apply, inject } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
@@ -72,6 +73,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
   let approved = initiallyApproved
   let ended = false
   let closed = false
+  let createdGroup: ScopeGroupEntryStatus | undefined
   const groupStatus = (): ScopeGroupEntryStatus => ({ entry: groupEntry, text: JSON.stringify(groupEntry),
     state: closed ? 'closed' : 'open', applicationCount: 1 })
   const closeGroupEntry = vi.fn(async (_request: ScopeGroupEntrySelection) => {
@@ -79,6 +81,16 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     remote.emit('scope-access/contribution-application-changed', [{ taskId: groupEntry.taskId }])
     return ok(groupStatus())
   })
+  const createGroupEntry = vi.fn(async (request: ScopeGroupEntryRequest): Promise<RemoteResult<ScopeGroupEntryResult>> => {
+    const entry: ScopeGroupEntry = { ...groupEntry, ...request, sourceKind: request.sourceKind ?? 'tool-observations',
+      entryId: 'entry-b' as ScopeGroupEntry['entryId'] }
+    createdGroup = { entry, text: JSON.stringify(entry), state: 'open', applicationCount: 0 }
+    return ok({ entry, text: createdGroup.text })
+  })
+  const groupEntries = vi.fn(async (request: ScopeGroupEntriesRequest): Promise<RemoteResult<ScopeGroupEntries>> =>
+    ok(request.afterEntryId === undefined
+      ? { entries: [groupStatus()], nextEntryId: createdGroup === undefined ? null : groupEntry.entryId }
+      : { entries: createdGroup === undefined ? [] : [createdGroup], nextEntryId: null }))
   let readGrant: ScopeAccessList['grants'][number] | undefined = initiallyApproved
     ? { invitation: readInvitation, state: 'active' } : undefined
   const currentMember = (): ScopeGroupApplication => ({ ...member, result: !approved ? { status: 'pending' }
@@ -88,7 +100,8 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
         readState: readGrant?.state === 'revoked' ? 'revoked' : 'active' } })
   const list = vi.fn(async (): Promise<Extract<RemoteResult<ScopeAccessList>, { readonly ok: true }>> =>
     ok({ grants: readGrant === undefined ? [] : [readGrant], subscriptions: [] }))
-  const groupApplications = vi.fn(async () => ok({ entries: [currentMember()], nextApplicationId: null }))
+  const groupApplications = vi.fn(async (request: ScopeGroupApplicationsRequest) =>
+    ok({ entries: request.entryId === groupEntry.entryId ? [currentMember()] : [], nextApplicationId: null }))
   const approve = vi.fn(async (request: ScopeContributionApplicationApprovalRequest): Promise<RemoteResult<ScopeGroupApplication>> => {
     expect(request).toEqual({ entryId: groupEntry.entryId, applicationId: member.applicationId,
       expectedProposal: member.proposal, limits: member.limits, ownerAddress: groupEntry.ownerAddress,
@@ -142,8 +155,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
       list, revoke,
       contributionInventory: async () => ok({ entries: [], nextGrantId: null }),
       contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
-      groupEntries: async () => ok({ entries: [groupStatus()], nextEntryId: null }),
-      groupApplications, approveContributionApplication: approve, closeGroupEntry, recoverContributionEntry,
+      groupEntries, createGroupEntry, groupApplications, approveContributionApplication: approve, closeGroupEntry, recoverContributionEntry,
       rejectContributionApplication: endMember,
       previewContributionText: async () => ok(groupEntry),
       probeContributionEntry: async () => ok({ status: 'ready' }),
@@ -163,7 +175,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     return value as HTMLElement
   })
   return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave,
-    recipient, tasksList, closeGroupEntry, contributionDetail, recoverContributionEntry, endMember,
+    recipient, tasksList, closeGroupEntry, contributionDetail, recoverContributionEntry, endMember, createGroupEntry, groupEntries,
     authority: () => readGrant,
     invalidateOwner() { remote.emit('scope-access/contribution-application-changed', [{ taskId: groupEntry.taskId }]) },
     revokeFromAnotherClient() {
@@ -173,6 +185,78 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
 }
 
 describe('Emergence Center owner read inventory', () => {
+  it('retains an owner-refused entry draft and loads the newly created empty group without granting its existing applicant permission', async () => {
+    const subject = await mountOwner(false)
+    const page = Promise.withResolvers<RemoteResult<ScopeGroupEntries>>()
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const ownerElement = screen.getByText(zh['contribution.ownerTitle']).closest('details')
+      if (ownerElement === null) throw new Error('Owner contribution panel missing')
+      const ownerControls = within(ownerElement)
+      fireEvent.change(ownerControls.getByLabelText(zh['contribution.join.purpose']), { target: { value: 'group' } })
+      fireEvent.change(ownerControls.getByLabelText(zh['contribution.sourceKind']), { target: { value: 'completed-turn-outcomes' } })
+      fireEvent.change(ownerControls.getByLabelText(zh['contribution.group.capacity']), { target: { value: '9999' } })
+      fireEvent.change(ownerControls.getByLabelText(zh['contribution.application.entryHours']), { target: { value: '1' } })
+      subject.createGroupEntry.mockResolvedValueOnce({ ok: false,
+        error: new RemoteError('scope-contribution/invalid-permission', 'Private owner capacity policy', {}) })
+      fireEvent.click(ownerControls.getByRole('button', { name: zh['contribution.group.create'] }))
+      await ownerControls.findByText(zh['contribution.error.permission'])
+      expect(ownerControls.getByLabelText<HTMLInputElement>(zh['contribution.group.capacity']).value).toBe('9999')
+      expect(ownerControls.getByLabelText<HTMLInputElement>(zh['contribution.application.entryHours']).value).toBe('1')
+      expect(ownerControls.getByLabelText<HTMLSelectElement>(zh['contribution.sourceKind']).value).toBe('completed-turn-outcomes')
+      expect(document.body.textContent).not.toContain('Private owner capacity policy')
+      expect(subject.createGroupEntry).toHaveBeenCalledOnce()
+      expect(subject.authority()).toBeUndefined()
+      expect(within(subject.application).getByText(zh['contribution.application.owner.pending'])).toBeTruthy()
+      await waitFor(() => { expect(ownerControls.getByRole<HTMLButtonElement>('button', {
+        name: zh['contribution.group.create'],
+      }).disabled).toBe(false) })
+      fireEvent.change(ownerControls.getByLabelText(zh['contribution.group.capacity']), { target: { value: '3' } })
+      const requestedAt = Date.now()
+      fireEvent.click(ownerControls.getByRole('button', { name: zh['contribution.group.create'] }))
+      await ownerControls.findByRole('button', { name: zh['contribution.more'] })
+      expect(ownerControls.queryByText(zh['contribution.error.permission'])).toBeNull()
+      const request = subject.createGroupEntry.mock.calls[1]?.[0]
+      if (request === undefined) throw new Error('Corrected group request missing')
+      expect(request).toEqual({ taskId: groupEntry.taskId, ownerAddress: groupEntry.ownerAddress,
+        sourceKind: 'completed-turn-outcomes', maxMembers: 3, expiresAt: request.expiresAt })
+      expect(request.expiresAt).toBeGreaterThanOrEqual(requestedAt + 3_600_000)
+      expect(request.expiresAt).toBeLessThanOrEqual(Date.now() + 3_600_000)
+      const sent = subject.groupEntries.mock.calls.length
+      const readPage = subject.groupEntries.getMockImplementation()
+      if (readPage === undefined) throw new Error('Group page fixture missing')
+      subject.groupEntries.mockReturnValueOnce(page.promise)
+      fireEvent.click(ownerControls.getByRole('button', { name: zh['contribution.more'] }))
+      await waitFor(() => { expect(subject.groupEntries).toHaveBeenCalledTimes(sent + 1) })
+      expect(subject.groupEntries).toHaveBeenLastCalledWith({ taskId: groupEntry.taskId, afterEntryId: groupEntry.entryId })
+      expect(ownerControls.getByText(zh['contribution.loading'])).toBeTruthy()
+      fireEvent.click(ownerControls.getByRole('button', { name: zh['contribution.more'] }))
+      expect(subject.groupEntries).toHaveBeenCalledTimes(sent + 1)
+      await act(async () => {
+        page.resolve(await readPage({ taskId: groupEntry.taskId, afterEntryId: groupEntry.entryId }))
+        await page.promise
+      })
+      await waitFor(() => { expect(ownerControls.queryByRole('button', { name: zh['contribution.more'] })).toBeNull() })
+      const created = ownerElement.querySelector('[data-group-entry="entry-b"]')
+      if (!(created instanceof HTMLElement)) throw new Error('Created group page missing')
+      const displayed = JSON.parse(within(created).getByLabelText<HTMLTextAreaElement>(zh['contribution.application.entryText']).value) as unknown
+      expect(displayed).toEqual({ ...groupEntry, ...request, sourceKind: 'completed-turn-outcomes', entryId: 'entry-b' })
+      expect(within(created).getByText(zh['contribution.group.count'].replace('{count}', '0').replace('{capacity}', '3'))).toBeTruthy()
+      expect(within(subject.application).getByText(zh['contribution.application.owner.pending'])).toBeTruthy()
+      expect(subject.createGroupEntry).toHaveBeenCalledTimes(2)
+      expect(subject.approve).not.toHaveBeenCalled()
+      expect(subject.revoke).not.toHaveBeenCalled()
+      expect(subject.endMember).not.toHaveBeenCalled()
+      expect(subject.authority()).toBeUndefined()
+      expect(diagnostics).toHaveBeenCalledOnce()
+    } finally {
+      page.resolve(ok({ entries: [], nextEntryId: null }))
+      await page.promise
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
+    }
+  })
+
   it('recovers the original entry, confirms a committed approval after a lost reply and ends only that member despite a stale pending read', async () => {
     const subject = await mountOwner(false)
     const entered = Promise.withResolvers<undefined>()

@@ -28,6 +28,8 @@ The service requires `connection` and `webServer`. On macOS/Linux its plugin act
 
 Windows reports `unsupported`, disables setup, and publishes no descriptor. The ordinary Web application remains available. Participant identities combine a stable 128-bit digest of hostname and username with the complete client id; identical host/account names are not distinguished. A successful client write means the launch configuration matches, including `DSH_HOME` and participant identity. A different existing entry remains a conflict, including after a hostname or account change; remove that registration explicitly before rerunning setup.
 
+A matching Codex registration with `enabled=false` remains manual-only; setup preserves it and requires the user to enable it in Codex MCP settings.
+
 Discovery and configuration-read errors remain `failed` states for the affected client. Listing and batch setup continue for other clients without modifying the failed client's files.
 
 

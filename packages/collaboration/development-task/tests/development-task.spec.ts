@@ -23,7 +23,7 @@ import DevelopmentTaskService, {
 } from '../src/index.ts'
 import { developmentTaskAdmitRemoteObservedContextRequestSchema, developmentTaskAssignmentEventSchema,
   developmentTaskContextBlockSchema, developmentTaskEventSchema, developmentTaskObservedIntervalIdentitySchema,
-  openApiObservationInputSchema } from '../src/schema.ts'
+  developmentTaskOpenApiObservationSchema, openApiObservationInputSchema } from '../src/schema.ts'
 
 const contexts: Context[] = []
 const participant = (value: string): DevelopmentParticipantId => value as DevelopmentParticipantId
@@ -337,6 +337,91 @@ describe('owner-approved remote observation intervals', () => {
     expect(ended.revision).toBe(5)
     expect(owner.tasks.get({ taskId: identity.taskId }).context.filter(item => item.observation?.state === 'revoked')).toHaveLength(2)
     expect(await owner.tasks.acceptObservedIntervalEnd(identity, identity.sourceNodeId)).toEqual(ended)
+  })
+
+  it('reserves a safe terminal sequence before committing a remote artifact', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ ...fields, intervalId: interval.id,
+      observation: artifactObservation(Number.MAX_SAFE_INTEGER) })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    const admitted = await owner.tasks.acceptObservedRemote({ ...input,
+      observation: artifactObservation(Number.MAX_SAFE_INTEGER - 1) }, sourceNodeId)
+    expect(admitted.receipt.event.seq).toBe((before.at(-1)?.seq ?? 0) + 1)
+    const ended = await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+    expect(owner.tasks.get({ taskId: identity.taskId }).context.at(-2)?.observation)
+      .toMatchObject({ state: 'revoked', sequence: Number.MAX_SAFE_INTEGER })
+    expect(ended.event.seq).toBe(admitted.receipt.event.seq + 1)
+    expect(await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)).toEqual(ended)
+    expect(persisted).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a remote revocation sample and retains retirement for the interval end operation', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const admitted = await owner.tasks.acceptObservedRemote({ ...fields, intervalId: interval.id }, sourceNodeId)
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({
+      ...revocation(fields), intervalId: interval.id,
+    })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(await owner.tasks.observedIntervals({ taskId: identity.taskId })).toEqual([interval])
+    const ended = await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+    expect(ended.event.seq).toBe(admitted.receipt.event.seq + 1)
+    expect(owner.tasks.get({ taskId: identity.taskId }).context.map(item => item.observation?.state))
+      .toEqual(['valid', 'revoked', undefined])
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('bounds the complete multibyte remote observation and can still emit its terminal successor at the exact limit', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const { state: _state, sha256: _digest, facts: _facts, ...artifact } = artifactObservation(9)
+    const observation = openApiObservationInputSchema.parse({ ...artifact,
+      sourceName: 'API 职责🙂', state: 'unavailable', reason: 'too-large' })
+    if (observation.state !== 'unavailable') throw new Error('Expected unavailable artifact evidence')
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ ...fields, intervalId: interval.id, observation })
+    const complete = developmentTaskOpenApiObservationSchema.parse({ ...observation,
+      observerNodeId: sourceNodeId, sourceId: input.sourceId,
+      binding: { id: identity.bindingId, epoch: identity.expectedBindingEpoch } })
+    const bytes = Buffer.byteLength(JSON.stringify(complete), 'utf8')
+    expect(bytes).toBeGreaterThan(JSON.stringify(complete).length)
+    const saved = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(owner.tasks.log())))
+    for (const limit of [bytes - 1, bytes]) {
+      const bounded = await setup({ maxTextBytes: limit })
+      bounded.tasks.restoreLog(saved)
+      const before = bounded.tasks.log()
+      const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+      bounded.ctx.on('development-task/persist', persisted)
+      const retry = limit === bytes ? input : { ...input, observation: { ...observation, sourceName: 'API' } }
+      if (limit < bytes) {
+        await expect(bounded.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+        expect(bounded.tasks.log()).toEqual(before)
+        expect(persisted).not.toHaveBeenCalled()
+      }
+      const admitted = await bounded.tasks.acceptObservedRemote(retry, sourceNodeId)
+      expect(admitted.receipt.event.seq).toBe((before.at(-1)?.seq ?? 0) + 1)
+      const admittedBytes = Buffer.byteLength(JSON.stringify(admitted.publication.observation), 'utf8')
+      expect(admittedBytes).toBeLessThanOrEqual(limit)
+      if (limit === bytes) expect(admittedBytes).toBe(limit)
+      await bounded.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+      const terminal = bounded.tasks.get({ taskId: identity.taskId }).context.at(-2)?.observation
+      expect(terminal).toMatchObject({ state: 'revoked', sequence: 10 })
+      expect(Buffer.byteLength(JSON.stringify(terminal), 'utf8')).toBe(admittedBytes - 1)
+      expect(persisted).toHaveBeenCalledTimes(2)
+    }
   })
 
   it('keeps authority and receipts unchanged when opening or ending persistence fails', async () => {

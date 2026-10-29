@@ -5,11 +5,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { expect, it, onTestFailed } from 'vitest'
+import { createCodexCliFixture } from '../fixtures/codex-cli.ts'
 
 const repository = fileURLToPath(new URL('../../../../../../', import.meta.url))
 const sourceArgs = ['--import', import.meta.resolve('tsx/esm'), join(repository, 'apps/cli/src/bin.ts')]
@@ -224,11 +225,13 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
 
   it.skipIf(process.platform === 'win32')(`${mode}: authenticates real Host calls and adopts a restarted Host in the same MCP session`, async () => {
     const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-restart-'))
+    const clientBin = join(home, 'client-bin')
     let hostDiagnostics = ''
     onTestFailed(() => { console.error(hostDiagnostics.replace(/https?:\/\/\S+/gu, '[private-url]')) })
     const start = (): ChildProcessWithoutNullStreams => {
       const child = spawn(process.execPath, [...args, '--profile', 'web', '--no-open', '--port', '0'], {
-        cwd: home, env: environment(home, mode), stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: home, env: { ...environment(home, mode), PATH: [clientBin, process.env.PATH ?? ''].join(delimiter) },
+        stdio: ['pipe', 'pipe', 'pipe'],
       })
       // The Web startup URL contains a secret. Drain it without including it in diagnostics.
       child.stdout.resume()
@@ -245,6 +248,7 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       })
       expect(unauthenticated.status).toBe(401)
       await unauthenticated.body?.cancel()
+      const { settingsPath: codexSettings, registrationLogPath: codexRegistrationLog } = await createCodexCliFixture(home, clientBin)
       // Generate an actual client entry through Host setup, then execute it from an unrelated cwd.
       await mkdir(join(home, '.cursor'))
       await writeFile(join(home, '.cursor/mcp.json'), '{"mcpServers":{}}')
@@ -277,6 +281,45 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       expect(entry.args).toEqual(expect.arrayContaining(['--profile', 'mcp', '--connection', join(home, 'mcp/connection.json')]))
       expect(entry.env.DSH_HOME).toBe(home)
       expect(entry.env.TSX_TSCONFIG_PATH).toBe(mode === 'source' ? join(repository, 'tsconfig.base.json') : undefined)
+      const codexSetup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'setup-codex-fixture', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(codexSetup.status).toBe(200)
+      expect(await codexSetup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      const settings = JSON.parse(await readFile(codexSettings, 'utf8')) as {
+        keep: string
+        servers: { name: string; enabled: boolean; transport: ClientEntry }[]
+      }
+      const codexEntry = settings.servers.find(server => server.name === 'agentharness')
+      if (codexEntry === undefined) throw new Error('Host setup did not register its Codex launcher')
+      codexEntry.enabled = false
+      await writeFile(codexSettings, JSON.stringify(settings))
+      const disabledSettings = await readFile(codexSettings, 'utf8')
+      const originalRegistrations = await readFile(codexRegistrationLog, 'utf8')
+      const disabledList = await fetch(`${origin}/api/mcpClientSetup/list`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'disabled-codex-inspect', method: 'mcpClientSetup/list', payload: { args: {} } }),
+      })
+      expect(disabledList.status).toBe(200)
+      expect(await disabledList.json()).toHaveProperty('result.value.clients', expect.arrayContaining([
+        expect.objectContaining({ id: 'codex', state: 'manual', canSetup: false, restartRequired: false,
+          detail: 'The AgentHarness MCP server is disabled in Codex. Enable it in Codex MCP settings.' }),
+      ]))
+      const disabledSetup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'disabled-codex-setup', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(disabledSetup.status).toBe(200)
+      expect(await disabledSetup.json()).toMatchObject({ result: { ok: true,
+        value: { outcome: 'manual', client: { state: 'manual', canSetup: false, restartRequired: false } } } })
+      expect(await readFile(codexSettings, 'utf8')).toBe(disabledSettings)
+      expect(await readFile(codexRegistrationLog, 'utf8')).toBe(originalRegistrations)
+      expect(settings.keep).toBe('unrelated preference')
+      expect(settings.servers[0]).toEqual({ name: 'sibling', enabled: true,
+        transport: { type: 'stdio', command: 'existing-server', args: [] } })
       const clientCwd = join(home, 'external-client-cwd')
       await mkdir(clientCwd)
       const connected = await bridge(args, clientCwd, mode, entry)

@@ -324,9 +324,13 @@ async function inspectCodex(
     const current: unknown = (list as unknown[]).find((item: unknown) => isRecord(item) && item.name === SERVER_NAME)
     if (!isRecord(current)) return { state: 'not-configured' }
     const transport = current.transport
-    return isRecord(transport) && compatibleEntry(transport, expected)
-      ? { state: 'configured' }
-      : { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
+    if (!isRecord(transport) || !compatibleEntry(transport, expected)) {
+      return { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
+    }
+    if (current.enabled === false) return {
+      state: 'manual', detail: 'The AgentHarness MCP server is disabled in Codex. Enable it in Codex MCP settings.',
+    }
+    return { state: 'configured' }
   } catch {
     return { state: 'failed', detail: 'Could not inspect Codex MCP settings; run codex mcp list --json locally for diagnostics.' }
   }

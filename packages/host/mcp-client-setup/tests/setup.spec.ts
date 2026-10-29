@@ -163,6 +163,7 @@ describe('MCP client setup', () => {
   it.skipIf(process.platform === 'win32').each([
     ['not an MCP list', '{}', 'failed'],
     ['different transport', '[{"name":"agentharness","transport":{"type":"http"}}]', 'conflict'],
+    ['disabled different transport', '[{"name":"agentharness","enabled":false,"transport":{"type":"http"}}]', 'conflict'],
   ])('inspects a bundled official client reporting %s', async (_label, contents, state) => {
     const { root, options } = await fixture()
     const executable = join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources', 'codex')
@@ -359,6 +360,35 @@ describe('MCP client setup', () => {
     expect(codexLines[1]).toContain(`/opt/agentharness/lib/bin.js --profile mcp --connection ${options.descriptorPath}`)
     expect(results.find(result => result.client.id === 'claude-code')?.outcome).toBe('failed')
     expect(results).toHaveLength(7)
+  })
+
+  // Official Codex list output includes the user's independent server-enabled policy.
+  it.skipIf(process.platform === 'win32')('reports a disabled matching Codex launcher without enabling it or changing sibling settings', async () => {
+    const { root, options } = await fixture()
+    const identity = (await listMcpClients(options)).clients.find(client => client.id === 'codex')
+    if (identity === undefined) throw new Error('Missing Codex client definition')
+    const transport = { type: 'stdio', command: options.nodePath,
+      args: [options.dshPath, '--profile', 'mcp', '--connection', options.descriptorPath,
+        '--participant-id', identity.participantId, '--display-name', identity.displayName],
+      env: { DSH_HOME: options.harnessHome } }
+    const directory = join(root, 'home', '.codex')
+    await mkdir(directory)
+    const path = join(directory, 'config.toml')
+    const original = `[mcp_servers.sibling]\ncommand = "existing-server"\n\n[mcp_servers.agentharness]\nenabled = false\ncommand = ${JSON.stringify(transport.command)}\nargs = ${JSON.stringify(transport.args)}\n\n[mcp_servers.agentharness.env]\nDSH_HOME = ${JSON.stringify(options.harnessHome)}\n`
+    await writeFile(path, original)
+    const mutationLog = join(root, 'unexpected-registration.log')
+    await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nif [ "$1" = mcp ] && [ "$2" = list ]; then printf "%s" "$MCP_SETUP_LIST"; exit 0; fi\nprintf "%s" "$*" > "$MCP_SETUP_MUTATION_LOG"\nexit 9\n')
+    const deployment = { ...options, environment: { ...options.environment, MCP_SETUP_MUTATION_LOG: mutationLog,
+      MCP_SETUP_LIST: JSON.stringify([{ name: 'sibling', enabled: true, transport: { type: 'stdio', command: 'existing-server', args: [] } },
+        { name: 'agentharness', enabled: false, transport }]) } }
+    const listed = (await listMcpClients(deployment)).clients.find(client => client.id === 'codex')
+    expect(listed).toMatchObject({ detected: true, state: 'manual', canSetup: false, restartRequired: false })
+    expect(listed?.detail).toContain('disabled')
+    expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({
+      outcome: 'manual', client: { state: 'manual', canSetup: false, restartRequired: false },
+    })
+    expect(await readFile(path, 'utf8')).toBe(original)
+    await expect(readFile(mutationLog)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('retains source Node arguments and detects a different Harness home as a conflict', async () => {
