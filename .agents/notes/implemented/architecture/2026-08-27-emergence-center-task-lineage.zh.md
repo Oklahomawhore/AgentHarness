@@ -14,9 +14,9 @@ Status: implemented
 
 **继承内容是显式的内容寻址快照。**Fork 和 Merge 把每个父 Task 的名称、初始共享上下文和显式 publication 写成 canonical JSON，并以 SHA-256 寻址。调用方可在评估大小限制前删除单条显式 publication。私聊、完整 Session、编辑器与工具历史、内部推理永远不是快照输入。Merge 标注每个来源，但要求填写新的 Task 名称和初始共享上下文，不宣称自动解决语义冲突。
 
-**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
+**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。恢复在接纳值前校验行键是否匹配 block id 或事件的来源节点与序号。Task service 在持久化前派生或验证 block digest，并在恢复时再次校验；存储适配器为已验证的 digest 保留首个行。事件和分配行仍独立检查身份冲突，因为结果未知的写入可能已持久化，却尚未发布投影。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
 
-**Task 和分配校验先于持久发布。**本地和复制的变更在持久化前使用同一投影校验，包括重复 Task 事件的身份检查；内存投影和通知只在写入成功后改变。倒退的确认版本、序号缺口和冲突身份不会占用持久日志位置。Task Mesh 会等待绑定的目标 Task 和确认引用的 Task revision 从其 owner 到达。
+**Task 和分配校验先于持久发布。**本地和复制的变更在持久化前使用同一投影校验，包括重复 Task 事件的身份检查；内存投影和通知只在写入成功后改变。与已保留内容相同的 Task 事件直接返回，不再次写入。Invariant 比较 Task 身份与 revision，避免相同时间戳掩盖过期或归属错误的通知。倒退的确认版本、序号缺口和冲突身份不会占用持久日志位置。Task Mesh 会等待绑定的目标 Task 和确认引用的 Task revision 从其 owner 到达。
 
 **通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。同一不可变事件标识出现冲突内容时会隔离 peer。认证提供节点身份和完整性，不提供传输保密。Socket 清理先于显式拨号和发现服务启动注册，因此初始化失败会释放已取得的 peer 和重连定时器。
 

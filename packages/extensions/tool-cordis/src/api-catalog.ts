@@ -1430,7 +1430,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'acceptLogReplica(candidate: DevelopmentTaskLogEntry, sourceNodeId: DevelopmentNodeId): Promise<DevelopmentTaskSnapshot>',
-        description: 'Persist and append one authenticated peer Task event.',
+        description: 'Accept one authenticated peer Task event, persisting it only if unseen.',
         parameters: [{ name: 'candidate', description: 'wire-validated event.' }, { name: 'sourceNodeId', description: 'authenticated peer identity.' }],
         returns: 'current Task projection.',
       },

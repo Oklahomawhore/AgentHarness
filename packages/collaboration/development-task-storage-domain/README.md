@@ -20,7 +20,7 @@ English | [中文](README.zh.md)
 
 ## Behavior
 
-The `development_context_tasks` domain uses format version `1` and rejects mismatched records. Event identity is `(origin node, sequence)`, and each Task event carries its Task-local revision. A context block is written before the Task creation event that references it; startup removes blocks older than `orphanGraceMs` when no event references them.
+The `development_context_tasks` domain uses format version `1` and rejects mismatched records. Event identity is `(origin node, sequence)`, and each Task event carries its Task-local revision. Startup rejects block keys that differ from their content id and event or assignment keys that differ from their node and sequence. A context block is written before the Task creation event that references it; startup removes blocks older than `orphanGraceMs` when no event references them.
 
 Trusted Mesh observation intervals and independent peer contribution grants use the same event table for approval and termination. Recovery reconstructs terminal withdrawals and receipts from their original owner events; it does not require the source Host to remain online. An interval ended before approval retains its terminal record after restart. Receipts identify durable owner admission or termination, not model consumption.
 
@@ -41,7 +41,7 @@ None.
 - The append-only rows have no compaction operation.
 - Backup and restore are file-level operator procedures; online multi-writer SQLite is not supported.
 
-No invariant companion is published because the Task service owns replay validation, and this adapter rejects conflicting row identities before writing.
+No invariant companion is published because the Task service owns block-digest and replay validation. This adapter validates persisted row keys and rejects conflicting event and assignment identities before writing; repeated validated block digests retain their original row.
 
 ### Dev Note
 

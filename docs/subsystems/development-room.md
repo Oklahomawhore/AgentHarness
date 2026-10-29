@@ -3745,7 +3745,7 @@ restoreAssignmentLog(entries: readonly DevelopmentTaskAssignmentLogEntry[]): voi
 async acceptContextReplica(block: DevelopmentTaskContextBlock): Promise<void>
 
 /**
- * Persist and append one authenticated peer Task event.
+ * Accept one authenticated peer Task event, persisting it only if unseen.
  * @param candidate - wire-validated event.
  * @param sourceNodeId - authenticated peer identity.
  * @returns current Task projection.

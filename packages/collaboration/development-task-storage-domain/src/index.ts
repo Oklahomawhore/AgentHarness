@@ -41,9 +41,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const events = domain.table('events')
     const blocks = domain.table('context_blocks')
     const assignments = domain.table('assignments')
-    ctx.developmentTasks.restoreContextBlocks([...blocks.entries()].map(([, block]) => block))
-    ctx.developmentTasks.restoreLog([...events.entries()].map(([, entry]) => entry))
-    ctx.developmentTasks.restoreAssignmentLog([...assignments.entries()].map(([, entry]) => entry))
+    ctx.developmentTasks.restoreContextBlocks([...blocks.entries()].map(([key, block]) => {
+      if (key !== block.id) throw new Error(`development-task storage: context block key "${key}" does not match "${block.id}"`)
+      return block
+    }))
+    ctx.developmentTasks.restoreLog([...events.entries()].map(([key, entry]) => {
+      if (key !== eventKey(entry)) throw new Error(`development-task storage: event key "${key}" does not match its identity`)
+      return entry
+    }))
+    ctx.developmentTasks.restoreAssignmentLog([...assignments.entries()].map(([key, entry]) => {
+      if (key !== assignmentKey(entry)) throw new Error(`development-task storage: assignment key "${key}" does not match its identity`)
+      return entry
+    }))
 
     const referenced = new Set(ctx.developmentTasks.log().flatMap(entry =>
       entry.change.kind === 'task-created' && entry.change.inheritedContextBlockId !== undefined
@@ -56,9 +65,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
     const stopBlock = ctx.on('development-task/context-persist', async (block: DevelopmentTaskContextBlock) => {
       const retained = blocks.get(block.id)
-      if (retained !== undefined && JSON.stringify(retained.sources) !== JSON.stringify(block.sources)) {
-        throw new Error(`development-task storage: context block conflict at "${block.id}"`)
-      }
       if (retained === undefined) await blocks.put(block.id, block)
     })
     const stopEvent = ctx.on('development-task/persist', async (entry: DevelopmentTaskLogEntry) => {

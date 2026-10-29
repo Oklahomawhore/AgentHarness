@@ -109,6 +109,13 @@ function storedTaskRows() {
   } finally { database.close() }
 }
 
+function storedAssignmentRows() {
+  if (root === undefined) throw new Error('Task storage fixture has not started')
+  const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+  try { return database.prepare('SELECT key, value FROM u_development_context_tasks_assignments ORDER BY key').all() }
+  finally { database.close() }
+}
+
 async function remoteBinding(owner: Context, peer: Context, taskId: DevelopmentTaskId): Promise<DevelopmentTaskObservedIntervalIdentity> {
   const sourceNodeId = 'node-b' as DevelopmentNodeId
   const agent = participant('remote-sampler')
@@ -153,11 +160,7 @@ describe('development-task SQLite storage composition', () => {
     const { assignment } = await first.developmentTasks.checkout({ taskId: task.id, participantId: agent })
     const request = { taskId: task.id, participantId: agent, bindingId: assignment.bindingId }
     await first.developmentTasks.acknowledge({ ...request, revision: 2 })
-    const rows = () => {
-      const database = new DatabaseSync(join(root!, 'tasks.sqlite'))
-      try { return database.prepare('SELECT key, value FROM u_development_context_tasks_assignments ORDER BY key').all() }
-      finally { database.close() }
-    }
+    const rows = storedAssignmentRows
     const retained = rows()
     expect(retained).toHaveLength(2)
     await expect(first.developmentTasks.acknowledge({ ...request, revision: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
@@ -170,6 +173,162 @@ describe('development-task SQLite storage composition', () => {
     const restored = await boot()
     expect(restored.developmentTasks.assignmentList()).toEqual([acknowledged])
     expect(rows()).toEqual(committed)
+  })
+
+  it('preserves a committed Task row when another persistence observer fails before publication', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const stopFailing = first.on('development-task/persist', () => { throw new Error('Secondary persistence observer failed') })
+    try {
+      await expect(first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Committed original',
+        scope: 'storage settlement', createdBy: owner })).rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const retained = storedTaskRows()
+    expect(retained.events).toHaveLength(1)
+    expect(first.developmentTasks.log()).toEqual([])
+    await expect(first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Conflicting retry',
+      scope: 'storage settlement', createdBy: owner })).rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(storedTaskRows()).toEqual(retained)
+    expect(first.developmentTasks.log()).toEqual([])
+    await close(first)
+    const restored = await boot()
+    const [task] = restored.developmentTasks.list({ limit: 10 })
+    expect(task?.objective).toBe('Committed original')
+    expect(storedTaskRows()).toEqual(retained)
+  })
+
+  it('preserves a committed assignment row when another persistence observer loses its outcome', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Assignment settlement',
+      scope: 'storage settlement', createdBy: owner })
+    const stopFailing = first.on('development-task/assignment-persist', () => { throw new Error('Secondary assignment observer failed') })
+    try {
+      await expect(first.developmentTasks.checkout({ taskId: task.id, participantId: agent }))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const retained = storedAssignmentRows()
+    expect(retained).toHaveLength(1)
+    expect(first.developmentTasks.assignmentLog()).toEqual([])
+    await expect(first.developmentTasks.checkout({ taskId: task.id, participantId: agent }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(storedAssignmentRows()).toEqual(retained)
+    expect(first.developmentTasks.assignmentLog()).toEqual([])
+    await close(first)
+    const restored = await boot()
+    expect(restored.developmentTasks.assignmentList()).toHaveLength(1)
+    expect(storedAssignmentRows()).toEqual(retained)
+  })
+
+  it('reuses the original durable Task replica after a secondary observer loses the first outcome', async () => {
+    const recipient = await boot()
+    const source = await boot(undefined, 'node-b')
+    const owner = participant('source-owner')
+    await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+    const task = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Stable replica',
+      scope: 'recover original durable write', createdBy: owner })
+    const [entry] = source.developmentTasks.log()
+    if (entry === undefined) throw new Error('Source Task did not retain its creation event')
+    const stopFailing = recipient.on('development-task/persist', () => { throw new Error('Secondary replica observer failed') })
+    try {
+      await expect(recipient.developmentTasks.acceptLogReplica(entry, entry.nodeId))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const committed = storedTaskRows()
+    expect(committed.events).toHaveLength(1)
+    expect(recipient.developmentTasks.log()).toEqual([])
+    await expect(recipient.developmentTasks.acceptLogReplica(entry, entry.nodeId)).resolves.toMatchObject({ id: task.id, revision: 1 })
+    expect(storedTaskRows()).toEqual(committed)
+    expect(recipient.developmentTasks.log()).toEqual([entry])
+  })
+
+  it('reuses the original durable assignment replica after a secondary observer loses the first outcome', async () => {
+    const recipient = await boot()
+    const source = await boot(undefined, 'node-b')
+    const owner = participant('source-owner')
+    const agent = participant('source-agent')
+    await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+    await source.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Source Agent' })
+    const task = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Stable binding replica',
+      scope: 'recover original durable write', createdBy: owner })
+    const [creation] = source.developmentTasks.log()
+    if (creation === undefined) throw new Error('Source Task did not retain its creation event')
+    await recipient.developmentTasks.acceptLogReplica(creation, creation.nodeId)
+    const checked = await source.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+    const [entry] = source.developmentTasks.assignmentLog()
+    if (entry === undefined) throw new Error('Source checkout did not retain its assignment event')
+    const stopFailing = recipient.on('development-task/assignment-persist', () => { throw new Error('Secondary assignment observer failed') })
+    try {
+      await expect(recipient.developmentTasks.acceptAssignmentReplica(entry, entry.nodeId))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const committed = storedAssignmentRows()
+    expect(committed).toHaveLength(1)
+    expect(recipient.developmentTasks.assignmentLog()).toEqual([])
+    await expect(recipient.developmentTasks.acceptAssignmentReplica(entry, entry.nodeId)).resolves.toEqual(checked.assignment)
+    expect(storedAssignmentRows()).toEqual(committed)
+    expect(recipient.developmentTasks.assignmentLog()).toEqual([entry])
+  })
+
+  it('closes the opened Task domain when a durable event has lost its predecessor', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Interrupted recovery',
+      scope: 'missing predecessor', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text: 'Retained second event' })
+    await close(first)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+    try { database.prepare('DELETE FROM u_development_context_tasks_events WHERE key = ?').run('node-a:1') }
+    finally { database.close() }
+    await expect(boot()).rejects.toThrow('unresolved lineage or sequence dependencies')
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
+  })
+
+  it.each(['context_blocks', 'events', 'assignments'] as const)('rejects a persisted %s row whose key differs from its valid value', async (table) => {
+    const recipient = await boot()
+    const owner = participant('owner')
+    if (table === 'context_blocks') {
+      const source = await boot(undefined, 'node-b')
+      await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+      const parent = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Source parent',
+        scope: 'valid orphan block', createdBy: owner })
+      await source.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: parent.id, revision: parent.revision } },
+        objective: 'Source child', scope: 'valid inherited context', createdBy: owner })
+      const [block] = source.developmentTasks.blocks()
+      if (block === undefined) throw new Error('Source fork did not retain its context block')
+      await recipient.developmentTasks.acceptContextReplica(block)
+      expect(recipient.developmentTasks.log()).toEqual([])
+    } else {
+      await recipient.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+      const task = await recipient.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Valid durable Task',
+        scope: 'row identity', createdBy: owner })
+      if (table === 'assignments') {
+        const agent = participant('agent')
+        await recipient.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+        await recipient.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+      }
+    }
+    await close(recipient)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+    try {
+      const physicalTable = `u_development_context_tasks_${table}`
+      const row = database.prepare(`SELECT key FROM ${physicalTable} LIMIT 1`).get()
+      if (typeof row?.key !== 'string') throw new Error('Expected a persisted fixture row')
+      database.prepare(`UPDATE ${physicalTable} SET key = ? WHERE key = ?`).run('mismatched-row-key', row.key)
+    } finally { database.close() }
+    await expect(boot().then(() => 'started')).rejects.toThrow(/key/u)
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
   })
 
   it('restores owner receipts and terminal remote evidence without rewriting prior SQLite rows', async () => {

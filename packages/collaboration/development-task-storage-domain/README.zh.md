@@ -22,7 +22,7 @@ kind: "package-reference"
 
 ## 行为
 
-`development_context_tasks` domain 使用 format version `1`，并拒绝版本不匹配的记录。事件标识是“来源节点 + 序号”，每个 Task 事件还携带 Task 自身的 revision。context block 先于引用它的 Task 创建事件写入；启动时会删除超过 `orphanGraceMs` 且没有事件引用的 block。
+`development_context_tasks` domain 使用 format version `1`，并拒绝版本不匹配的记录。事件标识是“来源节点 + 序号”，每个 Task 事件还携带 Task 自身的 revision。启动时，block 行键必须匹配其内容 id，事件和分配行键必须匹配其来源节点与序号，否则拒绝恢复。context block 先于引用它的 Task 创建事件写入；启动时会删除超过 `orphanGraceMs` 且没有事件引用的 block。
 
 互信 Mesh 观察区间与独立 peer 贡献 grant 的批准和终结使用同一张事件表。恢复时从原始 owner 事件重建终结撤回和 receipt，不要求来源 Host 仍然在线。在批准前已结束的区间，重启后仍保留终结记录。receipt 表示 owner 已持久准入或终结，不表示模型已消费。
 
@@ -47,7 +47,7 @@ Web bundle 把 `development_context_tasks` 路由到 SQLite。生命周期版本
 - 仅追加行还没有压缩操作。
 - 备份和恢复由运维按文件执行；不支持在线多写者 SQLite。
 
-本包不发布 invariant companion，因为 Task service 负责重放校验，而本适配器在写入前拒绝行身份冲突。
+本包不发布 invariant companion，因为 Task service 负责 block digest 和重放校验。本适配器校验持久行键，并在写入前拒绝冲突的事件和分配身份；已校验的 block digest 重复到达时保留原行。
 
 <a id="dev-note"></a>
 

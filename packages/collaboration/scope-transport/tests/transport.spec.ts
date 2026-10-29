@@ -17,6 +17,7 @@ import { multiaddr } from '@multiformats/multiaddr'
 import Transport, { type Config } from '../src/libp2p.ts'
 import type { ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
 import { identityKey } from '../src/identity.ts'
+import { encode, readJson, responsePayload, writeJson } from '../src/wire.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -237,6 +238,15 @@ describe('direct authenticated scope transport', () => {
     expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
   })
 
+  it('rejects a well-formed stored key of an unsupported signing type without replacing its record', async () => {
+    const ctx = await credentials(await directory())
+    const bytes = privateKeyToProtobuf(await generateKeyPair('secp256k1'))
+    const record = { kind: 'grant', payload: { version: 1, privateKey: Buffer.from(bytes).toString('base64') } } as const
+    await ctx.credentials.modifyRecord(identityKey, () => Promise.resolve(record))
+    await expect(ctx.plugin(Transport, config)).rejects.toMatchObject({ code: 'scope-transport/identity-invalid' })
+    expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
+  })
+
   it('keeps a live identity fixed when its credential is removed and creates a new identity only at restart', async () => {
     const path = await directory()
     const ctx = await boot({}, path)
@@ -417,6 +427,61 @@ describe('direct authenticated scope transport', () => {
     expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual({ version: 1, ok: false, code: 'invalid-json' })
     expect(calls).toBe(0)
     expect(await peer.scopeTransport.request(destination, protocol, null, new AbortController().signal)).toBe('valid')
+  })
+
+  it('rejects JSON numeric overflow before invoking a handler', async () => {
+    const owner = await boot()
+    const raw = await createLibp2p({
+      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] }, transports: [tcp()],
+      connectionEncrypters: [noise()], streamMuxers: [yamux()],
+      peerDiscovery: [], services: {}, connectionMonitor: { enabled: false },
+    })
+    cleanups.push(async () => { await raw.stop() })
+    const handler = vi.fn(async () => 'unreachable')
+    register(owner, handler)
+    const destination = target(await owner.scopeTransport.identity())
+    const stream = await raw.dialProtocol(multiaddr(destination.address), protocol)
+    try {
+      stream.send(Buffer.from('{"version":1,"payload":1e400}'))
+      await stream.close()
+      const chunks: Uint8Array[] = []
+      for await (const chunk of stream) chunks.push(chunk.subarray())
+      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual({ version: 1, ok: false, code: 'invalid-json' })
+      expect(handler).not.toHaveBeenCalled()
+    } finally { stream.abort(new Error('test request cleanup')) }
+  })
+
+  it('drains real Yamux backpressure without truncating a complete multibyte request', async () => {
+    // The payload exceeds Yamux's fixed 256 KiB initial stream window.
+    const payload = '🧭'.repeat(100_000)
+    const limit = Buffer.byteLength(JSON.stringify({ version: 1, payload }))
+    const owner = await boot({ maxRequestBytes: limit })
+    const raw = await createLibp2p({
+      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] }, transports: [tcp()],
+      connectionEncrypters: [noise()], streamMuxers: [yamux()],
+      peerDiscovery: [], services: {}, connectionMonitor: { enabled: false },
+    })
+    cleanups.push(async () => { await raw.stop() })
+    const handler = vi.fn(async ({ payload: received }: { payload: unknown }) => ({ exact: received === payload }))
+    register(owner, handler)
+    const destination = target(await owner.scopeTransport.identity())
+    const stream = await raw.dialProtocol(multiaddr(destination.address), protocol)
+    stream.maxWriteBufferLength = limit
+    const drained = vi.spyOn(stream, 'onDrain')
+    const signal = AbortSignal.timeout(config.requestTimeoutMs)
+    const abort = (): void => { stream.abort(new Error('test request deadline')) }
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await writeJson(stream, encode({ version: 1, payload }, limit, 'scope-transport/request-too-large'), signal)
+      expect(responsePayload(await readJson(stream, config.maxResponseBytes, 'scope-transport/response-too-large', signal)))
+        .toEqual({ exact: true })
+      expect(drained).toHaveBeenCalled()
+      expect(handler).toHaveBeenCalledOnce()
+    } finally {
+      signal.removeEventListener('abort', abort)
+      stream.abort(new Error('test request cleanup'))
+      drained.mockRestore()
+    }
   })
 
   it('rejects invalid UTF-8 and receiver-side request overflow without admitting a handler', async () => {

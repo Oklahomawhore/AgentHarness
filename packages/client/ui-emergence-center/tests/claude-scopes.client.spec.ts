@@ -30,6 +30,27 @@ function port(overrides: Partial<ClaudeScopePort> = {}): ClaudeScopePort {
 }
 
 describe('Claude scope directory', () => {
+  it.each(['reset', 'dispose'] as const)('ignores a rejected session read after %s', async (operation) => {
+    const old = Promise.withResolvers<readonly ClaudeScopeSessionSummary[]>()
+    const sessions = vi.fn().mockImplementationOnce(() => old.promise).mockResolvedValue([B])
+    const report = vi.fn()
+    const directory = createClaudeScopeDirectory(port({ sessions }), report)
+    try {
+      directory[operation]()
+      if (operation === 'reset') await vi.waitFor(() => { expect(directory.getSnapshot().sessions).toEqual([B]) })
+      const current = directory.getSnapshot()
+      old.reject(new Error('previous connection closed'))
+      await Promise.allSettled([old.promise])
+      expect(directory.getSnapshot()).toBe(current)
+      expect(report).not.toHaveBeenCalled()
+    } finally { directory.dispose() }
+    const disposed = directory.getSnapshot()
+    directory.refresh()
+    directory.reset()
+    expect(directory.getSnapshot()).toBe(disposed)
+    expect(sessions).toHaveBeenCalledTimes(operation === 'reset' ? 2 : 1)
+  })
+
   it('deduplicates refresh and rejects an older list after an exact-session join', async () => {
     const read = Promise.withResolvers<readonly ClaudeScopeSessionSummary[]>()
     const sessions = vi.fn().mockImplementationOnce(() => read.promise).mockResolvedValue([{ ...A, taskId: TASK }, B])

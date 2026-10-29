@@ -1391,7 +1391,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
-   * Persist and append one authenticated peer Task event.
+   * Accept one authenticated peer Task event, persisting it only if unseen.
    * @param candidate - wire-validated event.
    * @param sourceNodeId - authenticated peer identity.
    * @returns current Task projection.
@@ -1402,7 +1402,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated Task event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
-      this.prepare(entry, 'REPLICA_CONFLICT')
+      const task = this.prepare(entry, 'REPLICA_CONFLICT')
+      if (entry.seq <= (this.lastSeqByNode.get(entry.nodeId) ?? 0)) return this.snapshot(task)
       await this.persistEntry(entry)
       return this.append(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })
