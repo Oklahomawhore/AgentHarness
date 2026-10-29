@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-29-workbench-managed-process-lifetimes.md
-2026-10-29-workbench-managed-process-lifetimes.md: 0fa652c9baec25e25070ff30cdcdbb17a2e89fbc
-2026-10-29-workbench-managed-process-lifetimes.zh.md: e8de770b4cff9be19b63b7bb06f79cb709821cdc
+2026-10-29-workbench-managed-process-lifetimes.md: 4064ca758b902e57f79bd3414c553d72cff9adb3
+2026-10-29-workbench-managed-process-lifetimes.zh.md: 4b7c4a198b4515b5e9f3b1a85d36137a0e688b41

@@ -24,6 +24,8 @@ kind: "package-reference"
 
 显式 peer 与经过认证的 IPv4 multicast 发现可以并存。较小 node id 负责拨号，重连采用有界退避，channel heads 在重连后续传缺失增量。相同事件标识出现不同内容时，该 peer 会被隔离并断开连接，channel 仍会收到其离线通知。隔离中的 peer 不能再次建立入站连接。正在关闭的 socket 收到的帧不能再派发新 command。Command timeout 与复制相互独立。
 
+重连延迟、命令超时与发现公告间隔须符合 Node 的 2,147,483,647 毫秒计时上限；超过该值的配置在启动前失败。发现 peer TTL 比较已流逝时间，保留正安全整数范围。
+
 Upgrade 路径必须已是规范的 URL pathname，仍支持百分号编码路径。Peer URL 使用不带片段的 `ws:` 或 `wss:`。若显式 peer 的完整签名初始 hello 超过 `maxMessageBytes`，构造阶段会拒绝配置。传输层在保留或拨号已发现的 peer 前进行同样的检查；拒绝时报告告警，发现服务继续运行。
 
 发现功能要求成功绑定 socket 并加入组播。首次及后续 datagram 发送失败均记录告警，监听与已配置的公告周期继续运行。本地成功启动不代表已发现 peer 或已送达报文。无效的公告字节上限仍会使启动失败。启动失败会释放发现服务就绪前已取得的显式 peer socket 和重连定时器。

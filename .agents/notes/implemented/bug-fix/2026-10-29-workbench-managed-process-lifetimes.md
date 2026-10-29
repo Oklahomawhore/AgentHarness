@@ -14,7 +14,7 @@ The [Host workbench](../../../../packages/host/dev-workbench/README.md) retains 
 
 The [subprocess provider decision](../architecture/2026-08-28-subprocess-native-containment.md) independently owns range membership and platform guarantees. The workbench uses that existing interface without PID inference or another process controller. Its readiness interval, request timeout, and termination grace are positive integers bounded by Node's 2,147,483,647 millisecond timer ceiling. The warning threshold compares elapsed time and retains its positive-safe-integer range.
 
-The [browser panel](../../../../packages/client/ui-dev-workbench/README.md) offers Stop alongside Restart for started tasks that exit or fail. It retains last-known readiness and reports stopped checks for unresolved readiness without an error. The [inventory decision](../simplification/2026-10-25-client-inventory-snapshot-store.md) retains independent connection-generation and publication ownership.
+The [browser panel](../../../../packages/client/ui-dev-workbench/README.md) offers Stop alongside Restart for started tasks that exit or fail. It retains last-known readiness and reports stopped checks for unresolved readiness without an error. The [inventory decision](../simplification/2026-10-25-client-inventory-snapshot-store.md) retains independent connection-generation and publication ownership. The visible panel owns polling and its active resize listeners; closing, losing all entries, or unmounting releases them without persisting an unfinished drag.
 
 ## Alternatives considered
 

@@ -24,6 +24,70 @@ function row(phase: DevWorkbenchEntrySnapshot['phase']): DevWorkbenchEntrySnapsh
 }
 
 describe('createDevWorkbenchInventory', () => {
+  describe.each(['start', 'stop'] as const)('%s failure ownership', (method) => {
+    it.each([false, true])('keeps only current-Host failures observable after reset=%s', async (reset) => {
+      const action = Promise.withResolvers<DevWorkbenchEntrySnapshot>()
+      const error = new Error('Original Host action failed')
+      const source = createDevWorkbenchInventory({ list: vi.fn(), start: () => action.promise, stop: () => action.promise }, vi.fn())
+      const result = source[method](ENTRY).then(() => undefined, (reason: unknown) => reason)
+      if (reset) source.reset()
+      action.reject(error)
+      expect(await result).toBe(reset ? undefined : error)
+      expect(source.getSnapshot()).toEqual({ entries: [], read: false })
+    })
+  })
+
+  it.each(['start', 'stop'] as const)('retains the completed %s state while replacing an older list read', async (method) => {
+    const before = row(method === 'start' ? 'idle' : 'running')
+    const after = row(method === 'start' ? 'running' : 'stopped')
+    const stale = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const current = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const list = vi.fn(async (): Promise<DevWorkbenchSnapshot> => ({ entries: [before] }))
+    const source = createDevWorkbenchInventory({ list, start: async () => after, stop: async () => after }, vi.fn())
+    try {
+      source.refresh()
+      await vi.waitFor(() => { expect(source.getSnapshot().read).toBe(true) })
+      list.mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise)
+      source.refresh()
+      await source[method](ENTRY)
+      expect(source.getSnapshot().entries).toEqual([after])
+      stale.resolve({ entries: [before] })
+      await stale.promise
+      await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(3) })
+      expect(source.getSnapshot().entries).toEqual([after])
+      const baseline = { ...after, stdout: 'Current Host output' }
+      current.resolve({ entries: [baseline] })
+      await vi.waitFor(() => { expect(source.getSnapshot().entries).toEqual([baseline]) })
+      expect(list).toHaveBeenCalledTimes(3)
+    } finally {
+      stale.resolve({ entries: [before] }); current.resolve({ entries: [after] })
+      await Promise.allSettled([stale.promise, current.promise])
+    }
+  })
+
+  it('suppresses a superseded list failure and reads the baseline after a completed action', async () => {
+    const stale = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const current = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const report = vi.fn()
+    const list = vi.fn(async (): Promise<DevWorkbenchSnapshot> => ({ entries: [row('idle')] }))
+    const source = createDevWorkbenchInventory({ list, start: async () => row('running'), stop: async () => row('stopped') }, report)
+    try {
+      source.refresh()
+      await vi.waitFor(() => { expect(source.getSnapshot().read).toBe(true) })
+      list.mockReturnValueOnce(stale.promise).mockReturnValueOnce(current.promise)
+      source.refresh()
+      await source.start(ENTRY)
+      stale.reject(new Error('Previous read failed'))
+      await Promise.allSettled([stale.promise])
+      await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(3) })
+      expect(source.getSnapshot()).toEqual({ entries: [row('running')], read: true })
+      expect(report).not.toHaveBeenCalled()
+    } finally {
+      stale.resolve({ entries: [] }); current.resolve({ entries: [row('running')] })
+      await Promise.allSettled([stale.promise, current.promise])
+    }
+  })
+
   it('single-flights reads and publishes task actions', async () => {
     let resolveList!: (value: DevWorkbenchSnapshot) => void
     const list = vi.fn(() => new Promise<DevWorkbenchSnapshot>((resolve) => { resolveList = resolve }))

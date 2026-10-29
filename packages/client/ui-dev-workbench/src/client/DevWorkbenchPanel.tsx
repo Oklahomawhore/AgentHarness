@@ -41,7 +41,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
 }
 
-/** Render the sidebar entry and its opaque, lower-left-resizable panel. */
+/** Render the sidebar entry and its opaque panel; visible panels own polling and active resize listeners. */
 export function DevWorkbenchPanel({
   wide, useInventory, usePreferences, start, stop, refresh,
   setPanelSize, selectEntry, selectView, t,
@@ -58,6 +58,8 @@ export function DevWorkbenchPanel({
   )
   const [frameVersion, setFrameVersion] = useState(0)
   const panelRef = useRef<HTMLDivElement>(null)
+  const resizeCleanup = useRef<(() => void) | undefined>(undefined)
+  const visible = open && !(inventory.read && inventory.entries.length === 0)
 
   const selectedEntry = useMemo(() => {
     return inventory.entries.find(entry => entry.id === preferences.selectedEntryId) ?? inventory.entries[0]
@@ -73,11 +75,12 @@ export function DevWorkbenchPanel({
 
   useEffect(() => { refresh() }, [refresh])
   useEffect(() => {
-    if (!open) return
+    if (!visible) return
     refresh()
     const timer = window.setInterval(refresh, 1_000)
     return () => { window.clearInterval(timer) }
-  }, [open, refresh])
+  }, [visible, refresh])
+  useEffect(() => () => { resizeCleanup.current?.() }, [visible])
 
   if (inventory.read && inventory.entries.length === 0) return null
 
@@ -98,6 +101,7 @@ export function DevWorkbenchPanel({
   const resizeFromLeft = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const panel = panelRef.current
     if (panel === null) return
+    resizeCleanup.current?.()
     event.preventDefault()
     const rect = panel.getBoundingClientRect()
     const startX = event.clientX
@@ -112,12 +116,17 @@ export function DevWorkbenchPanel({
       }
       setSize(latest)
     }
-    const release = (): void => {
+    const cancel = (): void => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
+      resizeCleanup.current = undefined
+    }
+    const release = (): void => {
+      cancel()
       if (latest !== undefined) setPanelSize(latest.width, latest.height)
     }
+    resizeCleanup.current = cancel
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)

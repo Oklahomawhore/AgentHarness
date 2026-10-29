@@ -143,8 +143,9 @@ const frameSchema = z.strictObject({
 })
 const envelopeSchema = z.strictObject({ payload: z.string(), mac: z.string().regex(/^[a-f0-9]{64}$/u) })
 
-function positive(value: number, field: string): number {
+function positive(value: number, field: string, maximum = Number.MAX_SAFE_INTEGER): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`development-mesh-websocket: ${field} must be a positive safe integer`)
+  if (value > maximum) throw new TypeError(`development-mesh-websocket: ${field} must not exceed ${String(maximum)}`)
   return value
 }
 
@@ -178,13 +179,13 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
       cluster: s.string().required(),
       multicastAddress: s.string().required(),
       port: s.number().step(1).min(1).max(65_535).required(),
-      announceIntervalMs: s.number().step(1).min(1).required(),
+      announceIntervalMs: s.number().step(1).min(1).max(2_147_483_647).required(),
       peerTtlMs: s.number().step(1).min(1).required(),
       maxDatagramBytes: s.number().step(1).min(1).required(),
     }).required(),
-    reconnectInitialDelayMs: s.number().step(1).min(1).required(),
-    reconnectMaxDelayMs: s.number().step(1).min(1).required(),
-    commandTimeoutMs: s.number().step(1).min(1).required(),
+    reconnectInitialDelayMs: s.number().step(1).min(1).max(2_147_483_647).required(),
+    reconnectMaxDelayMs: s.number().step(1).min(1).max(2_147_483_647).required(),
+    commandTimeoutMs: s.number().step(1).min(1).max(2_147_483_647).required(),
     maxMessageBytes: s.number().step(1).min(1).required(),
     maxEventsPerFrame: s.number().step(1).min(1).required(),
   })
@@ -220,13 +221,13 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
         ...config.discovery,
         cluster,
         port: positive(config.discovery.port, 'discovery.port'),
-        announceIntervalMs: positive(config.discovery.announceIntervalMs, 'discovery.announceIntervalMs'),
+        announceIntervalMs: positive(config.discovery.announceIntervalMs, 'discovery.announceIntervalMs', 2_147_483_647),
         peerTtlMs: positive(config.discovery.peerTtlMs, 'discovery.peerTtlMs'),
         maxDatagramBytes: positive(config.discovery.maxDatagramBytes, 'discovery.maxDatagramBytes'),
       },
-      reconnectInitialDelayMs: positive(config.reconnectInitialDelayMs, 'reconnectInitialDelayMs'),
-      reconnectMaxDelayMs: positive(config.reconnectMaxDelayMs, 'reconnectMaxDelayMs'),
-      commandTimeoutMs: positive(config.commandTimeoutMs, 'commandTimeoutMs'),
+      reconnectInitialDelayMs: positive(config.reconnectInitialDelayMs, 'reconnectInitialDelayMs', 2_147_483_647),
+      reconnectMaxDelayMs: positive(config.reconnectMaxDelayMs, 'reconnectMaxDelayMs', 2_147_483_647),
+      commandTimeoutMs: positive(config.commandTimeoutMs, 'commandTimeoutMs', 2_147_483_647),
       maxMessageBytes: positive(config.maxMessageBytes, 'maxMessageBytes'),
       maxEventsPerFrame: positive(config.maxEventsPerFrame, 'maxEventsPerFrame'),
     }

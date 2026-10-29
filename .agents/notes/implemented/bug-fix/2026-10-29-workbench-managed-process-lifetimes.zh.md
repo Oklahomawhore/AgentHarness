@@ -14,7 +14,7 @@ Status: implemented
 
 [Subprocess 提供方决策](../architecture/2026-08-28-subprocess-native-containment.zh.md)独立负责范围成员及平台保证。Workbench 使用既有接口，不推断 PID，也不另建进程控制器。其就绪间隔、请求超时及终止宽限均为正整数，并受 Node 的 2,147,483,647 毫秒计时上限约束。警告阈值仅比较经过时间，仍允许整个正安全整数范围。
 
-[浏览器面板](../../../../packages/client/ui-dev-workbench/README.zh.md)为已启动但退出或失败的任务同时提供“停止”和“重新启动”。它保留最后一次就绪结果；未就绪且没有错误时提示探测已停止。[清单决策](../simplification/2026-10-25-client-inventory-snapshot-store.zh.md)保有独立的连接代际及发布所有权。
+[浏览器面板](../../../../packages/client/ui-dev-workbench/README.zh.md)为已启动但退出或失败的任务同时提供“停止”和“重新启动”。它保留最后一次就绪结果；未就绪且没有错误时提示探测已停止。[清单决策](../simplification/2026-10-25-client-inventory-snapshot-store.zh.md)保有独立的连接代际及发布所有权。可见面板负责轮询及正在使用的缩放监听器；关闭、全部条目消失或卸载时释放它们，不持久化尚未完成的拖拽。
 
 ## Alternatives considered
 

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.md
-2026-10-25-client-inventory-snapshot-store.md: fc1d65f00f810590702a17b4496fb6ee8d3cbfc5
-2026-10-25-client-inventory-snapshot-store.zh.md: c418020147b47bed2adacbc300cb12fa38facda5
+2026-10-25-client-inventory-snapshot-store.md: fcf36f7c02c25ceb18fef13c082e055d20a58e7c
+2026-10-25-client-inventory-snapshot-store.zh.md: 2efc4e44256f528ab2bf3c9b349c9e70cac1437a

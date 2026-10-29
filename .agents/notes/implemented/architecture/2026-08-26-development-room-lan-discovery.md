@@ -24,6 +24,8 @@ The Web bundle enables discovery for launcher-created nodes with an empty config
 
 Discovery datagrams have a configurable byte limit and reject unknown fields, protocol versions, invalid ids, invalid ports, and mismatched cluster or path values. The runtime ignores its own process instance, reports a different instance reusing its stable node id, refreshes peer leases only from valid announcements, and closes announcement timers, UDP sockets, reconnect timers, WebSockets, and pending commands during dispose.
 
+Reconnect delays, command timeouts, and discovery announcement intervals are bounded by Node’s 2,147,483,647 millisecond timer ceiling at configuration resolution. Larger values would clamp to one millisecond. Peer TTL compares elapsed time and retains its positive-safe-integer range.
+
 Socket binding, multicast membership and announcement byte limits must succeed before discovery starts. UDP send errors, including an unreachable network on the first announcement, report through the existing diagnostic callback while the listener and configured announcement interval remain active. One successful datagram is not evidence of peer reachability; making only the first send fatal would couple local startup to transient routing state without making later discovery reliable.
 
 The automatic scope is one IPv4 multicast domain. Routed VLANs and networks that suppress multicast require explicit peers or a later company-internal rendezvous provider.

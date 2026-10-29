@@ -24,6 +24,8 @@ Web bundle 为启动器创建的节点启用发现，并使用空的已配置拓
 
 发现 datagram 具有可配置的字节上限，并拒绝未知字段、协议版本、无效 id、无效端口以及 cluster 或 path 不匹配。运行时忽略本进程 instance，报告另一个 instance 复用稳定 node id，只通过有效公告刷新 peer 租约，并在 dispose（资源释放）期间关闭公告 timer、UDP socket、重连 timer、WebSocket 与待处理 command。
 
+配置解析将重连延迟、命令超时与发现公告间隔限制在 Node 的 2,147,483,647 毫秒计时上限内。更大的值会被压成一毫秒。Peer TTL 比较已流逝时间，保留正安全整数范围。
+
 发现开始前必须成功绑定 socket、加入组播并满足公告字节上限。UDP 发送错误（包括首次公告时网络不可达）通过已有诊断回调报告，监听与已配置的公告周期继续运行。单次报文成功并不能证明 peer 可达；只让首次发送失败中止启动，会让本地启动依赖瞬时路由状态，却不能保证后续发现可靠。
 
 自动范围是一个 IPv4 multicast domain。跨 VLAN 路由或禁止 multicast 的网络需要显式 peer，或后续的公司内部 rendezvous 提供方。

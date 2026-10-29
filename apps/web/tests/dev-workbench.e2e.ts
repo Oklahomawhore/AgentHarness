@@ -129,6 +129,16 @@ describe('web e2e: development workbench', () => {
     expect(resized.width).toBeGreaterThan(before.width)
     expect(resized.height).toBeGreaterThan(before.height)
 
+    const activeHandle = await handle.boundingBox()
+    if (activeHandle === null) throw new Error('workbench resize handle is unavailable')
+    await page.mouse.move(activeHandle.x + 4, activeHandle.y + activeHandle.height - 4)
+    await page.mouse.down()
+    await page.mouse.move(activeHandle.x - 24, activeHandle.y + activeHandle.height + 24)
+    await panel.getByRole('button', { name: '关闭工作台', exact: true }).press('Enter')
+    await panel.waitFor({ state: 'detached' })
+    await page.mouse.move(activeHandle.x - 56, activeHandle.y + activeHandle.height + 56)
+    await page.mouse.up()
+
     await page.reload({ waitUntil: 'load' })
     await page.getByRole('button', { name: '打开开发工作台' }).click()
     const restored = page.locator('[data-dev-workbench]')

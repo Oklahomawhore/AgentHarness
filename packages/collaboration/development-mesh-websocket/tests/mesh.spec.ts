@@ -518,6 +518,10 @@ describe('authenticated generic development Mesh', () => {
     ['unescaped path space', { path: '/mesh space' }, 'path must be a canonical URL pathname'],
     ['path traversal segment', { path: '/a/../mesh' }, 'path must be a canonical URL pathname'],
     ['inverted reconnect delays', { reconnectInitialDelayMs: 101 }, 'delay bounds are inverted'],
+    ['overflowing initial reconnect delay', { reconnectInitialDelayMs: 2_147_483_648, reconnectMaxDelayMs: 2_147_483_648 }, 'reconnectInitialDelayMs'],
+    ['overflowing maximum reconnect delay', { reconnectMaxDelayMs: 2_147_483_648 }, 'reconnectMaxDelayMs'],
+    ['overflowing command timeout', { commandTimeoutMs: 2_147_483_648 }, 'commandTimeoutMs'],
+    ['overflowing announcement interval', { discovery: { ...discovery, announceIntervalMs: 2_147_483_648, peerTtlMs: Number.MAX_SAFE_INTEGER } }, 'discovery.announceIntervalMs'],
     ['zero timeout', { commandTimeoutMs: 0 }, 'commandTimeoutMs must be a positive safe integer'],
     ['fractional frame count', { maxEventsPerFrame: 1.5 }, 'maxEventsPerFrame must be a positive safe integer'],
     ['discovery expiry', { discovery: { ...discovery, peerTtlMs: discovery.announceIntervalMs } }, 'peerTtlMs must exceed'],
@@ -531,6 +535,24 @@ describe('authenticated generic development Mesh', () => {
   ] satisfies [string, Partial<Config>, string][])('rejects %s before acquiring transport resources', async (_name, overlay, message) => {
     const node = await baseNode('config-validation')
     expect(() => new DevelopmentMeshWebSocketService(node.ctx, { ...config([]), ...overlay })).toThrow(message)
+  })
+
+  it('routes a command with maximum timer delays while a discovery lease may exceed that range', async () => {
+    const owner = await baseNode('timer-limit-owner')
+    const source = await baseNode('timer-limit-source')
+    const timers: Partial<Config> = {
+      reconnectInitialDelayMs: 2_147_483_647, reconnectMaxDelayMs: 2_147_483_647,
+      commandTimeoutMs: 2_147_483_647,
+      discovery: { ...discovery, announceIntervalMs: 2_147_483_647, peerTtlMs: Number.MAX_SAFE_INTEGER },
+    }
+    await startMesh(owner, [peer(source, false)], timers)
+    await startMesh(source, [peer(owner, true)], timers)
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    owner.ctx.effect(() => owner.ctx.developmentMesh.register('timer-limit/v1', {
+      heads: () => ({}), read: () => [], receive: () => {}, command: payload => payload,
+    }))
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, 'timer-limit/v1', 'bounded command'))
+      .resolves.toBe('bounded command')
   })
 
   it('authenticates and routes commands through a canonical percent-encoded pathname', async () => {

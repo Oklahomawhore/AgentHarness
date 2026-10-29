@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, RemoteError, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import type { DevWorkbenchEntryId, DevWorkbenchEntrySnapshot } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DevWorkbenchEntryId, DevWorkbenchEntrySnapshot, DevWorkbenchSnapshot, RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import { DevWorkbenchPanel, type DevWorkbenchPanelProps } from '../src/client/DevWorkbenchPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 import { apply, inject } from '../src/client/index.ts'
@@ -56,9 +56,47 @@ function props(
 }
 
 describe('DevWorkbenchPanel', () => {
-  it('keeps the replacement Host task visible when an earlier start finishes after connection reset', async () => {
+  it('keeps Stop available after starting while an older refresh reply settles', async () => {
     const runtime = await SlotTestRuntime.create()
-    const oldStart = Promise.withResolvers<DevWorkbenchEntrySnapshot>()
+    const stale = Promise.withResolvers<DevWorkbenchSnapshot>()
+    const baseline = Promise.withResolvers<DevWorkbenchSnapshot>()
+    let current = entry()
+    const list = vi.fn(async (): Promise<DevWorkbenchSnapshot> => ({ entries: [current] }))
+    try {
+      const locale = new LocaleRuntime(runtime.ctx)
+      locale.setLocale('zh')
+      runtime.ctx.provide('locale', locale)
+      runtime.slots.installLocale(locale)
+      new TestRemote(runtime.ctx, { devWorkbench: {
+        list: async () => ({ ok: true as const, value: await list() }),
+        start: async () => { current = entry('running'); return { ok: true as const, value: current } },
+        stop: async () => ({ ok: true as const, value: entry('stopped') }),
+      } })
+      await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
+      await runtime.mount({ inject, apply })
+      runtime.renderSlot('sidebar.footer.action', { wide: true })
+      fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      await screen.findByRole('button', { name: zh['action.start'] })
+      await runtime.flush()
+      const initialReads = list.mock.calls.length
+      list.mockReturnValueOnce(stale.promise).mockReturnValueOnce(baseline.promise)
+      fireEvent.click(screen.getByTitle(zh['action.refresh']))
+      await waitFor(() => { expect(list).toHaveBeenCalledTimes(initialReads + 1) })
+      fireEvent.click(screen.getByRole('button', { name: zh['action.start'] }))
+      await screen.findByRole('button', { name: zh['action.stop'] })
+      await act(async () => { stale.resolve({ entries: [entry()] }); await stale.promise })
+      expect(screen.getByRole('button', { name: zh['action.stop'] })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: zh['action.start'] })).toBeNull()
+      await waitFor(() => { expect(list).toHaveBeenCalledTimes(initialReads + 2) })
+    } finally {
+      stale.resolve({ entries: [current] }); baseline.resolve({ entries: [current] })
+      await runtime.dispose()
+    }
+  })
+
+  it.each(['success', 'failure'] as const)('keeps the replacement Host task visible after an old start %s', async (outcome) => {
+    const runtime = await SlotTestRuntime.create()
+    const oldStart = Promise.withResolvers<RemoteResult<DevWorkbenchEntrySnapshot>>()
     const laterList = Promise.withResolvers<{ readonly entries: readonly DevWorkbenchEntrySnapshot[] }>()
     let current = entry()
     let holdReads = false
@@ -69,7 +107,7 @@ describe('DevWorkbenchPanel', () => {
       runtime.slots.installLocale(locale)
       new TestRemote(runtime.ctx, { devWorkbench: {
         list: async () => ({ ok: true as const, value: holdReads ? await laterList.promise : { entries: [current] } }),
-        start: async () => ({ ok: true as const, value: await oldStart.promise }),
+        start: async () => await oldStart.promise,
         stop: async () => ({ ok: true as const, value: current }),
       } })
       await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
@@ -81,12 +119,16 @@ describe('DevWorkbenchPanel', () => {
       await act(async () => { runtime.ctx.emit('connection/reset') })
       await screen.findByText('Replacement Host task')
       holdReads = true
-      await act(async () => { oldStart.resolve({ ...entry('running'), stdout: 'OLD_HOST' }) })
+      await act(async () => {
+        oldStart.resolve(outcome === 'success' ? { ok: true, value: { ...entry('running'), stdout: 'OLD_HOST' } }
+          : { ok: false, error: new RemoteError('gateway/internal', 'OLD_HOST_ACTION_FAILED', {}) })
+      })
       expect(screen.queryByText('AgentHarness Agent')?.textContent ?? null).toBeNull()
       expect(screen.getByText('Replacement Host task')).toBeTruthy()
       expect(screen.queryByText('OLD_HOST')).toBeNull()
+      expect(screen.queryByText(/OLD_HOST_ACTION_FAILED/)).toBeNull()
     } finally {
-      oldStart.resolve(entry('running'))
+      oldStart.resolve({ ok: true, value: entry('running') })
       await act(async () => { laterList.resolve({ entries: [current] }) })
       await runtime.dispose()
     }
@@ -172,6 +214,30 @@ describe('DevWorkbenchPanel', () => {
     expect(panel.style.height).toBe('660px')
     fireEvent.pointerUp(window)
     expect(panelProps.setPanelSize).toHaveBeenCalledWith(960, 660)
+  })
+
+  it.each(['close', 'unmount', 'empty'] as const)('cancels its active resize listeners on %s', (action) => {
+    const panelProps = props()
+    const clearInterval = vi.spyOn(window, 'clearInterval')
+    const view = render(<DevWorkbenchPanel {...panelProps} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    const panel = document.querySelector<HTMLElement>('[data-dev-workbench]')!
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      x: 100, y: 10, left: 100, top: 10, right: 1000, bottom: 610,
+      width: 900, height: 600, toJSON: () => ({}),
+    })
+    try {
+      fireEvent.pointerDown(screen.getByTitle(zh['panel.resize']), { clientX: 100, clientY: 610 })
+      fireEvent.pointerMove(window, { clientX: 40, clientY: 670 })
+      if (action === 'close') fireEvent.click(screen.getByRole('button', { name: zh['panel.close'] }))
+      else if (action === 'unmount') view.unmount()
+      else view.rerender(<DevWorkbenchPanel {...panelProps} useInventory={selector => selector({ entries: [], read: true })} />)
+      expect(document.querySelector('[data-dev-workbench]')).toBeNull()
+      fireEvent.pointerMove(window, { clientX: 0, clientY: 710 })
+      fireEvent.pointerUp(window)
+      expect(panelProps.setPanelSize).not.toHaveBeenCalled()
+      expect(clearInterval).toHaveBeenCalled()
+    } finally { fireEvent.pointerCancel(window); clearInterval.mockRestore() }
   })
 
   it('restores persisted panel geometry and the selected browser view', () => {
