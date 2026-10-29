@@ -99,7 +99,7 @@ async function fixture(args: readonly string[] = []) {
   return { ctx, owned, calls, announced, exits, listeners, config, commitReady, request, dispose }
 }
 
-describe.skipIf(process.platform === 'win32')('MCP stdio lifecycle', () => {
+describe('MCP stdio lifecycle', () => {
   it('settles transport startup failure before disposing partially acquired resources', async () => {
     const f = await fixture()
     const starting = vi.spyOn(StdioServerTransport.prototype, 'start').mockRejectedValueOnce(new Error('stdio startup refused'))
@@ -149,7 +149,7 @@ describe.skipIf(process.platform === 'win32')('MCP stdio lifecycle', () => {
     }
   })
 
-  it('withdraws presence and reports cleanup failure when the transport close acknowledgement rejects', async () => {
+  it.skipIf(process.platform === 'win32')('withdraws presence and reports cleanup failure when the transport close acknowledgement rejects', async () => {
     const f = await fixture()
     // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply retains the actual transport cleanup below.
     const original = StdioServerTransport.prototype.close
@@ -170,7 +170,7 @@ describe.skipIf(process.platform === 'win32')('MCP stdio lifecycle', () => {
     } finally { closing.mockRestore(); errors.mockRestore(); await f.dispose() }
   })
 
-  it('serves protocol frames before readiness, then announces and withdraws without retaining stdin listeners', async () => {
+  it.skipIf(process.platform === 'win32')('serves protocol frames before readiness, then announces and withdraws without retaining stdin listeners', async () => {
     const f = await fixture(['--url', 'http://127.0.0.1:3080'])
     try {
       await apply(f.ctx, f.config)
@@ -206,7 +206,7 @@ describe.skipIf(process.platform === 'win32')('MCP stdio lifecycle', () => {
     } finally { await f.dispose() }
   })
 
-  it('requests bounded launcher exit when the ready protocol transport closes', async () => {
+  it.skipIf(process.platform === 'win32')('requests bounded launcher exit when the ready protocol transport closes', async () => {
     const f = await fixture()
     try {
       await apply(f.ctx, f.config)

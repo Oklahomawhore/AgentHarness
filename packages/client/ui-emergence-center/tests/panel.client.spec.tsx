@@ -308,6 +308,27 @@ describe('EmergenceCenterPanel', () => {
     expect(within(hub).getByText(content => content.includes('已确认修订 r1'))).toBeTruthy()
   })
 
+  it.each([zh, en])('counts only stale connected Sessions and names the status tool needed to refresh their context', (dictionary) => {
+    const current = { ...task(ROOT, 'Root', { kind: 'root' }), revision: 3 }
+    const assignments: DevelopmentTaskAssignment[] = [
+      { bindingId: binding('current-session'), participantId: AGENT, taskId: ROOT, assignedAt: 1, acknowledgedRevision: 3 },
+      { bindingId: binding('stale-session'), participantId: AGENT, taskId: ROOT, assignedAt: 2, acknowledgedRevision: 2 },
+      { bindingId: binding('unrelated-session'), participantId: AGENT, taskId: FORK_ONE, assignedAt: 3, acknowledgedRevision: 1 },
+    ]
+    const props = { ...panelProps([current], { assignments }), t: makeTranslate(dictionary) }
+    render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: dictionary['trigger.aria'] }))
+    const hub = within(screen.getByRole('region', { name: dictionary['agents.connectTitle'] }))
+    expect(hub.getByText(props.t('agent.status.assigned', { client: 'Codex', sessions: 1, revision: 3 }))).toBeTruthy()
+    expect(hub.queryByText(props.t('agent.status.assigned', { client: 'Codex', sessions: 2, revision: 3 }))).toBeNull()
+    const steps = within(hub.getByRole('list', { name: dictionary['agents.progress'] })).getAllByRole('listitem')
+    expect(steps.at(-1)?.getAttribute('data-state')).toBe('pending')
+    const guide = dictionary === zh
+      ? '在已连接的 Codex Session 中调用 agentharness_task_status，并传入该 Session 自己的 bindingId；然后刷新本页。'
+      : 'In the connected Codex session, call agentharness_task_status with that session’s own bindingId, then refresh this page.'
+    expect(hub.getByText(guide)).toBeTruthy()
+  })
+
   it('publishes only explicit shared context from the detail panel', async () => {
     const props = panelProps()
     openPanel(props)

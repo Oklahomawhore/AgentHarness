@@ -128,7 +128,8 @@ export function agentMcpView(input: AgentMcpViewInput): AgentMcpView {
   const configured = client.state === 'configured'
   const selectedBindings = assignments.filter(assignment => assignment.taskId === selectedTaskId)
   const assigned = selectedBindings.length > 0
-  const acknowledged = assigned && selectedBindings.every(assignment => assignment.acknowledgedRevision === selectedRevision)
+  const pendingAcknowledgements = selectedBindings.filter(assignment => assignment.acknowledgedRevision !== selectedRevision).length
+  const acknowledged = assigned && pendingAcknowledgements === 0
   const steps: readonly AgentMcpStep[] = [
     { key: 'agent.configured', complete: configured },
     { key: 'agent.online', complete: online },
@@ -205,7 +206,7 @@ export function agentMcpView(input: AgentMcpViewInput): AgentMcpView {
     return {
       ...base,
       phase: 'assigned',
-      status: message('agent.status.assigned', { client: client.label, revision: selectedRevision, sessions: selectedBindings.length }),
+      status: message('agent.status.assigned', { client: client.label, revision: selectedRevision, sessions: pendingAcknowledgements }),
       next: message('agent.next.acknowledge', { client: client.label }),
     }
   }

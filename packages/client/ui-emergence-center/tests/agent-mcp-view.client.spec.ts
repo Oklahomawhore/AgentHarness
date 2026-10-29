@@ -161,8 +161,12 @@ describe('agentMcpView', () => {
     const second = { ...assignment(TASK, 2), bindingId: 'other-session' as DevelopmentTaskBindingId }
     const unrelated = { ...assignment(OTHER_TASK, 3), bindingId: 'other-task-session' as DevelopmentTaskBindingId }
     expect(view({ assignments: [assignment(TASK, 3), second, unrelated] })).toMatchObject({
-      phase: 'assigned', status: { params: { revision: 3, sessions: 2 } },
+      phase: 'assigned', status: { params: { revision: 3, sessions: 1 } },
       steps: [{ complete: true }, { complete: true }, { complete: true }, { complete: false }],
+    })
+    const unread = { ...assignment(), bindingId: 'unread-session' as DevelopmentTaskBindingId }
+    expect(view({ assignments: [assignment(TASK, 3), second, unread, unrelated] })).toMatchObject({
+      phase: 'assigned', status: { params: { revision: 3, sessions: 2 } },
     })
     const acknowledged = [assignment(TASK, 3), { ...second, acknowledgedRevision: 3 }, { ...unrelated, acknowledgedRevision: 1 }]
     expect(view({ assignments: acknowledged })).toMatchObject({

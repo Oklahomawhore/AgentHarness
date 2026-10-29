@@ -66,7 +66,7 @@ kind: "package-reference"
 
 已提交的授权变化同时刷新成员卡和独立读取控件，包括另一个已连接浏览器发起的变化。Client 目录持有读取清单、待定修改，并在面板关闭后继续拒绝陈旧响应。重新连接会查询最新权限；确认失败会保留上次观察、禁用控件，并提供只重试读取的入口。接收或停止 Claude 上下文会独立刷新其 Session，不依赖清单确认成功。[清单同步决策](../../../.agents/notes/implemented/bug-fix/2026-10-24-owner-read-inventory-synchronization.zh.md)说明状态所有权和通知时机。
 
-MCP 客户端卡片区分配置、进程在线、按 Session 的 Task 连接和上下文确认。目标 MCP Session 自行调用 `agentharness_task_connect` 并保存自己的 `bindingId`，即使多个 Session 共享一份客户端配置也如此。完成配置本身不会加入 Task。 配置操作返回已发送请求的结果；重置目录后，早先连接的回复不能替换客户端目录。 在成功配置前已开始的列表读取，不能替换配置结果或报告陈旧的读取错误。
+MCP 客户端卡片区分配置、进程在线、按 Session 的 Task 连接和上下文确认。未完成的确认数量仅统计尚未确认所选修订版本的 Session。恢复指引要求调用 `agentharness_task_status` 并使用该 Session 自己的 `bindingId`；列举 Task 或读取资源不会确认上下文。目标 MCP Session 自行调用 `agentharness_task_connect` 并保存自己的 `bindingId`，即使多个 Session 共享一份客户端配置也如此。完成配置本身不会加入 Task。 配置操作返回已发送请求的结果；重置目录后，早先连接的回复不能替换客户端目录。 在成功配置前已开始的列表读取，不能替换配置结果或报告陈旧的读取错误。
 
 页头是唯一的 Task 创建入口。Root 创建只要求已保存的显示名、Task 名称和初始共享上下文。Fork 和 Merge 增加不可变父 Task 选择，但没有计划、阶段、验收或评审前置。侧栏徽标统计当前身份创建的 Task，显示 `0` 至 `99` 或 `99+`，并预留足够宽度使数字保持在按钮内。
 
