@@ -1,6 +1,5 @@
 /** Read-only, bounded actual-request evidence for independent named Web profiles. */
-import { randomUUID } from 'node:crypto'
-import { mkdir, open, opendir, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, opendir } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { isDeepStrictEqual } from 'node:util'
@@ -71,7 +70,7 @@ function requestConfig(options) {
 /** Install the observer using explicit public runtime modules, without changing Session or model input.
  * @param ctx Profile-owned context with the ordinary loop and JSONL persistence services.
  * @param config Explicit evidence paths, expected request count and finite resource limits.
- * @param modules Public Session, Catalog and Llm modules resolved by the profile preparer.
+ * @param modules Public Session, Catalog, Llm and Atomic modules resolved by the profile preparer.
  * @returns Observer-owned close operation; disposal also calls and awaits it.
  */
 export async function installObserver(ctx, config, modules) {
@@ -111,13 +110,10 @@ export async function installObserver(ctx, config, modules) {
         && activeStreams === 0 && summaries.every(item => item.idle) ? 'passed' : 'running',
       expectedRequests: config.expectedRequests, observedRequests: records.length, verifiedRequests, activeStreams,
       evidenceBytes, drainBudgetExceeded, sessions: summaries, failures: [...failures] }
-    const temporary = join(config.directory, `verification.${randomUUID()}.tmp`)
-    const file = await open(temporary, 'wx', 0o600)
-    try { await file.writeFile(encoded(value) + '\n'); await file.sync() } finally { await file.close() }
-    try { await rename(temporary, join(config.directory, 'verification.json')) } catch (error) {
-      await unlink(temporary)
-      throw error
-    }
+    const path = join(config.directory, 'verification.json')
+    await modules.Atomic.writeFileAtomic(path, encoded(value) + '\n', { mode: 0o600 })
+    const file = await open(path, 'r+')
+    try { await file.sync() } finally { await file.close() }
   }
   const enqueue = operation => {
     const result = tail.then(operation)
@@ -260,7 +256,7 @@ export async function installObserver(ctx, config, modules) {
  * @param config Explicit module URLs and observer resource limits.
  */
 export async function apply(ctx, config) {
-  const modules = Object.fromEntries(await Promise.all(['Session', 'Catalog', 'Llm']
+  const modules = Object.fromEntries(await Promise.all(['Session', 'Catalog', 'Llm', 'Atomic']
     .map(async key => [key, await import(config.modules[key])])))
   await installObserver(ctx, config, modules)
 }

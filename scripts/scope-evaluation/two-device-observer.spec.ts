@@ -1,5 +1,5 @@
 /** The private observer records real loop requests and refuses incomplete or divergent durable evidence. */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -9,10 +9,25 @@ import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import * as Llm from '@deepseek-ai/dsh-llm'
 import * as Session from '@deepseek-ai/dsh-session'
 import * as Catalog from '@deepseek-ai/dsh-session-format-catalog'
+import * as Atomic from '@deepseek-ai/dsh-atomic-write'
 import Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { MockAdapter, textResponse } from '../../packages/core/agent-loop/tests/mock-adapter.ts'
+
+const replacement = vi.hoisted(() => ({ failure: undefined as string | undefined, attempts: 0 }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rename: async (...args: Parameters<typeof actual.rename>) => {
+    if (String(args[1]).endsWith('verification.json')) {
+      replacement.attempts++
+      const code = replacement.failure
+      replacement.failure = undefined
+      if (code !== undefined) throw Object.assign(new Error(`injected ${code} during evidence replacement`), { code })
+    }
+    return actual.rename(...args)
+  } }
+})
 
 interface ObserverConfig {
   directory: string
@@ -29,7 +44,7 @@ interface ObserverModule {
   installObserver(
     ctx: Context,
     config: ObserverConfig,
-    modules: { Llm: typeof Llm; Session: typeof Session; Catalog: typeof Catalog },
+    modules: { Llm: typeof Llm; Session: typeof Session; Catalog: typeof Catalog; Atomic: typeof Atomic },
   ): Promise<ObserverHandle>
 }
 // The production plugin stays plain ESM so the built dsh profile does not need a TS loader.
@@ -46,6 +61,8 @@ const requestSchema = z.object({ index: z.number(), sessionId: z.string(), turn:
   messages: z.array(z.unknown()), tools: z.array(z.unknown()), contextBytes: z.number(), sourceSeqs: z.array(z.unknown()) })
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
+  replacement.failure = undefined
+  vi.restoreAllMocks()
   const results = await Promise.allSettled(cleanups.splice(0).reverse().map(cleanup => cleanup()))
   const failures = results.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
   if (failures.length > 0) throw new AggregateError(failures, 'observer fixture cleanup failed')
@@ -76,7 +93,7 @@ async function fixture(overrides: Partial<ObserverConfig> = {}, adapter = new Mo
   const persistenceFiber = await ctx.plugin(Jsonl, { root: config.sessionRoot, compression: 'none' })
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.effect(() => ctx.llm.registerAdapter(['mock'], adapter))
-  const observation = await observer.installObserver(ctx, config, { Llm, Session, Catalog })
+  const observation = await observer.installObserver(ctx, config, { Llm, Session, Catalog, Atomic })
   owned.observation = observation
   const handle = await ctx.agents.create({ sessionId: Session.SessionId('observer-session'),
     agentOptions: { provider: 'mock', model: 'mock' }, meta: { cwd: root } })
@@ -93,6 +110,32 @@ async function fixture(overrides: Partial<ObserverConfig> = {}, adapter = new Mo
 }
 
 describe('two-device actual-request observer', () => {
+  it('commits a complete final report through transient Windows replacement interference', async () => {
+    const f = await fixture()
+    await f.send('ordinary complete request')
+    await expect.poll(async () => (await f.verification()).verifiedRequests).toBe(1)
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      replacement.attempts = 0
+      replacement.failure = 'EPERM'
+      await f.observation.close()
+      expect(replacement.attempts).toBeGreaterThanOrEqual(2)
+      expect(await f.verification()).toMatchObject({ final: true, status: 'passed', failures: [] })
+      expect((await readdir(f.config.directory)).filter(path => path.endsWith('.tmp'))).toEqual([])
+    } finally { platform.mockRestore(); replacement.failure = undefined }
+  })
+
+  it('retains a report publication failure as failed evidence', async () => {
+    const f = await fixture()
+    f.allowFailure()
+    await f.send('ordinary complete request')
+    await expect.poll(async () => (await f.verification()).verifiedRequests).toBe(1)
+    replacement.failure = 'EIO'
+    await expect(f.observation.close()).rejects.toThrow('injected EIO')
+    expect(await f.verification()).toMatchObject({ final: true, status: 'failed' })
+    expect((await readdir(f.config.directory)).filter(path => path.endsWith('.tmp'))).toEqual([])
+  })
+
   it('records unchanged full ordinary requests and rebuilds both durable prefixes after each settled turn', async () => {
     const f = await fixture({ expectedRequests: 2 })
     expect(await f.verification()).toMatchObject({ status: 'running', observedRequests: 0 })

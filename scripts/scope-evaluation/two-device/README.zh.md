@@ -51,7 +51,7 @@ A 创建一个联合加入入口。B 验证入口，允许自身 `workspace/proj
 <a id="evidence-and-limits"></a>
 ## 证据与限制
 
-[观察插件](../two-device-observer.mjs)只观察普通循环请求和 Session 持久化，写入 `evidence/requests.jsonl` 和原子替换的 `evidence/verification.json`。每条请求包含实际 messages、tools、请求配置、Session 身份、事件数量、精确前缀摘要及受管上下文字节数。验证严格恢复本端磁盘未压缩 JSONL，核对捕获前缀，重建完整 messages、tools 和已记录请求配置。它不添加 Session 事件、不独立读取 scope 上下文、不代理文件工作，也不取消 Agent。
+[观察插件](../two-device-observer.mjs)只观察普通循环请求和 Session 持久化，写入 `evidence/requests.jsonl` 和原子替换的 `evidence/verification.json`。报告替换复用共享 atomic-write 工具对 Windows 短暂干扰的有界处理，并在操作结算前同步完整报告；仍未消除的写入失败会使观察失败。每条请求包含实际 messages、tools、请求配置、Session 身份、事件数量、精确前缀摘要及受管上下文字节数。验证严格恢复本端磁盘未压缩 JSONL，核对捕获前缀，重建完整 messages、tools 和已记录请求配置。它不添加 Session 事件、不独立读取 scope 上下文、不代理文件工作，也不取消 Agent。
 
 中途的 `passed` 仅表示已观察且已结束的前缀可以重建；只有 `final: true`、`status: passed`、次数精确符合预期且无失败，才证明观察程序完整消费。通过正常 `dsh` 终止流程停止，并等待进程退出。观察插件限制单请求、Session 和总证据字节数，拒绝额外请求。收尾预算超限会标记失败，但不能取消文件系统 I/O；浏览器辅助函数另行拥有进程清理硬期限，并将强制终止视为失败。未完成或发生分歧的证据不能算成功。
 

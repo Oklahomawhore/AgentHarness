@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { prepareDevice, runPreparation } from './two-device-prepare.ts'
 
 vi.mock('./native-dependencies.ts', () => ({ resolveNativeModules: () => ({
-  Session: 'file:///built/session.js', Catalog: 'file:///built/catalog.js', Llm: 'file:///built/llm.js',
+  Session: 'file:///built/session.js', Catalog: 'file:///built/catalog.js', Llm: 'file:///built/llm.js', Atomic: 'file:///built/atomic.js',
 }) }))
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })

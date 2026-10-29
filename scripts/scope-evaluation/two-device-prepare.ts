@@ -108,7 +108,7 @@ export async function prepareDevice(options: { repo: string; root: string; role:
       } },
       { id: 'two-device-observer', name: pathToFileURL(observer).href, config: {
         directory: evidencePath, sessionRoot,
-        modules: { Session: modules.Session, Catalog: modules.Catalog, Llm: modules.Llm },
+        modules: { Session: modules.Session, Catalog: modules.Catalog, Llm: modules.Llm, Atomic: modules.Atomic },
         maxSessions: 1, expectedRequests: program.length, maxRequestBytes: 4 * 1024 * 1024,
         maxSessionBytes: 32 * 1024 * 1024, maxEvidenceBytes: 64 * 1024 * 1024, drainBudgetMs: 15000,
       } },

@@ -18,6 +18,7 @@ export function resolveNativeModules(repo) {
   const names = {
     Launcher: ['scope', '@deepseek-ai/dsh-loader-smoke'],
     Catalog: ['jsonl', '@deepseek-ai/dsh-session-format-catalog'],
+    Atomic: ['scope', '@deepseek-ai/dsh-atomic-write'],
     Gateway: ['scope', '@deepseek-ai/dsh-api-gateway'], Connection: ['scope', '@deepseek-ai/dsh-client-connection'],
     Credentials: ['scope', '@deepseek-ai/dsh-credentials-local'], Rooms: ['scope', '@deepseek-ai/dsh-development-room'],
     RoomStorage: ['scope', '@deepseek-ai/dsh-development-room-storage-domain'], Tasks: ['scope', '@deepseek-ai/dsh-development-task'],
