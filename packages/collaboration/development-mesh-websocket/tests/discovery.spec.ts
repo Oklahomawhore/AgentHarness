@@ -2,9 +2,14 @@
 import { EventEmitter } from 'node:events'
 import { createSocket, type Socket } from 'node:dgram'
 import { createHmac, randomUUID } from 'node:crypto'
+import { Context } from '@deepseek-ai/cordis'
+import Rooms from '@deepseek-ai/dsh-development-room'
 import type { DevelopmentNodeId } from '@deepseek-ai/dsh-development-room'
+import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { afterEach, expect, it, vi } from 'vitest'
 import { isMulticastAddress, LanPeerDiscovery, type LanDiscoveryConfig } from '../src/discovery.ts'
+import Mesh, { type PeerConfig } from '../src/index.ts'
+import { MemoryCredentials } from '../../../credentials/credentials/tests/memory.ts'
 
 vi.mock('node:dgram', () => ({ createSocket: vi.fn() }))
 
@@ -36,10 +41,73 @@ class DatagramSocket extends EventEmitter {
 }
 
 const active: LanPeerDiscovery[] = []
+const contexts: Context[] = []
 afterEach(async () => {
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
   for (const discovery of active.splice(0)) await discovery.close()
   vi.useRealTimers()
   vi.clearAllMocks()
+})
+
+async function provider(nodeId: string, peers: PeerConfig[] = []) {
+  const ctx = new Context()
+  contexts.push(ctx)
+  const socket = new DatagramSocket()
+  // Only multicast is replaced; endpoint authentication uses real loopback WebSockets.
+  vi.mocked(createSocket).mockReturnValueOnce(socket as unknown as Socket)
+  await ctx.plugin(Rooms, { nodeId, presenceTtlMs: 10000, maxParticipants: 16, maxRooms: 16, maxTextBytes: 2048 })
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  const secret = 'provider-discovery-secret-with-at-least-32-bytes'
+  await ctx.plugin(MemoryCredentials, { TEST_MESH_SECRET: secret })
+  await ctx.plugin(Mesh, { path: '/mesh', secretRef: 'TEST_MESH_SECRET', peers,
+    discovery: { enabled: true, cluster: 'provider-test', multicastAddress: '239.255.73.67', port: 45892,
+      announceIntervalMs: 10000, peerTtlMs: 30000, maxDatagramBytes: 2048 },
+    reconnectInitialDelayMs: 1000, reconnectMaxDelayMs: 1000, commandTimeoutMs: 1000,
+    maxMessageBytes: 256 * 1024, maxEventsPerFrame: 4096 })
+  const send = (changes: Readonly<Record<string, unknown>>) => {
+    socket.emit('message', peerPacket(Buffer.from(secret), {
+      clusterId: ctx.developmentMesh.list().clusterId, path: '/mesh', ...changes,
+    }), { address: '127.0.0.1' })
+  }
+  return { ctx, socket, send }
+}
+
+it('connects discovered endpoints, preserves configured topology and removes authenticated departed peers', async () => {
+  const configured = { nodeId: 'node-c', url: 'ws://127.0.0.1:1', connect: false }
+  const first = await provider('node-a', [configured])
+  const second = await provider('node-b')
+  const firstInstance = randomUUID()
+  const secondInstance = randomUUID()
+  const firstAnnouncement = { nodeId: 'node-a', port: first.ctx.webServer.port, instanceId: firstInstance }
+  const secondAnnouncement = { nodeId: 'node-b', port: second.ctx.webServer.port, instanceId: secondInstance }
+  first.send(secondAnnouncement)
+  second.send(firstAnnouncement)
+  await expect.poll(() => first.ctx.developmentMesh.list().peers.find(peer => peer.nodeId === 'node-b')?.state).toBe('online')
+  await expect.poll(() => second.ctx.developmentMesh.list().peers[0]?.state).toBe('online')
+  const handled = vi.fn((value: unknown) => value)
+  second.ctx.effect(() => second.ctx.developmentMesh.register('discovered-command/v1', {
+    heads: () => ({}), read: () => [], receive: () => {}, command: handled,
+  }))
+  await expect(first.ctx.developmentMesh.command('node-b' as DevelopmentNodeId, 'discovered-command/v1', 'discovered'))
+    .resolves.toBe('discovered')
+  expect(handled).toHaveBeenCalledExactlyOnceWith('discovered', 'node-a')
+
+  first.send({ ...secondAnnouncement, port: first.ctx.webServer.port })
+  const configuredAnnouncement = { nodeId: 'node-c', port: second.ctx.webServer.port, instanceId: randomUUID() }
+  first.send(configuredAnnouncement)
+  first.send({ ...configuredAnnouncement, state: 'offline' })
+  first.socket.emit('error', new Error('one multicast receive error'))
+  first.send({ nodeId: 'node-a', port: first.ctx.webServer.port })
+  expect(first.ctx.developmentMesh.list().peers).toEqual([
+    expect.objectContaining({ nodeId: 'node-c', state: 'offline', direction: 'accept' }),
+    expect.objectContaining({ nodeId: 'node-b', state: 'online', direction: 'dial' }),
+  ])
+
+  first.send({ ...secondAnnouncement, state: 'offline' })
+  await expect.poll(() => second.ctx.developmentMesh.list().peers[0]?.state).toBe('offline')
+  second.send({ ...firstAnnouncement, state: 'offline' })
+  expect(first.ctx.developmentMesh.list().peers).toEqual([expect.objectContaining({ nodeId: 'node-c', state: 'offline' })])
+  expect(second.ctx.developmentMesh.list().peers).toEqual([])
 })
 
 function fixture(overrides: Partial<LanDiscoveryConfig> = {}) {

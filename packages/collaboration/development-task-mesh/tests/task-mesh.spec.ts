@@ -28,11 +28,11 @@ const HUMAN = 'human-remote' as DevelopmentParticipantId
 
 class MemoryMesh extends DevelopmentMeshService {
   list(): DevelopmentMeshSnapshot {
-    return { nodeId: 'local-node' as DevelopmentNodeId, clusterId: 'test', secretFingerprint: 'test', peers: [] }
+    return { nodeId: this.ctx.developmentRooms.list().nodeId, clusterId: 'test', secretFingerprint: 'test', peers: [] }
   }
   publish(): void {}
   async command(ownerNodeId: DevelopmentNodeId, channel: string, payload: unknown): Promise<unknown> {
-    if (ownerNodeId !== 'local-node') throw Object.assign(new Error('offline'), { code: 'RUNTIME_UNAVAILABLE' })
+    if (ownerNodeId !== this.list().nodeId) throw Object.assign(new Error('offline'), { code: 'RUNTIME_UNAVAILABLE' })
     return await this.channel(channel)?.command?.(payload, ownerNodeId)
   }
 }
@@ -41,11 +41,11 @@ afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
 })
 
-async function setup(): Promise<Context> {
+async function setup(nodeId = 'local-node'): Promise<Context> {
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(DevelopmentRoomService, {
-    nodeId: 'local-node', presenceTtlMs: 10_000, maxParticipants: 16, maxRooms: 32, maxTextBytes: 2_048,
+    nodeId, presenceTtlMs: 10_000, maxParticipants: 16, maxRooms: 32, maxTextBytes: 2_048,
   })
   await ctx.plugin(DevelopmentTaskService, {
     maxTasks: 32, maxEventsPerTask: 64,
@@ -129,6 +129,129 @@ async function approvedSource() {
 }
 
 describe('development Task Mesh channel', () => {
+  it('reads only local deltas and sends the context blocks required by the selected creation events', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const publish = vi.spyOn(ctx.developmentMesh, 'publish')
+    const creator = 'local-owner' as DevelopmentParticipantId
+    const agent = 'local-agent' as DevelopmentParticipantId
+    await ctx.developmentRooms.announce({ id: creator, kind: 'human', displayName: 'Owner' })
+    await ctx.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const root = await ctx.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Root', scope: 'Scope', createdBy: creator })
+    await ctx.developmentTaskMesh.route('local-node' as DevelopmentNodeId, {
+      method: 'publishContext', request: { taskId: root.id, participantId: creator, text: 'API ready' },
+    })
+    const fork = await ctx.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: root.id, revision: 2 } },
+      objective: 'Fork', scope: 'Scope', createdBy: creator })
+    const merged = await ctx.developmentTasks.create({ origin: { kind: 'merge', parents: [
+      { taskId: root.id, revision: 2 }, { taskId: fork.id, revision: 1 },
+    ] }, objective: 'Merge', scope: 'Scope', createdBy: creator })
+    await ctx.developmentTasks.checkout({ taskId: merged.id, participantId: agent })
+    expect(publish).toHaveBeenCalledTimes(5)
+    const localEvents = [...ctx.developmentTasks.log()]
+    const assignment = ctx.developmentTasks.assignmentLog()[0]!
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    expect(publish).toHaveBeenCalledTimes(5)
+    expect(await channel.heads()).toEqual({ 'task:local-node': 4, 'task:remote-node': 1, 'assignment:local-node': 1 })
+    const blocks = ctx.developmentTasks.blocks()
+    expect(await channel.read({})).toEqual([
+      ...blocks.map(block => ({ kind: 'context-block', block })),
+      ...localEvents.map(entry => ({ kind: 'task-event', entry })),
+      { kind: 'assignment-event', entry: assignment },
+    ])
+    expect(await channel.read({ 'task:local-node': 3, 'assignment:local-node': 1 })).toEqual([
+      { kind: 'context-block', block: blocks.find(block => block.id === merged.inheritedContextBlockId) },
+      { kind: 'task-event', entry: localEvents[3] },
+    ])
+    expect(await channel.read({ 'task:local-node': 4, 'assignment:local-node': 1 })).toEqual([])
+  })
+
+  it.each(['fork', 'merge'] as const)('holds an inherited %s until its block and cross-owner parent revisions have arrived', async (kind) => {
+    const parentOwner = 'parent-owner' as DevelopmentNodeId
+    const parents = await setup(parentOwner)
+    await parents.developmentRooms.announce({ id: HUMAN, kind: 'human', displayName: 'Owner' })
+    const parent = await parents.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Parent', scope: 'Scope', createdBy: HUMAN })
+    await parents.developmentTasks.publishContext({ taskId: parent.id, participantId: HUMAN, text: 'Pinned contract' })
+    const second = await parents.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Second', scope: 'Scope', createdBy: HUMAN })
+    const source = await setup(REMOTE)
+    for (const entry of parents.developmentTasks.log()) await source.developmentTasks.acceptLogReplica(entry, parentOwner)
+    const creator = 'child-owner' as DevelopmentParticipantId
+    await source.developmentRooms.announce({ id: creator, kind: 'human', displayName: 'Child owner' })
+    const parentRef = { taskId: parent.id, revision: 2 }
+    const origin = kind === 'fork' ? { kind, parent: parentRef } : { kind, parents: [parentRef, { taskId: second.id, revision: 1 }] }
+    const child = await source.developmentTasks.create({ origin, objective: 'Child', scope: 'Scope', createdBy: creator })
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const [root, publication, secondRoot] = parents.developmentTasks.log()
+    const childEntry = source.developmentTasks.log().at(-1)!
+    const block = source.developmentTasks.blocks()[0]!
+    const persisted = vi.fn()
+    ctx.on('development-task/persist', persisted)
+    await channel.receive([{ kind: 'task-event', entry: childEntry }], REMOTE)
+    await channel.receive([{ kind: 'context-block', block }], REMOTE)
+    expect(ctx.developmentTasks.list({})).toEqual([])
+    expect(persisted).not.toHaveBeenCalled()
+    await channel.receive([{ kind: 'task-event', entry: root }], parentOwner)
+    expect(ctx.developmentTasks.list({})).toHaveLength(1)
+    await channel.receive([{ kind: 'task-event', entry: publication }, { kind: 'task-event', entry: secondRoot }], parentOwner)
+    expect(ctx.developmentTasks.get({ taskId: child.id })).toMatchObject({ objective: 'Child', inheritedContextBlockId: block.id })
+    expect(ctx.developmentTasks.context({ taskId: child.id }).inherited?.sources[0]?.context[0]?.text).toBe('Pinned contract')
+    expect(persisted).toHaveBeenCalledTimes(4)
+  })
+
+  it('rejects changed pending Task events and accepts exact pending and committed retries without another write', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const pending = contextPublished()
+    const item = { kind: 'task-event', entry: pending }
+    const persisted = vi.fn()
+    ctx.on('development-task/persist', persisted)
+    await channel.receive([item, item], REMOTE)
+    await expect(channel.receive([{ ...item, entry: { ...pending, at: 3 } }], REMOTE)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    expect(persisted).toHaveBeenCalledTimes(2)
+    await channel.receive([item], REMOTE)
+    expect(persisted).toHaveBeenCalledTimes(2)
+  })
+
+  it('authenticates and deduplicates pending assignment events before committing a delayed clear', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    const bound: DevelopmentTaskAssignmentLogEntry = { nodeId: REMOTE, seq: 1, at: 1,
+      bindingId: 'delayed-clear' as DevelopmentTaskBindingId, participantId: HUMAN, change: { kind: 'task-bound', taskId: TASK } }
+    const cleared: DevelopmentTaskAssignmentLogEntry = { ...bound, seq: 2, at: 2, change: { kind: 'task-cleared', previousTaskId: TASK } }
+    const item = { kind: 'assignment-event', entry: cleared }
+    const persisted = vi.fn()
+    ctx.on('development-task/assignment-persist', persisted)
+    await expect(channel.receive([item], 'forged-node' as DevelopmentNodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    await channel.receive([item, item], REMOTE)
+    await expect(channel.receive([{ ...item, entry: { ...cleared, at: 3 } }], REMOTE)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    await channel.receive([{ kind: 'assignment-event', entry: bound }], REMOTE)
+    expect(ctx.developmentTasks.assignmentList()).toEqual([])
+    expect(ctx.developmentTasks.assignmentLog()).toEqual([bound, cleared])
+    expect(persisted).toHaveBeenCalledTimes(2)
+    await expect(channel.receive([{ ...item, entry: { ...cleared, at: 3 } }], REMOTE)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses an overfull dependency queue without persisting events that lack their predecessor', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const events = Array.from({ length: 20_001 }, (_, index) => ({
+      kind: 'task-event', entry: { ...contextPublished(), seq: index + 2, revision: index + 2 },
+    }))
+    const persisted = vi.fn()
+    ctx.on('development-task/persist', persisted)
+    await channel.receive(events.slice(0, 10_000), REMOTE)
+    await expect(channel.receive(events.slice(10_000), REMOTE)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(ctx.developmentTasks.log()).toEqual([])
+    expect(await channel.heads()).toEqual({})
+  })
+
   it('uses the actual command peer for observation admission and terminal authorization', async () => {
     const { ctx, identity, request, interval } = await approvedSource()
     const channel = ctx.developmentMesh.channel('development-task/v1')!

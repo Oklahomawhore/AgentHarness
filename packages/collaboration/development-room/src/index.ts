@@ -488,6 +488,7 @@ export class DevelopmentRoomService extends TypertRemoteService {
           participantIds: room.participantIds.filter(id => id !== participantId),
         }
       }
+      /* v8 ignore next -- local producers and the shared durable/Mesh schema admit only these three change kinds. */
       default: return this.assertLogChangeNever(entry.change)
     }
   }
@@ -534,11 +535,11 @@ export class DevelopmentRoomService extends TypertRemoteService {
             participantId: this.key(candidate.change.participantId, 'participant id') as DevelopmentParticipantId,
           }
           break
+        /* v8 ignore next -- durable and Mesh consumers parse the shared closed change union before this call. */
         default: return this.assertLogChangeNever(candidate.change)
       }
       return this.freezeEntry({ nodeId, seq: candidate.seq, at: candidate.at, roomId, change })
     } catch (error) {
-      if (error instanceof DevelopmentRoomError && error.code === code) throw error
       throw new DevelopmentRoomError(`${subject} room-log entry is invalid`, code, { cause: error })
     }
   }
@@ -632,6 +633,7 @@ export class DevelopmentRoomService extends TypertRemoteService {
     return { kind: 'local', nodeId: this.config.nodeId }
   }
 
+  /* v8 ignore next 3 -- the exhaustive switches receive only locally constructed or schema-validated change kinds. */
   private assertLogChangeNever(value: never): never {
     throw new DevelopmentRoomError(`unsupported room-log change: ${JSON.stringify(value)}`, 'INVALID_REQUEST')
   }

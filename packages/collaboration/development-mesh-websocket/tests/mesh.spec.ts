@@ -45,7 +45,12 @@ interface TestNode {
 }
 
 afterEach(async () => {
-  for (const socket of rawSockets.splice(0)) socket.terminate()
+  for (const socket of rawSockets.splice(0)) {
+    if (socket.readyState === WebSocket.CLOSED) continue
+    const closed = new Promise<void>((resolve) => { socket.once('close', () => { resolve() }) })
+    socket.terminate()
+    await closed
+  }
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
 })
 
@@ -166,7 +171,10 @@ async function rawConnect(target: TestNode, attacker = 'attacker-node'): Promise
   return socket
 }
 
-function envelope(target: TestNode, seq: number, body: unknown, attacker = 'attacker-node'): string {
+function envelope(
+  target: TestNode, seq: number, body: unknown, attacker = 'attacker-node',
+  fields: { nodeId?: string; targetNodeId?: string; nonce?: string; at?: number } = {},
+): string {
   const frame = {
     version: 1,
     nodeId: attacker,
@@ -175,6 +183,7 @@ function envelope(target: TestNode, seq: number, body: unknown, attacker = 'atta
     seq,
     at: Date.now(),
     body,
+    ...fields,
   }
   const payload = Buffer.from(JSON.stringify(frame)).toString('base64url')
   return JSON.stringify({ payload, mac: signature(payload) })
@@ -498,5 +507,148 @@ describe('authenticated generic development Mesh', () => {
     expect(() => new DevelopmentMeshWebSocketService(selfNode.ctx, {
       ...config([{ nodeId: selfNode.nodeId, url: `ws://127.0.0.1:${String(selfNode.ctx.webServer.port)}`, connect: false }]),
     })).toThrow('cannot list itself')
+  })
+
+  it.each([
+    ['relative path', { path: 'relative' }, 'path must be absolute'],
+    ['trailing slash', { path: '/mesh/' }, 'without a trailing slash'],
+    ['inverted reconnect delays', { reconnectInitialDelayMs: 101 }, 'delay bounds are inverted'],
+    ['zero timeout', { commandTimeoutMs: 0 }, 'commandTimeoutMs must be a positive safe integer'],
+    ['fractional frame count', { maxEventsPerFrame: 1.5 }, 'maxEventsPerFrame must be a positive safe integer'],
+    ['discovery expiry', { discovery: { ...discovery, peerTtlMs: discovery.announceIntervalMs } }, 'peerTtlMs must exceed'],
+    ['non-local multicast range', { discovery: { ...discovery, multicastAddress: '224.0.0.251' } }, 'must be in 239.0.0.0/8'],
+    ['blank cluster', { discovery: { ...discovery, cluster: '  ' } }, 'cluster must be 1-128 UTF-8 bytes'],
+    ['multibyte cluster overflow', { discovery: { ...discovery, cluster: '界'.repeat(43) } }, 'cluster must be 1-128 UTF-8 bytes'],
+    ['invalid peer identity', { peers: [{ nodeId: 'UpperCase', url: 'ws://127.0.0.1:1', connect: false }] }, 'lower-kebab-case'],
+    ['HTTP peer URL', { peers: [{ nodeId: 'other-node', url: 'http://127.0.0.1:1', connect: false }] }, 'must use ws or wss'],
+    ['duplicate peers', { peers: Array.from({ length: 2 }, () => ({ nodeId: 'other-node', url: 'ws://127.0.0.1:1', connect: false })) }, 'peer node ids must be unique'],
+  ] satisfies [string, Partial<Config>, string][])('rejects %s before acquiring transport resources', async (_name, overlay, message) => {
+    const node = await baseNode('config-validation')
+    expect(() => new DevelopmentMeshWebSocketService(node.ctx, { ...config([]), ...overlay })).toThrow(message)
+  })
+
+  it('routes local commands with the local identity and rejects missing local handlers', async () => {
+    const node = await baseNode('local-command')
+    await startMesh(node, [])
+    const command = vi.fn((payload: unknown, sender: DevelopmentNodeId) => ({ payload, sender }))
+    node.ctx.effect(() => node.ctx.developmentMesh.register('local-test/v1', {
+      heads: () => ({}), read: () => [], receive: () => {}, command,
+    }))
+    await expect(node.ctx.developmentMesh.command(node.nodeId, 'local-test/v1', 'local payload'))
+      .resolves.toEqual({ payload: 'local payload', sender: node.nodeId })
+    expect(command).toHaveBeenCalledExactlyOnceWith('local payload', node.nodeId)
+    await expect(node.ctx.developmentMesh.command(node.nodeId, 'unknown/v1', null)).rejects.toThrow('has no command handler')
+    await expect(node.ctx.developmentMesh.command(node.nodeId, 'development-room/v1', null)).rejects.toThrow()
+    expect(() => { node.ctx.developmentMesh.publish('unknown/v1') }).toThrow('unknown channel')
+  })
+
+  it.each(['timeout', 'disposal'] as const)('settles an outstanding owner command on %s without adopting its late response', async (outcome) => {
+    const source = await baseNode('pending-source')
+    const owner = await baseNode('pending-owner')
+    await startMesh(owner, [peer(source, false)])
+    await startMesh(source, [peer(owner, true)])
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    const entered = Promise.withResolvers<undefined>()
+    const released = Promise.withResolvers<undefined>()
+    const finished = Promise.withResolvers<undefined>()
+    owner.ctx.effect(() => owner.ctx.developmentMesh.register('pending/v1', {
+      heads: () => ({}), read: () => [], receive: () => {},
+      command: async (payload) => {
+        if (payload !== 'blocked') return 'next command'
+        entered.resolve(undefined)
+        try { await released.promise; return 'late response' }
+        finally { finished.resolve(undefined) }
+      },
+    }))
+    const request = source.ctx.developmentMesh.command(owner.nodeId, 'pending/v1', 'blocked')
+    const rejected = outcome === 'timeout'
+      ? expect(request).rejects.toMatchObject({ code: 'RUNTIME_UNAVAILABLE', message: 'development Mesh command timed out' })
+      : expect(request).rejects.toThrow('development Mesh stopped')
+    try {
+      await entered.promise
+      if (outcome === 'disposal') await source.stopMesh?.()
+      await rejected
+      released.resolve(undefined)
+      await finished.promise
+      if (outcome === 'timeout') {
+        await expect(source.ctx.developmentMesh.command(owner.nodeId, 'pending/v1', 'next')).resolves.toBe('next command')
+        expect(source.ctx.developmentMesh.list().peers[0]?.state).toBe('online')
+      } else {
+        await waitFor(() => owner.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+      }
+    } finally {
+      released.resolve(undefined)
+      await request.catch(() => undefined)
+      await finished.promise
+    }
+  })
+
+  it('returns remote handler failures without closing the authenticated connection', async () => {
+    const source = await baseNode('rejected-source')
+    const owner = await baseNode('rejected-owner')
+    await startMesh(owner, [peer(source, false)])
+    await startMesh(source, [peer(owner, true)])
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    owner.ctx.effect(() => owner.ctx.developmentMesh.register('rejected/v1', {
+      heads: () => ({}), read: () => [], receive: () => {},
+      command: (payload) => {
+        if (payload === 'undefined rejection') throw undefined
+        if (payload === 'successful empty result') return undefined
+        throw payload
+      },
+    }))
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, 'unregistered/v1', null))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', message: 'Mesh channel has no command handler' })
+    for (const [payload, message] of [
+      ['string rejection', 'string rejection'],
+      ['undefined rejection', 'undefined'],
+      [{ reason: 'structured rejection' }, '{"reason":"structured rejection"}'],
+    ] as const) {
+      await expect(source.ctx.developmentMesh.command(owner.nodeId, 'rejected/v1', payload))
+        .rejects.toMatchObject({ code: 'INTERNAL', message })
+    }
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, 'rejected/v1', 'successful empty result')).resolves.toBeNull()
+    expect(source.ctx.developmentMesh.list().peers[0]?.state).toBe('online')
+  })
+
+  it.each([
+    ['binary frame', 1003, 'text frames only'],
+    ['oversized text', 1009, 'frame too large'],
+    ['missing hello', 1008, 'hello required'],
+    ['duplicate hello', 1008, 'duplicate hello'],
+    ['wrong sender', 1008, 'authentication failed'],
+    ['wrong recipient', 1008, 'authentication failed'],
+    ['stale timestamp', 1008, 'authentication failed'],
+    ['reused nonce', 1008, 'authentication failed'],
+  ] as const)('closes an authenticated connection for %s', async (violation, expectedCode, expectedReason) => {
+    const node = await baseNode('wire-validation')
+    await startMesh(node, [{ nodeId: 'attacker-node', url: 'ws://127.0.0.1:1', connect: false }])
+    const socket = await rawConnect(node)
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString() }) })
+    })
+    if (violation !== 'missing hello') await introduce(node, socket)
+    const body = { type: 'pull', channel: 'unknown/v1', heads: {} }
+    if (violation === 'binary frame') socket.send(Buffer.from('binary'))
+    else if (violation === 'oversized text') socket.send('x'.repeat(config([]).maxMessageBytes + 1))
+    else if (violation === 'missing hello') socket.send(envelope(node, 1, body))
+    else if (violation === 'duplicate hello') socket.send(envelope(node, 2, { type: 'hello' }))
+    else if (violation === 'wrong sender') socket.send(envelope(node, 2, body, 'attacker-node', { nodeId: 'different-node' }))
+    else if (violation === 'wrong recipient') socket.send(envelope(node, 2, body, 'attacker-node', { targetNodeId: 'different-node' }))
+    else if (violation === 'stale timestamp') socket.send(envelope(node, 2, body, 'attacker-node', { at: Date.now() - 60_000 }))
+    else {
+      const nonce = randomUUID()
+      socket.send(envelope(node, 2, body, 'attacker-node', { nonce }))
+      socket.send(envelope(node, 3, body, 'attacker-node', { nonce }))
+    }
+    expect(await closed).toEqual({ code: expectedCode, reason: expectedReason })
+    await waitFor(() => node.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+    if (violation === 'wrong sender' || violation === 'wrong recipient') {
+      expect(node.ctx.developmentMesh.list().peers[0]?.lastError).toBe('peer identity mismatch')
+    } else if (violation === 'stale timestamp') {
+      expect(node.ctx.developmentMesh.list().peers[0]?.lastError).toBe('stale envelope')
+    } else if (violation === 'reused nonce') {
+      expect(node.ctx.developmentMesh.list().peers[0]?.lastError).toBe('replayed envelope nonce')
+    }
   })
 })
