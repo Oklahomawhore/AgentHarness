@@ -121,7 +121,7 @@ export function OwnerContributionPanel({ taskId, entry, readOwnedContributions, 
         </div>
       </div>)}
       {(entry?.value?.inventory.nextGrantId != null || entry?.value?.applications.nextEntryId != null
-        || entry?.value?.groups.nextEntryId != null || entry?.value?.groups.entries.some(group => group.applications.nextApplicationId !== null)) && <Button variant="outline" disabled={entry.pending} onClick={() => { moreOwnedContributions(taskId) }}>{t('contribution.more')}</Button>}
+        || entry?.value?.groups.nextEntryId != null || entry?.value?.groups.entries.some(group => group.applications.nextApplicationId !== null)) && <Button variant="outline" disabled={pending} onClick={() => { moreOwnedContributions(taskId) }}>{t('contribution.more')}</Button>}
       {entry?.status === 'ready' && entry.value?.inventory.entries.length === 0 && <p className={css.empty}>{t('contribution.noGrants')}</p>}
     </>}
     {invalid && <p role="alert" className={css.error}>{t('contribution.error.text')}</p>}

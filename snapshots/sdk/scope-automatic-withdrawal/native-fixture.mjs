@@ -1,4 +1,4 @@
-/** A real peer revokes reading after an automatic file read; further automatic requests stop. */
+/** A real peer revokes reading while renewed automatic permission waits for its old turn. */
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -18,7 +18,7 @@ const firstPrompt = 'Retain my existing local responsibility before joining any 
 const lastPrompt = 'Continue my ordinary local work after the owner has revoked shared reading.'
 const sentinel = 'LOCAL_READ_ONLY_SENTINEL\n'
 
-/** Join the same live Session after its ordinary turn, revoke during a permitted tool, then resume only user work. */
+/** Retain the ordinary Session and successful read while a later owner revocation prevents automatic renewal. */
 export async function apply(ctx) {
   const owner = await host(join(process.cwd(), '.dsh/withdrawal-owner'), 'owner')
   ctx.effect(() => owner.close)
@@ -31,10 +31,60 @@ export async function apply(ctx) {
   let receiver
   let invitation
   let bindingId
+  let subscriptionId
   let requests = 0
   let reads = 0
   let trigger
-  ctx.effect(() => async () => { await trigger })
+  let renewalVerified = false
+  const lifetime = new AbortController()
+  const continuing = Promise.withResolvers()
+  const cancelled = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const renewal = ctx.agents.withoutInitiator(async () => {
+    let resuming
+    try {
+      const signal = await continuing.promise
+      lifetime.signal.throwIfAborted()
+      assert.equal(ctx.agents.currentInitiator(), undefined)
+      let settled = false
+      resuming = ctx.scopeAgentContext.resume({ agentId: receiver.id, expectedBindingId: bindingId,
+        automatic: { goal: 'Renew only while the original shared reading remains authorized.', activationLimit: 2,
+          maxStepsPerTurn: 3, minIntervalMs: 0 } }).then(
+        value => { settled = true; return { status: 'fulfilled', value } },
+        reason => { settled = true; return { status: 'rejected', reason } },
+      )
+      await cancelled.promise
+      lifetime.signal.throwIfAborted()
+      assert.equal(signal.aborted, true)
+      assert.equal(receiver.status, 'running', 'the cancelled automatic turn has not reached idle')
+      assert.equal(settled, false, 'renewal waits for the old automatic activity')
+      await owner.ctx.scopeAccess.revoke({ grantId: invitation.grantId })
+      assert.deepEqual(await ctx.scopeAccess.retrieve(subscriptionId, lifetime.signal), { status: 'revoked' })
+      assert.equal(settled, false, 'owner revocation happens before the held automatic activity retires')
+      release.resolve()
+      const outcome = await resuming
+      assert.equal(outcome.status, 'rejected', 'terminal reading must reject renewal after cancellation settles')
+      assert.equal(outcome.reason.code, 'scope-agent/terminal-subscription')
+      assert.equal(outcome.reason.details.state, 'revoked')
+      renewalVerified = true
+    } finally {
+      release.resolve()
+      await resuming
+    }
+  })
+  void renewal.catch(error => {
+    if (!lifetime.signal.aborted) {
+      process.stderr.write((error instanceof Error ? error.stack : String(error)) + '\n')
+      ctx.appExit(1)
+    }
+  })
+  ctx.effect(() => async () => {
+    lifetime.abort(new Error('automatic withdrawal fixture disposed'))
+    continuing.resolve()
+    cancelled.resolve()
+    release.resolve()
+    await Promise.allSettled([trigger, renewal])
+  })
   ctx.on('agent/status', ({ agent, status }) => {
     if (agent !== receiver || status !== 'idle' || requests !== 1 || trigger !== undefined) return
     trigger = (async () => {
@@ -48,6 +98,7 @@ export async function apply(ctx) {
         automatic: { goal: 'Inspect the current interface using my existing read-only files.', activationLimit: 2,
           maxStepsPerTurn: 3, minIntervalMs: 0 } })
       bindingId = bound.binding.id
+      subscriptionId = bound.binding.subscriptionId
     })()
     void trigger.catch(error => { ctx.logger.error(error); ctx.appExit(1) })
   })
@@ -59,18 +110,27 @@ export async function apply(ctx) {
     assert.equal(await readFile(join(process.cwd(), 'permission-sentinel.txt'), 'utf8'), sentinel)
     reads++
     assert.equal(reads, 1)
-    await owner.ctx.scopeAccess.revoke({ grantId: invitation.grantId })
     return result
   })
-  ctx.on('agent/pre-step', async ({ agent, turn, step }, next) => {
+  ctx.on('agent/pre-step', async ({ agent, turn, step, signal }, next) => {
     receiver = agent
     assert.equal(ctx.permissionPresets.current(agent.session), 'read-only')
+    if (turn === 2 && step === 2) {
+      assert.equal(requests, 2)
+      assert.equal(reads, 1)
+      const abort = () => { cancelled.resolve() }
+      signal.addEventListener('abort', abort, { once: true })
+      continuing.resolve(signal)
+      try { await release.promise } finally { signal.removeEventListener('abort', abort) }
+    }
     if (turn === 3 && step === 1) {
       assert.equal(requests, 2, 'revocation prevents the automatic continuation from dispatching')
       assert.equal(reads, 1)
+      assert.equal(renewalVerified, true)
       const events = agent.session.snapshotEvents()
       const ends = events.filter(event => event.type === 'turn/end')
-      assert.deepEqual(ends.map(event => [event.data.turn, event.data.reason.kind]), [[1, 'completed'], [2, 'blocked']])
+      assert.deepEqual(ends.map(event => [event.data.turn, event.data.reason.kind]), [[1, 'completed'], [2, 'aborted']])
+      assert.deepEqual(ends[1].data.reason.reason, { kind: 'hook', reason: 'Native scope automatic permission ended' })
       assert.deepEqual(events.filter(event => event.type === 'scope-agent-context/request')
         .map(event => [event.data.turn, event.data.step]), [[2, 1]])
       const outcome = events.filter(event => event.type === 'tool/result')

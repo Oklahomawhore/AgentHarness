@@ -12,6 +12,8 @@ An automatic pulse starts a turn but is absent from its later tool continuations
 
 The [native scope consumer](../../../../packages/collaboration/scope-agent-context/README.md) retains ownership of the current automatic turn through every pre-step. Context withdrawal rejects a continuation with no newly claimed external input. Admission checks execution permission before reading and again after asynchronous reading; a recovered connection cannot revive a paused turn. New external input can proceed as ordinary work with the applicable current context or withdrawal.
 
+Resume waits for owned automatic activity to retire, then reads the receiving inventory again before renewing local permission. A subscription that expires or ends during cancellation remains terminal. The initial active observation cannot authorize the later commit.
+
 The same admission rule covers remote and owner-local context. No Session event format, grant, budget, or core loop behavior changes. Reservations remain consumed and completed tool effects are not rolled back.
 
 ## Alternatives considered

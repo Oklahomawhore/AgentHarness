@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-06-stop-automatic-continuations-without-authority.md
-2026-10-06-stop-automatic-continuations-without-authority.md: 73db5ce549987c4704f0627d2bf5f6c66a20f581
-2026-10-06-stop-automatic-continuations-without-authority.zh.md: 1ae43c4251cd7f3de5d664a4f24d252e3da21894
+2026-10-06-stop-automatic-continuations-without-authority.md: fda7a7a6c904c7f0287a41b069090ea1bb27c41c
+2026-10-06-stop-automatic-continuations-without-authority.zh.md: 5238a4e99c5b08914f97189dfb05b5d0b201788d

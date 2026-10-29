@@ -1305,6 +1305,38 @@ describe('native scope context through real Loader and AgentLoop', () => {
     expect(text(adapter.requests[1]!)).toContain('A newly approved goal')
   })
 
+  it.each(['expired', 'left'] as const)('refuses renewed automatic permission when its read permission becomes %s while the old turn is cancelling', async (terminal) => {
+    const { ctx, agent, adapter, access } = await fixture()
+    const gate = barrier()
+    adapter.gate = gate.promise
+    const bound = await ctx.scopeAgentContext.bind({ expectedBindingId: null, agentId: agent.id, invitation, automatic })
+    const binding = bound.binding
+    if (binding === null || binding.kind === 'local-task') throw new Error('fixture expects a remote read subscription')
+    await requests(adapter, 1)
+    const resuming = ctx.scopeAgentContext.resume({ agentId: agent.id,
+      expectedBindingId: requiredBindingId(ctx, agent.id), automatic: { ...automatic, goal: 'Renew only while the original read remains authorized' } })
+    const rejected = expect(resuming).rejects.toMatchObject({ code: 'scope-agent/terminal-subscription',
+      details: { state: terminal } })
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      await expect.poll(() => adapter.requests[0]!.signal?.aborted).toBe(true)
+      if (terminal === 'expired') clock.mockReturnValue(invitation.expiresAt + 1)
+      else await access.leave({ subscriptionId: binding.subscriptionId })
+      adapter.gate = undefined
+      gate.resolve(undefined)
+      await rejected
+      await agent.whenIdle()
+      expect(await state(ctx, agent.id)).toMatchObject({ mode: 'paused', usedBudget: 1, pauseReason: 'terminal', pendingActivation: null })
+      expect(adapter.requests).toHaveLength(1)
+    } finally {
+      adapter.gate = undefined
+      gate.resolve(undefined)
+      await Promise.allSettled([resuming, rejected])
+      await agent.whenIdle()
+      clock.mockRestore()
+    }
+  })
+
   it('does not cancel an ordinary user turn when passive receive permission is left', async () => {
     const { ctx, agent, adapter } = await fixture()
     const gate = barrier()

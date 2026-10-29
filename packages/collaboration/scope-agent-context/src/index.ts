@@ -907,24 +907,16 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     this.requireCommand(runtime, command)
     this.requireExpected(runtime, request.expectedBindingId)
     this.requireEligible(runtime)
-    const subscriptionState = this.subscriptionState(runtime, inventory.subscriptions)
-    if (subscriptionState !== 'active') {
-      this.cancelActivation(runtime)
-      this.requireCommand(runtime, command)
-      this.requireExpected(runtime, request.expectedBindingId)
-      this.write(runtime, { ...this.state(runtime), mode: 'paused', pauseReason: 'terminal', pendingActivation: null })
-      // The matched non-null binding cannot be absent; local-only resume returned above.
-      throw new RemoteError('scope-agent/terminal-subscription', 'The local scope subscription cannot resume.', {
-        agentId: request.agentId, state: subscriptionState as Exclude<typeof subscriptionState, 'unbound'>,
-      })
-    }
+    this.requireResumableSubscription(runtime, inventory.subscriptions, command, request.expectedBindingId)
     this.requireBudget(runtime, automatic)
     this.cancelOwnedTurn(runtime)
     this.cancelActivation(runtime)
     await runtime.cancelledActivity
+    const currentInventory = await this.ctx.scopeAccess.list()
     this.requireCommand(runtime, command)
     this.requireExpected(runtime, request.expectedBindingId)
     this.requireEligible(runtime)
+    this.requireResumableSubscription(runtime, currentInventory.subscriptions, command, request.expectedBindingId)
     this.requireBudget(runtime, automatic)
     if (hasLocal(localBinding)) this.requireLocalTarget(runtime, this.publicLocalTarget(localBinding.target))
     this.write(runtime, { ...this.state(runtime), automatic, mode: 'enabled', pauseReason: null, pendingActivation: null })
@@ -1040,6 +1032,20 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (automatic !== null && automatic.activationLimit <= usedBudget) {
       throw new RemoteError('scope-agent/budget-exhausted', 'The absolute activation budget is exhausted.', { agentId: runtime.agent.id, usedBudget })
     }
+  }
+
+  private requireResumableSubscription(runtime: Runtime, subscriptions: readonly ScopeSubscription[],
+    command: number, expectedBindingId: ScopeAgentBindingId | null): void {
+    const state = this.subscriptionState(runtime, subscriptions)
+    if (state === 'active') return
+    this.cancelActivation(runtime)
+    this.requireCommand(runtime, command)
+    this.requireExpected(runtime, expectedBindingId)
+    this.write(runtime, { ...this.state(runtime), mode: 'paused', pauseReason: 'terminal', pendingActivation: null })
+    // The matched non-null binding cannot be absent; local-only resume returned earlier.
+    throw new RemoteError('scope-agent/terminal-subscription', 'The local scope subscription cannot resume.', {
+      agentId: runtime.agent.id, state: state as Exclude<typeof state, 'unbound'>,
+    })
   }
 
   private subscriptionState(runtime: Runtime, subscriptions: readonly ScopeSubscription[]): ScopeAgentSubscriptionState {

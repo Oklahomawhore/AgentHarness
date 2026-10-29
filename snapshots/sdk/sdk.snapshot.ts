@@ -110,8 +110,8 @@ interface SdkAssertions {
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
   expectedFinalResponse?: string
-  /** Explicit terminal reasons for scenarios that intentionally block an automatic turn. */
-  expectedTurnReasons?: readonly ('completed' | 'blocked' | 'error')[]
+  /** Explicit terminal reasons for scenarios that intentionally stop an automatic turn. */
+  expectedTurnReasons?: readonly ('completed' | 'blocked' | 'aborted' | 'error')[]
   /** Environment overrides passed to the runtime subprocess. */
   environment?: Readonly<Record<string, string>>
   /** A separate DSH SDK child whose persisted session joins the evidence. */
@@ -176,7 +176,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
   },
   'scope-automatic-withdrawal': {
     expectedFinalResponse: 'Ordinary local work continues without the revoked shared facts.',
-    expectedTurnReasons: ['completed', 'blocked', 'completed'],
+    expectedTurnReasons: ['completed', 'aborted', 'completed'],
   },
   'scope-semantic-idle': {
     expectedFinalResponse: 'Semantic idle evidence verified; the Task was left without renewing automatic permission.',

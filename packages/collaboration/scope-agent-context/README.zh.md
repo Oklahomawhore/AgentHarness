@@ -96,7 +96,7 @@ await ctx.scopeAgentContext.pause({ agentId, expectedBindingId })
 
 组合准入只经过一次 Task consumer。系统先按 `maxLocalContextBytes` 计算本地投影，从总额度扣除其实际文本和固定远端说明文字，再按剩余额度请求远端投影。该次在线读取返回后，同步复核本地分配、provider、修订和过期时间；本地授权变化会丢弃候选并重新读取。两份精确消息共用总预算。远端失败时撤回远端事实，普通用户工作仍使用总额度中的剩余部分获得当前本地上下文；自动续步停止。在原请求与接收方仍有效时，若绑定或路由在这次本地读取期间变化，即使被中止的读取失败，同一普通请求也会使用当前权限与事实，无需用户再次提示。自动请求证据保存双方投影及已提交消息序号。解析要求同时提供两个锚点；历史校验检查其授权和精确消息内容。任一来源变化均会使已完成比较失效。
 
-管理失败携带结构化 Remote code，包括 `scope-agent/stale-binding`、`scope-agent/not-live` 和 `scope-agent/terminal-subscription`；客户端按 code 与 details 判断，不解析诊断文本。已知撤销、过期、退出或缺失的订阅不能恢复。本地 Task assignment 冲突时，仍可对准确绑定执行暂停与退出。 没有接收绑定的 Session 会拒绝恢复，不添加调度记录。
+管理失败携带结构化 Remote code，包括 `scope-agent/stale-binding`、`scope-agent/not-live` 和 `scope-agent/terminal-subscription`；客户端按 code 与 details 判断，不解析诊断文本。已知撤销、过期、退出或缺失的订阅不能恢复。恢复操作在先前自动活动结束后、提交续期的本地意图前，重新检查接收订阅。本地 Task assignment 冲突时，仍可对准确绑定执行暂停与退出。 没有接收绑定的 Session 会拒绝恢复，不添加调度记录。
 
 `automatic: null` 仅允许请求时被动读取。`activationLimit` 是此 Session 全生命周期的绝对预留次数上限，不是每次恢复新增的配额。取消的预留仍计入消耗；退出、重新绑定和重启保留 `usedBudget`。耗尽后恢复需要显式提高绝对上限。自动触发消息使用本地目标，远端文本不能授予执行许可。
 

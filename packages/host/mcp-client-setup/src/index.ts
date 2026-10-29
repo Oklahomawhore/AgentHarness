@@ -381,8 +381,7 @@ async function inspectClient(
       detected: isDetected,
       mechanism: definition.mechanism,
       state: observation.state,
-      canSetup: isDetected && observation.state === 'not-configured' && definition.mechanism !== 'manual'
-        && (definition.mechanism !== 'cli' || command !== undefined),
+      canSetup: observation.state === 'not-configured',
       participantId,
       displayName,
       restartRequired: observation.state === 'configured',

@@ -1168,7 +1168,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-claude-work": "scope-claude-work-context-order",
-        "scope-automatic-withdrawal": "scope-automatic-withdrawal-context-order-r6",
+        "scope-automatic-withdrawal": "scope-automatic-withdrawal-context-order-r7",
         "scope-capture-self-omission": "scope-capture-self-omission-context-order-r3",
         "scope-completed-file": "scope-completed-file-context-order-r7",
         "scope-context-live": "scope-context-live-maintenance-r5",
@@ -1249,7 +1249,9 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
                     harness, session,
                     first_prompt="Retain my existing local responsibility before joining any shared scope.",
                     last_prompt="Continue my ordinary local work after the owner has revoked shared reading.",
-                    expected_automatic_reason="blocked",
+                    expected_automatic_reason={"kind": "aborted", "reason": {
+                        "kind": "hook", "reason": "Native scope automatic permission ended",
+                    }},
                 )
             elif scenario == "scope-semantic-idle":
                 first, last, observed = run_finite_scope_turns(
@@ -3476,9 +3478,11 @@ def reentrant_consent_snapshot_result(
 
 def run_finite_scope_turns(
     harness: DeepSeekHarness, session: Session, *, first_prompt: str, last_prompt: str,
-    coverage_revision: int | None = None, completed_turn: int = 2, expected_automatic_reason: str = "completed",
+    coverage_revision: int | None = None, completed_turn: int = 2,
+    expected_automatic_reason: dict[str, object] | None = None,
 ) -> tuple[RunResult, RunResult, list[dict[str, object]]]:
-    """Wait for the expected automatic terminal reason and optional coverage pause before user work."""
+    """Wait for the exact automatic terminal reason and optional coverage pause before user work."""
+    expected_reason = {"kind": "completed"} if expected_automatic_reason is None else expected_automatic_reason
     with harness.client.subscribe_session_notifications(session.id) as subscription:
         deadline = threading.Timer(110, harness.close)
         deadline.start()
@@ -3497,7 +3501,7 @@ def run_finite_scope_turns(
                     continue
                 observed.append(event)
                 if event.get("type") == "turn/end" and event["data"]["turn"] == completed_turn:
-                    if event["data"]["reason"] != {"kind": expected_automatic_reason}:
+                    if event["data"]["reason"] != expected_reason:
                         raise AssertionError("scope automatic turn ended with an unexpected reason")
                     completed = True
                 if coverage_revision is not None:
@@ -3634,14 +3638,18 @@ def automatic_withdrawal_snapshot_result(
     if [(item["turn"], item["step"]) for item in requests] != [(2, 1)] or wire_requests != requests:
         raise AssertionError("revocation must stop further automatic requests and preserve the one actual request")
     ends = [event["data"] for event in records if event.get("type") == "turn/end"]
-    if [(item["turn"], item["reason"]["kind"]) for item in ends] != [(1, "completed"), (2, "blocked"), (3, "completed")]:
-        raise AssertionError("only the automatic continuation must be blocked; ordinary turns must complete")
+    if [(item["turn"], item["reason"]["kind"]) for item in ends] != [(1, "completed"), (2, "aborted"), (3, "completed")]:
+        raise AssertionError("only the previous automatic turn must be aborted; ordinary turns must complete")
+    if ends[1]["reason"] != {"kind": "aborted", "reason": {
+        "kind": "hook", "reason": "Native scope automatic permission ended",
+    }}:
+        raise AssertionError("renewal must cancel the old automatic turn through its owned hook")
     wire_ends = [event["data"] for event in observed if event.get("type") == "turn/end"]
     if not any(item == ends[1] for item in wire_ends):
-        raise AssertionError("Python notifications omitted the blocked automatic turn")
+        raise AssertionError("Python notifications omitted the aborted automatic turn")
     outcomes = [event["data"] for event in records if event.get("type") == "tool/result"]
     if len(outcomes) != 1 or outcomes[0]["message"]["content"][0]["isError"]:
-        raise AssertionError("the actual authorized file read must finish before the automatic continuation is blocked")
+        raise AssertionError("the actual authorized file read must finish before renewal cancels the automatic turn")
     users = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "user"]
     pulses = [event for event in records if event.get("type") == "user/message" and event["data"]["source"]["kind"] == "scope-agent-pulse"]
     if len(users) != 2 or len(pulses) != 1:
@@ -3660,7 +3668,7 @@ def automatic_withdrawal_snapshot_result(
             "automaticRequests": len(requests), "automaticTurnReason": ends[1]["reason"]["kind"],
             "automaticPulses": len(pulses), "ordinaryInputs": len(users), "allowedRead": True,
             "mode": state["mode"], "pauseReason": state["pauseReason"], "usedBudget": state["usedBudget"],
-            "finalContext": contexts[-1], "wirePreservesAutomaticRequestAndBlock": True}
+            "finalContext": contexts[-1], "wirePreservesAutomaticRequestAndAbort": True}
 
 
 def joint_automatic_snapshot_result(

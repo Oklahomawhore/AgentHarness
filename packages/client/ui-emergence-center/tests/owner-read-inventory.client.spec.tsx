@@ -439,6 +439,51 @@ describe('Emergence Center owner read inventory', () => {
     expect(within(subject.application).queryByText(zh['contribution.join.read.active'])).toBeNull()
   })
 
+  it('keeps an in-progress owner permission refresh when Load more is clicked after another client revokes a member', async () => {
+    const subject = await mountOwner(true)
+    const confirmation = Promise.withResolvers<Awaited<ReturnType<typeof subject.groupApplications>>>()
+    const readMembers = subject.groupApplications.getMockImplementation()
+    if (readMembers === undefined) throw new Error('Group member fixture missing')
+    try {
+      const ownerElement = screen.getByText(zh['contribution.ownerTitle']).closest('details')
+      if (ownerElement === null) throw new Error('Owner contribution panel missing')
+      const ownerControls = within(ownerElement)
+      const nextEntry: ScopeGroupEntry = { ...groupEntry, entryId: 'entry-b' as ScopeGroupEntry['entryId'] }
+      subject.groupEntries.mockImplementation(async request => ok({
+        entries: request.afterEntryId === undefined
+          ? [{ entry: groupEntry, text: JSON.stringify(groupEntry), state: 'open', applicationCount: 1 }]
+          : [{ entry: nextEntry, text: JSON.stringify(nextEntry), state: 'open', applicationCount: 0 }],
+        nextEntryId: request.afterEntryId === undefined ? groupEntry.entryId : null,
+      }))
+      await act(async () => { subject.invalidateOwner() })
+      const more = await ownerControls.findByRole('button', { name: zh['contribution.more'] })
+      await waitFor(() => { expect(ownerControls.queryByText(zh['contribution.loading'])).toBeNull() })
+      expect(within(subject.application).getByText(zh['contribution.join.read.active'])).toBeTruthy()
+      const reads = subject.groupApplications.mock.calls.length
+      subject.groupApplications.mockReturnValueOnce(confirmation.promise)
+      await act(async () => { subject.revokeFromAnotherClient() })
+      await waitFor(() => { expect(subject.groupApplications).toHaveBeenCalledTimes(reads + 1) })
+      expect(ownerControls.getByText(zh['contribution.loading'])).toBeTruthy()
+      await screen.findByText(zh['access.revoked'])
+      fireEvent.click(more)
+      await act(async () => {
+        confirmation.resolve(await readMembers({ entryId: groupEntry.entryId }))
+        await confirmation.promise
+      })
+      await within(subject.application).findByText(zh['contribution.join.read.revoked'])
+      expect(within(subject.application).queryByText(zh['contribution.join.read.active'])).toBeNull()
+      expect(subject.groupEntries.mock.calls.some(([request]) => request.afterEntryId !== undefined)).toBe(false)
+      expect(subject.approve).not.toHaveBeenCalled()
+      expect(subject.revoke).not.toHaveBeenCalled()
+      expect(subject.endMember).not.toHaveBeenCalled()
+      expect(subject.authority()?.state).toBe('revoked')
+    } finally {
+      confirmation.resolve(ok({ entries: [], nextApplicationId: null }))
+      await confirmation.promise
+      await subject.runtime.dispose()
+    }
+  })
+
   it.each([
     { operation: 'receive', lostReply: false }, { operation: 'stop', lostReply: false },
     { operation: 'receive', lostReply: true }, { operation: 'stop', lostReply: true },

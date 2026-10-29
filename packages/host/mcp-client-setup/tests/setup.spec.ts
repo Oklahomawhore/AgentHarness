@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -162,6 +162,37 @@ describe('MCP client setup', () => {
     expect(snapshot.clients.find(client => client.id === 'doubao')).toMatchObject({ detected: true, state: 'manual', canSetup: false })
     expect(snapshot.clients.find(client => client.id === 'claude-code')).toMatchObject({ detected: false, state: 'not-installed' })
   })
+
+  // Windows setup is unsupported and creating symlinks can require elevated privileges.
+  it.skipIf(process.platform === 'win32').each(['PATH', 'application bundle'] as const)(
+    'isolates an executable symlink loop discovered through %s without changing client settings', async (location) => {
+      const { root, options } = await fixture()
+      const command = location === 'PATH' ? join(root, 'bin', 'codex')
+        : join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources', 'codex')
+      if (location === 'application bundle') {
+        await mkdir(join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources'), { recursive: true })
+      }
+      await symlink('codex', command)
+      const codexConfig = join(root, 'home', '.codex', 'config.toml')
+      await mkdir(join(root, 'home', '.codex'))
+      const original = 'model = "retained-user-model"\n'
+      await writeFile(codexConfig, original)
+      const buddyConfig = join(root, 'home', '.workbuddy', 'mcp.json')
+      await mkdir(join(root, 'home', '.workbuddy'))
+      await writeFile(buddyConfig, JSON.stringify({ preference: 'retained', mcpServers: { sibling: { command: 'existing' } } }))
+      const listed = await listMcpClients(options)
+      expect(listed.clients.find(client => client.id === 'codex')).toMatchObject({ state: 'failed', canSetup: false })
+      expect(listed.clients.find(client => client.id === 'workbuddy')).toMatchObject({ state: 'not-configured', canSetup: true })
+      const results = await setupAllMcpClients(options)
+      expect(results.find(result => result.client.id === 'codex')).toMatchObject({ outcome: 'failed', client: { state: 'failed' } })
+      expect(results.find(result => result.client.id === 'workbuddy')?.outcome).toBe('configured')
+      expect(await readlink(command)).toBe('codex')
+      expect(await readFile(codexConfig, 'utf8')).toBe(original)
+      expect(JSON.parse(await readFile(buddyConfig, 'utf8'))).toMatchObject({ preference: 'retained', mcpServers: {
+        sibling: { command: 'existing' }, agentharness: { command: options.nodePath },
+      } })
+    },
+  )
 
   // File-as-parent discovery reports platform-specific errors; MCP setup supports POSIX hosts.
   it.skipIf(process.platform === 'win32')('keeps configuration-only discovery independent when a client parent is not a directory', async () => {

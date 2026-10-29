@@ -10,6 +10,8 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { createScope } from '@deepseek-ai/dsh-scope'
+import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import DevelopmentRoomService, { type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import DevelopmentTaskService from '@deepseek-ai/dsh-development-task'
@@ -17,6 +19,7 @@ import type { DevelopmentTaskBindingId, DevelopmentTaskId, DevelopmentTaskObserv
 import {
   createUserMessage,
   LlmAdapter,
+  ToolCallId,
   type GenerateOptions,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -57,7 +60,7 @@ class RecordingAdapter extends LlmAdapter {
   }
 }
 
-async function harness() {
+async function harness(responses = [response('A done'), response('B done'), response('B after Room warning')]) {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -85,7 +88,7 @@ async function harness() {
   await ctx.loader.await()
   expect([...ctx.loader.entries()].filter(entry => entry.fiber === undefined && !entry.disabled))
     .toEqual([])
-  const adapter = new RecordingAdapter([response('A done'), response('B done'), response('B after Room warning')])
+  const adapter = new RecordingAdapter(responses)
   ctx.llm.registerAdapter(['mock'], adapter)
   const agent = await ctx.agentLoop.create(SessionId('task-agent'), { provider: 'mock', model: 'mock' })
   const owner = 'human-owner' as DevelopmentParticipantId
@@ -411,6 +414,8 @@ describe('managed owner-local Task admission', () => {
       try {
         expect(ctx.agents.get(agent.id)).toBe(agent)
         expect(other.agents.get(agent.id)).toBe(foreign.agent)
+        expect(ctx.developmentTaskContextAdmission.signalFor(agent)?.aborted).toBe(false)
+        expect(ctx.developmentTaskContextAdmission.signalFor(foreign.agent)).toBeUndefined()
         if (operation === 'admission') {
           foreign.agent.followup(createUserMessage({ source: { kind: 'user' },
             content: [{ type: 'text', text: 'Continue independent work without the other registry Task' }] }))
@@ -742,6 +747,203 @@ describe('managed owner-local Task admission', () => {
     expect(signal.aborted).toBe(true)
     expect(ctx.get('developmentTaskContextAdmission')).toBeUndefined()
     expect(ctx.get('developmentTaskContextBackend')).toBeDefined()
+  })
+
+  it('retains unsubmitted input when the Loader consumer unloads while a downstream pre-step is waiting', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    await localSelection(ctx, agentId, owner)
+    const entered = Promise.withResolvers<AbortSignal>()
+    const release = Promise.withResolvers<undefined>()
+    const removeBarrier = ctx.on('agent/pre-step', async ({ signal }, next) => {
+      entered.resolve(signal)
+      await release.promise
+      return next()
+    })
+    const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep my pending responsibility' }] })
+    const compute = vi.spyOn(ctx.developmentTaskContextBackend, 'compute')
+    const entry = [...ctx.loader.entries()].find(item => item.options.name === '@deepseek-ai/dsh-development-task-context')
+    if (entry === undefined) throw new Error('actual consumer entry is missing')
+    agent.followup(original)
+    const idle = agent.whenIdle()
+    try {
+      const signal = await entered.promise
+      await entry.update({ disabled: true })
+      await ctx.loader.await()
+      expect(signal.aborted).toBe(false)
+      release.resolve(undefined)
+      await idle
+      expect(adapter.requests).toHaveLength(0)
+      expect(compute).not.toHaveBeenCalled()
+      expect(agent.inbox.nextStep.filter(message => message.id === original.id)).toEqual([original])
+      expect(visibleLocalTaskContext(agent)).toHaveLength(0)
+      removeBarrier()
+      await entry.update({ disabled: false })
+      await ctx.loader.await()
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue after the consumer reloads' }] }))
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(adapter.requests[0]!.messages.filter(message => message.id === original.id)).toEqual([original])
+      expect(requestText(adapter.requests[0]!)).toContain('Managed local objective')
+      expect(agent.inbox.nextStep).toHaveLength(0)
+    } finally {
+      release.resolve(undefined)
+      removeBarrier()
+      await idle
+      await agent.whenIdle()
+    }
+  })
+
+  it('honors an admission plugin rejection without falling back to passive Task injection', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    const { target } = await localSelection(ctx, agentId, owner)
+    const compute = vi.spyOn(ctx.developmentTaskContextBackend, 'compute')
+    const policy = ctx.plugin({ name: 'reject-task-admission', apply(consumer) {
+      consumer.on('development-task-context/admit', async () => ({ kind: 'reject' }))
+    } })
+    try {
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Wait for my admission policy' }] }))
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(0)
+      expect(compute).not.toHaveBeenCalled()
+      expect(visibleLocalTaskContext(agent)).toHaveLength(0)
+      expect(ctx.developmentTasks.latestAssignment(agentId)?.bindingId).toBe(target.taskBindingId)
+      expect(agent.session.snapshotEvents().findLast(event => event.type === 'turn/end'))
+        .toMatchObject({ data: { reason: { kind: 'blocked' } } })
+      await policy.dispose()
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue after the policy unloads' }] }))
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(requestText(adapter.requests[0]!)).toContain('Managed local objective')
+      expect(compute).toHaveBeenCalledTimes(1)
+    } finally { await policy.dispose(); await agent.whenIdle() }
+  })
+
+  it('retains only the delegate-selected ordinary input after Task computation fails', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    await localSelection(ctx, agentId, owner)
+    const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Preserve this original responsibility' }] })
+    const derived = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Temporary derived admission context' }] })
+    const removeDerived = ctx.on('agent/pre-step', async (payload, next) => { payload.messages.push(derived); return next() })
+    const policy = ctx.plugin({ name: 'retain-only-claimed-input', apply(consumer) {
+      consumer.on('development-task-context/admit', async (input, next) => { input.retainInput(input.claimed); return next() })
+    } })
+    vi.spyOn(ctx.developmentTaskContextBackend, 'compute').mockRejectedValueOnce(new Error('backend temporarily unavailable'))
+    try {
+      agent.followup(original)
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(0)
+      expect(agent.inbox.nextStep).toEqual([original])
+      expect(visibleLocalTaskContext(agent)).toHaveLength(0)
+      removeDerived()
+      await policy.dispose()
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue after backend recovery' }] }))
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(adapter.requests[0]!.messages.filter(message => message.id === original.id)).toEqual([original])
+      expect(adapter.requests[0]!.messages.some(message => message.id === derived.id)).toBe(false)
+      expect(requestText(adapter.requests[0]!)).toContain('Managed local objective')
+    } finally { removeDerived(); await policy.dispose(); await agent.whenIdle() }
+  })
+
+  it('rechecks the selected Task when an admission delegate changes its binding after passive computation', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    const { target } = await localSelection(ctx, agentId, owner)
+    const replacement = await ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: owner,
+      objective: 'Replacement human responsibility', scope: 'Use the new assignment only' })
+    let switched = false
+    const policy = ctx.plugin({ name: 'switch-after-passive-admission', apply(consumer) {
+      consumer.on('development-task-context/admit', async (_input, next) => {
+        const decision = await next()
+        if (!switched) {
+          switched = true
+          await ctx.developmentTasks.checkout({ taskId: replacement.id, participantId: agentId, bindingId: target.taskBindingId })
+        }
+        return decision
+      })
+    } })
+    const compute = vi.spyOn(ctx.developmentTaskContextBackend, 'compute')
+    try {
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue my current responsibility' }] }))
+      await agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(compute.mock.calls.map(([input]) => input.view.task.id)).toEqual([target.taskId, replacement.id])
+      expect(requestText(adapter.requests[0]!)).toContain('Replacement human responsibility')
+      expect(requestText(adapter.requests[0]!)).not.toContain('Managed local objective')
+      expect(adapter.requests[0]!.messages.filter(message => message.source.kind === 'development-task-context')).toHaveLength(1)
+      const history = agent.session.snapshotEvents().filter(event => event.type === 'user/message'
+        && event.data.source.kind === 'development-task-context')
+      expect(history).toHaveLength(1)
+      expect(JSON.stringify(history[0])).toContain('Replacement human responsibility')
+      expect(JSON.stringify(history)).not.toContain('Managed local objective')
+      expect(Session.create(agent.id, structuredClone(agent.session.snapshotEvents()), agent.session.header).deriveMessages())
+        .toEqual(agent.session.deriveMessages())
+    } finally { await policy.dispose(); await agent.whenIdle() }
+  })
+
+  it('passes the ordinary Session responsibility to its actual passive Task computation', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    const sessionLabel = 'Maintain the frontend responsibility'
+    await localSelection(ctx, agentId, owner, sessionLabel)
+    const compute = vi.spyOn(ctx.developmentTaskContextBackend, 'compute')
+    agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue my assigned frontend work' }] }))
+    await agent.whenIdle()
+    expect(compute).toHaveBeenCalledTimes(1)
+    expect(compute.mock.calls[0]![0].recipient).toEqual({ participantId: agentId, sessionLabel })
+    expect(adapter.requests).toHaveLength(1)
+    expect(adapter.requests[0]!.messages.find(message => message.source.kind === 'development-task-context')?.source)
+      .toMatchObject({ version: 2, form: 'snapshot' })
+    expect(requestText(adapter.requests[0]!)).toContain('Managed local objective')
+  })
+
+  it('continues after a real tool result without claiming the same ordinary input again', async () => {
+    const call = { type: 'tool-call' as const, id: ToolCallId('task-context-read'), name: 'read_task_fixture', arguments: '{}' }
+    const { ctx, agent, adapter, agentId, owner } = await harness([[
+      { type: 'block-start', index: 0, blockType: 'tool-call' },
+      { type: 'block-end', index: 0, block: call }, { type: 'finish', reason: { kind: 'tool-calls' } },
+    ], response('Task work completed')])
+    await localSelection(ctx, agentId, owner)
+    const execute = vi.fn(async () => [{ type: 'text' as const, text: 'Fixture read completed' }])
+    ctx.effect(() => ctx.tools.register(defineContentToolFixture({ name: call.name, description: 'Read a fixture-owned value', parameters: {}, execute })))
+    const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Read once and finish my Task' }] })
+    const claims: (readonly UserMessage[])[] = []
+    ctx.on('development-task-context/admit', async (input, next) => { claims.push([...input.claimed]); return next() })
+    const compute = vi.spyOn(ctx.developmentTaskContextBackend, 'compute')
+    agent.followup(original)
+    await agent.whenIdle()
+    expect(execute).toHaveBeenCalledOnce()
+    expect(adapter.requests).toHaveLength(2)
+    expect(claims).toEqual([[original], []])
+    expect(compute).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(adapter.requests[1]!.messages)).toContain('Fixture read completed')
+    expect(adapter.requests[1]!.messages.filter(message => message.id === original.id)).toEqual([original])
+    expect(adapter.requests[1]!.messages.filter(message => message.source.kind === 'development-task-context')).toHaveLength(1)
+    expect(Session.create(agent.id, structuredClone(agent.session.snapshotEvents()), agent.session.header).deriveMessages())
+      .toEqual(agent.session.deriveMessages())
+  })
+
+  it('exposes a scoped injector only to the actual Agent whose scope receives its events', async () => {
+    const { ctx, agent, adapter, agentId, owner } = await harness()
+    await localSelection(ctx, agentId, owner)
+    const entry = [...ctx.loader.entries()].find(item => item.options.name === '@deepseek-ai/dsh-development-task-context')
+    if (entry === undefined) throw new Error('actual consumer entry is missing')
+    await entry.update({ disabled: true })
+    await ctx.loader.await()
+    const scope = createScope(ctx, agent)
+    const consumer = scope.ctx.plugin(DevelopmentTaskContext, { maxContextBytesPerStep: 4096 })
+    const outside = await ctx.agents.create({ sessionId: SessionId('outside-task-injector-scope'), agentOptions: { provider: 'mock', model: 'mock' } })
+    try {
+      const admission = ctx.get('developmentTaskContextAdmission')
+      if (admission === undefined) throw new Error('scoped Task consumer is missing')
+      expect(admission.signalFor(agent)?.aborted).toBe(false)
+      expect(admission.signalFor(outside.agent)).toBeUndefined()
+      outside.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue independent work' }] }))
+      await outside.agent.whenIdle()
+      expect(requestText(adapter.requests[0]!)).not.toContain('Managed local objective')
+      expect(visibleLocalTaskContext(outside.agent)).toHaveLength(0)
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue my scoped responsibility' }] }))
+      await agent.whenIdle()
+      expect(requestText(adapter.requests[1]!)).toContain('Managed local objective')
+    } finally { await outside.dispose(); await consumer.dispose(); await scope.dispose() }
   })
 
   it.each([false, true])('delegates exactly one injector independently of adjacent pre-step order: prepend=%s', async (prepend) => {
