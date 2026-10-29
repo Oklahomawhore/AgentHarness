@@ -3456,6 +3456,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Allocate a real terminal and start one owned process session. This is the only non-pipe process primitive: implementations own terminal byte I/O, foreground groups, signals, and whole-session quiescence.',
         parameters: [{ name: 'spec', description: 'fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.' }],
         returns: 'the live terminal handle after allocation succeeds.',
+        throws: ['{@link SubprocessTerminalCleanupError} when initialization and provider cleanup both fail.'],
       },
     ],
   },

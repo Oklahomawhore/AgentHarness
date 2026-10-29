@@ -16,6 +16,8 @@ The ordinary subprocess handle cannot solve this gap by publishing a PID. Linux 
 
 An ordinary `SubprocessHandle` has no PID or public startup state. `.done` reports the direct target result or startup/provider failure, `terminate()` signals the selected range, and `waitForExit()` succeeds only after that same range is proven empty. `SubprocessTerminalHandle.pid` remains part of the terminal contract because PTY identity and foreground inspection require it.
 
+A newly allocated PTY acquires its existing provider record and native exit listener before fallible process inspection. Native handles can retain the process after JavaScript references disappear, so garbage collection cannot replace teardown. Failed inspection awaits the same handle termination as a published session; failed cleanup retains provider ownership for disposal and host-exit handling rather than releasing the allocation.
+
 ### Linux scope and one-shot bootstrap
 
 The first eligible Linux ordinary or PTY call in one runtime deeply checks the exact runner entry, the libc `execve` and `fcntl` bindings, the readable user manager, and literal-argv transient-scope support. Failed deep probes are retried, while the first success is cached. Each later eligible call still performs a lightweight user-manager reachability probe before target execution. Once selected, a scope, protocol, state-query, or pre-exec failure is reported through that launch and never switches to fallback.

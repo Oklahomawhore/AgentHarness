@@ -12,6 +12,7 @@ import {
   quoteE2BShellArg,
 } from '@deepseek-ai/dsh-e2b'
 import type { CommandHandle, CommandResult, Sandbox } from '@deepseek-ai/dsh-e2b'
+import { SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type {
   SubprocessOutcome,
   SubprocessTerminalForeground,
@@ -560,7 +561,7 @@ export async function spawnE2BTerminal(
     } catch (cleanupError: unknown) {
       // TODO(e2b-terminal-setup-rollback): Retain retry state only if a real
       // double failure must be recovered before sandbox disposal or timeout.
-      throw new AggregateError([asError(error), asError(cleanupError)], asError(error).message)
+      throw new SubprocessTerminalCleanupError(asError(error), asError(cleanupError))
     }
     throw error
   }

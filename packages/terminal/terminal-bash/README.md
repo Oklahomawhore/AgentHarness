@@ -67,6 +67,8 @@ Both dialects expose the same readiness contract, so consumers are dialect-agnos
 
 The shell runs under the effective sandbox boundary for its whole life. Changing the effective sandbox mode is rejected while the owner still has open sessions or a spawn in progress — wait for creation to settle and close the sessions first, so a terminal opened with wider access cannot survive a downgrade. The backend supplies only terminal-specific environment overrides; the subprocess provider applies its shared credential scrub.
 
+Provider initialization failures with incomplete cleanup retain owner activity and block sandbox-mode changes through the terminal service’s existing cleanup-failure handling.
+
 ### Observable outcomes and failures
 
 An open returns the session id and a bounded startup message. Sends settle with one of the four wait reasons and a session status; `session_exit` means the top-level shell exited. Setup failures reject the open: a missing sandbox provider in a confined mode, a shell that exits during startup, a shell that fails to reach readiness before the startup timeout, or caller cancellation. Cleanup failures reject the close instead of claiming success.

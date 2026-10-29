@@ -8,6 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { TerminalBackendCleanupError } from '@deepseek-ai/dsh-terminal'
+import { SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type { TerminalBackend, TerminalBackendSpawnSpec, TerminalSendOperation } from '@deepseek-ai/dsh-terminal'
 import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -193,15 +194,21 @@ export class BashTerminalBackend implements TerminalBackend {
     const policy = this.ctx.sandboxPolicy.resolve({ session: spec.owner.session })
     const argv = spawnArgv(this.ctx, this.config, policy)
     if (argv[0] === undefined) throw new Error('terminal-bash: sandbox returned empty argv')
-    const terminal = await this.spawnTerminal({
-      argv,
-      cwd: spec.cwd ?? policy.workspaceRoot,
-      env: childEnvironment(spec, this.config.shellDialect),
-      rows: this.config.rows,
-      cols: this.config.cols,
-      graceMs: this.config.disposeGraceMs,
-      signal: spec.signal,
-    })
+    let terminal: SubprocessTerminalHandle
+    try {
+      terminal = await this.spawnTerminal({
+        argv,
+        cwd: spec.cwd ?? policy.workspaceRoot,
+        env: childEnvironment(spec, this.config.shellDialect),
+        rows: this.config.rows,
+        cols: this.config.cols,
+        graceMs: this.config.disposeGraceMs,
+        signal: spec.signal,
+      })
+    } catch (error) {
+      if (error instanceof SubprocessTerminalCleanupError) throw new TerminalBackendCleanupError(error.spawnError, error.cleanupError)
+      throw error
+    }
     const session = this.createSession(terminal, this.config)
     try {
       await startupSession(session, this.config.shellDialect, this.config.timeoutMs, spec.signal)

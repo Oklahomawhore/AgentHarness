@@ -433,11 +433,9 @@ describe('LocalSubprocessRuntime', () => {
       waitForExit: vi.fn(async () => {}),
       terminateForHostExit: vi.fn(),
     }
-    const launcherStates: boolean[] = []
     const bindOwner = vi.fn((direct: { running(): boolean; signal(signal: 'SIGTERM' | 'SIGKILL'): void }) => {
       launcherRunning = () => direct.running()
       launcherSignal = (signal) => { direct.signal(signal) }
-      launcherStates.push(direct.running())
       return owner
     })
     const prepareLinuxTerminalScope = vi.fn(() => ({
@@ -503,7 +501,6 @@ describe('LocalSubprocessRuntime', () => {
         expect.objectContaining({ rows: 24, cols: 80, cwd: '/bootstrap', env: { BOOTSTRAP: 'yes' } }),
       )
       expect(bindOwner).toHaveBeenCalledOnce()
-      expect(launcherStates).toEqual([true])
       expect(launcherRunning?.()).toBe(true)
       expect(() => { launcherSignal?.('SIGTERM') }).not.toThrow()
       expect(terminalKill).toHaveBeenCalledExactlyOnceWith('SIGTERM')

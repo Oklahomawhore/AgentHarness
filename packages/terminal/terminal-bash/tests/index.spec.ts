@@ -16,7 +16,7 @@ import { ENCODING_PREAMBLE } from '@deepseek-ai/dsh-pwsh-local'
 import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
 import type { ResolvedConfig } from '@deepseek-ai/dsh-terminal-bash/src/config.ts'
 import type { LocalPtySession } from '@deepseek-ai/dsh-terminal-bash/src/session.ts'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessRuntime, SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type {
   SubprocessHandle,
   SubprocessSpawnSpec,
@@ -667,6 +667,47 @@ describe('terminal-bash plugin shape', () => {
     await ctx.terminals.kill(owner, second.sessionId)
     expect(() => { setSandboxMode(session, 'read-only') }).not.toThrow()
     expect(session.snapshotEvents().filter(event => event.type === 'sandbox/mode')).toHaveLength(2)
+  })
+
+  it('retains the sandbox fence when lower-provider initialization cleanup is unconfirmed', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(AgentRegistry)
+    const serviceFiber = await ctx.plugin(TerminalSessionService)
+    await ctx.plugin(RecordingSandbox)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    const ownerFiber = await ctx.plugin(() => {})
+    const session = ctx.sessions.create(SessionId('unconfirmed-cleanup-owner'))
+    const owner: Agent = {
+      id: session.id, options: {}, session, inbox: unsupportedInbox(), status: 'idle', ctx: ownerFiber.ctx,
+      send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
+      runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
+    }
+    const unregister = ctx.agents.register(owner)
+    const spawnError = new Error('initial process inspection failed')
+    const cleanupError = new Error('native exit could not be confirmed')
+    const lowerFailure = new SubprocessTerminalCleanupError(spawnError, cleanupError)
+    const backend = new BashTerminalBackend(ctx, config(), async () => { throw lowerFailure })
+    const unregisterBackend = ctx.terminals.registerBackend(backend)
+    try {
+      const failure = await ctx.terminals.spawn(owner, { type: 'shell' }).then(
+        () => { throw new Error('Provider initialization unexpectedly succeeded') },
+        (error: unknown) => error,
+      )
+      expect.soft(ctx.terminals.hasOwnerActivity(owner)).toBe(true)
+      expect.soft(() => { setSandboxMode(owner.session, 'read-only') }).toThrow('open or being created')
+      expect(failure).toBeInstanceOf(TerminalBackendCleanupError)
+      if (!(failure instanceof TerminalBackendCleanupError)) throw new Error('Missing backend cleanup failure')
+      expect(failure.spawnError).toBe(spawnError)
+      expect(failure.cleanupError).toBe(cleanupError)
+      expect(owner.session.snapshotEvents().filter(event => event.type === 'sandbox/mode')).toHaveLength(0)
+    } finally {
+      unregisterBackend()
+      await ownerFiber.dispose()
+      unregister()
+      await serviceFiber.dispose()
+    }
   })
 
   it('also fences sandbox-mode changes across unpublished PTY creation', async () => {

@@ -262,6 +262,7 @@ describe.skipIf(!linuxNative)('Linux user-systemd native containment', () => {
         signal: (signal) => { terminal.kill(signal) },
       })
       handle = new LocalTerminalHandle(terminal, createProcessInspector(), request.graceMs, 'linux', owner, scope.resolveOutcome)
+      handle.captureRootIdentity()
       // Observe rejection immediately while startup assertions still own cleanup.
       void handle.done.catch(() => {})
       await waitForPid(fixture.ready)

@@ -14,7 +14,7 @@ import { delimiter, extname, isAbsolute, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import * as nodePty from 'node-pty'
 import type { IPtyForkOptions } from 'node-pty'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessRuntime, SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type {
   SubprocessHandle,
   SubprocessSpawnSpec,
@@ -226,8 +226,6 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     )
   }
 
-  // Local PTY allocation is synchronous, but the provider contract permits remote asynchronous allocation.
-  // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     const file = spec.argv[0]
     if (file === undefined || file.length === 0) {
@@ -266,15 +264,13 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       scope?.cleanup()
       throw error
     }
-    // oxlint-disable-next-line eslint/prefer-const -- The owner can query readiness before the handle is published.
-    let handle: LocalTerminalHandle | undefined
     const owner = scope?.bindOwner({
-      running: () => handle?.running ?? true,
+      running: (): boolean => handle.running,
       signal: (signal) => {
         try { terminal.kill(signal) } catch { /* Direct process already exited. */ }
       },
     })
-    handle = new LocalTerminalHandle(
+    const handle = new LocalTerminalHandle(
       terminal,
       inspector,
       spec.graceMs,
@@ -288,6 +284,12 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       this.terminals.delete(handle)
     }
     void handle.done.then(release, release).catch(() => {})
+    try {
+      handle.captureRootIdentity()
+    } catch (error) {
+      try { await release() } catch (cleanupError) { throw new SubprocessTerminalCleanupError(error, cleanupError) }
+      throw error
+    }
     return handle
   }
 }
