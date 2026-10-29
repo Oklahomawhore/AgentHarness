@@ -93,7 +93,7 @@ Host 消费者在延迟投影前后调用 `currentContextView`。它先提交本
 
 ## Owner 本地贡献
 
-Host-only 的 `openLocalContribution`、`admitLocalContribution`、`localContributionStatus` 和 `endLocalContribution` 授权 Task owner 自己的 Agent，不经过 self-peer transport。许可绑定一个本地 Root Task、参与者、binding epoch、capture 代际和明确的单类或组合原生来源选择。有效期、样本数和完整样本字节均有上限。来源消费者另行负责来源同意和采集；Task 准入核对原 assignment，且新样本必须仍属于同一本地 Agent 的当前 binding。
+Host-only 的 `openLocalContribution`、`admitLocalContribution`、`localContributionStatus` 和 `endLocalContribution` 授权 Task owner 自己的 Agent，不经过 self-peer transport。许可绑定一个本地 Root Task、参与者、binding epoch、capture 代际和明确的单类或组合原生来源选择。有效期、样本数和完整样本字节均有上限。来源消费者另行负责来源同意和采集；Task 准入核对原 assignment，且新样本必须仍属于同一本地 Agent 的当前 binding。请求与事件 schema 校验来源权限；投影独立核对保留的授权、规范正文、序号与额度。
 
 每个 capture 预留一个终结事件。状态及当前上下文读取先提交到期或失效绑定的终结再返回；clear 和 checkout 先结束 capture 再改变 binding。Checkout 在终结任何 capture 前先校验可选的会话标签。Agent 离开或 binding 改变后仍可显式终结。先于打开的终结留下关闭的代际。终结后，已准入内容的精确重试仍返回原 receipt，但修改许可或新样本不能重开该代际。持久化失败时，不会把受影响的授权变更报告为已完成。
 

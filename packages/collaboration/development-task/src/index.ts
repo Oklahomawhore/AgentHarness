@@ -1710,9 +1710,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       || (publication.localToolObservation === undefined && publication.localTurnOutcome === undefined)) {
       throw new DevelopmentTaskError('local withdrawal requires its terminal owner event', code)
     }
-    const parsed = localContributionRequestSchema.safeParse(localPublicationRequest(publication))
-    if (!parsed.success) throw new DevelopmentTaskError('local report changes its permitted source', code)
-    const sample = parsed.data
+    const sample = localPublicationRequest(publication)
     const id = localContributionId(sample.grant)
     const authority = task.localContributions.get(id)
     if (authority?.state !== 'active' || !isDeepStrictEqual(authority.grant, sample.grant) || sample.grant.expiresAt <= entry.at

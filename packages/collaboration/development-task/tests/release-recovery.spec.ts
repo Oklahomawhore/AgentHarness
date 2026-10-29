@@ -73,6 +73,85 @@ async function routedSource() {
   return { owner, source, hosts, sourceTransport, ownerNodeId, sourceNodeId, task, identity, bound }
 }
 
+async function generatedObservedLifecycle() {
+  const f = await routedSource()
+  const approved = await f.owner.tasks.approveObservedInterval(f.identity)
+  const approval = f.owner.tasks.log().at(-1)
+  const otherBinding = await f.source.tasks.checkout({ taskId: f.task.id, participantId: f.identity.participantId })
+  const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({
+    taskId: f.task.id, participantId: f.identity.participantId, bindingId: f.identity.bindingId,
+    expectedBindingEpoch: f.identity.expectedBindingEpoch, intervalId: approved.id,
+    sourceId: 'a'.repeat(64), text: 'Source API evidence', observation: {
+      kind: 'openapi-artifact', version: 1, artifactId: 'source-contract', sourceName: 'Source API', grantId: 'source-grant', sequence: 1,
+      operation: { method: 'post', path: '/orders' }, state: 'valid', sha256: 'b'.repeat(64),
+      facts: { requestBodyRequired: true, requiredRequestFields: ['name'], responseStatuses: ['201'], deprecated: false },
+    },
+  })
+  await f.source.tasks.admitObservedRemote(input)
+  const publication = f.owner.tasks.log().at(-1)
+  await f.source.tasks.endObservedInterval(f.identity)
+  await f.owner.tasks.publishContext({ taskId: f.task.id, participantId: f.owner.owner, text: 'Later owner decision' })
+  const following = f.owner.tasks.log().at(-1)
+  if (approval?.change.kind !== 'observed-interval-opened' || publication?.change.kind !== 'context-published'
+    || publication.change.publication.observation === undefined || following === undefined) {
+    throw new Error('Generated observation lifecycle is incomplete')
+  }
+  return { ...f, approval: { ...approval, change: approval.change },
+    publication: { ...publication, change: publication.change }, following, otherBinding }
+}
+
+describe.each(['replica', 'restore'] as const)('Observed Task %s admission', (admission) => {
+  it.each(['source-epoch', 'duplicate-approval', 'terminal-marker', 'wrong-participant', 'wrong-observer',
+    'another-session', 'reopen-ended', 'late-publication'] as const)(
+    'rejects parsed %s corruption without consuming the canonical owner event', async (mismatch) => {
+      const f = await generatedObservedLifecycle()
+      const recipient = await setup('recipient-node')
+      const canonical = mismatch === 'source-epoch' ? f.approval
+        : mismatch === 'reopen-ended' || mismatch === 'late-publication' ? f.following : f.publication
+      const publication = f.publication.change.publication
+      const observation = publication.observation
+      if (observation === undefined) throw new Error('Generated artifact observation is missing')
+      const wire = developmentTaskEventSchema.parse({ ...canonical,
+        change: mismatch === 'source-epoch' ? { ...f.approval.change,
+          interval: { ...f.approval.change.interval, expectedBindingEpoch: { ...f.identity.expectedBindingEpoch, nodeId: f.ownerNodeId } } }
+          : mismatch === 'duplicate-approval' || mismatch === 'reopen-ended' ? f.approval.change
+            : { kind: 'context-published', publication: { ...publication,
+              ...(mismatch === 'terminal-marker' ? { observedIntervalEnded: true } : {}),
+              ...(mismatch === 'wrong-participant' ? { publishedBy: f.owner.owner } : {}),
+              ...(mismatch === 'wrong-observer' ? { observation: { ...observation, observerNodeId: f.ownerNodeId } } : {}),
+              ...(mismatch === 'another-session' ? { observation: { ...observation,
+                binding: { ...observation.binding, id: f.otherBinding.assignment.bindingId } } } : {}),
+            } },
+      })
+      const history = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(f.owner.tasks.log())))
+      const before = history.filter(entry => entry.seq < canonical.seq)
+      if (admission === 'restore') recipient.tasks.restoreLog(before)
+      else for (const entry of before) await recipient.tasks.acceptLogReplica(entry, entry.nodeId)
+      const view = recipient.tasks.contextView(f.task.id)
+      const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+      const changed = vi.fn()
+      recipient.ctx.on('development-task/persist', persisted)
+      recipient.ctx.on('development-task/changed', changed)
+      if (admission === 'restore') expect(() => { recipient.tasks.restoreLog([wire]) })
+        .toThrow(expect.objectContaining({ code: 'REPLICA_CONFLICT' }))
+      else await expect(recipient.tasks.acceptLogReplica(wire, wire.nodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+      expect(recipient.tasks.log()).toEqual(before)
+      expect(recipient.tasks.contextView(f.task.id)).toEqual(view)
+      expect(persisted).not.toHaveBeenCalled()
+      expect(changed).not.toHaveBeenCalled()
+      if (admission === 'restore') recipient.tasks.restoreLog([canonical])
+      else await recipient.tasks.acceptLogReplica(canonical, canonical.nodeId)
+      expect(recipient.tasks.log()).toEqual([...before, canonical])
+      expect(changed).toHaveBeenCalledOnce()
+      expect(persisted).toHaveBeenCalledTimes(admission === 'replica' ? 1 : 0)
+      const remaining = history.filter(entry => entry.seq > canonical.seq)
+      if (admission === 'restore') recipient.tasks.restoreLog(remaining)
+      else for (const entry of remaining) await recipient.tasks.acceptLogReplica(entry, entry.nodeId)
+      expect(recipient.tasks.get({ taskId: f.task.id }).context).toEqual(f.owner.tasks.get({ taskId: f.task.id }).context)
+    },
+  )
+})
+
 describe('Task owner routing and recovery', () => {
   it.each(['node-sequence', 'task-revision', 'second-creation', 'hidden-room', 'backwards-time', 'unknown-task', 'foreign-owner'] as const)(
     'rejects parsed %s corruption without occupying the next owner log position', async (mismatch) => {

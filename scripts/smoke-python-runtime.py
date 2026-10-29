@@ -1168,7 +1168,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         raise AssertionError(f"unsupported scope snapshot: {scenario}")
     expected_name = {
         "scope-claude-work": "scope-claude-work-context-order",
-        "scope-automatic-withdrawal": "scope-automatic-withdrawal-context-order-r5",
+        "scope-automatic-withdrawal": "scope-automatic-withdrawal-context-order-r6",
         "scope-capture-self-omission": "scope-capture-self-omission-context-order-r3",
         "scope-completed-file": "scope-completed-file-context-order-r7",
         "scope-context-live": "scope-context-live-maintenance-r5",

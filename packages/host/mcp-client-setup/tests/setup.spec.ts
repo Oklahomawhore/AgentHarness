@@ -100,6 +100,23 @@ describe('MCP client setup', () => {
     expect(JSON.stringify(result)).not.toContain('PRIVATE_COMMAND_OUTPUT')
   })
 
+  // Native shebang execution is POSIX-only; lookup and child PATH are both intentionally empty.
+  it.skipIf(process.platform === 'win32')('runs an explicit executable with spaces without PATH or application discovery', async () => {
+    const { root, options } = await fixture()
+    const directory = join(root, 'private executables')
+    await mkdir(directory)
+    const command = join(directory, 'official codex')
+    const log = join(root, 'override-invocation')
+    await fakeExecutable(command, '#!/bin/sh\nprintf "%s" "$*" > "$MCP_SETUP_LOG"\nprintf "[]"\n')
+    const listed = await listMcpClients({ ...options, path: '', applicationRoots: [], executableOverrides: { codex: command },
+      environment: { ...options.environment, PATH: '', MCP_SETUP_LOG: log } })
+    expect(listed.clients.find(client => client.id === 'codex')).toMatchObject({
+      detected: true, state: 'not-configured', canSetup: true, restartRequired: false,
+    })
+    expect(listed.clients.filter(client => client.detected).map(client => client.id)).toEqual(['codex'])
+    expect(await readFile(log, 'utf8')).toBe('mcp list --json')
+  })
+
   it('keeps one account’s clients distinct across separate Hosts and stable on the same Host', async () => {
     const { options } = await fixture()
     machine.name = 'first-host'
@@ -195,6 +212,27 @@ describe('MCP client setup', () => {
     expect(await readFile(blocked, 'utf8')).toBe('existing client data\n')
   })
 
+  it('preserves a directory occupying one client config while configuring another client independently', async () => {
+    const { root, options } = await fixture()
+    const cursorPath = join(root, 'home', '.cursor', 'mcp.json')
+    const retained = join(cursorPath, 'user-data.txt')
+    await mkdir(cursorPath, { recursive: true })
+    await writeFile(retained, 'unrelated client data')
+    const buddyPath = join(root, 'home', '.workbuddy', 'mcp.json')
+    await mkdir(join(root, 'home', '.workbuddy'))
+    await writeFile(buddyPath, JSON.stringify({ keep: 'local preference', mcpServers: { sibling: { command: 'existing' } } }))
+    const listed = await listMcpClients(options)
+    expect(listed.clients.find(client => client.id === 'cursor')).toMatchObject({ state: 'failed', canSetup: false })
+    expect(listed.clients.find(client => client.id === 'workbuddy')).toMatchObject({ state: 'not-configured', canSetup: true })
+    const configured = await setupAllMcpClients(options)
+    expect(configured.find(result => result.client.id === 'cursor')).toMatchObject({ outcome: 'failed', client: { state: 'failed' } })
+    expect(configured.find(result => result.client.id === 'workbuddy')?.outcome).toBe('configured')
+    expect(await readFile(retained, 'utf8')).toBe('unrelated client data')
+    expect(JSON.parse(await readFile(buddyPath, 'utf8'))).toMatchObject({ keep: 'local preference', mcpServers: {
+      sibling: { command: 'existing' }, agentharness: { command: options.nodePath },
+    } })
+  })
+
   it('atomically adds one JSON entry, preserves siblings, and is idempotent', async () => {
     const { root, options } = await fixture()
     await mkdir(join(root, 'Applications', 'Cursor.app'))
@@ -230,6 +268,24 @@ describe('MCP client setup', () => {
     expect((await listMcpClients(options)).clients.find(client => client.id === 'cursor')?.state).toBe('conflict')
     expect((await setupMcpClient(options, { clientId: 'cursor' })).outcome).toBe('conflict')
     expect(await readFile(path, 'utf8')).toBe(legacy)
+  })
+
+  it('preserves a persisted HTTP transport conflicting with the generated stdio launcher', async () => {
+    const { root, options } = await fixture()
+    const directory = join(root, 'home', '.workbuddy')
+    const path = join(directory, 'mcp.json')
+    await mkdir(directory)
+    await writeFile(path, JSON.stringify({ keep: 'local preference', mcpServers: { sibling: { command: 'existing' } } }))
+    expect((await setupMcpClient(options, { clientId: 'workbuddy' })).outcome).toBe('configured')
+    const original = await readFile(path, 'utf8')
+    const changed = original.replace('"type": "stdio"', '"type": "http"')
+    expect(changed).not.toBe(original)
+    await writeFile(path, changed)
+    expect((await listMcpClients(options)).clients.find(client => client.id === 'workbuddy')).toMatchObject({
+      state: 'conflict', canSetup: false, restartRequired: false,
+    })
+    expect(await setupMcpClient(options, { clientId: 'workbuddy' })).toMatchObject({ outcome: 'conflict' })
+    expect(await readFile(path, 'utf8')).toBe(changed)
   })
 
   it.each([
@@ -334,6 +390,29 @@ describe('MCP client setup', () => {
     expect(result.outcome).toBe('failed')
     expect(result.client.detail).not.toContain('SECRET42')
   })
+
+  // The isolated CLI uses POSIX shebang execution; its exit status alone does not verify registration.
+  it.skipIf(process.platform === 'win32').each(['unchanged', 'invalid-list'] as const)(
+    'does not report a successful CLI command as configured when verification is %s', async (verification) => {
+      const { root, options } = await fixture()
+      const directory = join(root, 'home', '.codex')
+      await mkdir(directory)
+      const configPath = join(directory, 'config.toml')
+      const original = '[mcp_servers.sibling]\ncommand = "existing-server"\n'
+      await writeFile(configPath, original)
+      const attempt = join(root, 'registration-attempt')
+      await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nif [ "$2" = list ]; then\n  if [ -f "$MCP_SETUP_ATTEMPT" ]; then printf "%s" "$MCP_SETUP_AFTER"; else printf "[]"; fi\nelse printf "%s" "$*" > "$MCP_SETUP_ATTEMPT"; fi\n')
+      const result = await setupMcpClient({ ...options, environment: { ...options.environment,
+        MCP_SETUP_ATTEMPT: attempt, MCP_SETUP_AFTER: verification === 'unchanged' ? '[]' : '{}',
+      } }, { clientId: 'codex' })
+      expect(result).toMatchObject({ outcome: 'failed', client: {
+        state: verification === 'unchanged' ? 'not-configured' : 'failed', restartRequired: false,
+        detail: verification === 'unchanged' ? 'Registration completed but verification did not pass.' : 'Codex returned an invalid MCP list.',
+      } })
+      expect(await readFile(configPath, 'utf8')).toBe(original)
+      expect(await readFile(attempt, 'utf8')).toContain('mcp add agentharness --env DSH_HOME=')
+    },
+  )
 
   // These fake CLI executables require native POSIX shebang execution; Windows setup is unsupported.
   it.skipIf(process.platform === 'win32')('uses official CLI arguments and continues when another client fails', async () => {

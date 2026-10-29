@@ -24,6 +24,8 @@ Backend identities remain unchanged because previously valid inputs retain ident
 
 **Use ordinary local publications.** They cannot end all reports from one capture after stop, expiry, or restart. A durable interval makes withdrawal independent of a still-live Agent or assignment.
 
+**Reparse each local report during projection.** Request and event schemas enforce the same source/result permission and have no transformations or defaults. Typed reconstruction introduces no new input to validate. Projection instead checks independently retained grant state, canonical text, sequence, and quota. Peer reports retain their parser because request and persisted sequence limits differ.
+
 **Create another tool observer.** Separate observers would diverge on filesystem providers, PTC attribution, durable completion, and failed operations. The consumer shares these mechanics and changes the admission authority.
 
 **Combine all joining permissions in this change.** Read, outgoing file collection, and idle execution have distinct effects. The creator can participate using the existing local read path while invitation simplification and local idle scheduling receive their own acceptance evidence.
