@@ -1,5 +1,7 @@
 /** Native management requests follow actual mounted providers and independently terminated owner authority. */
 import { afterEach, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
@@ -259,25 +261,45 @@ it.each(['local', 'remote'] as const)('rejects expired %s permission and duplica
   expect((await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
 })
 
-it.each(['local', 'remote'] as const)('requires new %s consent after the filesystem provider is replaced', async (role) => {
+it.each(['local', 'remote'] as const)('ends %s file-only collection when its filesystem provider is replaced', async (role) => {
   const f = await fixture()
   const capture = role === 'local' ? (await f.source.ctx.scopeAgentContributions.requestLocal(f.local)).capture : await f.approve()
   if (capture === null) throw new Error('Missing original capture')
+  const status = async () => role === 'local'
+    ? f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })
+    : f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })
+  const context = () => (role === 'local' ? f.source : f.owner).ctx.developmentTasks
+    .get({ taskId: role === 'local' ? f.localTask.id : f.task.id }).context
+  await expect.poll(async () => (await status()).capture?.collecting).toBe(true)
+  const shell = [...f.source.ctx.loader.entries()].find(entry => entry.options.name === 'bash')
   const filesystem = [...f.source.ctx.loader.entries()].find(entry => entry.options.name === 'fs')
-  if (filesystem === undefined) throw new Error('Missing fixture filesystem entry')
+  if (shell === undefined || filesystem === undefined) throw new Error('Missing fixture providers')
+  await shell.update({ disabled: true })
+  await f.source.ctx.loader.await()
+  await shell.update({ disabled: false })
+  await f.source.ctx.loader.await()
+  expect((await status()).capture).toMatchObject({ selection: capture.selection, collecting: true })
+  await run(f.source, f.agent, [toolCallResponse('before-filesystem-replacement', 'write', {
+    file_path: 'before-replacement.txt', content: 'AUTHORIZED_BEFORE_REPLACEMENT',
+  })])
+  await expect.poll(() => JSON.stringify(context())).toContain('AUTHORIZED_BEFORE_REPLACEMENT')
   await filesystem.update({ disabled: true })
   await f.source.ctx.loader.await()
-  expect(f.agent.ctx.get('fs')).toBeUndefined()
   await filesystem.update({ disabled: false })
   await f.source.ctx.loader.await()
-  expect(f.agent.ctx.get('fs')).toBeDefined()
-  const request = role === 'local'
+  await run(f.source, f.agent, [toolCallResponse('after-filesystem-replacement', 'write', {
+    file_path: 'after-replacement.txt', content: 'PRIVATE_AFTER_REPLACEMENT',
+  })])
+  expect(await readFile(join(f.source.workspace, 'after-replacement.txt'), 'utf8')).toBe('PRIVATE_AFTER_REPLACEMENT')
+  expect(JSON.stringify(context())).not.toContain('PRIVATE_AFTER_REPLACEMENT')
+  expect((await status()).capture?.collecting ?? false).toBe(false)
+  await expect.poll(async () => (await status()).capture).toBeNull()
+  const ended = context().find(item => (item.localContribution ?? item.peerContribution)?.ended === 'left')
+  expect((ended?.localContribution ?? ended?.peerContribution)?.grant.captureId).toBe(capture.selection.captureId)
+  const retry = role === 'local'
     ? f.source.ctx.scopeAgentContributions.requestLocal({ ...f.local, expectedCapture: capture.selection })
     : f.source.ctx.scopeAgentContributions.request({ ...f.remote, expectedCapture: capture.selection })
-  await expect(request).rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
-  const status = role === 'local' ? await f.source.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })
-    : await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })
-  expect(status.capture?.selection).toEqual(capture.selection)
+  await expect(retry).rejects.toMatchObject({ code: 'scope-agent-contribution/stale-capture' })
 })
 
 it('rejects a contribution to a different Task while retaining the explicitly selected local and remote reading assignments', async () => {

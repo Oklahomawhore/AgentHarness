@@ -275,7 +275,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     ctx.on('internal/service', (name) => {
       if (name === 'shell' || name === 'fs') for (const role of captureRoles) {
         for (const [id, runtime] of this.sources[role].runtimes) {
-          if (!this.commandProvidersCurrent(runtime)) this.endDetached(id, role)
+          if (!this.providersCurrent(runtime)) this.endDetached(id, role)
         }
       }
       if (name !== 'scopeAgentContext') return
@@ -869,11 +869,9 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       throw this.superseded(agent.id)
     }
   }
-  private commandProvidersCurrent(runtime: Runtime): boolean {
-    if (runtime.shell === undefined) return true
-    const filesystem = runtime.agent.ctx.get('fs')
-    return filesystem !== undefined && this.sameFilesystem(filesystem, runtime.filesystem)
-      && shellIdentity(runtime.agent.ctx.get('shell')) === shellIdentity(runtime.shell)
+  private providersCurrent(runtime: Runtime): boolean {
+    return (runtime.filesystem === undefined || this.sameFilesystem(runtime.agent.ctx.get('fs'), runtime.filesystem))
+      && (runtime.shell === undefined || shellIdentity(runtime.agent.ctx.get('shell')) === shellIdentity(runtime.shell))
   }
   private local(): NativeLocalContributionDomain {
     if (this.localDomain === undefined) throw new Error('scope-agent-contribution: local domain is not open')
@@ -1148,7 +1146,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
     const role = 'grant' in capture ? 'local' : 'remote'
     const runtime = this.sources[role].runtimes.get(id)
     if (runtime === undefined || this.ctx.agents.get(id) !== runtime.agent
-      || !sameSelection(runtime.selection, selection(capture)) || !this.commandProvidersCurrent(runtime)) return false
+      || !sameSelection(runtime.selection, selection(capture)) || !this.providersCurrent(runtime)) return false
     if (!permissionOnly && capture.turnAfterSeq !== undefined && runtime.turnAfterSeq === undefined) return false
     if ('grant' in capture) {
       return this.localEligibility(runtime.agent) === 'eligible' && this.matchesBinding(id, capture.grant)

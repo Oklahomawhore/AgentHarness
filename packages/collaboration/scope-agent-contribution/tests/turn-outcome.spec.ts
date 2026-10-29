@@ -89,6 +89,21 @@ it('captures two completed user answers without files and retains exact durable 
     taskId: f.request.taskId, bindingId: f.request.bindingId, expectedBindingEpoch: f.request.expectedBindingEpoch,
   })
 })
+
+it('keeps answer-only permission and its actual completed answer when an unrelated filesystem provider is replaced', async () => {
+  const f = await fixture(8192, new TestNetwork(), true)
+  const filesystem = [...f.owner.ctx.loader.entries()].find(entry => entry.options.name === 'fs')
+  if (filesystem === undefined) throw new Error('Missing fixture filesystem provider')
+  await filesystem.update({ disabled: true })
+  await f.owner.ctx.loader.await()
+  await filesystem.update({ disabled: false })
+  await f.owner.ctx.loader.await()
+  expect((await f.owner.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture)
+    .toMatchObject({ selection: f.capture.selection, collecting: true })
+  await turn(f, 'ANSWER_AFTER_UNRELATED_FILESYSTEM_REPLACEMENT')
+  await expect.poll(() => JSON.stringify(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context))
+    .toContain('ANSWER_AFTER_UNRELATED_FILESYSTEM_REPLACEMENT')
+})
 it('does not mistake an idle user steer for an eligible next-turn claim', async () => {
   const f = await fixture()
   await turn(f, 'STEER_MUST_REMAIN_PRIVATE', true)
