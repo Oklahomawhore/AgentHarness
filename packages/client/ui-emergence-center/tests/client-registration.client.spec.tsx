@@ -2,14 +2,17 @@
 import type { ReactNode } from 'react'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { RemoteError, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, RemoteError, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetupResult, DevelopmentParticipantAnnounceRequest,
   DevelopmentTaskCreateRequest, DevelopmentTaskLineageRequest, DevelopmentTaskPublishContextRequest,
-  DevelopmentTaskSnapshot, RemoteResult, ScopeAgentBindingStatus, ScopeAgentBindRequest, ScopeAgentBindingRequest,
+  DevelopmentTaskSnapshot, DevelopmentTaskAssignment, DevelopmentParticipantSnapshot,
+  DevelopmentRoomDirectorySnapshot, McpClientSnapshot, RemoteResult, ScopeAgentBindingStatus, ScopeAgentBindRequest,
+  ScopeAgentBindingRequest,
   ScopeAgentResumeRequest, ScopeAgentContributionStatus, ScopeAgentContributionRequest, ClaudeScopeContributionDetail,
   ClaudeScopePrepareContributionRequest, ClaudeScopeActivateContributionRequest, ScopeContributionApproval,
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { apply, inject } from '../src/client/index.ts'
 import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
 import { zh } from '../src/client/locales.ts'
@@ -33,8 +36,13 @@ const session: ClaudeScopeSessionSummary = { sessionKey: 'claude-observed' as Cl
   sessionId: 'external-original-session', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const project = { projectPath: '/project', settingsPath: '/project/.claude/settings.local.json', profileName: 'scope-hook' }
 const proposalDocument = { version: 1, kind: 'tool-contribution-request', proposal: capture.proposal } satisfies ScopeContributionTransfer
+const mcpParticipant = 'mcp-notification-agent' as DevelopmentTaskAssignment['participantId']
+const mcpClient: McpClientSnapshot = { id: 'codex', label: 'Codex', detected: true, mechanism: 'cli', state: 'configured',
+  canSetup: false, participantId: mcpParticipant, displayName: 'Codex', restartRequired: false }
+const mcpPresence: DevelopmentParticipantSnapshot = { id: mcpParticipant, nodeId: task.ownerNodeId, kind: 'agent',
+  displayName: 'Codex', presence: 'online', lastSeenAt: 2 }
 
-async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] = [], native = false) {
+async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] = [], native = false, mcp = false) {
   const runtime = await SlotTestRuntime.create()
   try {
     localStorage.setItem('dsh.emergence-center.profile.v1', JSON.stringify({ id: task.createdBy, displayName: '' }))
@@ -45,6 +53,10 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     const connection = observable({ id: 1, host: { home: '/home/test-owner' } })
     runtime.ctx.provide('connection', { generation: connection })
     const tasksList = vi.fn(async () => ok([task]))
+    const roomsList = vi.fn(async (): Promise<RemoteResult<DevelopmentRoomDirectorySnapshot>> => ok({
+      nodeId: task.ownerNodeId, participants: [], rooms: [], presenceTtlMs: 15_000,
+    }))
+    const assignmentsList = vi.fn(async (): Promise<RemoteResult<readonly DevelopmentTaskAssignment[]>> => ok([]))
     let created: DevelopmentTaskSnapshot | undefined
     const lineage = vi.fn(async (request: DevelopmentTaskLineageRequest) => ok({
       tasks: [created?.id === request.taskId ? created : task], boundaryTaskIds: [] }))
@@ -122,12 +134,12 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     })
     const stopNative = vi.fn(async () => { contribution = { ...emptyStatus, revision: 2 }; return ok(contribution) })
     const remote = new TestRemote(runtime.ctx, {
-      developmentRooms: { list: async () => ok({ nodeId: task.ownerNodeId, participants: [], rooms: [], presenceTtlMs: 15_000 }),
+      developmentRooms: { list: roomsList,
         announce, withdraw },
       developmentTasks: { list: tasksList, lineage, publishContext, create,
         observedCandidates: async () => ok([]), observedIntervals: async () => ok([]) },
-      developmentTaskAssignments: { list: async () => ok([]) },
-      mcpClientSetup: { list: async () => ok({ clients: [] }) },
+      developmentTaskAssignments: { list: assignmentsList },
+      mcpClientSetup: { list: async () => ok({ clients: mcp ? [mcpClient] : [] }) },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
         prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource,
         contributionDetail: async () => ok({ ...sourceDetail, session: currentSessions[0] ?? session }) },
@@ -170,7 +182,8 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
     await screen.findByText(zh['observed.empty'])
     await runtime.flush()
-    return { runtime, feature, remote, connection, tasksList, lineage, sessions, setup, projectSetup, removeSetup, join, leave,
+    return { runtime, feature, remote, connection, tasksList, roomsList, assignmentsList, lineage, sessions,
+      setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
@@ -183,6 +196,75 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it.each(['bound', 'cleared'] as const)('keeps a newer %s Session notification when an older assignment read settles', async (change) => {
+    const subject = await mountPanel([], false, true)
+    const stale = Promise.withResolvers<RemoteResult<readonly DevelopmentTaskAssignment[]>>()
+    const assignment: DevelopmentTaskAssignment = { bindingId: 'notification-binding' as DevelopmentTaskAssignment['bindingId'],
+      participantId: mcpParticipant, taskId: task.id, assignedAt: 2, sessionLabel: 'Notification Session', acknowledgedRevision: 1 }
+    const baseline: DevelopmentTaskAssignment = { ...assignment, bindingId: 'baseline-binding' as DevelopmentTaskAssignment['bindingId'],
+      sessionLabel: 'Baseline Session' }
+    const entry: DevelopmentTaskAssignmentLogEntry = { nodeId: task.ownerNodeId, seq: change === 'bound' ? 1 : 2, at: 2,
+      bindingId: assignment.bindingId, participantId: mcpParticipant, change: change === 'bound'
+        ? { kind: 'task-bound', taskId: task.id } : { kind: 'task-cleared', previousTaskId: task.id } }
+    const label = (name: string) => `${name} · ${makeTranslate(zh)('detail.revision', { revision: 1 })}`
+    try {
+      await act(async () => {
+        subject.remote.emit('development-room/presence-changed', [mcpPresence, { kind: 'local', nodeId: task.ownerNodeId }])
+        if (change === 'cleared') subject.remote.emit('development-task/assignment-changed', [assignment,
+          { ...entry, seq: 1, change: { kind: 'task-bound', taskId: task.id } }, { kind: 'local', nodeId: task.ownerNodeId }])
+      })
+      const older = change === 'bound' ? [baseline] : [assignment, baseline]
+      const current = change === 'bound' ? [assignment, baseline] : [baseline]
+      subject.roomsList.mockResolvedValue(ok({ nodeId: task.ownerNodeId, participants: [mcpPresence], rooms: [], presenceTtlMs: 15_000 }))
+      subject.assignmentsList.mockReturnValueOnce(stale.promise).mockResolvedValue(ok(current))
+      const reads = subject.assignmentsList.mock.calls.length
+      refreshPanel()
+      expect(subject.assignmentsList).toHaveBeenCalledTimes(reads + 1)
+      await act(async () => { subject.remote.emit('development-task/assignment-changed', [change === 'bound' ? assignment : null, entry,
+        { kind: 'local', nodeId: task.ownerNodeId }]) })
+      if (change === 'bound') expect(screen.getByText(label('Notification Session'))).toBeTruthy()
+      else expect(screen.queryByText(label('Notification Session'))).toBeNull()
+      await act(async () => { stale.resolve(ok(older)); await stale.promise })
+      await subject.runtime.flush()
+      if (change === 'bound') expect(screen.getByText(label('Notification Session'))).toBeTruthy()
+      else expect(screen.queryByText(label('Notification Session'))).toBeNull()
+      await screen.findByText(label('Baseline Session'))
+      expect(subject.assignmentsList).toHaveBeenCalledTimes(reads + 2)
+    } finally {
+      stale.resolve(ok([])); await stale.promise
+      await subject.runtime.dispose()
+    }
+  })
+
+  it.each(['online', 'withdrawn'] as const)('keeps a newer %s MCP presence notification when an older participant read settles', async (change) => {
+    const subject = await mountPanel([], false, true)
+    const stale = Promise.withResolvers<RemoteResult<DevelopmentRoomDirectorySnapshot>>()
+    const owner: DevelopmentParticipantSnapshot = { id: task.createdBy, nodeId: task.ownerNodeId, kind: 'human',
+      displayName: 'Baseline owner', presence: 'online', lastSeenAt: 1 }
+    const latest = change === 'online' ? mcpPresence : { ...mcpPresence, presence: 'offline' as const, lastSeenAt: 0 }
+    const older = change === 'online' ? [owner] : [mcpPresence, owner]
+    const current = { nodeId: task.ownerNodeId, participants: [latest, owner], rooms: [], presenceTtlMs: 15_000 }
+    const status = makeTranslate(zh)(change === 'online' ? 'agent.status.configured' : 'agent.status.offline', { client: 'Codex' })
+    try {
+      if (change === 'withdrawn') await act(async () => { subject.remote.emit('development-room/presence-changed', [mcpPresence,
+        { kind: 'local', nodeId: task.ownerNodeId }]) })
+      subject.roomsList.mockReturnValueOnce(stale.promise).mockResolvedValue(ok(current))
+      const reads = subject.roomsList.mock.calls.length
+      refreshPanel()
+      expect(subject.roomsList).toHaveBeenCalledTimes(reads + 1)
+      await act(async () => { subject.remote.emit('development-room/presence-changed', [latest, { kind: 'local', nodeId: task.ownerNodeId }]) })
+      expect(screen.getByText(status)).toBeTruthy()
+      await act(async () => { stale.resolve(ok({ ...current, participants: older })); await stale.promise })
+      await subject.runtime.flush()
+      expect(screen.getByText(status)).toBeTruthy()
+      await screen.findByText('Baseline owner')
+      expect(subject.roomsList).toHaveBeenCalledTimes(reads + 2)
+    } finally {
+      stale.resolve(ok(current)); await stale.promise
+      await subject.runtime.dispose()
+    }
+  })
+
   it.each(['publication', 'creation'] as const)('does not repopulate a replacement Host catalog from an old %s reply', async (operation) => {
     const subject = await mountPanel()
     const reply = Promise.withResolvers<DevelopmentTaskSnapshot>()

@@ -66,8 +66,10 @@ export function createParticipantDirectory(
     finally { leaseRequests.delete(request) }
   }
 
-  const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): void => {
-    store.set({ nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
+  const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): ParticipantDirectoryState => {
+    const accepted = { nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true }
+    store.set(accepted)
+    return accepted
   }
   const scheduleHeartbeat = (ttl: number): void => {
     clearTimeout(heartbeat)
@@ -76,11 +78,13 @@ export function createParticipantDirectory(
     if (!current(issued) || retained === undefined) return
     heartbeat = setTimeout(() => {
       const renew = async (): Promise<void> => {
+        const observed = store.getSnapshot()
         try {
           const next = await lease(port.heartbeat({ participantId: retained.id }))
           if (!current(issued) || profile !== retained) return
           scheduleHeartbeat(next.presenceTtlMs)
-          publishDirectory(next)
+          if (store.getSnapshot() === observed) publishDirectory(next)
+          else refresh()
         } catch (error) {
           if (!current(issued) || profile !== retained) return
           scheduleHeartbeat(ttl)
@@ -90,9 +94,10 @@ export function createParticipantDirectory(
       void renew()
     }, ttl / 3)
   }
-  const announce = async (nextProfile: EmergenceProfile): Promise<void> => {
+  const announce = async (nextProfile: EmergenceProfile): Promise<ParticipantDirectoryState | undefined> => {
     if (closing !== undefined) return
     const issued = generation
+    const observed = store.getSnapshot()
     clearTimeout(heartbeat)
     profile = nextProfile
     needsAnnounce = true
@@ -100,27 +105,37 @@ export function createParticipantDirectory(
     if (!current(issued) || profile !== nextProfile) return
     needsAnnounce = false
     scheduleHeartbeat(next.presenceTtlMs)
-    publishDirectory(next)
+    if (store.getSnapshot() === observed) return publishDirectory(next)
+    refresh()
   }
   const refresh = (): void => {
     if (closing !== undefined || inFlight !== undefined) return
     const issued = generation
+    let observed = store.getSnapshot()
     const read = async (): Promise<void> => {
       try {
         const next = await port.list()
-        if (!current(issued)) return
-        if (profile !== undefined && needsAnnounce) await announce(profile)
-        else { scheduleHeartbeat(next.presenceTtlMs); publishDirectory(next) }
+        if (!current(issued) || store.getSnapshot() !== observed) return
+        if (profile !== undefined && needsAnnounce) {
+          const accepted = await announce(profile)
+          if (accepted !== undefined) observed = accepted
+        }
+        else { scheduleHeartbeat(next.presenceTtlMs); observed = publishDirectory(next) }
       } catch (error) {
-        if (!current(issued)) return
+        if (!current(issued) || store.getSnapshot() !== observed) return
         onError(error)
         // Presence leases and Task assignment reads retain their own refresh lifecycles.
         /* jscpd:ignore-start */
-        store.set({ ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) })
+        observed = { ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) }
+        store.set(observed)
         /* jscpd:ignore-end */
       }
     }
-    inFlight = read().finally(() => { if (current(issued)) inFlight = undefined })
+    inFlight = read().finally(() => {
+      if (!current(issued)) return
+      inFlight = undefined
+      if (store.getSnapshot() !== observed) refresh()
+    })
   }
 
   refresh()
@@ -147,7 +162,7 @@ export function createParticipantDirectory(
         : [...store.getSnapshot().participants, participant]
       store.set({ ...store.getSnapshot(), participants, read: true })
     },
-    setProfile: announce,
+    async setProfile(nextProfile) { await announce(nextProfile) },
     dispose() {
       return closing ??= (async () => {
         generation += 1

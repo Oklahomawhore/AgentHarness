@@ -117,23 +117,31 @@ export function createDevelopmentTaskDirectory(
   const refresh = (): void => {
     if (inFlight !== undefined) return
     const issued = generation
+    const observedTasks = new Set(store.getSnapshot().tasks)
+    let observedAssignments = store.getSnapshot().assignments
     const read = async (): Promise<void> => {
       try {
         const [tasks, assignments] = await Promise.all([port.list({}), port.assignmentList()])
         if (issued !== generation) return
         const current = store.getSnapshot()
-        const catalog = tasks.map(latestTask)
+        if (current.assignments !== observedAssignments) return
+        const catalog = mergeTasks(tasks.map(latestTask), current.tasks.filter(task => !observedTasks.has(task)))
         const graphTasks = selectedTaskId === undefined ? catalog : current.graphTasks
+        observedAssignments = assignments
         store.set({ tasks: mergeTasks(catalog, graphTasks), graphTasks,
           boundaryTaskIds: selectedTaskId === undefined ? [] : current.boundaryTaskIds, assignments, read: true })
         if (issued === generation && selectedTaskId !== undefined) await focus(selectedTaskId)
       } catch (error) {
-        if (issued !== generation) return
+        if (issued !== generation || store.getSnapshot().assignments !== observedAssignments) return
         onError(error)
         store.set({ ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) })
       }
     }
-    inFlight = read().finally(() => { if (issued === generation) inFlight = undefined })
+    inFlight = read().finally(() => {
+      if (issued !== generation) return
+      inFlight = undefined
+      if (store.getSnapshot().assignments !== observedAssignments) refresh()
+    })
   }
 
   refresh()

@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ClaudeScopeContributionDetail, ScopeContributionInvitation, ScopeContributionProposal,
-  ScopeContributionTransfer, ScopeContributionEntry, ScopeGroupEntry, ScopeGroupApplicationId, DevelopmentTaskId, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
+  ScopeContributionTransfer, ScopeContributionEntry, ScopeContributionEntryResult, ScopeGroupEntry,
+  ScopeGroupApplicationId, DevelopmentTaskId, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskPeerContribution } from '@deepseek-ai/dsh-development-task/types'
 import { SourceContributionPanel, type SourceContributionActions } from '../src/client/SourceContributionPanel.tsx'
 import { OwnerContributionPanel, type OwnerContributionActions, type OwnerContributionValue } from '../src/client/OwnerContributionPanel.tsx'
@@ -418,6 +419,46 @@ type ScopeContributionApprovalResult = Awaited<ReturnType<OwnerContributionActio
 
 
 describe('owner online contribution applications', () => {
+  it.each(['single', 'group'] as const)('recovers the original %s entry through the selected route without approving a source', async (kind) => {
+    const network = '/ip4/192.0.2.10/tcp/43120/p2p/owner-peer'
+    const entry: ScopeContributionEntry = kind === 'single' ? applicationEntry : {
+      ...applicationEntry, version: 2, kind: 'scope-group-entry', sourceKind: 'tool-observations', maxMembers: 2,
+    }
+    const text = JSON.stringify(entry)
+    const recoveredEntry = { ...entry, ownerAddress: network }
+    const recovered: ScopeContributionEntryResult = { entry: recoveredEntry, text: JSON.stringify(recoveredEntry) }
+    const reply = Promise.withResolvers<ScopeContributionEntryResult | undefined>()
+    const actions = ownerActions({ recoverContributionEntry: vi.fn(async () => await reply.promise) })
+    const value: OwnerContributionValue = { ...owned,
+      identity: { ...owned.identity, addresses: [invitation.ownerAddress, network] },
+      ...(entry.kind === 'scope-group-entry' ? { groups: { nextEntryId: null, entries: [{
+        group: { entry, text, state: 'open', applicationCount: 0 },
+        applications: { entries: [], nextApplicationId: null },
+      }] } } : { applications: { nextEntryId: null, entries: [{
+        entry, text, proposal: null, limits: null, result: { status: 'open' },
+      }] } }),
+    }
+    render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value }} {...actions} t={t} />)
+    try {
+      fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+      const field = () => screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.entryText'])
+      expect(field().value).toBe(text)
+      paste(zh['access.address'], network)
+      fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.recover'] }))
+      expect(actions.recoverContributionEntry).toHaveBeenCalledExactlyOnceWith(TASK, { entryId: entry.entryId, ownerAddress: network })
+      expect(field().value).toBe(text)
+      await act(async () => { reply.resolve(recovered); await reply.promise })
+      expect(field().value).toBe(recovered.text)
+      vi.mocked(actions.recoverContributionEntry).mockResolvedValueOnce(undefined)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.recover'] })) })
+      expect(field().value).toBe(recovered.text)
+      expect(actions.approveContributionApplication).not.toHaveBeenCalled()
+      expect(actions.approveContribution).not.toHaveBeenCalled()
+      expect(actions.createContributionEntry).not.toHaveBeenCalled()
+      expect(actions.createGroupEntry).not.toHaveBeenCalled()
+    } finally { await act(async () => { reply.resolve(undefined); await reply.promise }) }
+  })
+
   it('creates entries for the displayed source mode and preserves the OpenAPI option', () => {
     const actions = ownerActions()
     render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)

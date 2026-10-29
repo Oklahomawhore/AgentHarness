@@ -214,6 +214,26 @@ describe('Emergence Center directories', () => {
     expect(directory.getSnapshot().graphTasks).toEqual([task()])
   })
 
+  it('retains a newly notified Task across an older unfocused catalog without retaining omitted older rows', async () => {
+    const remote = taskPort()
+    const directory = createDevelopmentTaskDirectory(remote, vi.fn())
+    await vi.waitFor(() => { expect(directory.getSnapshot().read).toBe(true) })
+    const catalog = Promise.withResolvers<readonly DevelopmentTaskSnapshot[]>()
+    const baseline = task('baseline-task' as DevelopmentTaskId)
+    const notified = task('newly-notified-task' as DevelopmentTaskId)
+    remote.list.mockReturnValueOnce(catalog.promise)
+    directory.refresh()
+    expect(remote.list).toHaveBeenCalledTimes(2)
+    directory.applyTask(notified)
+    expect(directory.getSnapshot().tasks).toContainEqual(notified)
+    catalog.resolve([baseline])
+    await vi.waitFor(() => { expect(directory.getSnapshot().tasks).toContainEqual(baseline) })
+    expect(directory.getSnapshot().tasks).toContainEqual(notified)
+    expect(directory.getSnapshot().tasks.some(item => item.id === ROOT)).toBe(false)
+    expect(directory.getSnapshot().graphTasks).toEqual(expect.arrayContaining([baseline, notified]))
+    expect(remote.lineage).not.toHaveBeenCalled()
+  })
+
   it('reannounces on reset and renews presence after a failed heartbeat', async () => {
     vi.useFakeTimers()
     const remote = participantPort()
@@ -233,6 +253,56 @@ describe('Emergence Center directories', () => {
     expect(remote.announce).toHaveBeenCalledTimes(2)
     await directory.dispose()
     expect(remote.withdraw).toHaveBeenCalledWith({ participantId: HUMAN })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each([
+    ['announcement', 'online'], ['announcement', 'withdrawn'], ['heartbeat', 'online'], ['heartbeat', 'withdrawn'],
+  ] as const)('does not let a delayed %s reply replace a %s participant notification', async (kind, change) => {
+    vi.useFakeTimers()
+    const remote = participantPort()
+    const sent = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const fresh = Promise.withResolvers<DevelopmentRoomDirectorySnapshot>()
+    const human = { id: HUMAN, nodeId: NODE, kind: 'human' as const, displayName: 'Jet', presence: 'online' as const, lastSeenAt: 1 }
+    const agent = { id: AGENT, nodeId: NODE, kind: 'agent' as const, displayName: 'Agent', presence: 'online' as const, lastSeenAt: 2 }
+    const latest = change === 'online' ? agent : { ...agent, presence: 'offline' as const, lastSeenAt: 0 }
+    const baseline = { ...human, id: 'other-human' as DevelopmentParticipantId, displayName: 'Baseline owner' }
+    const newer = { ...EMPTY, participants: [human, latest, baseline] }
+    const older = { ...EMPTY, participants: change === 'online' ? [human] : [human, agent] }
+    const directory = createParticipantDirectory(remote, { id: HUMAN, displayName: kind === 'heartbeat' ? 'Jet' : '' }, vi.fn())
+    let announcement: Promise<void> | undefined
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      if (change === 'withdrawn') directory.applyPresence(agent)
+      remote.list.mockReturnValueOnce(fresh.promise)
+      const reads = remote.list.mock.calls.length
+      if (kind === 'announcement') {
+        remote.announce.mockReturnValueOnce(sent.promise)
+        announcement = directory.setProfile({ id: HUMAN, displayName: 'Jet' })
+      } else {
+        remote.heartbeat.mockReturnValueOnce(sent.promise)
+        await vi.advanceTimersByTimeAsync(3_000)
+      }
+      expect(remote[kind === 'announcement' ? 'announce' : 'heartbeat']).toHaveBeenCalledOnce()
+      directory.applyPresence(latest)
+      sent.resolve(older)
+      await announcement
+      await vi.advanceTimersByTimeAsync(0)
+      expect(directory.getSnapshot().participants.find(item => item.id === AGENT)).toEqual(latest)
+      expect(vi.getTimerCount()).toBe(1)
+      expect(remote.list).toHaveBeenCalledTimes(reads + 1)
+      directory.refresh()
+      expect(remote.list).toHaveBeenCalledTimes(reads + 1)
+      fresh.resolve(newer)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(directory.getSnapshot().participants).toEqual(newer.participants)
+      expect(vi.getTimerCount()).toBe(1)
+    } finally {
+      sent.resolve(older); fresh.resolve(newer)
+      await announcement
+      await directory.dispose()
+      await vi.advanceTimersByTimeAsync(0)
+    }
     expect(vi.getTimerCount()).toBe(0)
   })
 
