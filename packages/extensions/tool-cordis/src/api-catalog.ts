@@ -2333,7 +2333,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'scopeAgentContext',
     summary: 'Explicit management is local authenticated RPC; remote content never starts work by itself.',
-    description: 'Explicit management is local authenticated RPC; remote content never starts work by itself.',
+    description: 'Explicit management is local authenticated RPC; remote content never starts work by itself. Automatic turns cannot replace or renew their own receiving permission, including while owned cancellation settles.',
     methods: [
       {
         signature: 'adoptJoinRead(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadResult>',

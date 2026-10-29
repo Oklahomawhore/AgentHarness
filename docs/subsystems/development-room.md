@@ -4010,7 +4010,7 @@ Source: [`packages/collaboration/scope-access/src/index.ts`](../../packages/coll
 
 ### `ctx.scopeAgentContext` — `ScopeAgentContextService`
 
-Explicit management is local authenticated RPC; remote content never starts work by itself.
+Explicit management is local authenticated RPC; remote content never starts work by itself. Automatic turns cannot replace or renew their own receiving permission, including while owned cancellation settles.
 
 ```ts cordis-catalog
 /**

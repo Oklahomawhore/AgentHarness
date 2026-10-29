@@ -105,7 +105,10 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-/** Explicit management is local authenticated RPC; remote content never starts work by itself. */
+/**
+ * Explicit management is local authenticated RPC; remote content never starts work by itself.
+ * Automatic turns cannot replace or renew their own receiving permission, including while owned cancellation settles.
+ */
 export default class ScopeAgentContextService extends TypertRemoteService {
   static inject = ['agents', 'sessionProjections', 'scopeAccess']
   static Config = Config
@@ -321,9 +324,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private async adoptJoinReadRequest(request: ScopeAgentJoinReadRequest): Promise<ScopeAgentJoinReadResult> {
     const runtime = this.requireRuntime(request.agentId)
-    if (runtime.activeTurn !== undefined && this.ctx.agents.currentInitiator() === runtime.agent) {
-      throw new RemoteError('scope-agent/superseded', 'An automatic turn cannot replace its own receiving permission.', { agentId: request.agentId })
-    }
+    this.requireNoSelfWait(runtime)
     const command = runtime.commandEpoch
     const invitation = invitationSchema.parse(request.invitation)
     const automatic = request.automatic === undefined ? undefined : policySchema.parse(request.automatic)
@@ -722,9 +723,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private async bindRequest(request: ScopeAgentBindRequest): Promise<ScopeAgentBindingStatus> {
     const runtime = this.requireRuntime(request.agentId)
-    if (runtime.activeTurn !== undefined && this.ctx.agents.currentInitiator() === runtime.agent) {
-      throw new RemoteError('scope-agent/superseded', 'An automatic turn cannot replace its own receiving permission.', { agentId: request.agentId })
-    }
+    this.requireNoSelfWait(runtime)
     this.requireExpected(runtime, request.expectedBindingId)
     const target = this.requireReceiveTarget(runtime, request.localTask)
     const invitation = invitationSchema.parse(request.invitation)
@@ -782,6 +781,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private async bindLocalRequest(request: ScopeAgentBindLocalRequest): Promise<ScopeAgentBindingStatus> {
     const runtime = this.requireRuntime(request.agentId)
+    this.requireNoSelfWait(runtime)
     this.requireExpected(runtime, request.expectedBindingId)
     const target = this.requireLocalTarget(runtime, request)
     if (this.state(runtime).binding?.kind === 'local-task-scope') throw new RemoteError('scope-agent/task-conflict',
@@ -876,6 +876,7 @@ export default class ScopeAgentContextService extends TypertRemoteService {
 
   private async resumeRequest(request: ScopeAgentResumeRequest): Promise<ScopeAgentBindingStatus> {
     const runtime = this.requireRuntime(request.agentId)
+    this.requireNoSelfWait(runtime)
     this.requireExpected(runtime, request.expectedBindingId)
     this.requireEligible(runtime)
     const automatic = policySchema.parse(request.automatic)
@@ -1025,6 +1026,13 @@ export default class ScopeAgentContextService extends TypertRemoteService {
     if (actualBindingId !== expectedBindingId) throw new RemoteError('scope-agent/stale-binding', 'The native scope binding changed.', {
       agentId: runtime.agent.id, expectedBindingId, actualBindingId,
     })
+  }
+
+  private requireNoSelfWait(runtime: Runtime): void {
+    if ((runtime.activeTurn !== undefined || runtime.cancelledActivity !== undefined)
+      && this.ctx.agents.currentInitiator() === runtime.agent) {
+      throw new RemoteError('scope-agent/superseded', 'An automatic turn cannot replace its own receiving permission.', { agentId: runtime.agent.id })
+    }
   }
 
   private requireBudget(runtime: Runtime, automatic: ScopeAgentAutomaticPolicy | null): void {
@@ -1277,7 +1285,10 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   private cancelOwnedTurn(runtime: Runtime): void {
     if (runtime.disposing || runtime.activeTurn === undefined) return
     // New automatic permission commits only after the old activity retires; disposal also drains it.
-    runtime.cancelledActivity = this.track(runtime.agent.whenIdle())
+    const cancelledActivity = runtime.agent.whenIdle().finally(() => {
+      if (runtime.cancelledActivity === cancelledActivity) runtime.cancelledActivity = undefined
+    })
+    runtime.cancelledActivity = this.track(cancelledActivity)
     const unsubmitted = runtime.unsubmittedInputs
     runtime.unsubmittedInputs = []
     runtime.activeTurn = undefined

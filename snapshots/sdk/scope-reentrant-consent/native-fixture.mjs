@@ -134,7 +134,7 @@ export function apply(ctx) {
       assert.ok(!text.includes(replacementCanary))
     }
     if (currentRequest === 2) {
-      own((async () => {
+      own(ctx.agents.withoutInitiator(async () => {
         await activation
         const ready = join(process.cwd(), '.dsh/reentrant-consent-stream-ready')
         const deadline = performance.now() + 10000
@@ -157,7 +157,7 @@ export function apply(ctx) {
           if (performance.now() >= replacementDeadline) throw new Error('replacement consent did not dispatch its automatic request')
           await setTimeout(10, undefined, { signal: lifetime.signal })
         }
-      })())
+      }))
     } else if (currentRequest === 3) {
       assert.ok(text.includes(replacementCanary))
       assert.ok(!text.includes(originalCanary))

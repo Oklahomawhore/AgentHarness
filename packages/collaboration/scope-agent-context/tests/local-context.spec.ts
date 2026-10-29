@@ -271,6 +271,46 @@ async function installForeignTaskInjector(ctx: Context): Promise<Context> {
   return isolated
 }
 
+it.each(['bindLocal', 'resume'] as const)('refuses an automatic tool turn replacing its own local permission through %s', async (method) => {
+  const f = await fixture()
+  const { ctx, agent, target, adapter } = f
+  const release = barrier()
+  const observed = Promise.withResolvers<'cancelled' | 'fulfilled' | 'rejected'>()
+  let operation: Promise<void> | undefined
+  let rejected: unknown
+  const stop = ctx.on('agent/cancel-requested', ({ agent: current }) => {
+    if (current === agent) observed.resolve('cancelled')
+  })
+  ctx.tools.register(defineContentToolFixture({ name: 'local_fixture', description: 'Attempt to replace local scheduling permission', parameters: {},
+    async execute() {
+      const current = await status(ctx, agent.id)
+      const request = { agentId: agent.id, expectedBindingId: current.state.binding!.id, automatic: policy }
+      const changing = method === 'bindLocal' ? ctx.scopeAgentContext.bindLocal({ ...request, ...target })
+        : ctx.scopeAgentContext.resume(request)
+      operation = changing.then(() => { observed.resolve('fulfilled') }, (error: unknown) => {
+        rejected = error
+        observed.resolve('rejected')
+      })
+      await Promise.race([operation, release.promise])
+      return [{ type: 'text', text: 'Continue under the original local permission.' }]
+    } }))
+  adapter.tool = true
+  const bound = await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: policy })
+  try {
+    expect(await observed.promise).toBe('rejected')
+    await idleRequests(f, 2)
+    expect(rejected).toMatchObject({ code: 'scope-agent/superseded' })
+    expect((await status(ctx, agent.id)).state).toMatchObject({ binding: { id: bound.binding!.id }, usedBudget: 1 })
+    expect(ctx.developmentTasks.assignmentList()).toHaveLength(1)
+  } finally {
+    await ctx.scopeAgentContext.pause({ agentId: agent.id, expectedBindingId: (await status(ctx, agent.id)).state.binding!.id })
+    release.resolve(undefined)
+    await agent.whenIdle()
+    await operation
+    stop()
+  }
+})
+
 it('rejects local automatic permission when the live Task injector belongs to another Agent registry', async () => {
   const { ctx, agent, target, adapter } = await fixture({ injector: false })
   expect(ctx.get('developmentTaskContextAdmission')).toBeUndefined()

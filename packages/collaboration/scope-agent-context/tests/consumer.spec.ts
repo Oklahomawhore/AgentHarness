@@ -752,26 +752,78 @@ describe('native scope context through real Loader and AgentLoop', () => {
     } finally { clock.mockRestore() }
   })
 
-  it('refuses an automatic tool turn replacing its own receive permission', async () => {
-    const { ctx, agent, adapter, access } = await fixture()
-    let rejected: unknown
-    ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Attempt to replace receiving permission', parameters: {},
-      async execute() {
-        try {
-          await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id),
-            invitation, automatic })
-        } catch (error: unknown) { rejected = error }
-        return [{ type: 'text', text: 'Continue under the original permission.' }]
-      } }))
-    adapter.toolCalls = 1
-    const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic })
-    await requests(adapter, 2)
-    await agent.whenIdle()
-    expect(rejected).toMatchObject({ code: 'scope-agent/superseded' })
-    expect((await state(ctx, agent.id)).binding?.id).toBe(bound.binding?.id)
-    expect(access.subscriptions.size).toBe(1)
-    expect((await state(ctx, agent.id)).usedBudget).toBe(1)
-  })
+  it.each((['bind', 'resume'] as const).flatMap(method => [false, true].map(afterPause => ({ method, afterPause }))))(
+    'refuses an automatic tool turn replacing its own receive permission through $method afterPause=$afterPause', async ({ method, afterPause }) => {
+      const { ctx, agent, adapter, access } = await fixture()
+      let rejected: unknown
+      let operation: Promise<void> | undefined
+      let replacing = false
+      let ordinaryRenewal = false
+      let renewed: ScopeAgentBindingStatus | undefined
+      const release = barrier()
+      const observed = Promise.withResolvers<'cancelled' | 'fulfilled' | 'rejected' | 'accessed'>()
+      const stop = ctx.on('agent/cancel-requested', ({ agent: current }) => {
+        if (current === agent && replacing) observed.resolve('cancelled')
+      })
+      const originalJoin = access.join.bind(access)
+      const joining = vi.spyOn(access, 'join').mockImplementation(async (request) => {
+        const result = await originalJoin(request)
+        if (afterPause && replacing) observed.resolve('accessed')
+        return result
+      })
+      const originalList = access.list.bind(access)
+      const listing = vi.spyOn(access, 'list').mockImplementation(async () => {
+        const result = await originalList()
+        if (afterPause && replacing) observed.resolve('accessed')
+        return result
+      })
+      ctx.tools.register(defineContentToolFixture({ name: 'read_fixture', description: 'Attempt to replace receiving permission', parameters: {},
+        async execute() {
+          const request = { agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id),
+            automatic: ordinaryRenewal ? { ...automatic, minIntervalMs: 60000 } : automatic }
+          if (afterPause && !ordinaryRenewal) await ctx.scopeAgentContext.pause(request)
+          replacing = true
+          const changing = method === 'bind' ? ctx.scopeAgentContext.bind({ ...request, invitation })
+            : ctx.scopeAgentContext.resume(request)
+          operation = changing.then((value) => {
+            if (ordinaryRenewal) renewed = value
+            observed.resolve('fulfilled')
+          }, (error: unknown) => {
+            rejected = error
+            observed.resolve('rejected')
+          })
+          await Promise.race([operation, release.promise])
+          return [{ type: 'text', text: 'Continue under the original permission.' }]
+        } }))
+      adapter.toolCalls = 1
+      const bound = await ctx.scopeAgentContext.bind({ agentId: agent.id, expectedBindingId: null, invitation, automatic })
+      try {
+        expect(await observed.promise).toBe('rejected')
+        if (!afterPause) await requests(adapter, 2)
+        await agent.whenIdle()
+        expect(rejected).toMatchObject({ code: 'scope-agent/superseded' })
+        expect((await state(ctx, agent.id)).binding?.id).toBe(bound.binding?.id)
+        expect(access.subscriptions.size).toBe(1)
+        expect((await state(ctx, agent.id)).usedBudget).toBe(1)
+        if (afterPause) {
+          ordinaryRenewal = true
+          adapter.toolCalls = 1
+          const previousRequests = adapter.requests.length
+          agent.followup(user('Renew receiving during independently requested ordinary work.'))
+          await requests(adapter, previousRequests + 2)
+          await agent.whenIdle()
+          expect(renewed).toMatchObject({ mode: 'enabled', usedBudget: 1, automatic: { minIntervalMs: 60000 } })
+        }
+      } finally {
+        await ctx.scopeAgentContext.pause({ agentId: agent.id, expectedBindingId: requiredBindingId(ctx, agent.id) })
+        release.resolve(undefined)
+        await agent.whenIdle()
+        await operation
+        joining.mockRestore()
+        listing.mockRestore()
+        stop()
+      }
+    })
 
   it.each([0, 1])('rejects a combined local ceiling that consumes remote framing and text, excess=%s', (excess) => {
     const ctx = new Context()
