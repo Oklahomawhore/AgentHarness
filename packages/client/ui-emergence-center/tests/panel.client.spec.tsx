@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
@@ -320,6 +320,92 @@ describe('EmergenceCenterPanel', () => {
         text: 'A reusable decision',
       })
     })
+  })
+
+  it('keeps unpublished context attached to the Task where it was entered', () => {
+    openPanel(panelProps())
+    const draft = screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder'])
+    fireEvent.change(draft, { target: { value: 'Private draft for Root' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${zh['detail.origin.fork']}.*r1.*Fork one`) }))
+    expect(screen.getByRole('heading', { name: 'Fork one', level: 1 })).toBeTruthy()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('')
+  })
+
+  it.each(['other-task', 'same-task'] as const)('does not clear a replacement %s draft when an earlier publication finishes', async (selection) => {
+    const props = panelProps()
+    const pending = Promise.withResolvers<DevelopmentTaskSnapshot>()
+    vi.mocked(props.publishContext).mockReturnValue(pending.promise)
+    openPanel(props)
+    try {
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Root decision' } })
+      fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+      expect(props.publishContext).toHaveBeenCalledOnce()
+      if (selection === 'other-task') fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${zh['detail.origin.fork']}.*r1.*Fork one`) }))
+      const replacement = selection === 'other-task' ? 'New Fork decision' : 'Root decision'
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Edited replacement decision' } })
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: replacement } })
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+      expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe(replacement)
+    } finally {
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+    }
+  })
+
+  it.each([
+    { error: Object.assign(new Error('private storage diagnostics'), { code: 'PERSISTENCE_FAILED' }), key: 'error.persistenceFailed' },
+    { error: new Error('private transport diagnostics'), key: 'error.generic' },
+    { error: null, key: 'error.generic' },
+  ] as const)('retains a failed publication draft and permits an explicit retry: $key', async ({ error, key }) => {
+    const props = panelProps()
+    vi.mocked(props.publishContext).mockRejectedValueOnce(error)
+    openPanel(props)
+    fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Keep this decision' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe(makeTranslate(zh)('error.action', { message: zh[key] }))
+    expect(alert.textContent).not.toContain('private')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('Keep this decision')
+    fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+    await waitFor(() => { expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('') })
+    expect(props.publishContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('admits one create submission before React renders its pending state', async () => {
+    const props = panelProps([])
+    const pending = Promise.withResolvers<DevelopmentTaskSnapshot>()
+    vi.mocked(props.createTask).mockReturnValue(pending.promise)
+    openPanel(props)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+      fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+      fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'One new Task' } })
+      fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Shared scope' } })
+      const form = screen.getByRole('button', { name: zh['create.submit'] }).closest('form')!
+      await act(async () => { fireEvent.submit(form); fireEvent.submit(form) })
+      expect(props.createTask).toHaveBeenCalledOnce()
+    } finally {
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+    }
+  })
+
+  it('keeps a Merge draft visible and unsubmitted when a selected parent leaves the catalog', async () => {
+    const props = panelProps()
+    const view = render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.merge'] }))
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
+    fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Combined work' } })
+    fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Selected parents only' } })
+    const missing = panelProps([task(ROOT, 'Root', { kind: 'root' })])
+    expect(() => { view.rerender(<EmergenceCenterPanel {...props} useTasks={missing.useTasks} />) }).not.toThrow()
+    const submit = screen.getByRole('button', { name: zh['create.submit'] })
+    expect(submit).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText<HTMLInputElement>(zh['create.objective']).value).toBe('Combined work')
+    await act(async () => { fireEvent.submit(submit.closest('form')!); fireEvent.submit(submit.closest('form')!) })
+    expect(props.createTask).not.toHaveBeenCalled()
+    view.rerender(<EmergenceCenterPanel {...props} />)
+    expect(screen.getByRole('button', { name: zh['create.submit'] })).toHaveProperty('disabled', false)
   })
 
   it('identifies independent peer samples and terminal notices without a participant publisher', () => {

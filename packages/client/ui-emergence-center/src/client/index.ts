@@ -198,9 +198,11 @@ export function apply(ctx: Context): void {
 
   ctx.effect(() => () => { observedScopes.dispose() }, 'ui-emergence-center: remote observation directory')
 
+  const connection = (ctx.get('connection') as ConnectionHandle).generation
   const updateTask = async (operation: () => Promise<DevelopmentTaskSnapshot>): Promise<DevelopmentTaskSnapshot> => {
+    const issued = connection.getSnapshot()
     const task = await operation()
-    tasks.applyTask(task)
+    if (connection.getSnapshot() === issued) tasks.applyTask(task)
     return task
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
@@ -215,7 +217,7 @@ export function apply(ctx: Context): void {
         evidence: binding.session.projections.faceOf('scopeAgentEvidence'),
         contextProgress: binding.session.projections.faceOf('sessionStats') as NativeScopeDependencies['contextProgress'],
         session: binding.session,
-        connection: (ctx.get('connection') as ConnectionHandle).generation,
+        connection,
         subscribeReset: listener => ctx.on('connection/reset', listener),
         subscribeAssignments: listener => ctx.remote.$on('development-task/assignment-changed', listener),
       })

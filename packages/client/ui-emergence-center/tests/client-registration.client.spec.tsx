@@ -11,6 +11,7 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ClaudeScopePrepareContributionRequest, ClaudeScopeActivateContributionRequest, ScopeContributionApproval,
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
 import { apply, inject } from '../src/client/index.ts'
+import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
 import { zh } from '../src/client/locales.ts'
 import { binding, localCapture, unbound } from './native-local-contribution-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
@@ -41,7 +42,8 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     locale.setLocale('zh')
     runtime.ctx.provide('locale', locale)
     runtime.slots.installLocale(locale)
-    runtime.ctx.provide('connection', { generation: observable({ id: 1, host: { home: '/home/test-owner' } }) })
+    const connection = observable({ id: 1, host: { home: '/home/test-owner' } })
+    runtime.ctx.provide('connection', { generation: connection })
     const tasksList = vi.fn(async () => ok([task]))
     let created: DevelopmentTaskSnapshot | undefined
     const lineage = vi.fn(async (request: DevelopmentTaskLineageRequest) => ok({
@@ -87,7 +89,9 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     const announce = vi.fn(async (request: DevelopmentParticipantAnnounceRequest) => ok({ nodeId: task.ownerNodeId,
       participants: [{ ...request, nodeId: task.ownerNodeId, presence: 'online', lastSeenAt: 1 }], rooms: [], presenceTtlMs: 15_000 }))
     const withdraw = vi.fn(async () => ok({ nodeId: task.ownerNodeId, participants: [], rooms: [], presenceTtlMs: 15_000 }))
-    const publishContext = vi.fn(async (request: DevelopmentTaskPublishContextRequest) => ok({ ...task, revision: 2,
+    const publishContext = vi.fn(async (
+      request: DevelopmentTaskPublishContextRequest,
+    ): Promise<RemoteResult<DevelopmentTaskSnapshot>> => ok({ ...task, revision: 2,
       context: [{ id: 'published-decision', text: request.text, publishedBy: request.participantId, publishedAt: 2 }] }))
     const create = vi.fn(async (request: DevelopmentTaskCreateRequest) => {
       created = { ...task, id: 'new-local-task' as DevelopmentTaskSnapshot['id'], objective: request.objective,
@@ -166,7 +170,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
     await screen.findByText(zh['observed.empty'])
     await runtime.flush()
-    return { runtime, feature, remote, tasksList, lineage, sessions, setup, projectSetup, removeSetup, join, leave,
+    return { runtime, feature, remote, connection, tasksList, lineage, sessions, setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
@@ -179,6 +183,55 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it.each(['publication', 'creation'] as const)('does not repopulate a replacement Host catalog from an old %s reply', async (operation) => {
+    const subject = await mountPanel()
+    const reply = Promise.withResolvers<DevelopmentTaskSnapshot>()
+    let pending: Promise<DevelopmentTaskSnapshot> | undefined
+    try {
+      const registration = subject.runtime.slots.entries('sidebar.footer.action')[0]
+      if (registration?.inject === undefined) throw new Error('Collaboration center entry missing')
+      // Slot registration erases the component-specific injected face.
+      const face = registration.inject() as unknown as EmergenceCenterPanelFace
+      if (operation === 'publication') {
+        subject.publishContext.mockImplementationOnce(async () => ok(await reply.promise))
+        pending = face.publishContext({ taskId: task.id, participantId: task.createdBy, text: 'Old Host decision' })
+      } else {
+        subject.create.mockImplementationOnce(async () => ok({ task: await reply.promise, runtime: task.runtime }))
+        pending = face.createTask({ origin: { kind: 'root' }, objective: task.objective, scope: task.scope, createdBy: task.createdBy })
+      }
+      subject.tasksList.mockResolvedValue(ok([]))
+      subject.lineage.mockResolvedValue(ok({ tasks: [], boundaryTaskIds: [] }))
+      await act(async () => {
+        subject.connection.set({ id: 2, host: { home: '/home/replacement-owner' } })
+        subject.runtime.ctx.emit('connection/reset')
+      })
+      await waitFor(() => { expect(face.hooks.tasks.getSnapshot()).toMatchObject({ read: true, tasks: [] }) })
+      await act(async () => {
+        const obsolete = { ...task, revision: 2, scope: 'Old Host-only scope' }
+        reply.resolve(obsolete)
+        expect(await pending).toEqual(obsolete)
+      })
+      expect(face.hooks.tasks.getSnapshot().tasks).toEqual([])
+      const current = { ...task, id: 'replacement-host-task' as DevelopmentTaskSnapshot['id'],
+        objective: 'Fresh Host work', scope: 'Fresh Host decision' }
+      await act(async () => {
+        if (operation === 'publication') {
+          subject.publishContext.mockResolvedValueOnce(ok(current))
+          expect(await face.publishContext({ taskId: current.id, participantId: current.createdBy, text: current.scope })).toEqual(current)
+        } else {
+          subject.create.mockResolvedValueOnce(ok({ task: current, runtime: current.runtime }))
+          expect(await face.createTask({ origin: { kind: 'root' }, objective: current.objective,
+            scope: current.scope, createdBy: current.createdBy })).toEqual(current)
+        }
+      })
+      expect(face.hooks.tasks.getSnapshot().tasks).toEqual([current])
+    } finally {
+      reply.resolve(task)
+      await pending
+      await subject.runtime.dispose()
+    }
+  })
+
   it('prepares one Claude capture, approves its exact proposal as owner, activates the returned grant and stops that capture', async () => {
     const subject = await mountPanel([session])
     try {

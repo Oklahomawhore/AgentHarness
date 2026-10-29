@@ -1,6 +1,6 @@
 /** Task lineage, shared context, and prominent Agent-session connection panel. */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { graphlib, layout as dagreLayout } from '@dagrejs/dagre'
 import {
@@ -179,11 +179,13 @@ export function EmergenceCenterPanel({
   const [profileName, setProfileName] = useState(initialProfile.displayName)
   const [confirmedProfileName, setConfirmedProfileName] = useState<string>()
   const [profileSaving, setProfileSaving] = useState(false)
-  const [contextText, setContextText] = useState('')
+  const [contextDraft, setContextDraft] = useState<{ readonly taskId: DevelopmentTaskId; readonly text: string }>()
+  const actionInFlight = useRef(false)
   const [pendingAction, setPendingAction] = useState<PendingAction>()
   const [actionError, setActionError] = useState<string>()
   const participantId = profile.id
   const selectedTask = selectedTaskId === undefined ? taskState.tasks[0] : taskState.tasks.find(task => task.id === selectedTaskId)
+  const contextText = contextDraft !== undefined && contextDraft.taskId === selectedTask?.id ? contextDraft.text : ''
   const taskCount = taskState.tasks.filter(task => task.createdBy === participantId).length
 
   useEffect(() => {
@@ -239,6 +241,8 @@ export function EmergenceCenterPanel({
 
   const pending = pendingAction !== undefined
   const perform = async (kind: PendingAction, operation: () => Promise<unknown>): Promise<void> => {
+    if (actionInFlight.current) return
+    actionInFlight.current = true
     setPendingAction(kind)
     setActionError(undefined)
     try {
@@ -248,6 +252,7 @@ export function EmergenceCenterPanel({
       const key = typeof code === 'string' ? TASK_ERROR_KEYS[code as keyof typeof TASK_ERROR_KEYS] : undefined
       setActionError(t(key ?? 'error.generic'))
     } finally {
+      actionInFlight.current = false
       setPendingAction(undefined)
     }
   }
@@ -268,13 +273,11 @@ export function EmergenceCenterPanel({
       return { kind: 'fork', parent: { taskId: selectedTask.id, revision: selectedTask.revision } }
     }
     if (createKind === 'merge' && mergeParents.length >= 2) {
+      const parents = mergeParents.map(taskId => taskState.tasks.find(candidate => candidate.id === taskId))
+      if (!parents.every((task): task is DevelopmentTaskSnapshot => task !== undefined)) return undefined
       return {
         kind: 'merge',
-        parents: mergeParents.map((taskId) => {
-          const task = taskState.tasks.find(candidate => candidate.id === taskId)
-          if (task === undefined) throw new Error(`Task ${taskId} is unavailable`)
-          return { taskId, revision: task.revision }
-        }),
+        parents: parents.map(task => ({ taskId: task.id, revision: task.revision })),
       }
     }
     return undefined
@@ -540,14 +543,20 @@ export function EmergenceCenterPanel({
                       : t('context.independentSource', { peerId: item.peerContribution.grant.contributorPeerId })}</small>
                   </article>)}
                 </div>
-                <textarea value={contextText} onChange={(event) => { setContextText(event.target.value) }} placeholder={t('context.placeholder')} />
+                <textarea value={contextText} onChange={(event) => {
+                  setContextDraft({ taskId: selectedTask.id, text: event.target.value })
+                }} placeholder={t('context.placeholder')} />
                 <button
                   type="button"
                   disabled={pending || contextText.trim() === ''}
-                  onClick={() => { void perform('context', async () => {
-                    await publishContext({ taskId: selectedTask.id, participantId, text: contextText.trim() })
-                    setContextText('')
-                  }) }}
+                  onClick={() => {
+                    if (contextDraft?.taskId !== selectedTask.id || contextDraft.text.trim() === '') return
+                    const submitted = contextDraft
+                    void perform('context', async () => {
+                      await publishContext({ taskId: submitted.taskId, participantId, text: submitted.text.trim() })
+                      setContextDraft(current => current === submitted ? undefined : current)
+                    })
+                  }}
                 >{t('context.publish')}</button>
               </section>
             </div>

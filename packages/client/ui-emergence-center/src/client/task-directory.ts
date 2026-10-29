@@ -151,8 +151,9 @@ export function createDevelopmentTaskDirectory(
     applyTask,
     applyAssignment,
     async create(request) {
+      const issued = generation
       const task = await port.create(request)
-      applyTask(task, true)
+      if (issued === generation) applyTask(task, true)
       return task
     },
   }
