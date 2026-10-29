@@ -135,8 +135,9 @@ describe('DevWorkbenchService', () => {
   it.each(['stop', 'restart', 'unload'] as const)('quiesces surviving child work on %s after the task leader exits', async (action) => {
     const child = `const server = require('node:http').createServer((_request, response) => response.end('owned child'));
       server.listen(0, '127.0.0.1', () => process.send(server.address().port));`
+    // Windows detachment avoids Node's parent-exit Job; POSIX children retain the managed PGID.
     const leader = `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}],
-      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      { detached: process.platform === 'win32', stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
       child.once('message', port => { console.log(port); child.disconnect(); process.exit(0) });`
     const ctx = new Context()
     contexts.push(ctx)
