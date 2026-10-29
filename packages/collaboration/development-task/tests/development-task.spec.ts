@@ -6,6 +6,7 @@ import DevelopmentRoomService, {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import DevelopmentTaskService, {
+  observedIntervalId,
   type Config,
   type DevelopmentTaskAdmitObservedContextRequest,
   type DevelopmentTaskBindingId,
@@ -20,7 +21,9 @@ import DevelopmentTaskService, {
   type DevelopmentNodeId,
   type DevelopmentTaskObservedIntervalIdentity,
 } from '../src/index.ts'
-import { developmentTaskAssignmentEventSchema, developmentTaskContextBlockSchema, developmentTaskEventSchema, openApiObservationInputSchema } from '../src/schema.ts'
+import { developmentTaskAdmitRemoteObservedContextRequestSchema, developmentTaskAssignmentEventSchema,
+  developmentTaskContextBlockSchema, developmentTaskEventSchema, developmentTaskObservedIntervalIdentitySchema,
+  openApiObservationInputSchema } from '../src/schema.ts'
 
 const contexts: Context[] = []
 const participant = (value: string): DevelopmentParticipantId => value as DevelopmentParticipantId
@@ -151,6 +154,97 @@ describe('owner-approved remote observation intervals', () => {
     await owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, identity.sourceNodeId)
     expect(owner.tasks.observedCandidates({ taskId: identity.taskId })).toEqual([])
     await expect(source.tasks.approveObservedInterval(identity)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
+  })
+
+  it('refuses a known human or another home node before persisting remote observation approval', async () => {
+    const { owner, source, identity } = await remoteObservationScenario()
+    const human = participant('remote-human')
+    await source.rooms.announce({ id: human, kind: 'human', displayName: 'Remote human owner' })
+    const profile = source.rooms.list().participants.find(item => item.id === human)
+    if (profile === undefined) throw new Error('Remote human profile was not announced')
+    await owner.rooms.acceptPresenceReplica(profile, profile.nodeId)
+    const other = await setup({}, 'node-c')
+    const otherTask = await other.tasks.create(rootRequest('Other Agent responsibility'))
+    const otherBinding = await other.tasks.checkout({ taskId: otherTask.id, participantId: participant('agent') })
+    const otherEpoch = other.tasks.assignmentLog().at(-1)
+    if (otherEpoch === undefined) throw new Error('Other Agent checkout was not retained')
+    const selections = [
+      developmentTaskObservedIntervalIdentitySchema.parse({ ...identity, participantId: human }),
+      developmentTaskObservedIntervalIdentitySchema.parse({ ...identity, sourceNodeId: otherEpoch.nodeId,
+        bindingId: otherBinding.assignment.bindingId, expectedBindingEpoch: { nodeId: otherEpoch.nodeId, seq: otherEpoch.seq } }),
+    ]
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    for (const selection of selections) await expect(owner.tasks.approveObservedInterval(selection))
+      .rejects.toMatchObject({ code: 'PARTICIPANT_NOT_AVAILABLE' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(owner.tasks.log()).toEqual(before)
+    expect(await owner.tasks.observedIntervals({ taskId: identity.taskId })).toEqual([])
+    const approved = await owner.tasks.approveObservedInterval(identity)
+    expect(approved).toMatchObject({ state: 'active', approvalReceipt: { event: { seq: (before.at(-1)?.seq ?? 0) + 1 } } })
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('waits for remote Agent presence while keeping approval candidates scoped to their Task and home node', async () => {
+    const { owner, source, task, identity, bound } = await remoteObservationScenario()
+    await owner.tasks.acceptAssignmentReplica(bound, identity.sourceNodeId)
+    const otherTask = await owner.tasks.create(rootRequest('Another shared responsibility'))
+    const otherCreation = owner.tasks.log().at(-1)
+    if (otherCreation === undefined) throw new Error('Other Task creation was not retained')
+    await source.tasks.acceptLogReplica(otherCreation, otherCreation.nodeId)
+    const other = await source.tasks.checkout({ taskId: otherTask.id, participantId: identity.participantId })
+    const otherEpoch = source.tasks.assignmentLog().at(-1)
+    if (otherEpoch === undefined) throw new Error('Other Task checkout was not retained')
+    await owner.tasks.acceptAssignmentReplica(otherEpoch, identity.sourceNodeId)
+    await owner.tasks.checkout({ taskId: task.id, participantId: participant('agent') })
+    const delayedId = participant('delayed-remote-agent')
+    await source.rooms.announce({ id: delayedId, kind: 'agent', displayName: 'Delayed remote Agent' })
+    const delayed = await source.tasks.checkout({ taskId: task.id, participantId: delayedId })
+    const delayedEpoch = source.tasks.assignmentLog().at(-1)
+    const profile = source.rooms.list().participants.find(item => item.id === delayedId)
+    if (delayedEpoch === undefined || profile === undefined) throw new Error('Delayed Agent evidence is missing')
+    await owner.tasks.acceptAssignmentReplica(delayedEpoch, identity.sourceNodeId)
+    const selection = developmentTaskObservedIntervalIdentitySchema.parse({ taskId: task.id, sourceNodeId: profile.nodeId,
+      participantId: delayedId, bindingId: delayed.assignment.bindingId,
+      expectedBindingEpoch: { nodeId: delayedEpoch.nodeId, seq: delayedEpoch.seq } })
+    expect(owner.tasks.observedCandidates({ taskId: task.id })).toEqual([{ ...identity, sessionLabel: 'Backend API' }])
+    expect(owner.tasks.observedCandidates({ taskId: otherTask.id })).toEqual([{
+      taskId: otherTask.id, sourceNodeId: otherEpoch.nodeId, participantId: identity.participantId,
+      bindingId: other.assignment.bindingId, expectedBindingEpoch: { nodeId: otherEpoch.nodeId, seq: otherEpoch.seq },
+    }])
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.approveObservedInterval(selection)).rejects.toMatchObject({ code: 'PARTICIPANT_NOT_AVAILABLE' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    await owner.rooms.acceptPresenceReplica(profile, profile.nodeId)
+    expect(owner.tasks.observedCandidates({ taskId: task.id })).toEqual([{ ...identity, sessionLabel: 'Backend API' }, selection])
+    expect(await owner.tasks.approveObservedInterval(selection)).toMatchObject({ state: 'active', participantId: delayedId,
+      approvalReceipt: { event: { seq: (before.at(-1)?.seq ?? 0) + 1 } } })
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an observation before its real interval is approved and admits the unchanged request after approval', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ taskId: identity.taskId,
+      participantId: identity.participantId, bindingId: identity.bindingId, expectedBindingEpoch: identity.expectedBindingEpoch,
+      intervalId: observedIntervalId(identity), sourceId: request.sourceId, text: request.text, observation: request.observation })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    const approved = await owner.tasks.approveObservedInterval(identity)
+    expect(approved.id).toBe(input.intervalId)
+    const admitted = await owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)
+    expect(admitted).toMatchObject({ outcome: 'published', receipt: { intervalId: approved.id,
+      event: { seq: (before.at(-1)?.seq ?? 0) + 2 } } })
+    expect(persisted).toHaveBeenCalledTimes(2)
+    expect((await owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)).receipt).toEqual(admitted.receipt)
+    expect(persisted).toHaveBeenCalledTimes(2)
   })
 
   it('returns only the admitted publication and receipt as unrelated Task history grows beyond a Mesh frame', async () => {

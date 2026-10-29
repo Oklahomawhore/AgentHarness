@@ -257,6 +257,54 @@ it('distinguishes expiration from revocation and refuses a parent-bearing Task',
   expect((await b.access.list()).subscriptions[0]?.state).toBe('expired')
 })
 
+it.each([false, true])('retains expiry crossed during a projection write, including terminal-write failure=%s', async (failExpiryWrite) => {
+  const { b, invitation, subscription } = await joined()
+  const domain = b.ctx.storageDomain.get('scope_access')
+  if (domain === undefined) throw new Error('Receiving domain missing')
+  const records = domain.table('projections')
+  const put = records.put.bind(records)
+  const written = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const delayed = vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+    await put(key, value)
+    written.resolve(undefined)
+    await release.promise
+  })
+  const clock = vi.spyOn(Date, 'now')
+  const request = vi.spyOn(b.transport, 'request')
+  const pending = b.access.retrieve(subscription.id, signal()).catch((error: unknown) => error)
+  try {
+    await written.promise
+    expect(projections(b.pool).size).toBe(1)
+    clock.mockReturnValue(invitation.expiresAt)
+    if (failExpiryWrite) b.pool.failNextWrites = 1
+    release.resolve(undefined)
+    const outcome = await pending
+    if (failExpiryWrite) {
+      expect(outcome).toBeInstanceOf(Error)
+      expect(outcome).toMatchObject({ message: 'injected write failure' })
+      expect((await b.access.list()).subscriptions).toEqual([subscription])
+      expect(await b.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    } else expect(outcome).toEqual({ status: 'expired' })
+    expect((await b.access.list()).subscriptions).toEqual([{ ...subscription, state: 'expired' }])
+    clock.mockRestore()
+    expect(await b.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(request).toHaveBeenCalledOnce()
+    await b.ctx.fiber.dispose()
+    const restored = await host('peer-b', b.pool)
+    const restoredRequest = vi.spyOn(restored.transport, 'request')
+    expect((await restored.access.list()).subscriptions).toEqual([{ ...subscription, state: 'expired' }])
+    expect(await restored.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(restoredRequest).not.toHaveBeenCalled()
+    expect(projections(b.pool).size).toBe(1)
+  } finally {
+    release.resolve(undefined)
+    await Promise.allSettled([pending])
+    delayed.mockRestore()
+    clock.mockRestore()
+  }
+})
+
 it('requires explicit receiver identity when accepting local intent', async () => {
   const { invitation } = await joined()
   const c = await host('peer-c')

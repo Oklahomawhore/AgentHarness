@@ -600,6 +600,7 @@ export default class ScopeAccessService extends TypertRemoteService {
 
   /**
    * Verify current owner authorization and persist exact text before returning it.
+   * Observed expiry is durable before reporting it.
    * @param subscriptionId - local receive binding identity; no Task assignment is created.
    * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
    * @returns current projection or an explicit inactive/unknown state; never an offline cached projection.
@@ -610,6 +611,7 @@ export default class ScopeAccessService extends TypertRemoteService {
 
   /**
    * Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.
+   * Observed expiry is durable before reporting it.
    * @param request - subscription and positive backend text allowance, excluding consumer-owned model framing.
    * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
    * @returns exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.
@@ -792,17 +794,14 @@ export default class ScopeAccessService extends TypertRemoteService {
         if (current.generation !== subscription.generation || (current.routeRevision ?? 0) !== (subscription.routeRevision ?? 0)) return { status: 'unavailable' }
         if (current.state !== 'active') return { status: current.state }
         if (this.requests.get(id) !== request.requestId) return { status: 'unavailable' }
-        if (subscription.invitation.expiresAt <= Date.now()) {
-          await currentDomain.table('subscriptions').put(id, { ...current, state: 'expired' })
+        const end = async (state: 'expired' | 'revoked'): Promise<ScopeRetrieveResult> => {
+          await currentDomain.table('subscriptions').put(id, { ...current, state })
           this.stopWaiting(id)
-          return { status: 'expired' }
+          return { status: state }
         }
+        if (subscription.invitation.expiresAt <= Date.now()) return await end('expired')
         if (response.result.status === 'denied' || response.result.status === 'unavailable') return { status: 'unavailable' }
-        if (response.result.status !== 'active') {
-          await currentDomain.table('subscriptions').put(id, { ...current, state: response.result.status })
-          this.stopWaiting(id)
-          return { status: response.result.status }
-        }
+        if (response.result.status !== 'active') return await end(response.result.status)
         if (request.maxContextBytes !== undefined && response.result.projection.maxContextBytes > request.maxContextBytes) {
           throw new Error('scope-access: projection exceeds the requested text budget')
         }
@@ -810,7 +809,7 @@ export default class ScopeAccessService extends TypertRemoteService {
         await this.persistProjection(currentDomain, response.result.projection)
         signal.throwIfAborted()
         if (this.requests.get(id) !== request.requestId) return { status: 'unavailable' }
-        if (subscription.invitation.expiresAt <= Date.now()) return { status: 'expired' }
+        if (subscription.invitation.expiresAt <= Date.now()) return await end('expired')
         return response.result
       })
     } catch (error) {

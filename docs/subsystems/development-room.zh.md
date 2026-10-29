@@ -3980,6 +3980,7 @@ endContribution(request: { readonly invitation: ScopeContributionInvitation }, s
 
 /**
  * Verify current owner authorization and persist exact text before returning it.
+ * Observed expiry is durable before reporting it.
  * @param subscriptionId - local receive binding identity; no Task assignment is created.
  * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
  * @returns current projection or an explicit inactive/unknown state; never an offline cached projection.
@@ -3988,6 +3989,7 @@ retrieve(subscriptionId: ScopeSubscriptionId, signal: AbortSignal): Promise<Scop
 
 /**
  * Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.
+ * Observed expiry is durable before reporting it.
  * @param request - subscription and positive backend text allowance, excluding consumer-owned model framing.
  * @param signal - consumer cancellation, combined with service disposal and the configured deadline.
  * @returns exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.

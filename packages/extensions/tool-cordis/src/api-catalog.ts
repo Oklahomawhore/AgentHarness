@@ -2312,13 +2312,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'retrieve(subscriptionId: ScopeSubscriptionId, signal: AbortSignal): Promise<ScopeRetrieveResult>',
-        description: 'Verify current owner authorization and persist exact text before returning it.',
+        description: 'Verify current owner authorization and persist exact text before returning it. Observed expiry is durable before reporting it.',
         parameters: [{ name: 'subscriptionId', description: 'local receive binding identity; no Task assignment is created.' }, { name: 'signal', description: 'consumer cancellation, combined with service disposal and the configured deadline.' }],
         returns: 'current projection or an explicit inactive/unknown state; never an offline cached projection.',
       },
       {
         signature: 'async retrieveWithinBudget(request: ScopeRetrieveWithinBudgetRequest, signal: AbortSignal): Promise<ScopeRetrieveResult>',
-        description: 'Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol.',
+        description: 'Retrieve freshly authorized text within a consumer-selected allowance, without falling back to a legacy read protocol. Observed expiry is durable before reporting it.',
         parameters: [{ name: 'request', description: 'subscription and positive backend text allowance, excluding consumer-owned model framing.' }, { name: 'signal', description: 'consumer cancellation, combined with service disposal and the configured deadline.' }],
         returns: 'exact persisted projection using the smaller allowance on both Hosts, or explicit inactive/unknown status.',
       },

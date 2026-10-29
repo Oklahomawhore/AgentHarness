@@ -11,7 +11,7 @@ const { Session } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh
 /** Loader fixture identity. */
 export const name = 'scope-automatic-withdrawal-snapshot'
 /** The SDK profile supplies the real tool, loop, permission and receiving services. */
-export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'scopeTransport', 'permissionPresets', 'sessionProjections', 'llm', 'tools']
+export const inject = ['agents', 'scopeAgentContext', 'scopeAccess', 'scopeTransport', 'storageDomain', 'permissionPresets', 'sessionProjections', 'llm', 'tools']
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const scopeMessages = messages => messages.filter(message => message.source.kind === 'scope-agent-context')
 const firstPrompt = 'Retain my existing local responsibility before joining any shared scope.'
@@ -87,13 +87,55 @@ export async function apply(ctx) {
     }
     return next()
   }, { prepend: true })
-  ctx.on('llm/stream', (options, next) => {
+  ctx.on('llm/stream', async function* (options, next) {
     requests++
     assert.ok(requests <= 3)
     const visible = scopeMessages(options.messages)
     const users = options.messages.filter(message => message.source.kind === 'user')
     assert.equal(body(users[0]), firstPrompt, 'the original user history stays in this Session')
     if (requests === 1) {
+      const expiryInvitation = await owner.ctx.scopeAccess.invite({ taskId: task.id, ownerAddress,
+        recipientPeerId: (await ctx.scopeTransport.identity()).peerId, expiresAt: Date.now() + 50000,
+        responsibility: 'Verify terminal receiving expiry before ordinary work.' })
+      const expirySubscription = await ctx.scopeAccess.join({ invitation: expiryInvitation })
+      const domain = ctx.storageDomain.get('scope_access')
+      assert.ok(domain)
+      const projections = domain.table('projections')
+      const subscriptions = domain.table('subscriptions')
+      const previousProjectionCount = projections.size
+      const originalPut = projections.put
+      const putDescriptor = Object.getOwnPropertyDescriptor(projections, 'put')
+      const transport = ctx.scopeTransport
+      const originalRequest = transport.request
+      const requestDescriptor = Object.getOwnPropertyDescriptor(transport, 'request')
+      const originalNow = Date.now
+      let expiryWrites = 0
+      let expiryRequests = 0
+      projections.put = async function(key, value) {
+        await originalPut.call(this, key, value)
+        expiryWrites++
+        Date.now = () => expiryInvitation.expiresAt
+      }
+      transport.request = function(...args) {
+        expiryRequests++
+        return originalRequest.apply(this, args)
+      }
+      try {
+        assert.deepEqual(await ctx.scopeAccess.retrieve(expirySubscription.id, new AbortController().signal), { status: 'expired' })
+        assert.equal(expiryWrites, 1)
+        assert.equal(projections.size, previousProjectionCount + 1, 'the committed projection remains historical evidence')
+        Date.now = originalNow
+        assert.equal(subscriptions.get(expirySubscription.id).state, 'expired',
+          'post-write expiry must remain terminal after clock correction')
+        assert.deepEqual(await ctx.scopeAccess.retrieve(expirySubscription.id, new AbortController().signal), { status: 'expired' })
+        assert.equal(expiryRequests, 1, 'terminal receiving does not retry after the clock is corrected')
+      } finally {
+        Date.now = originalNow
+        if (putDescriptor === undefined) delete projections.put
+        else Object.defineProperty(projections, 'put', putDescriptor)
+        if (requestDescriptor === undefined) delete transport.request
+        else Object.defineProperty(transport, 'request', requestDescriptor)
+      }
       assert.equal(visible.length, 0)
       assert.equal(users.length, 1)
     } else if (requests === 2) {
@@ -111,6 +153,6 @@ export async function apply(ctx) {
     }
     const events = JSON.parse(JSON.stringify(receiver.session.snapshotEvents()))
     assert.deepEqual(scopeMessages(Session.create(receiver.id, events, receiver.session.header).deriveMessages()), visible)
-    return next()
+    yield* next()
   })
 }
