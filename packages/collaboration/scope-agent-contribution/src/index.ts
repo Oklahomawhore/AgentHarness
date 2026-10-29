@@ -288,7 +288,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         this.receivingDirty.add(id)
         this.schedule(id, role)
       }
-    })
+    }, { global: true })
     ctx.on('agent/disposed', ({ agent }) => {
       for (const role of captureRoles) {
         if (this.sources[role].runtimes.get(agent.id)?.agent === agent) this.endDetached(agent.id, role)
