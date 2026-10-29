@@ -33,6 +33,64 @@ async function setup(overrides: Partial<Config> = {}) {
 }
 
 describe('Task admission before state changes', () => {
+  it('keeps the parent and log unchanged when inherited-block persistence fails, then permits a retry', async () => {
+    const { ctx, tasks, create } = await setup()
+    const parent = await create('Parent')
+    const retained = tasks.log()
+    const stop = ctx.on('development-task/context-persist', () => { throw new Error('Inherited block unavailable') })
+    const request = { origin: { kind: 'fork' as const, parent: { taskId: parent.id, revision: parent.revision } },
+      objective: 'Child', scope: 'Selected context', createdBy: owner }
+    await expect(tasks.create(request)).rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(tasks.blocks()).toEqual([])
+    expect(tasks.log()).toEqual(retained)
+    expect(tasks.get({ taskId: parent.id })).toEqual(parent)
+    stop()
+    const child = await tasks.create(request)
+    expect(child.inheritedContextBlockId).toBeDefined()
+    expect(tasks.blocks()).toHaveLength(1)
+    expect(tasks.log()).toHaveLength(retained.length + 1)
+  })
+
+  it.each(['root', 'duplicate', 'foreign'] as const)('rejects %s publication exclusions before persisting an inherited block', async (kind) => {
+    const { ctx, tasks, create } = await setup()
+    const parent = await create('Parent')
+    const published = await tasks.publishContext({ taskId: parent.id, participantId: owner, text: 'Parent publication' })
+    const publication = published.context[0]
+    if (publication === undefined) throw new Error('Parent publication was not retained')
+    const persisted = vi.fn<(block: DevelopmentTaskContextBlock) => void>()
+    ctx.on('development-task/context-persist', persisted)
+    const retained = tasks.log()
+    await expect(tasks.create({
+      origin: kind === 'root' ? { kind: 'root' } : { kind: 'fork', parent: { taskId: parent.id, revision: published.revision } },
+      objective: 'Child', scope: 'Selected context', createdBy: owner,
+      excludedContextIds: kind === 'duplicate' ? [publication.id, publication.id] : [kind === 'foreign' ? 'another-task-publication' : publication.id],
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(tasks.blocks()).toEqual([])
+    expect(tasks.log()).toEqual(retained)
+  })
+
+  it('rejects an acknowledgement from an older checkout epoch without changing the new binding', async () => {
+    const { ctx, tasks, create } = await setup()
+    const task = await create('Shared responsibility')
+    const { assignment } = await tasks.checkout({ taskId: task.id, participantId: agent })
+    const epoch = tasks.assignmentLog().at(-1)
+    if (epoch === undefined) throw new Error('Checkout did not retain its epoch')
+    const request = { taskId: task.id, participantId: agent, bindingId: assignment.bindingId, revision: task.revision }
+    await tasks.checkout({ ...request, sessionLabel: 'Reconnected Session' })
+    const retained = tasks.assignmentLog()
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    ctx.on('development-task/assignment-persist', persisted)
+    await expect(tasks.acknowledge({ ...request, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(tasks.assignmentLog()).toEqual(retained)
+    const current = retained.at(-1)
+    if (current === undefined) throw new Error('Reconnect did not retain its epoch')
+    await expect(tasks.acknowledge({ ...request, expectedBindingEpoch: { nodeId: current.nodeId, seq: current.seq } }))
+      .resolves.toMatchObject({ acknowledgedRevision: task.revision, sessionLabel: 'Reconnected Session' })
+  })
+
   it.each(['blank', 'oversized'] as const)('preserves an active local capture when checkout rejects a %s session label', async (invalid) => {
     const { tasks, create } = await setup()
     const task = await create('Existing responsibility')
@@ -89,6 +147,30 @@ describe('Task admission before state changes', () => {
 })
 
 describe('Task query and configuration bounds', () => {
+  it.each([
+    ['maxTasks', 0], ['maxEventsPerTask', 1.5], ['maxMergeParents', 1], ['maxContextBlockBytes', -1],
+    ['maxLineageTasks', Infinity], ['maxTextBytes', NaN], ['roomRetryIntervalMs', 0],
+  ] as const)('rejects invalid %s configuration before creating a Task service', async (field, value) => {
+    await expect(setup({ [field]: value })).rejects.toThrow(TypeError)
+  })
+
+  it('returns a depth boundary and visits a shared ancestor only once in a diamond lineage', async () => {
+    const { tasks, create } = await setup()
+    const root = await create('Common parent')
+    const children = await Promise.all(['Left', 'Right'].map(objective => tasks.create({
+      origin: { kind: 'fork', parent: { taskId: root.id, revision: root.revision } },
+      objective, scope: 'Parallel human responsibility', createdBy: owner,
+    })))
+    const merged = await tasks.create({ origin: { kind: 'merge', parents: children.map(child => ({ taskId: child.id, revision: child.revision })) },
+      objective: 'Merged context', scope: 'Combined decisions', createdBy: owner })
+    const shallow = tasks.lineage({ taskId: merged.id, ancestorDepth: 1, descendantDepth: 0 })
+    expect(shallow.tasks.map(task => task.id)).toEqual([merged.id, ...children.map(child => child.id)])
+    expect(shallow.boundaryTaskIds).toEqual([root.id])
+    const complete = tasks.lineage({ taskId: merged.id, ancestorDepth: 2, descendantDepth: 0 })
+    expect(complete.tasks.map(task => task.id)).toEqual([...shallow.tasks.map(task => task.id), root.id])
+    expect(complete.boundaryTaskIds).toEqual([])
+  })
+
   it('filters Tasks by their creator or a retained participant assignment without changing either inventory', async () => {
     const { rooms, tasks, create } = await setup()
     const first = await create('Owner responsibility')

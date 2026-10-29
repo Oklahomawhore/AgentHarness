@@ -698,6 +698,34 @@ describe('DevelopmentTaskService', () => {
     expect(restored.tasks.get({ taskId: task.id })).toEqual(latest)
   })
 
+  it('reuses committed assignment replicas without persisting or notifying again after acknowledgement and clear', async () => {
+    const { owner, source, task, bound } = await remoteObservationScenario()
+    const sourceNodeId = source.rooms.list().nodeId
+    await owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)
+    const acknowledged = await source.tasks.acknowledge({ taskId: task.id, participantId: bound.participantId,
+      bindingId: bound.bindingId, revision: task.revision })
+    await owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)
+    const changed = vi.fn()
+    owner.ctx.on('development-task/assignment-changed', changed)
+    const persisted = vi.fn(() => { throw new Error('No duplicate assignment write is allowed') })
+    const stop = owner.ctx.on('development-task/assignment-persist', persisted)
+    await expect(owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)).resolves.toEqual(acknowledged)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+    stop()
+
+    await source.tasks.clear({ participantId: bound.participantId, bindingId: bound.bindingId })
+    await owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)
+    changed.mockClear()
+    owner.ctx.on('development-task/assignment-persist', persisted)
+    const retained = owner.tasks.assignmentLog()
+    await expect(owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)).resolves.toBeUndefined()
+    expect(persisted).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+    expect(owner.tasks.assignmentLog()).toEqual(retained)
+    expect(owner.tasks.assignmentList()).toEqual([])
+  })
+
   it('keeps different sessions of the same Agent independently bound', async () => {
     const { ctx, rooms, tasks } = await setup()
     const assignmentChanged = vi.fn()

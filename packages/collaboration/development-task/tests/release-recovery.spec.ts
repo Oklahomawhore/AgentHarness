@@ -73,6 +73,51 @@ async function routedSource() {
 }
 
 describe('Task owner routing and recovery', () => {
+  it.each(['node-sequence', 'task-revision', 'second-creation', 'hidden-room', 'backwards-time', 'unknown-task', 'foreign-owner'] as const)(
+    'rejects parsed %s corruption without occupying the next owner log position', async (mismatch) => {
+      const source = await setup('source-node')
+      const recipient = await setup('recipient-node')
+      const task = await source.tasks.create({ origin: { kind: 'root' }, objective: 'Owner context', scope: 'Original scope', createdBy: source.owner })
+      await source.tasks.publishContext({ taskId: task.id, participantId: source.owner, text: 'Original publication' })
+      const [creation, publication] = source.tasks.log()
+      if (creation === undefined || publication === undefined) throw new Error('Generated Task history is missing')
+      await recipient.tasks.acceptLogReplica(creation, creation.nodeId)
+      const wire = developmentTaskEventSchema.parse({ ...publication,
+        ...(mismatch === 'node-sequence' ? { seq: publication.seq + 1 } : {}),
+        ...(mismatch === 'task-revision' ? { revision: publication.revision + 1 } : {}),
+        ...(mismatch === 'second-creation' ? { change: creation.change } : {}),
+        ...(mismatch === 'hidden-room' ? { hiddenRoomId: 'another-room' } : {}),
+        ...(mismatch === 'backwards-time' ? { at: creation.at - 1 } : {}),
+        ...(mismatch === 'unknown-task' ? { taskId: 'another-task', revision: 1 } : {}),
+        ...(mismatch === 'foreign-owner' ? { nodeId: 'another-node', seq: 1 } : {}),
+      })
+      const persisted = vi.fn<(candidate: DevelopmentTaskLogEntry) => void>()
+      recipient.ctx.on('development-task/persist', persisted)
+      await expect(recipient.tasks.acceptLogReplica(wire, wire.nodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+      expect(persisted).not.toHaveBeenCalled()
+      expect(recipient.tasks.log()).toEqual([creation])
+      await expect(recipient.tasks.acceptLogReplica(publication, publication.nodeId)).resolves.toMatchObject({
+        context: [expect.objectContaining({ text: 'Original publication' })],
+      })
+      expect(persisted).toHaveBeenCalledOnce()
+      expect(recipient.tasks.log()).toEqual(source.tasks.log())
+    },
+  )
+
+  it('rejects an event authenticated as another peer before persistence', async () => {
+    const source = await setup('source-node')
+    const recipient = await setup('recipient-node')
+    await source.tasks.create({ origin: { kind: 'root' }, objective: 'Owner context', scope: 'Original scope', createdBy: source.owner })
+    const creation = source.tasks.log()[0]
+    if (creation === undefined) throw new Error('Generated Task creation is missing')
+    const persisted = vi.fn<(candidate: DevelopmentTaskLogEntry) => void>()
+    recipient.ctx.on('development-task/persist', persisted)
+    await expect(recipient.tasks.acceptLogReplica(creation, recipient.rooms.list().nodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(recipient.tasks.log()).toEqual([])
+    await expect(recipient.tasks.acceptLogReplica(creation, creation.nodeId)).resolves.toMatchObject({ id: creation.taskId })
+  })
+
   it('routes approved source admission and termination to the original owner and preserves retry receipts', async () => {
     const { owner, source, task, identity } = await routedSource()
     const approved = await owner.tasks.approveObservedInterval(identity)
@@ -151,6 +196,28 @@ async function generatedLineage() {
 }
 
 describe('Task inherited-context replica validation', () => {
+  it('waits for a missing inherited block during restore and rejects its replica until the block arrives', async () => {
+    const { source, fork, forkBlock } = await generatedLineage()
+    const recipient = await setup('recipient-node')
+    const restored = await setup('restored-node')
+    const entry = source.tasks.log().find(item => item.taskId === fork.id)
+    if (entry === undefined) throw new Error('Generated Fork is missing')
+    const parents = source.tasks.log().filter(item => item.seq < entry.seq)
+    for (const parent of parents) await recipient.tasks.acceptLogReplica(parent, parent.nodeId)
+    const persisted = vi.fn<(candidate: DevelopmentTaskLogEntry) => void>()
+    recipient.ctx.on('development-task/persist', persisted)
+    await expect(recipient.tasks.acceptLogReplica(entry, entry.nodeId)).rejects.toMatchObject({ code: 'PARENT_REVISION_UNAVAILABLE' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(recipient.tasks.log()).toEqual(parents)
+    expect(() => { restored.tasks.restoreLog([...parents, entry]) }).toThrow('unresolved lineage or sequence dependencies')
+    expect(restored.tasks.log()).toEqual(parents)
+    restored.tasks.restoreContextBlocks([forkBlock])
+    restored.tasks.restoreLog([entry])
+    await recipient.tasks.acceptContextReplica(forkBlock)
+    await expect(recipient.tasks.acceptLogReplica(entry, entry.nodeId)).resolves.toMatchObject({ id: fork.id })
+    expect(restored.tasks.contextView(fork.id)).toEqual(recipient.tasks.contextView(fork.id))
+  })
+
   it.each(['replica', 'restore'] as const)('rejects %s of a Merge repeating a parent even with a matching content-addressed block', async (admission) => {
     const { source, merge, forkBlock } = await generatedLineage()
     const recipient = await setup('recipient-node')

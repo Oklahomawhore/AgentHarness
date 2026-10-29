@@ -1,0 +1,12 @@
+version: 1
+scenario: cordis-task-assignment-retry
+profile: headless
+composition: task-assignment-api
+recording: authored
+header:
+  class: advanced
+  pin: true
+  systemPromptSource: cordis-inspect-jsdoc
+  toolSchemasSource: cordis-inspect-jsdoc
+replay:
+  override: true

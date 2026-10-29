@@ -1412,7 +1412,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
-   * Persist and append one authenticated peer assignment event.
+   * Persist and append one unseen authenticated peer assignment event; exact committed retries return the current assignment.
    * @param candidate - wire-validated assignment event.
    * @param sourceNodeId - authenticated participant-home node.
    * @returns current assignment or undefined after clear.
@@ -1426,7 +1426,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated assignment event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
-      this.prepareAssignment(entry, 'REPLICA_CONFLICT')
+      const assignment = this.prepareAssignment(entry, 'REPLICA_CONFLICT')
+      if (entry.seq <= (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0)) return assignment
       await this.persistAssignment(entry)
       return this.appendAssignment(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })

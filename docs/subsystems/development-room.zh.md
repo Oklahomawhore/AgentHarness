@@ -3753,7 +3753,7 @@ async acceptContextReplica(block: DevelopmentTaskContextBlock): Promise<void>
 acceptLogReplica(candidate: DevelopmentTaskLogEntry, sourceNodeId: DevelopmentNodeId): Promise<DevelopmentTaskSnapshot>
 
 /**
- * Persist and append one authenticated peer assignment event.
+ * Persist and append one unseen authenticated peer assignment event; exact committed retries return the current assignment.
  * @param candidate - wire-validated assignment event.
  * @param sourceNodeId - authenticated participant-home node.
  * @returns current assignment or undefined after clear.

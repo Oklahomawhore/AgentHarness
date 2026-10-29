@@ -33,7 +33,7 @@ kind: "package-reference"
 - 继承 block 包含每个父 Task 在所选 revision 的名称、初始上下文和已准入 publication。创建、复制准入与恢复都要求 Root 不带继承块，Fork/Merge 带有继承块，且块中父任务 id 与 revision 的顺序必须匹配创建关系。本 service 不采集私有 Session、工具或编辑器历史，也不采集模型推理。
 - 调用方可在执行默认 256 KiB block 限制前排除部分 publication。超限返回 `LIMIT_EXCEEDED`，不会截断内容。
 - 每个 Agent Session 持有一个不透明 binding id。同一 Cursor、Codex 或 Claude 身份的多个 Session 可以连接不同 Task，互不替换。
-- Binding 先于 Room 协调提交。加入新 Room 与离开不再使用的旧 Room 分别报告结果；模型上下文只读取 binding。退出命令可以要求界面所显示的 checkout 代际；所有者队列会在终结本地贡献或清除新绑定前拒绝过期命令。
+- Binding 先于 Room 协调提交。已提交的分配副本精确重试会返回当前绑定，不再次写入或通知；确认或清除后也遵守此规则。加入新 Room 与离开不再使用的旧 Room 分别报告结果；模型上下文只读取 binding。退出命令可以要求界面所显示的 checkout 代际；所有者队列会在终结本地贡献或清除新绑定前拒绝过期命令。
 - 后台 Room 修复逐 Task 记录失败，结束后可再次重试。同一时刻只运行一次后台修复；停用会停止定时器，并等待当前修复结束。
 
 <a id="observed-context-admission"></a>

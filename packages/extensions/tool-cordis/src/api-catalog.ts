@@ -1436,7 +1436,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'acceptAssignmentReplica( candidate: DevelopmentTaskAssignmentLogEntry, sourceNodeId: DevelopmentNodeId, ): Promise<DevelopmentTaskAssignment | undefined>',
-        description: 'Persist and append one authenticated peer assignment event.',
+        description: 'Persist and append one unseen authenticated peer assignment event; exact committed retries return the current assignment.',
         parameters: [{ name: 'candidate', description: 'wire-validated assignment event.' }, { name: 'sourceNodeId', description: 'authenticated participant-home node.' }],
         returns: 'current assignment or undefined after clear.',
       },
