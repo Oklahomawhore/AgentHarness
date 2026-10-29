@@ -28,6 +28,8 @@ The service requires `connection` and `webServer`. On macOS/Linux its plugin act
 
 Windows reports `unsupported`, disables setup, and publishes no descriptor. The ordinary Web application remains available. Participant identities combine a stable 128-bit digest of hostname and username with the complete client id; identical host/account names are not distinguished. A successful client write means the launch configuration matches, including `DSH_HOME` and participant identity. A different existing entry remains a conflict, including after a hostname or account change; remove that registration explicitly before rerunning setup.
 
+Discovery and configuration-read errors remain `failed` states for the affected client. Listing and batch setup continue for other clients without modifying the failed client's files.
+
 
 ## Model Experience
 
@@ -43,6 +45,7 @@ No runtime invariant companion is published because listing and setup inspect cl
 
 - JSON-with-comments files are reported as conflicts rather than rewritten because preserving their comments safely is not yet supported.
 - Client reload or restart remains client-owned. A successful write proves configuration, not that the client launched the bridge.
+- Parser and CLI failures identify the failed stage without copying configuration contents or command output; inspect the client locally for the original diagnostic.
 - The service does not edit private application databases or approval records.
 
 ### Dev Note

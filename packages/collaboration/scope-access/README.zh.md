@@ -55,7 +55,7 @@ Host 消费方先为自己的模型说明文字和其他上下文预留字节，
 
 `waitForChange(subscriptionId, cursor, signal)` 返回不含事实的变化提示。省略 cursor 时立即校准；返回的游标不透明，可传给下一次有界等待。changed 和 unchanged 提示均不授权使用缓存上下文：消费方仍须调用 `retrieve` 或 `retrieveWithinBudget`。同一订阅的新等待会取消旧等待。调用方取消会拒绝 promise；退出、撤销和过期分别以对应状态结束接收。
 
-`maxConcurrentWaits` 共同限制 owner 与接收方正在等待的操作。读取与贡献状态查询、样本请求共享 `min(transport 入站上限, 出站上限) - maxConcurrentWaits - 1` 个槽位，加载时必须至少留有一个普通槽位；各自配置的并发上限也同时生效。另为贡献结束请求各保留一个入站和出站槽位；此保障仅约束本服务流量，不涵盖任意其他传输处理器。`waitTimeoutMs` 必须短于 `requestTimeoutMs`，后者不得超过传输截止时间。网络超时或断线返回 `unavailable`。等待既不计算后端文本，也不保留投影。
+`maxConcurrentWaits` 共同限制 owner 与接收方正在等待的操作，包括首次 Task 读取。已取消或被替换的 owner 读取会保留槽位，直到实际读取结算；容量已满时，重试返回 `unavailable`。读取与贡献状态查询、样本请求共享 `min(transport 入站上限, 出站上限) - maxConcurrentWaits - 1` 个槽位，加载时必须至少留有一个普通槽位；各自配置的并发上限也同时生效。另为贡献结束请求各保留一个入站和出站槽位；此保障仅约束本服务流量，不涵盖任意其他传输处理器。`waitTimeoutMs` 必须短于 `requestTimeoutMs`，后者不得超过传输截止时间。网络超时或断线返回 `unavailable`。等待既不计算后端文本，也不保留投影。
 
 Owner 选择一个 Root Task、接收方的公开 peer 身份、已公布的 owner 地址、过期时间和职责。邀请固定双方 peer 及精确授权代际。职责用于路由后端字段，不会缩小该 scope 的读取权限。Fork 和 Merge Task 不能通过此服务共享。
 

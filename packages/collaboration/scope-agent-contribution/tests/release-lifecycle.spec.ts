@@ -14,6 +14,7 @@ afterEach(async () => {
 
 const interruptions = [
   { removed: 'filesystem', sourceKind: 'tool-observations' },
+  { removed: 'shell', sourceKind: 'tool-observations' },
   { removed: 'Agent', sourceKind: 'tool-observations' },
   { removed: 'Agent', sourceKind: 'completed-turn-outcomes' },
 ] as const
@@ -55,16 +56,19 @@ it.each((['local', 'remote'] as const).flatMap(role => interruptions.map(interru
     cleanups.push(restore)
     try {
       const permission = { agentId: agent.id, expectedCapture: null, limits,
-        ...sourceKind === 'tool-observations' ? { roots: [source.workspace], tools: ['write' as const] } : { sourceKind } }
+        ...sourceKind === 'tool-observations'
+          ? { roots: [source.workspace], tools: removed === 'shell' ? [] : ['write' as const],
+            ...(removed === 'shell' ? { commands: [{ rootIndex: 0, command: 'node --version' }] } : {}) }
+          : { sourceKind } }
       const requesting = Promise.allSettled([role === 'local' ? source.ctx.scopeAgentContributions.requestLocal({ ...permission, ...assignment })
         : source.ctx.scopeAgentContributions.request({ ...permission, entry })])
       await committed.promise
-      if (removed === 'filesystem') {
-        const filesystem = [...source.ctx.loader.entries()].find(item => item.options.name === 'fs')
-        if (filesystem === undefined) throw new Error('Missing filesystem entry')
-        await filesystem.update({ disabled: true })
+      if (removed === 'filesystem' || removed === 'shell') {
+        const provider = [...source.ctx.loader.entries()].find(item => item.options.name === (removed === 'shell' ? 'bash' : 'fs'))
+        if (provider === undefined) throw new Error('Missing source provider entry')
+        await provider.update({ disabled: true })
         await source.ctx.loader.await()
-        expect(agent.ctx.get('fs')).toBeUndefined()
+        expect(agent.ctx.get(removed === 'shell' ? 'shell' : 'fs')).toBeUndefined()
       } else {
         await source.disposeAgent(agent.id)
         expect(source.ctx.agents.get(agent.id)).toBeUndefined()

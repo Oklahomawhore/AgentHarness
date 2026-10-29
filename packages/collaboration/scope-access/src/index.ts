@@ -120,7 +120,7 @@ interface ReceiverWait {
   readonly settled: Promise<ScopeWaitResult>
 }
 interface OwnerWait {
-  readonly controller: AbortController
+  readonly key: string
   readonly grantId: ScopeGrantId
   readonly wake: () => void
 }
@@ -136,7 +136,7 @@ export default class ScopeAccessService extends TypertRemoteService {
   private readonly operations = new Set<Promise<unknown>>()
   private readonly requests = new Map<ScopeSubscriptionId, string>()
   private readonly receiverWaits = new Map<ScopeSubscriptionId, ReceiverWait>()
-  private readonly ownerWaits = new Map<string, OwnerWait>()
+  private readonly ownerWaits = new Map<AbortController, OwnerWait>()
   private activeReads = 0
   private activeOrdinary = 0
   private inboundEnd = false
@@ -709,14 +709,31 @@ export default class ScopeAccessService extends TypertRemoteService {
       if (Buffer.byteLength(JSON.stringify(response), 'utf8') > this.config.maxResponseBytes) throw new Error('scope-access: response exceeds budget')
       return response
     }
+    const key = `${input.peerId}/${request.subscriptionId}`
+    for (const [controller, previous] of this.ownerWaits) {
+      if (previous.key === key) controller.abort(new Error('scope-access: remote wait superseded'))
+    }
+    if (this.ownerWaits.size + this.receiverWaits.size >= this.config.maxConcurrentWaits) {
+      return respond({ status: 'unavailable' })
+    }
+    const controller = new AbortController()
+    const signal = AbortSignal.any([input.signal, this.lifetime.signal, controller.signal])
+    signal.throwIfAborted()
+    const changed = Promise.withResolvers<undefined>()
+    const wake = () => { changed.resolve(undefined) }
+    const stopped = wake
+    this.ownerWaits.set(controller, { key, grantId: request.invitation.grantId, wake })
+    const stopTask = this.ctx.on('development-task/changed', (task) => { if (task.id === request.invitation.taskId) wake() })
+    const stopBackend = this.ctx.on('internal/service', (name) => { if (name === 'developmentTaskContextBackend') wake() })
+    signal.addEventListener('abort', stopped, { once: true })
+    const timer = setTimeout(wake, Math.min(this.config.waitTimeoutMs, Math.max(0, request.invitation.expiresAt - Date.now())))
     const current = async (): Promise<WaitResponse['result']> => {
       const authority = this.authorize(domain, request, input.peerId)
       if (typeof authority === 'string') return { status: authority }
       const backend = this.ctx.get('developmentTaskContextBackend')
       if (backend === undefined) return { status: 'unavailable' }
       const view = this.requireRootView(await this.ctx.developmentTasks.currentContextView(authority.invitation.taskId))
-      input.signal.throwIfAborted()
-      this.lifetime.signal.throwIfAborted()
+      signal.throwIfAborted()
       const checked = this.authorize(domain, request, input.peerId)
       if (typeof checked === 'string') return { status: checked }
       const cursor = createHash('sha256').update(JSON.stringify([request.subscriptionId, request.generation,
@@ -724,29 +741,9 @@ export default class ScopeAccessService extends TypertRemoteService {
         this.config.maxContextBytes, this.config.maxResponseBytes, this.config.maxDecodedResponseBytes])).digest('hex') as ScopeChangeCursor
       return { status: request.cursor === cursor ? 'unchanged' : 'changed', cursor }
     }
-    const first = await current()
-    if (first.status !== 'unchanged') return respond(first)
-    const key = `${input.peerId}/${request.subscriptionId}`
-    const previous = this.ownerWaits.get(key)
-    if (previous === undefined && this.ownerWaits.size + this.receiverWaits.size >= this.config.maxConcurrentWaits) {
-      return respond({ status: 'unavailable' })
-    }
-    previous?.controller.abort(new Error('scope-access: remote wait superseded'))
-    const controller = new AbortController()
-    const signal = AbortSignal.any([input.signal, this.lifetime.signal, controller.signal])
-    signal.throwIfAborted()
-    const changed = Promise.withResolvers<undefined>()
-    const wake = () => { changed.resolve(undefined) }
-    const stopped = wake
-    this.ownerWaits.set(key, { controller, grantId: request.invitation.grantId, wake })
-    const stopTask = this.ctx.on('development-task/changed', (task) => { if (task.id === request.invitation.taskId) wake() })
-    const stopBackend = this.ctx.on('internal/service', (name) => { if (name === 'developmentTaskContextBackend') wake() })
-    signal.addEventListener('abort', stopped, { once: true })
-    const timer = setTimeout(wake, Math.min(this.config.waitTimeoutMs, Math.max(0, request.invitation.expiresAt - Date.now())))
     try {
-      // Authority and cursor may change between the first read and listener registration.
-      const afterRegistration = await current()
-      if (afterRegistration.status !== 'unchanged' || signal.aborted) wake()
+      const first = await current()
+      if (first.status !== 'unchanged') return respond(first)
       await changed.promise
       signal.throwIfAborted()
       return respond(await current())
@@ -754,7 +751,7 @@ export default class ScopeAccessService extends TypertRemoteService {
       clearTimeout(timer)
       signal.removeEventListener('abort', stopped)
       stopTask(); stopBackend()
-      if (this.ownerWaits.get(key)?.controller === controller) this.ownerWaits.delete(key)
+      this.ownerWaits.delete(controller)
     }
   }
 

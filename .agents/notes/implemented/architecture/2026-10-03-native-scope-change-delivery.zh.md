@@ -12,7 +12,7 @@ Status: implemented
 
 [Scope access](../../../../packages/collaboration/scope-access/README.zh.md) 在独立读取之外提供经过认证的有界 `waitForChange` 操作。不透明游标覆盖 owner、grant 和接收方代际、Task revision，以及 backend identity/configuration。游标匹配时等待变化直至配置的截止时间；未提供游标时在线校准。通知不含事实。游标不是授权租约、采用回执或启动模型请求的许可。
 
-等待拥有独立的取消和最新等待所有权，不会覆盖读取。显式等待容量低于传输请求容量，等待截止时间低于 access 和 transport 截止时间。接收方等待时仍为普通读取和管理保留容量。撤销、过期、本地退出、owner 不可用和等待取消保持不同结果。backend identity 变化可以使游标失效，但不声称底层 Task 事实变化。
+等待拥有独立的取消和最新等待所有权，不会覆盖读取。owner 容量从首次 Task 读取到结算始终计入实际操作。取消或同订阅替换不能释放仍在运行的读取；容量已满时，重试返回 unavailable。Task 变化监听器先于首次读取注册，因此该读取期间的提交会唤醒已接纳的等待，无需另一次注册检查读取。显式等待容量低于传输请求容量，等待截止时间低于 access 和 transport 截止时间。接收方等待时仍为普通读取和管理保留容量。撤销、过期、本地退出、owner 不可用和等待取消保持不同结果。backend identity 变化可以使游标失效，但不声称底层 Task 事实变化。
 
 [原生 scope 上下文](../../../../packages/collaboration/scope-agent-context/README.zh.md) 通过经过认证的本地管理，将一个已经运行的普通 Session 绑定到独立读取订阅。已有本地分配需要明确的[组合接收同意](../feature/2026-10-07-retain-local-task-during-joint-receiving.zh.md)；职责是路由信息，不是 ACL。没有自动策略的绑定仅开启请求时读取。本地自动策略提供目标、全生命周期绝对启动次数上限、每轮步骤上限和最小间隔。远端来源文本不能授予此许可。
 

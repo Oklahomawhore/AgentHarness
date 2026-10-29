@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { expect, it } from 'vitest'
+import { expect, it, onTestFailed } from 'vitest'
 
 const repository = fileURLToPath(new URL('../../../../../../', import.meta.url))
 const sourceArgs = ['--import', import.meta.resolve('tsx/esm'), join(repository, 'apps/cli/src/bin.ts')]
@@ -175,13 +175,15 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
 
   it.skipIf(process.platform === 'win32')(`${mode}: authenticates real Host calls and adopts a restarted Host in the same MCP session`, async () => {
     const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-restart-'))
+    let hostDiagnostics = ''
+    onTestFailed(() => { console.error(hostDiagnostics.replace(/https?:\/\/\S+/gu, '[private-url]')) })
     const start = (): ChildProcessWithoutNullStreams => {
       const child = spawn(process.execPath, [...args, '--profile', 'web', '--no-open', '--port', '0'], {
         cwd: home, env: environment(home, mode), stdio: ['pipe', 'pipe', 'pipe'],
       })
       // The Web startup URL contains a secret. Drain it without including it in diagnostics.
       child.stdout.resume()
-      child.stderr.resume()
+      child.stderr.on('data', (chunk) => { hostDiagnostics = (hostDiagnostics + String(chunk)).slice(-16384) })
       return child
     }
     let host = start()
@@ -197,10 +199,22 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       // Generate an actual client entry through Host setup, then execute it from an unrelated cwd.
       await mkdir(join(home, '.cursor'))
       await writeFile(join(home, '.cursor/mcp.json'), '{"mcpServers":{}}')
+      await writeFile(join(home, '.workbuddy'), 'preserve unusable client configuration\n')
       const login = await fetch(first.launchUrl, { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
       const cookie = login.headers.getSetCookie()[0]?.split(';', 1)[0]
       await login.body?.cancel()
       if (cookie === undefined) throw new Error('Host did not issue a setup authentication cookie')
+      const inspection = await fetch(`${origin}/api/mcpClientSetup/list`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'inspect-fixture', method: 'mcpClientSetup/list', payload: { args: {} } }),
+      })
+      expect(inspection.status).toBe(200)
+      const inspected: unknown = await inspection.json()
+      expect(inspected).toMatchObject({ result: { ok: true } })
+      expect(inspected).toHaveProperty('result.value.clients', expect.arrayContaining([
+        expect.objectContaining({ id: 'workbuddy', state: 'failed', canSetup: false }),
+        expect.objectContaining({ id: 'cursor', state: 'not-configured', canSetup: true }),
+      ]))
       const setup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
         method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({ type: 'client-request', rpcId: 'setup-fixture', method: 'mcpClientSetup/setup',
@@ -208,6 +222,7 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       })
       expect(setup.status).toBe(200)
       expect(await setup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      expect(await readFile(join(home, '.workbuddy'), 'utf8')).toBe('preserve unusable client configuration\n')
       const configuration = JSON.parse(await readFile(join(home, '.cursor/mcp.json'), 'utf8')) as { mcpServers: { agentharness: ClientEntry } }
       const entry = configuration.mcpServers.agentharness
       expect(entry.args).toEqual(expect.arrayContaining(['--profile', 'mcp', '--connection', join(home, 'mcp/connection.json')]))

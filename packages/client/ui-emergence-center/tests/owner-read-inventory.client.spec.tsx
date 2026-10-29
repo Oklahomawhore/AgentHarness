@@ -8,7 +8,7 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type {
   ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, RemoteResult, ScopeAccessList,
   ScopeContributionApplicationApprovalRequest,
-  ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupEntry, ScopeInvitation,
+  ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupEntry, ScopeGroupEntrySelection, ScopeGroupEntryStatus, ScopeInvitation,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { apply, inject } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
@@ -70,6 +70,14 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
   // This root-only entry requires no transport operations or native Session header.
   runtime.ctx.provide('connection', { generation: observable(undefined) } as never)
   let approved = initiallyApproved
+  let closed = false
+  const groupStatus = (): ScopeGroupEntryStatus => ({ entry: groupEntry, text: JSON.stringify(groupEntry),
+    state: closed ? 'closed' : 'open', applicationCount: 1 })
+  const closeGroupEntry = vi.fn(async (_request: ScopeGroupEntrySelection) => {
+    closed = true
+    remote.emit('scope-access/contribution-application-changed', [{ taskId: groupEntry.taskId }])
+    return ok(groupStatus())
+  })
   let readGrant: ScopeAccessList['grants'][number] | undefined = initiallyApproved
     ? { invitation: readInvitation, state: 'active' } : undefined
   const currentMember = (): ScopeGroupApplication => ({ ...member, result: !approved ? { status: 'pending' }
@@ -119,9 +127,8 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
       list, revoke,
       contributionInventory: async () => ok({ entries: [], nextGrantId: null }),
       contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
-      groupEntries: async () => ok({ entries: [{ entry: groupEntry, text: JSON.stringify(groupEntry),
-        state: 'open', applicationCount: 1 }], nextEntryId: null }),
-      groupApplications, approveContributionApplication: approve,
+      groupEntries: async () => ok({ entries: [groupStatus()], nextEntryId: null }),
+      groupApplications, approveContributionApplication: approve, closeGroupEntry,
     },
   })
   await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
@@ -137,7 +144,8 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     expect(value).toBeInstanceOf(HTMLElement)
     return value as HTMLElement
   })
-  return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave, recipient, tasksList,
+  return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave,
+    recipient, tasksList, closeGroupEntry,
     authority: () => readGrant,
     revokeFromAnotherClient() {
       readGrant = { invitation: readInvitation, state: 'revoked' }
@@ -146,6 +154,29 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
 }
 
 describe('Emergence Center owner read inventory', () => {
+  it('closes entry admission while retaining the pending applicant and its separate approval consent', async () => {
+    const subject = await mountOwner(false)
+    const memberControls = within(subject.application)
+    fireEvent.change(memberControls.getByLabelText(zh['contribution.join.responsibility']),
+      { target: { value: readInvitation.responsibility } })
+    fireEvent.click(screen.getByRole('button', { name: zh['contribution.group.close'] }))
+    await screen.findByText(zh['contribution.group.state.closed'])
+    expect(subject.closeGroupEntry).toHaveBeenCalledExactlyOnceWith({ entryId: groupEntry.entryId })
+    expect(screen.queryByRole('button', { name: zh['contribution.group.close'] })).toBeNull()
+    expect(memberControls.getByText(zh['contribution.application.owner.pending'])).toBeTruthy()
+    expect(memberControls.getByLabelText<HTMLInputElement>(zh['contribution.join.responsibility']).value).toBe(readInvitation.responsibility)
+    expect(subject.approve).not.toHaveBeenCalled()
+    expect(subject.revoke).not.toHaveBeenCalled()
+    expect(subject.authority()).toBeUndefined()
+    const approve = memberControls.getByRole<HTMLButtonElement>('button', { name: zh['contribution.join.approve'] })
+    await waitFor(() => { expect(approve.disabled).toBe(false) })
+    fireEvent.click(approve)
+    await memberControls.findByText(zh['contribution.join.read.active'])
+    expect(subject.approve).toHaveBeenCalledOnce()
+    expect(subject.authority()).toEqual({ invitation: readInvitation, state: 'active' })
+    expect(screen.getByText(zh['contribution.group.state.closed'])).toBeTruthy()
+  })
+
   it('re-reads mounted Task and permission inventories on reset without restoring the old connection authority', async () => {
     const subject = await mountOwner(true)
     const old = Promise.withResolvers<{ ok: true; value: ScopeAccessList }>()

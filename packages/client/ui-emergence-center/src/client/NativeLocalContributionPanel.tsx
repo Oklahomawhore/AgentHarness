@@ -136,7 +136,7 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
       <label className={css.field} htmlFor={`${id}-source-kind`}>{t('contribution.sourceKind')}
         <select id={`${id}-source-kind`} value={sourceKind} disabled={!eligible} onChange={(event) => {
           setSourceKind(event.target.value as typeof sourceKind); setCompletedTurns(false)
-          setDraft(value => ({ ...value, consent: false })); setCompletedTurns(false); setConsentedBinding(null)
+          setDraft(value => ({ ...value, consent: false })); setConsentedBinding(null)
         }}><option value="tool-observations">{t('contribution.toolObservations')}</option>
           <option value="completed-turn-outcomes">{t('native.outcomes.source')}</option>
           <option value="native-work">{t('native.work.source')}</option></select>

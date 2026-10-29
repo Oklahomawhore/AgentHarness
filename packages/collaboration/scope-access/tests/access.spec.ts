@@ -379,17 +379,39 @@ it('wakes for its committed Task while unrelated commits and retrieval persisten
   expect(JSON.stringify(result)).not.toMatch(/PRIVATE|shared update|taskId|revision/)
 })
 
-it('rechecks current state after listener registration instead of losing an intervening update', async () => {
+it('observes a Task commit while its initial aligned view is still returning', async () => {
   const { a, b, task, subscription } = await joined()
   const cursor = await cursorOf(b.access, subscription.id)
-  const earlier = a.tasks.contextView(task.id)
-  await a.tasks.publishContext({ taskId: task.id, participantId: a.participantId, text: 'committed before listener registration' })
-  const latest = a.tasks.contextView(task.id)
-  // The first read captures old state; the next read sees the commit without another event.
-  const read = vi.spyOn(a.tasks, 'contextView').mockReturnValueOnce(earlier).mockReturnValue(latest)
-  const result = await b.access.waitForChange(subscription.id, cursor, signal())
-  expect(result.status).toBe('changed')
-  expect(read).toHaveBeenCalledTimes(3)
+  // Only the commit can wake this wait while its owner deadline is frozen.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const current = a.tasks.currentContextView.bind(a.tasks)
+  let held = false
+  const viewed = vi.spyOn(a.tasks, 'currentContextView').mockImplementation(async (id) => {
+    const view = await current(id)
+    if (!held) {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return view
+  })
+  const pending = b.access.waitForChange(subscription.id, cursor, signal())
+  const settled = Promise.allSettled([pending])
+  try {
+    await entered.promise
+    await a.tasks.publishContext({ taskId: task.id, participantId: a.participantId, text: 'Committed while cursor alignment was pending.' })
+    release.resolve(undefined)
+    const result = await pending
+    expect(result.status).toBe('changed')
+    if (result.status === 'changed') expect(result.cursor).not.toBe(cursor)
+  } finally {
+    release.resolve(undefined)
+    await settled
+    viewed.mockRestore()
+  }
+  expect(a.transport.inbound).toBe(0)
 })
 
 it('publishes revocation hints only after durability succeeds and stores the receiver terminal state', async () => {

@@ -1686,7 +1686,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         this.sources[role].sleeps.set(id, sleep)
         try { await delay(wait, undefined, { signal: AbortSignal.any([signal, sleep.signal]) }) }
         catch (error) { if (!aborted() && !sleep.signal.aborted) throw error }
-        finally { if (this.sources[role].sleeps.get(id) === sleep) this.sources[role].sleeps.delete(id) }
+        finally { this.sources[role].sleeps.delete(id) }
       }
     })()
     this.sources[role].workers.set(id, worker)

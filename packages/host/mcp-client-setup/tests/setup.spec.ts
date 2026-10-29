@@ -100,6 +100,28 @@ describe('MCP client setup', () => {
     expect(snapshot.clients.find(client => client.id === 'claude-code')).toMatchObject({ detected: false, state: 'not-installed' })
   })
 
+  // MCP setup supports POSIX hosts; Windows maps a file-as-parent lookup to a different errno.
+  it.skipIf(process.platform === 'win32').each(['list', 'setup-all'] as const)('keeps %s independent when one installed client has an unusable configuration directory', async (operation) => {
+    const { root, options } = await fixture()
+    await mkdir(join(root, 'Applications', 'Cursor.app'))
+    await mkdir(join(root, 'Applications', 'WorkBuddy.app'))
+    const blocked = join(root, 'home', '.cursor')
+    await writeFile(blocked, 'existing client data\n')
+    if (operation === 'list') {
+      const result = await listMcpClients(options)
+      expect(result.clients.find(client => client.id === 'cursor')).toMatchObject({ state: 'failed', detected: true, canSetup: false })
+      expect(result.clients.find(client => client.id === 'workbuddy')).toMatchObject({ state: 'not-configured', detected: true, canSetup: true })
+    } else {
+      const result = await setupAllMcpClients(options)
+      expect(result.find(item => item.client.id === 'cursor')).toMatchObject({ outcome: 'failed', client: { state: 'failed', detected: true } })
+      expect(result.find(item => item.client.id === 'workbuddy')?.outcome).toBe('configured')
+      expect(JSON.parse(await readFile(join(root, 'home', '.workbuddy', 'mcp.json'), 'utf8'))).toMatchObject({
+        mcpServers: { agentharness: { command: options.nodePath } },
+      })
+    }
+    expect(await readFile(blocked, 'utf8')).toBe('existing client data\n')
+  })
+
   it('atomically adds one JSON entry, preserves siblings, and is idempotent', async () => {
     const { root, options } = await fixture()
     await mkdir(join(root, 'Applications', 'Cursor.app'))
@@ -167,6 +189,28 @@ describe('MCP client setup', () => {
     expect(result.outcome).toBe('failed')
     expect(result.client.detail).toContain('symbolic-link')
     expect(await readFile(target, 'utf8')).toBe('{}\n')
+  })
+
+  it('reports invalid configuration without copying its contents into diagnostics', async () => {
+    const { root, options } = await fixture()
+    const directory = join(root, 'home', '.cursor')
+    await mkdir(directory)
+    await writeFile(join(directory, 'mcp.json'), 'SECRET42')
+    const result = await setupMcpClient(options, { clientId: 'cursor' })
+    expect(result.outcome).toBe('conflict')
+    expect(result.client.detail).not.toContain('SECRET42')
+    expect(await readFile(join(directory, 'mcp.json'), 'utf8')).toBe('SECRET42')
+  })
+
+  // Official client executables require native POSIX shebang execution; Windows setup is unsupported.
+  it.skipIf(process.platform === 'win32').each(['inspection', 'registration'] as const)('reports CLI %s failure without copying command output', async (operation) => {
+    const { root, options } = await fixture()
+    await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nif [ "$2" = list ] && [ "$MCP_SETUP_FAILURE" = registration ]; then printf "[]"; exit 0; fi\nprintf "%s" "$MCP_SETUP_DIAGNOSTIC" >&2\nexit 9\n')
+    const result = await setupMcpClient({ ...options, environment: {
+      ...options.environment, MCP_SETUP_DIAGNOSTIC: 'SECRET42', MCP_SETUP_FAILURE: operation,
+    } }, { clientId: 'codex' })
+    expect(result.outcome).toBe('failed')
+    expect(result.client.detail).not.toContain('SECRET42')
   })
 
   // These fake CLI executables require native POSIX shebang execution; Windows setup is unsupported.

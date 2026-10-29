@@ -300,8 +300,8 @@ async function inspectJson(path: string, expected: McpEntry): Promise<{ state: M
     return compatibleEntry(current, expected)
       ? { state: 'configured' }
       : { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
-  } catch (error) {
-    return { state: 'conflict', detail: `Configuration is not strict JSON: ${error instanceof Error ? error.message : String(error)}` }
+  } catch {
+    return { state: 'conflict', detail: 'Configuration is not strict JSON.' }
   }
 }
 
@@ -324,8 +324,8 @@ async function inspectCodex(
     return isRecord(transport) && compatibleEntry(transport, expected)
       ? { state: 'configured' }
       : { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
-  } catch (error) {
-    return { state: 'failed', detail: `Could not inspect Codex MCP settings: ${error instanceof Error ? error.message : String(error)}` }
+  } catch {
+    return { state: 'failed', detail: 'Could not inspect Codex MCP settings; run codex mcp list --json locally for diagnostics.' }
   }
 }
 
@@ -334,28 +334,35 @@ async function inspectClient(
   options: ResolvedOptions,
   requestedDisplayName?: string,
 ): Promise<InspectedClient> {
-  const command = await executable(definition, options)
-  const isDetected = await detected(definition, options, command)
-  const path = await configPath(definition, options)
   const { entry, participantId, displayName } = entryFor(definition, options, requestedDisplayName)
+  let command: string | undefined
+  let path: string | undefined
+  let isDetected = false
   let observation: { state: McpClientSnapshot['state']; detail?: string }
-  if (options.platform === 'win32') observation = {
-    state: 'unsupported', detail: 'Private local MCP authentication currently supports macOS and Linux only.',
+  try {
+    command = await executable(definition, options)
+    isDetected = await detected(definition, options, command)
+    path = await configPath(definition, options)
+    if (options.platform === 'win32') observation = {
+      state: 'unsupported', detail: 'Private local MCP authentication currently supports macOS and Linux only.',
+    }
+    else if (!isDetected) observation = { state: 'not-installed' }
+    else if (definition.mechanism === 'manual') observation = {
+      state: 'manual',
+      ...(definition.manualDetail === undefined ? {} : { detail: definition.manualDetail }),
+    }
+    else if (definition.mechanism === 'cli' && command === undefined) observation = {
+      state: 'manual',
+      detail: 'The supported registration command is not available on PATH.',
+    }
+    else if (definition.id === 'codex' && command !== undefined) {
+      observation = await inspectCodex(command, entry, options.environment)
+    }
+    else if (path !== undefined) observation = await inspectJson(path, entry)
+    else observation = { state: 'manual', detail: 'No supported registration mechanism is available.' }
+  } catch (error) {
+    observation = { state: 'failed', detail: error instanceof Error ? error.message : String(error) }
   }
-  else if (!isDetected) observation = { state: 'not-installed' }
-  else if (definition.mechanism === 'manual') observation = {
-    state: 'manual',
-    ...(definition.manualDetail === undefined ? {} : { detail: definition.manualDetail }),
-  }
-  else if (definition.mechanism === 'cli' && command === undefined) observation = {
-    state: 'manual',
-    detail: 'The supported registration command is not available on PATH.',
-  }
-  else if (definition.id === 'codex' && command !== undefined) {
-    observation = await inspectCodex(command, entry, options.environment)
-  }
-  else if (path !== undefined) observation = await inspectJson(path, entry)
-  else observation = { state: 'manual', detail: 'No supported registration mechanism is available.' }
   return {
     definition,
     executable: command,
@@ -381,7 +388,7 @@ async function inspectClient(
 /**
  * Read every supported client's current safe setup state.
  * @param options - runtime, filesystem, environment, and executable lookup inputs.
- * @returns detected clients and their independently verified setup states.
+ * @returns Per-client setup states; discovery and read failures remain failed entries.
  */
 export async function listMcpClients(options: McpClientSetupOptions): Promise<McpClientSetupSnapshot> {
   const resolved = resolveOptions(options)
@@ -467,7 +474,10 @@ export async function setupMcpClient(
         ...before.snapshot,
         state: 'failed',
         canSetup: false,
-        detail: error instanceof Error ? error.message : String(error),
+        detail: definition.mechanism === 'cli'
+          ? 'Client MCP registration command failed.'
+          : error instanceof SyntaxError ? 'Configuration is not strict JSON.'
+            : error instanceof Error ? error.message : String(error),
       },
     }
   }
