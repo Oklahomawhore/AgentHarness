@@ -95,7 +95,7 @@ async function createTask(page: Page): Promise<string> {
   await center.getByRole('heading', { name: OBJECTIVE, exact: true }).waitFor()
   await center.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。').fill(MARKER)
   await center.getByRole('button', { name: '发布上下文', exact: true }).click()
-  await center.getByText(MARKER, { exact: true }).waitFor()
+  await center.getByRole('paragraph').filter({ hasText: MARKER }).waitFor()
   await center.getByRole('button', { name: '关闭涌现协作中心', exact: true }).click()
   await page.getByRole('button', { name: '协作', exact: true }).click()
   await page.getByRole('radio', { name: '本机创建的目标', exact: true }).check()

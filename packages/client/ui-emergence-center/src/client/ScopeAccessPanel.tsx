@@ -68,7 +68,7 @@ export function ScopeAccessPanel({ taskId, entry, sessions, readScopeAccess, inv
   const currentAddress = resolveOwnerAddress(data?.identity.addresses ?? [], address)
   const pending = entry?.pending === true || entry?.status !== 'ready'
   const chosen = sessions.sessions.find(item => item.sessionKey === sessionKey)
-  const selectable = chosen !== undefined && !chosen.ended && chosen.taskId === undefined
+  const selectable = sessions.status === 'ready' && chosen !== undefined && !chosen.ended && chosen.taskId === undefined
     && chosen.receiveSubscriptionId === undefined && chosen.sharingState !== 'withdrawal-pending'
   return <details className={css.section}>
     <summary>{t('access.title')}</summary>

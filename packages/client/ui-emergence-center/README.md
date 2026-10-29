@@ -22,7 +22,7 @@ English | [中文](README.zh.md)
 
 ## Behavior
 
-Independent-device controls expose the local public identity, a recipient-pinned Root Task read invitation, and revocation. A recipient pastes the invitation and selects one observed Claude session without creating a local Task or authorizing directory reads. The panel reports the latest prepared context or unavailable, expired, and revoked state; it does not report model understanding. Direct network addresses must be reachable, and the default loopback listener supports only this computer.
+Independent-device controls expose the local public identity, a recipient-pinned Root Task read invitation, and revocation. A recipient pastes the invitation and selects one observed Claude session without creating a local Task or authorizing directory reads. New receiving requires a ready session catalog; stopping an existing receive remains available while that catalog is unavailable. The panel reports the latest prepared context or unavailable, expired, and revoked state; it does not report model understanding. Direct network addresses must be reachable, and the default loopback listener supports only this computer.
 
 Invitation and approval controls offer only addresses currently published by the Host identity. Several addresses require an explicit choice; a removed address cannot remain selected. Loopback choices are marked as local to the device running AgentHarness. To change the listener, use [Settings → Plugins → Collaboration network](../../bundle/web-app/README.md#scope-collaboration-network) on that device’s local page, save, and manually restart the Host before refreshing these addresses. Saving does not make the selected network reachable or change any Task permission.
 
