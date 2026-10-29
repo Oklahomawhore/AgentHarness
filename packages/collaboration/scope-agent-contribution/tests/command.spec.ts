@@ -202,6 +202,27 @@ it.each(['local', 'peer'] as const)('retains the %s failed outcome when stdout e
   expect(JSON.stringify(await retained(f))).not.toContain('LARGE_PRIVATE_OUTPUT')
 })
 
+it.each(['local', 'peer'] as const)('bounds %s command output together with its complete attribution', async (role) => {
+  const f = await fixture(role, { maxSampleBytes: 1800 })
+  const output = '界'.repeat(400)
+  expect(Buffer.byteLength(output, 'utf8')).toBeLessThan(f.permission.limits.maxSampleBytes)
+  await f.execute('complete-attribution-budget', 7, output)
+  await expect.poll(() => f.reports().length).toBe(1)
+  expect(f.reports()[0]?.observation).toMatchObject({ state: 'completed', exitCode: 7,
+    stdout: { state: 'omitted', reason: 'budget', truncated: false },
+    stderr: { state: 'included', text: '', truncated: false } })
+  const row = await retained(f)
+  expect(row.samples).toHaveLength(1)
+  expect(JSON.stringify(row)).not.toContain(output)
+  const sample = row.samples[0]
+  const capture = row.capture
+  if (sample === undefined || capture === null) throw new Error('Missing retained command sample')
+  const grant = 'grant' in capture ? capture.grant : capture.invitation?.grant
+  if (grant === undefined) throw new Error('Missing approved command grant')
+  expect(Buffer.byteLength(JSON.stringify({ grant, ...sample.sample }), 'utf8'))
+    .toBeLessThanOrEqual(grant.maxSampleBytes)
+})
+
 it.each(['local', 'peer'] as const)('keeps %s file completion permission in the same command-enabled source', async (role) => {
   const f = await fixture(role, { tools: ['write'], fileContent: 'completed-native-file' })
   await run(f.source, f.agent, [toolCallResponse('mixed-write', 'write', { file_path: 'mixed.txt', content: 'MIXED_FILE' })])

@@ -399,6 +399,40 @@ describe('joint native receiving and contribution consent', () => {
     expect(source.adapter.requests).toEqual([])
   })
 
+  it('waits for an adopted receiving reply during source unload and retains independent read authority', async () => {
+    const { source, b, approve, status } = await fixture(automaticPolicy)
+    const held = barrier()
+    const original = source.ctx.scopeAgentContext.adoptJoinRead.bind(source.ctx.scopeAgentContext)
+    vi.spyOn(source.ctx.scopeAgentContext, 'adoptJoinRead').mockImplementation(async (...args) => {
+      const result = await original(...args)
+      await held.wait()
+      return result
+    })
+    source.script.push(textResponse('Complete the independently authorized activation.'))
+    await approve()
+    await held.entered
+    await expect.poll(() => source.adapter.requests.length).toBe(1)
+    await b.whenIdle()
+    const before = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    const entry = [...source.ctx.loader.entries()].find(item => item.options.name === 'contribution')
+    if (entry === undefined) throw new Error('Missing contribution Loader entry')
+    let unloaded = false
+    const unloading = Promise.allSettled([entry.update({ disabled: true }).then(() => { unloaded = true })])
+    try {
+      await expect.poll(() => source.ctx.get('scopeAgentContributions')).toBeUndefined()
+      expect(unloaded).toBe(false)
+      held.release()
+      expect(await unloading).toEqual([{ status: 'fulfilled', value: undefined }])
+      await entry.update({ disabled: false })
+      await source.ctx.loader.await()
+      await expect.poll(async () => (await status()).capture).toBeNull()
+      await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
+      const after = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+      expect(after).toMatchObject({ binding: before.binding, automatic: automaticPolicy, usedBudget: before.usedBudget })
+      expect(source.adapter.requests).toHaveLength(1)
+    } finally { held.release(); await unloading }
+  })
+
   it.each(['stop', 'leave'] as const)('preserves or ends adopted automatic permission through explicit %s', async (action) => {
     const { source, b, capture, approve, status } = await fixture(automaticPolicy)
     source.script.push(textResponse('One adopted activation completed.'))
@@ -865,6 +899,9 @@ describe('joint native receiving and contribution consent', () => {
     await expect.poll(async () => (await status()).receivingContinuation?.intent).toBe('adopt')
     await expect(source.ctx.scopeAgentContributions.request({ ...request, expectedCapture: null }))
       .rejects.toMatchObject({ code: 'scope-agent-contribution/stale-capture' })
+    await expect(source.ctx.scopeAgentContributions.request({ ...request, expectedCapture: capture.selection }))
+      .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission',
+        message: 'Finish the retained receiving operation before requesting another capture' })
     await source.ctx.scopeAgentContributions.stop({ agentId: b.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
     held.release()

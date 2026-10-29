@@ -42,6 +42,14 @@ describe('mcp profile parsing', () => {
     expect((await invoke([], { ...policy, leaseMinHeartbeatMs: 30001 })).exits).toEqual([1])
   })
 
+  it.each([['--participant-id', ' '], ['--display-name', ' ']])('rejects an empty local identity: %j', async (...args) => {
+    expect((await invoke(args)).exits).toEqual([1])
+  })
+
+  it('requires launcher readiness before acquiring the stdio transport', async () => {
+    await expect(invoke([])).rejects.toThrow('MCP stdio requires the dsh application lifecycle')
+  })
+
   it('rejects timer overflow and missing complete-message limits at configuration parsing', () => {
     expect(() => Config({ ...policy, requestTimeoutMs: 2147483648 })).toThrow()
     const { maxRequestBytes: _limit, ...incomplete } = policy

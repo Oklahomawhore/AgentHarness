@@ -159,6 +159,43 @@ function remoteSample(identity: DevelopmentTaskObservedIntervalIdentity, sequenc
 }
 
 describe('development-task SQLite storage composition', () => {
+  it.each([
+    ['seq', 0], ['revision', 1.5], ['at', Number.MAX_SAFE_INTEGER + 1],
+  ] as const)('rejects persisted %s=%s at domain decoding and preserves the invalid row for repair', async (field, value) => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const target = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Validated recovery', scope: 'Schema authority', createdBy: owner })
+    await close(first)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const path = join(root, 'tasks.sqlite')
+    const database = new DatabaseSync(path)
+    let original: string
+    let corrupted: string
+    try {
+      const row = database.prepare('SELECT value FROM u_development_context_tasks_events WHERE key = ?').get('node-a:1')
+      if (typeof row?.value !== 'string') throw new Error('Expected the persisted creation event')
+      original = row.value
+      const parsed = JSON.parse(original) as Record<string, unknown>
+      corrupted = JSON.stringify({ ...parsed, [field]: value })
+      database.prepare('UPDATE u_development_context_tasks_events SET value = ? WHERE key = ?').run(corrupted, 'node-a:1')
+    } finally { database.close() }
+    await expect(boot()).rejects.toThrow('does not match its schema')
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.developmentTasks.log()).toEqual([])
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
+    await close(failed)
+    const repair = new DatabaseSync(path)
+    try {
+      expect(repair.prepare('SELECT value FROM u_development_context_tasks_events WHERE key = ?').get('node-a:1'))
+        .toEqual({ value: corrupted })
+      repair.prepare('UPDATE u_development_context_tasks_events SET value = ? WHERE key = ?').run(original, 'node-a:1')
+    } finally { repair.close() }
+    const restored = await boot()
+    expect(restored.developmentTasks.get({ taskId: target.id })).toEqual(target)
+  })
+
   it('preserves JSON Tasks, inherited blocks and bindings during one-way SQLite adoption', async () => {
     const first = await boot(86_400_000, 'node-a', 1024, 'json')
     const owner = participant('owner')

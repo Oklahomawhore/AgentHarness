@@ -152,6 +152,39 @@ it('stopping permission during an owned flush prevents late admission and drains
   await expect.poll(async () => (await f.owner.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture).toBeNull()
   expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.some(item => item.localTurnOutcome)).toBe(false)
 })
+
+it('waits for a captured answer checkpoint during unload and never resumes its disclosure consent', async () => {
+  const f = await fixture()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  releases.push(() => { release.resolve(undefined) })
+  releases.push(f.owner.ctx.on('session/flush', async (session) => {
+    if (session === f.agent.session && session.snapshotEvents().at(-1)?.type === 'turn/end') {
+      entered.resolve(undefined)
+      await release.promise
+    }
+  }))
+  await turn(f, 'LATE_ANSWER_MUST_STAY_PRIVATE')
+  await entered.promise
+  const entry = [...f.owner.ctx.loader.entries()].find(item => item.options.name === 'contribution')
+  if (entry === undefined) throw new Error('Missing contribution Loader entry')
+  let unloaded = false
+  const unloading = Promise.allSettled([entry.update({ disabled: true }).then(() => { unloaded = true })])
+  releases.push(async () => { release.resolve(undefined); await unloading })
+  await expect.poll(() => f.owner.ctx.get('scopeAgentContributions')).toBeUndefined()
+  expect(unloaded).toBe(false)
+  expect((await row(f)).samples).toEqual([])
+  release.resolve(undefined)
+  expect(await unloading).toEqual([{ status: 'fulfilled', value: undefined }])
+  expect(unloaded).toBe(true)
+  expect((await row(f)).samples).toEqual([])
+  await entry.update({ disabled: false })
+  await f.owner.ctx.loader.await()
+  await expect.poll(async () => (await f.owner.ctx.scopeAgentContributions.localStatus({ agentId: f.agent.id })).capture).toBeNull()
+  await turn(f, 'NEW_ANSWER_WITHOUT_RENEWED_CONSENT')
+  expect((await row(f)).samples).toEqual([])
+  expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.some(item => item.localTurnOutcome)).toBe(false)
+})
 it('excludes a turn already running when new permission becomes active', async () => {
   const f = await fixture()
   await f.owner.ctx.scopeAgentContributions.stopLocal({ agentId: f.agent.id, expectedCapture: f.capture.selection })

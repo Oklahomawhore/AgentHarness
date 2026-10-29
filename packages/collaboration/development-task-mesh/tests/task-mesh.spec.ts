@@ -129,6 +129,24 @@ async function approvedSource() {
 }
 
 describe('development Task Mesh channel', () => {
+  it.each([
+    ['seq', 0], ['seq', 1.5], ['seq', Number.MAX_SAFE_INTEGER + 1],
+    ['revision', 0], ['revision', 1.5], ['revision', Number.MAX_SAFE_INTEGER + 1],
+    ['at', -1], ['at', 1.5], ['at', Number.MAX_SAFE_INTEGER + 1],
+  ] as const)('rejects wire %s=%s before Task admission or queue retention', async (field, value) => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const accept = vi.spyOn(ctx.developmentTasks, 'acceptLogReplica')
+    await expect(channel.receive([{ kind: 'task-event', entry: { ...created(), [field]: value } }], REMOTE))
+      .rejects.toMatchObject({ name: 'ZodError' })
+    expect(accept).not.toHaveBeenCalled()
+    expect(ctx.developmentTasks.log()).toEqual([])
+    expect(await channel.heads()).toEqual({})
+    await channel.receive([{ kind: 'task-event', entry: created() }], REMOTE)
+    expect(accept).toHaveBeenCalledOnce()
+    expect(ctx.developmentTasks.log()).toEqual([created()])
+  })
+
   it('keeps an orphan mutation pending without blocking another peer’s independent history', async () => {
     const ctx = await setup()
     const channel = ctx.developmentMesh.channel('development-task/v1')!
