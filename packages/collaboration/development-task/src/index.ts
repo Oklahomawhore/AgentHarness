@@ -896,11 +896,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private async endPeerNow(
     task: TaskRecord, grant: DevelopmentTaskPeerContributionGrant, reason: DevelopmentTaskContributionEndReason,
   ): Promise<DevelopmentTaskPeerContributionReceipt> {
-    const retained = task.contributions.get(grant.grantId)
-    if (retained !== undefined) {
-      this.requireSamePeerGrant(retained.grant, grant)
-      if (retained.state === 'ended') return retained.endReceipt
-    }
     await this.publish(task.id, task.hiddenRoomId, { kind: 'peer-contribution-ended', grant, reason })
     const ended = this.requireTask(task.id).contributions.get(grant.grantId)
     if (ended?.state !== 'ended') throw new Error('peer terminal event did not end its grant')

@@ -82,6 +82,78 @@ it('admits an authenticated peer without creating a participant or assignment an
   expect(Object.isFrozen(opened.grant.source)).toBe(true)
 })
 
+it('rejects self-contribution authority and expired new grants without publishing approvals', async () => {
+  const { tasks, grant } = await scenario()
+  await expect(tasks.openPeerContribution({ ...grant, contributorPeerId: owner }))
+    .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  vi.spyOn(Date, 'now').mockReturnValue(grant.expiresAt)
+  await expect(tasks.openPeerContribution(grant)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  expect(tasks.log()).toHaveLength(1)
+  expect(tasks.peerContributions({})).toEqual([])
+})
+
+it('durably expires an existing peer approval before refusing to reopen it', async () => {
+  const { tasks, grant } = await scenario()
+  await tasks.openPeerContribution(grant)
+  vi.spyOn(Date, 'now').mockReturnValue(grant.expiresAt)
+  await expect(tasks.openPeerContribution(grant)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
+  expect(tasks.log()).toHaveLength(3)
+  expect(tasks.peerContributions({})).toEqual([expect.objectContaining({ state: 'ended', reason: 'expired' })])
+  await expect(tasks.openPeerContribution(grant)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
+  expect(tasks.log()).toHaveLength(3)
+})
+
+it.each(['task', 'peer identity', 'early expiry'] as const)
+('rejects a parsed durable peer %s inconsistency without changing authority', async (change) => {
+  const { tasks, grant } = await scenario()
+  await tasks.openPeerContribution(grant)
+  const opened = tasks.log()[1]!
+  const ending = change === 'early expiry'
+  const candidate = developmentTaskEventSchema.parse({ ...opened,
+    seq: ending ? 3 : 2, revision: ending ? 3 : 2,
+    at: ending ? grant.expiresAt - 1 : opened.at,
+    change: ending ? { kind: 'peer-contribution-ended', grant, reason: 'expired' }
+      : { kind: 'peer-contribution-opened', grant: { ...grant,
+        ...(change === 'task' ? { taskId: 'task-unrelated' } : { contributorPeerId: owner }),
+      } },
+  })
+  const restored = await setup()
+  restored.tasks.restoreLog(tasks.log().slice(0, ending ? 2 : 1))
+  const before = restored.tasks.log()
+  const message = ending ? 'expires after its terminal event' : 'does not match its Root Task'
+  const diagnostic: unknown = expect.stringContaining(message)
+  expect(() => { restored.tasks.restoreLog([candidate]) })
+    .toThrow(expect.objectContaining({ code: 'REPLICA_CONFLICT', message: diagnostic }))
+  expect(restored.tasks.log()).toEqual(before)
+})
+
+it('enforces a peer sample byte permission during parsed durable recovery', async () => {
+  const { tasks, grant } = await scenario()
+  await tasks.openPeerContribution(grant)
+  await tasks.admitPeerContribution(sample(grant), source)
+  const entries = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(tasks.log()),
+    (key, value: unknown): unknown => key === 'maxSampleBytes' ? 1 : value))
+  const restored = await setup()
+  expect(() => { restored.tasks.restoreLog(entries) }).toThrow('authorized byte limit')
+  expect(restored.tasks.log()).toHaveLength(2)
+})
+
+it('refuses recovery when a reduced text budget cannot retain complete peer withdrawal metadata', async () => {
+  const { tasks, task, grant } = await scenario()
+  await tasks.openPeerContribution(grant)
+  await tasks.admitPeerContribution(sample(grant), source)
+  const active = tasks.log()
+  await tasks.endPeerContribution({ grant, reason: 'left' }, source)
+  const withdrawal = tasks.get({ taskId: task.id }).context.find(item => item.peerObservation?.state === 'revoked')?.peerObservation
+  if (withdrawal === undefined) throw new Error('Missing canonical artifact withdrawal')
+  const maxTextBytes = Buffer.byteLength(JSON.stringify(withdrawal), 'utf8') - 1
+  expect(Buffer.byteLength(JSON.stringify(grant), 'utf8')).toBeLessThanOrEqual(maxTextBytes)
+  const restored = await setup({ maxTextBytes })
+  expect(() => {
+    restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(active))))
+  }).toThrow('peer withdrawal exceeds maxTextBytes')
+})
+
 it('rejects other senders, altered grants, reused source content and nonadvancing new samples', async () => {
   const { tasks, grant } = await scenario()
   await tasks.openPeerContribution(grant)

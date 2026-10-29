@@ -171,3 +171,26 @@ it('rejects durable attribution tampering and conflicting sample sequences rathe
   await expect(f.tasks.admitPeerContribution({ ...sample(f.peer, 2), sequence: 1 }, f.peer.contributorPeerId)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   await expect(f.tasks.admitLocalContribution({ ...sample(f.local, 2), sequence: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
 })
+
+it('accepts contribution withdrawals only through their terminal durable events', async () => {
+  const f = await scenario()
+  await f.tasks.openLocalContribution(f.local)
+  await f.tasks.openPeerContribution(f.peer)
+  await f.tasks.admitLocalContribution(sample(f.local))
+  await f.tasks.admitPeerContribution(sample(f.peer), f.peer.contributorPeerId)
+  const prefix = f.tasks.log()
+  const last = prefix.at(-1)!
+  await f.tasks.endLocalContribution({ grant: f.local, reason: 'left' })
+  await f.tasks.endPeerContribution({ grant: f.peer, reason: 'left' }, f.peer.contributorPeerId)
+  const notices = f.tasks.get({ taskId: f.task.id }).context.filter(item =>
+    item.localContribution?.ended !== undefined || item.peerContribution?.ended !== undefined)
+  expect(notices).toHaveLength(2)
+  for (const publication of notices) {
+    const restored = await setup()
+    restored.tasks.restoreLog(developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(prefix))))
+    const candidate = developmentTaskEventSchema.parse({ ...last, seq: last.seq + 1, revision: last.revision + 1,
+      at: publication.publishedAt, change: { kind: 'context-published', publication } })
+    expect(() => { restored.tasks.restoreLog([candidate]) }).toThrow('withdrawal requires its terminal owner event')
+    expect(restored.tasks.log()).toEqual(prefix)
+  }
+})
