@@ -24,7 +24,7 @@ Share permitted writes, edits, foreground command results, and completed final a
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount in a `dsh` profile providing Agents, the tool registry, Session persistence, storage, and [scope access](../scope-access/README.md). Mounting grants no permission. The authenticated `scopeAgentContributions` Remote exposes independent-owner `request`/`status`/`recoverRoute`, owner-local `requestLocal`/`localStatus`/`stopLocal`, remote `stop`, and joint `leaveJoin` to the [Collaboration UI](../../client/ui-emergence-center/README.md).
+Mount in a `dsh` profile providing Agents, the tool registry, Session persistence, storage, and [scope access](../scope-access/README.md). Mounting grants no permission. A finite automatic response cannot authorize its own local or remote source disclosure, including after self-pause; independent local management can still grant permission, and the Agent can stop sharing. The authenticated `scopeAgentContributions` Remote exposes independent-owner `request`/`status`/`recoverRoute`, owner-local `requestLocal`/`localStatus`/`stopLocal`, remote `stop`, and joint `leaveJoin` to the [Collaboration UI](../../client/ui-emergence-center/README.md).
 
 ### Minimal configuration
 

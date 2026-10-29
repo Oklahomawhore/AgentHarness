@@ -1025,7 +1025,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
         signal.throwIfAborted()
         if (!this.current(domain, session, undefined, change)) continue
         const prepared = receivedScopeProjection({ ...session, receive: session.receive }, result, this.config.maxContextBytes)
-        const projection = records.get(prepared.projectionId) ?? prepared
+        const projection = previous?.cacheKey === prepared.cacheKey ? previous : records.get(prepared.projectionId) ?? prepared
         const saved = await this.storeProjection(domain, session, undefined, change, projection, signal)
         if (!saved) continue
         const subscription = (await access.list()).subscriptions.find(item => item.id === session.receive?.subscriptionId)

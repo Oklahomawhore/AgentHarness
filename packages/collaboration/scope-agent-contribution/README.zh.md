@@ -24,7 +24,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在提供 Agent、工具注册表、Session 持久化、存储及 [scope 访问](../scope-access/README.zh.md)的 `dsh` profile 中挂载。挂载不授予任何许可。经过认证的 `scopeAgentContributions` Remote 向[协作界面](../../client/ui-emergence-center/README.zh.md)提供独立所有者的 `request`/`status`/`recoverRoute`、本机所有者的 `requestLocal`/`localStatus`/`stopLocal`，远端的 `stop`，以及联合加入的 `leaveJoin`。
+在提供 Agent、工具注册表、Session 持久化、存储及 [scope 访问](../scope-access/README.zh.md)的 `dsh` profile 中挂载。挂载不授予任何许可。有限自动响应不能为自己授权本地或远端来源披露，自行暂停后也不能；独立的本地管理操作仍可授权，Agent 也可以停止分享。经过认证的 `scopeAgentContributions` Remote 向[协作界面](../../client/ui-emergence-center/README.zh.md)提供独立所有者的 `request`/`status`/`recoverRoute`、本机所有者的 `requestLocal`/`localStatus`/`stopLocal`，远端的 `stop`，以及联合加入的 `leaveJoin`。
 
 ### 最小配置
 

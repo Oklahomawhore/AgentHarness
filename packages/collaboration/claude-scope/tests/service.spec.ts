@@ -26,7 +26,7 @@ import type { ClaudeScopeOpenApiSource, ClaudeScopeSessionKey } from '../src/typ
 import type { ScopeContributionLease } from '../src/contribution-state.ts'
 import { contributionSchema, contributionLeaseSchema } from '../src/contribution-state.ts'
 import type { DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
-import { claudeScopeDomainSpec, type ScopeSession, type ScopeToolLease } from '../src/state.ts'
+import { claudeScopeDomainSpec, type ScopeProjection, type ScopeSession, type ScopeToolLease } from '../src/state.ts'
 import type { ScopeWorkLease } from '../src/work-state.ts'
 import { scopeDigest } from '../src/projection.ts'
 import * as OpenApi from '../src/openapi.ts'
@@ -1192,8 +1192,8 @@ class ReadScopeTransport extends ScopeTransport {
 
 async function independentScopes() {
   const network = new Map<ScopePeerId, ReadScopeTransport>()
-  const host = async (id: string) => {
-    const result = await boot(new MemoryMediaPool(), undefined, {}, id, async (ctx) => {
+  const host = async (id: string, pool = new MemoryMediaPool(), directory?: string) => {
+    const result = await boot(pool, directory, {}, id, async (ctx) => {
       new ReadScopeTransport(ctx, id as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
         maxContextBytes: 6000, maxResponseBytes: 16000, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 1000,
@@ -1213,7 +1213,7 @@ async function independentScopes() {
     expiresAt: Date.now() + 60000, responsibility: 'frontend' })
   const key = await receiver.observe('read-only-session')
   await receiver.scope.receive({ sessionKey: key, invitation })
-  return { owner, receiver, task, secret, invitation, key }
+  return { owner, receiver, task, secret, invitation, key, host }
 }
 
 async function contributionPair(ownerPeerId = 'contribution-owner', overrides: Partial<Config> = {}) {
@@ -1763,6 +1763,76 @@ describe('independent Claude contribution permits', () => {
 })
 
 describe('independent Claude receiving intervals', () => {
+  it('uses a fixed owner allowance from its first active Hook and reuses the next unchanged output', async () => {
+    const { owner, source } = await contributionPair('bounded-read-owner', { maxContextBytes: 2500 })
+    const task = await owner.createTask('Stable receiving budget')
+    const key = await source.observe('bounded-read-session')
+    const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id,
+      recipientPeerId: source.transport.peerId, ownerAddress: (await owner.transport.identity()).addresses[0]!,
+      expiresAt: Date.now() + 60000, responsibility: 'frontend' })
+    await source.scope.receive({ sessionKey: key, invitation })
+    const retrieval = vi.spyOn(source.ctx.scopeAccess, 'retrieveWithinBudget')
+    const first = await source.hook('bounded-read-session', 'PostToolBatch')
+    const second = await source.hook('bounded-read-session', 'PostToolBatch')
+    expect(first.receipt.status).toBe('projected')
+    expect(second.receipt.status).toBe('projected')
+    const allowances = retrieval.mock.calls.map(([request]) => request.maxContextBytes)
+    expect(allowances).toHaveLength(2)
+    expect(allowances[1]).toBe(allowances[0])
+    expect(second).toEqual(first)
+    const text = first.output.hookSpecificOutput?.additionalContext
+    if (text === undefined) throw new Error('Active receiving returned no context')
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2500)
+    expect(text).toContain('"supersedes":null')
+    expect(source.facility.get('claude_scope')!.table('projections').size).toBe(1)
+  })
+
+  it('supersedes the suspension notice after owner recovery and reuses only the current prepared output', async () => {
+    const { owner, receiver } = await independentScopes()
+    const active = await receiver.hook('read-only-session', 'PostToolBatch')
+    owner.transport.offline = true
+    const unavailable = await receiver.hook('read-only-session', 'UserPromptSubmit')
+    expect(unavailable.receipt.reason).toBe('unavailable')
+    const noticeId = unavailable.receipt.projectionId
+    if (noticeId === undefined) throw new Error('Suspension notice has no persisted projection identity')
+    expect(await receiver.hook('read-only-session', 'UserPromptSubmit')).toEqual(unavailable)
+    owner.transport.offline = false
+    const recovered = await receiver.hook('read-only-session', 'PostToolBatch')
+    expect(recovered.receipt.status).toBe('projected')
+    expect(recovered.output.hookSpecificOutput?.additionalContext).toContain('PUBLIC_SCOPE')
+    expect(recovered.output.hookSpecificOutput?.additionalContext).toContain(`"supersedes":${JSON.stringify(noticeId)}`)
+    expect(recovered.receipt.projectionId).not.toBe(active.receipt.projectionId)
+    const recoveredId = recovered.receipt.projectionId
+    if (recoveredId === undefined) throw new Error('Recovered context has no persisted projection identity')
+    const records = receiver.facility.get('claude_scope')!.table('projections')
+    expect(records.get(recoveredId)).toMatchObject({ previousProjectionId: noticeId,
+      text: recovered.output.hookSpecificOutput?.additionalContext })
+    expect(await receiver.hook('read-only-session', 'PostToolBatch')).toEqual(recovered)
+    expect(records.size).toBe(3)
+    expect(receiver.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
+  })
+
+  it('restores an existing content-keyed receiving record without changing its prepared text or identity', async () => {
+    const { receiver, key, host } = await independentScopes()
+    const active = await receiver.hook('read-only-session', 'PostToolBatch')
+    const activeId = active.receipt.projectionId
+    if (activeId === undefined) throw new Error('Active context has no persisted projection identity')
+    const domain = receiver.facility.get('claude_scope')!
+    const projection = domain.table('projections').get(activeId) as ScopeProjection
+    const legacyId = `claude-projection-${scopeDigest([projection.cacheKey])}`
+    const legacy = { ...projection, projectionId: legacyId,
+      text: projection.text.replace(JSON.stringify(activeId), JSON.stringify(legacyId)) }
+    const session = domain.table('sessions').get(key) as ScopeSession
+    await domain.table('projections').put(legacyId, legacy)
+    await domain.table('sessions').put(key, { ...session, lastProjectionId: legacyId })
+    await receiver.ctx.fiber.dispose()
+    const restored = await host('read-recipient', receiver.pool, receiver.directory)
+    const output = await restored.hook('read-only-session', 'PostToolBatch')
+    expect(output.receipt).toMatchObject({ status: 'projected', projectionId: legacyId })
+    expect(output.output.hookSpecificOutput?.additionalContext).toBe(legacy.text)
+    expect(restored.facility.get('claude_scope')!.table('projections').get(legacyId)).toEqual(legacy)
+  })
+
   it('injects fresh owner context without capture or Task replication and suspends it while offline', async () => {
     const { owner, receiver, task, key, invitation } = await independentScopes()
     expect(receiver.ctx.developmentTasks.list({ limit: 32 })).toEqual([])

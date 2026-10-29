@@ -249,8 +249,14 @@ export function apply(ctx: Context): void {
       setupClaudeHooks: request => claudeScopes.setup(request),
       checkClaudeHooks: request => claudeScopes.projectSetup(request),
       removeClaudeHooks: request => claudeScopes.removeSetup(request),
-      joinClaudeScope: request => claudeScopes.join(request),
-      leaveClaudeScope: request => claudeScopes.leave(request),
+      joinClaudeScope: async (request) => {
+        try { return await claudeScopes.join(request) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
+      leaveClaudeScope: async (request) => {
+        try { return await claudeScopes.leave(request) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
       refreshClaudeScopes: () => { claudeScopes.refresh() },
       readContribution: (sessionKey) => { void sourceContributions.refresh(sessionKey) },
       requestContribution: async (request) => {

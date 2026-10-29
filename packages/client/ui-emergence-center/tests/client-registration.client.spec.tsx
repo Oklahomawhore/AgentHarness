@@ -69,12 +69,14 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     const setup = vi.fn(async (): Promise<RemoteResult<ClaudeScopeSetupResult>> => ok({ ...project, outcome: 'configured' }))
     const projectSetup = vi.fn(async () => ok({ ...project, state: 'configured' }))
     const removeSetup = vi.fn(async () => ok({ ...project, outcome: 'removed' }))
-    const join = vi.fn(async (request: ClaudeScopeJoinRequest) => {
+    const join = vi.fn(async (request: ClaudeScopeJoinRequest): Promise<RemoteResult<ClaudeScopeSessionSummary>> => {
       const joined = { ...session, taskId: request.taskId, responsibility: request.responsibility }
       currentSessions = [joined]
       return ok(joined)
     })
-    const leave = vi.fn(async () => { currentSessions = [session]; return ok(session) })
+    const leave = vi.fn(async (): Promise<RemoteResult<ClaudeScopeSessionSummary>> => {
+      currentSessions = [session]; return ok(session)
+    })
     let sourceDetail: ClaudeScopeContributionDetail = { session, capture: null }
     const prepare = vi.fn(async (request: ClaudeScopePrepareContributionRequest) => {
       const prepared: ClaudeScopeSessionSummary = { ...session, contributionState: 'prepared' }
@@ -234,6 +236,48 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it.each(['join', 'leave'] as const)('confirms the original Claude Session after a committed %s loses its reply', async (method) => {
+    const initial: ClaudeScopeSessionSummary = method === 'join' ? session : {
+      ...session, taskId: task.id, responsibility: 'Frontend integration',
+    }
+    const subject = await mountPanel([initial])
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      if (method === 'join') {
+        fireEvent.change(screen.getByPlaceholderText(zh['claude.responsibilityPlaceholder']), { target: { value: 'Frontend integration' } })
+        const commit = subject.join.getMockImplementation()
+        if (commit === undefined) throw new Error('Host join implementation missing')
+        subject.join.mockImplementationOnce(async (request) => {
+          await commit(request)
+          return { ok: false, error: new RemoteError('gateway/internal', 'Join response lost after commit', {}) }
+        })
+      } else {
+        const commit = subject.leave.getMockImplementation()
+        if (commit === undefined) throw new Error('Host leave implementation missing')
+        subject.leave.mockImplementationOnce(async () => {
+          await commit()
+          return { ok: false, error: new RemoteError('gateway/internal', 'Leave response lost after commit', {}) }
+        })
+      }
+      await subject.runtime.flush()
+      const reads = subject.sessions.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: zh[method === 'join' ? 'claude.join' : 'claude.leave'] }))
+      await screen.findByText(zh['claude.actionFailed'])
+      if (method === 'join') {
+        await screen.findByText(zh['claude.currentTask'])
+        await waitFor(() => { expect(screen.queryByLabelText(zh['contribution.application.paste'])).toBeNull() })
+        expect(subject.join).toHaveBeenCalledOnce()
+      } else {
+        await screen.findByRole('button', { name: zh['claude.join'] })
+        await screen.findByLabelText(zh['contribution.application.paste'])
+        expect(screen.queryByText(zh['claude.currentTask'])).toBeNull()
+        expect(subject.leave).toHaveBeenCalledOnce()
+      }
+      expect(subject.sessions).toHaveBeenCalledTimes(reads + 1)
+      expect(screen.queryByText(/response lost after commit/)).toBeNull()
+    } finally { await subject.runtime.dispose() }
+  })
+
   it('retries an explicitly refused MCP setup while keeping configuration separate from online and context receipt', async () => {
     const subject = await mountPanel([], false, true, 'not-configured')
     try {
@@ -633,10 +677,12 @@ describe('Collaboration client registration lifecycle', () => {
       fireEvent.change(screen.getByPlaceholderText(zh['claude.responsibilityPlaceholder']), { target: { value: '  Frontend API integration  ' } })
       fireEvent.click(screen.getByRole('button', { name: zh['claude.join'] }))
       await screen.findByText(zh['claude.currentTask'])
+      await waitFor(() => { expect(screen.queryByLabelText(zh['contribution.application.paste'])).toBeNull() })
       expect(subject.join).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, taskId: task.id,
         responsibility: 'Frontend API integration', roots: ['/project'], bashCommands: [] })
       fireEvent.click(screen.getByRole('button', { name: zh['claude.leave'] }))
       await screen.findByRole('button', { name: zh['claude.join'] })
+      await screen.findByLabelText(zh['contribution.application.paste'])
       expect(subject.leave).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey })
     } finally { await subject.runtime.dispose() }
   })

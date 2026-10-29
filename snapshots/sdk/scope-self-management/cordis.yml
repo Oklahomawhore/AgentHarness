@@ -62,5 +62,12 @@
         maxLocalContextBytes: 4000
         coalesceMs: 10
         retryDelayMs: 1000
+    - id: native-contribution-source
+      name: '@deepseek-ai/dsh-scope-agent-contribution'
+      config:
+        maxSessions: 16
+        maxLeases: 32
+        maxObservationBytes: 32768
+        contributionPollIntervalMs: 1000
     - id: native-contribution-assertions
       name: './native-fixture.mjs'

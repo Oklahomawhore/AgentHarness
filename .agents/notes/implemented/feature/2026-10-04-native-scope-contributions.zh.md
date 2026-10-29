@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-[原生贡献 Consumer](../../../../packages/collaboration/scope-agent-contribution/README.zh.md) 接受一次显式的当前 Session 选择：文件根、write/edit 操作、owner 入口与来源限额。Owner 批准可以缩小这些限额。服务在审批和地址重试期间保留同一个不可变 proposal；远端读取与对等来源选择必须指向相同 owner 和 Task；另行授权的本地采集遵循自己的 Task。其他 Agent 实例、fork 和委派 Agent 不继承此许可。
+[原生贡献 Consumer](../../../../packages/collaboration/scope-agent-contribution/README.zh.md) 接受一次显式的当前 Session 选择：文件根、write/edit 操作、owner 入口与来源限额。Owner 批准可以缩小这些限额。服务在审批和地址重试期间保留同一个不可变 proposal；远端读取与对等来源选择必须指向相同 owner 和 Task；另行授权的本地采集遵循自己的 Task。其他 Agent 实例、fork 和委派 Agent 不继承此许可。有界自动响应不能通过任一申请方法为自己授权来源披露。精确的存活发起 Agent 及其已记录的自动请求识别尚未结束的轮次，自行暂停后仍然有效；独立本地管理和 Agent 自己的停止操作仍可用。
 
 [文件工具](../../../../packages/fs/tool-fs/README.zh.md) 在策略和意图检查之后发出实际归一化修改尝试，并提供执行操作的 filesystem provider 和已解析目标。来源检查该 provider 的身份与规范路径包含关系，再将尝试关联到普通工具日志或 PTC 子调用日志。提供方负责给出规范 file URI，其协议和 host 不作为第二次授权检查。相对文件名渲染保留编码后的 pathname 前缀要求，因为包含关系本身不保证 URI 前缀长度相等。不匹配时省略报告，而不赋予截短的相对文件名。最终日志中的失败仍作为失败报告。Session 持久化检查点先于来源序号和样本的原子持久化。不需要扫描聊天、重新采样文件或传输原始错误正文。
 

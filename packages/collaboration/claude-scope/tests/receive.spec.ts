@@ -59,6 +59,7 @@ it.each([undefined, 'claude-projection-' + 'a'.repeat(64)])(
       ...(lastProjectionId === undefined ? {} : { lastProjectionId }) }
     const totalBytes = 2400
     const available = remainingReceiveContextBytes(current, totalBytes)
+    expect(available).toBe(remainingReceiveContextBytes({ ...current, lastProjectionId: 'claude-projection-' + 'a'.repeat(64) }, totalBytes))
     const content = '界🙂'
     const bounded: AccessProjection = { ...projection, taskId: current.receive.taskId,
       projectionId: 'b'.repeat(64) as AccessProjection['projectionId'], taskRevision: Number.MAX_SAFE_INTEGER,
@@ -66,10 +67,14 @@ it.each([undefined, 'claude-projection-' + 'a'.repeat(64)])(
     const rendered = receivedScopeProjection(current, { status: 'active', projection: bounded }, totalBytes)
     expect(available).toBeGreaterThan(0)
     expect(available).toBeLessThan(totalBytes)
-    expect(Buffer.byteLength(rendered.text, 'utf8')).toBe(totalBytes)
+    const renderedBytes = Buffer.byteLength(rendered.text, 'utf8')
+    expect(renderedBytes).toBeLessThanOrEqual(totalBytes)
+    if (lastProjectionId !== undefined) expect(renderedBytes).toBe(totalBytes)
     expect(rendered.text.endsWith(bounded.text)).toBe(true)
     expect(rendered.selectedSources).toEqual(bounded.selectedSources)
-    expect(() => receivedScopeProjection(current, { status: 'active', projection: { ...bounded, text: bounded.text + 'x' } }, totalBytes))
+    expect(() => receivedScopeProjection(current, { status: 'active', projection: {
+      ...bounded, text: bounded.text + 'x'.repeat(totalBytes - renderedBytes + 1),
+    } }, totalBytes))
       .toThrow('complete Hook budget')
   },
 )

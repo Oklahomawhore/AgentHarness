@@ -359,6 +359,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
    * @param request - exact capture expectation, owner entry, source permission and limits;
    * tool sources may separately permit recorded-local-tool export.
    * @returns durable local intent; later changed notifications describe owner reconciliation.
+   * @throws When the selected Agent's own automatic turn attempts to authorize disclosure, including after self-pause.
    */
   @Remote('request')
   request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus> {
@@ -366,6 +367,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async requestCapture(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus> {
+    this.requireSourceConsent(request.agentId)
     const role = 'remote'
     const domain = await this.ready
     const agent = this.requireAgent(request.agentId)
@@ -688,6 +690,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
    * Authorize the selected tool or completed-answer source for the Agent's current owner-local Root Task.
    * @param request - exact assignment and capture expectations, source permission, and finite limits.
    * @returns durable opening intent; collection starts only after Task commits the same permission.
+   * @throws When the selected Agent's own automatic turn attempts to authorize disclosure, including after self-pause.
    */
   @Remote('requestLocal')
   requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus> {
@@ -695,6 +698,7 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   }
 
   private async requestLocalCapture(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus> {
+    this.requireSourceConsent(request.agentId)
     const role = 'local'
     const domain = await this.ready
     const agent = this.requireAgent(request.agentId)
@@ -796,6 +800,17 @@ export default class ScopeAgentContributions extends TypertRemoteService {
       if (domain.table('sessions').get(agent.id) === undefined && this.local().table('sessions').get(agent.id) === undefined
         && this.sources[role].controls.get(agent.id) === command) this.sources[role].controls.delete(agent.id)
       this.schedule(agent.id, role)
+    }
+  }
+
+  private requireSourceConsent(id: SessionId): void {
+    const initiator = this.ctx.agents.currentInitiator()
+    if (initiator === undefined || this.ctx.agents.get(id) !== initiator) return
+    const events = initiator.session.snapshotEvents()
+    const boundary = events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end')
+    if (boundary?.type === 'turn/start' && events.some(event => event.seq > boundary.seq
+      && event.type === 'scope-agent-context/request' && event.data.turn === boundary.data.turn)) {
+      throw this.invalid(id, 'An automatic response cannot authorize its own source disclosure')
     }
   }
 

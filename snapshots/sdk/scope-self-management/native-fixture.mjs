@@ -1,4 +1,4 @@
-/** An automatic tool cannot replace its own receiving permission or cancel its following model request. */
+/** An automatic tool cannot authorize disclosure, replace receiving permission, or cancel its following model request. */
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
@@ -13,7 +13,7 @@ const { defineContentToolFixture } = await import(pathToFileURL(baseRequire.reso
 /** Loader fixture identity. */
 export const name = 'scope-self-management-snapshot'
 /** Actual SDK loop, Tool pipeline, Task admission, durable scheduling, and request assembly. */
-export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'scopeAgentContext', 'tools', 'llm', 'sessionProjections']
+export const inject = ['agents', 'developmentRooms', 'developmentTasks', 'scopeAgentContext', 'scopeAgentContributions', 'tools', 'llm', 'sessionProjections']
 
 const policy = { goal: 'Maintain the original local responsibility.', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0 }
 const replacement = { ...policy, goal: 'Replace my own receiving permission.', activationLimit: 5 }
@@ -43,6 +43,12 @@ export function apply(ctx) {
       toolCalls++
       assert.equal(requests, 2)
       assert.equal(ctx.agents.currentInitiator(), agent)
+      await assert.rejects(ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null,
+        sourceKind: 'completed-turn-outcomes', taskId: target.taskId, bindingId: target.taskBindingId,
+        expectedBindingEpoch: target.expectedBindingEpoch,
+        limits: { expiresAt: Date.now() + 50000, maxSamples: 4, maxSampleBytes: 8192 } }),
+      error => error.code === 'scope-agent-contribution/invalid-permission')
+      assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture, null)
       try {
         await ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: bindingId, automatic: replacement })
       } catch (error) {

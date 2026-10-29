@@ -4122,6 +4122,7 @@ Actual native execution observations become durable original reports, then the e
  * @param request - exact capture expectation, owner entry, source permission and limits;
  * tool sources may separately permit recorded-local-tool export.
  * @returns durable local intent; later changed notifications describe owner reconciliation.
+ * @throws When the selected Agent's own automatic turn attempts to authorize disclosure, including after self-pause.
  */
 @Remote('request') request(request: ScopeAgentContributionRequest): Promise<ScopeAgentContributionStatus>
 
@@ -4165,6 +4166,7 @@ Actual native execution observations become durable original reports, then the e
  * Authorize the selected tool or completed-answer source for the Agent's current owner-local Root Task.
  * @param request - exact assignment and capture expectations, source permission, and finite limits.
  * @returns durable opening intent; collection starts only after Task commits the same permission.
+ * @throws When the selected Agent's own automatic turn attempts to authorize disclosure, including after self-pause.
  */
 @Remote('requestLocal') requestLocal(request: ScopeAgentLocalContributionRequest): Promise<ScopeAgentLocalContributionStatus>
 ```

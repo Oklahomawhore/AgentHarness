@@ -2425,6 +2425,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Persist one Session\'s explicitly selected source permission and request automatic activation of an equal or narrower owner approval.',
         parameters: [{ name: 'request', description: 'exact capture expectation, owner entry, source permission and limits; tool sources may separately permit recorded-local-tool export.' }],
         returns: 'durable local intent; later changed notifications describe owner reconciliation.',
+        throws: ['When the selected Agent\'s own automatic turn attempts to authorize disclosure, including after self-pause.'],
       },
       {
         signature: '@Remote(\'recoverRoute\') recoverRoute(request: ScopeAgentContributionRecoverRouteRequest): Promise<ScopeAgentContributionStatus>',
@@ -2461,6 +2462,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Authorize the selected tool or completed-answer source for the Agent\'s current owner-local Root Task.',
         parameters: [{ name: 'request', description: 'exact assignment and capture expectations, source permission, and finite limits.' }],
         returns: 'durable opening intent; collection starts only after Task commits the same permission.',
+        throws: ['When the selected Agent\'s own automatic turn attempts to authorize disclosure, including after self-pause.'],
       },
     ],
   },

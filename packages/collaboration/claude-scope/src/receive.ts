@@ -34,7 +34,7 @@ function receiveFrame(session: ReceiveSession, status: ScopeReceive['status'], p
 export function remainingReceiveContextBytes(session: ReceiveSession, maxContextBytes: number): number {
   // Scope access validates a 64-character SHA-256 projection id and a safe-integer revision.
   const digest = scopeDigest([])
-  const framing = receiveFrame(session, 'active', `claude-projection-${digest}`,
+  const framing = receiveFrame({ ...session, lastProjectionId: session.lastProjectionId ?? `claude-projection-${digest}` }, 'active', `claude-projection-${digest}`,
     { projectionId: digest as ScopeAccessProjection['projectionId'], taskRevision: Number.MAX_SAFE_INTEGER })
   const remaining = maxContextBytes - Buffer.byteLength(framing, 'utf8')
   if (remaining <= 0) throw new Error('claude-scope: receiving framing exceeds maxContextBytes')
@@ -46,7 +46,7 @@ export function remainingReceiveContextBytes(session: ReceiveSession, maxContext
  * @param session - captured local receiving interval and previous prepared output.
  * @param result - request-time owner response already verified by scope access.
  * @param maxContextBytes - complete Hook text budget, including the adapter framing.
- * @returns exact text and attribution to persist before Hook output.
+ * @returns exact text and attribution for this predecessor, to persist before Hook output.
  */
 export function receivedScopeProjection(
   session: ScopeSession & { readonly receive: ScopeReceive }, result: ScopeRetrieveResult, maxContextBytes: number,
@@ -56,7 +56,7 @@ export function receivedScopeProjection(
   const active = result.status === 'active' && status === 'active' ? result.projection : undefined
   const cacheKey = scopeDigest([session.sessionKey, receive.subscriptionId, receive.generation,
     status, active, maxContextBytes])
-  const projectionId = `claude-projection-${scopeDigest([cacheKey])}`
+  const projectionId = `claude-projection-${scopeDigest([cacheKey, session.lastProjectionId ?? null])}`
   const text = receiveFrame(session, status, projectionId, active) + (active?.text ?? '')
   if (Buffer.byteLength(text, 'utf8') > maxContextBytes) throw new Error('claude-scope: independent projection exceeds complete Hook budget')
   return {
