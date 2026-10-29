@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,14 @@ import { McpClientSetupService, listMcpClients, setupAllMcpClients, setupMcpClie
 
 const roots: string[] = []
 const machine = vi.hoisted(() => ({ name: undefined as string | undefined }))
+const writer = vi.hoisted(() => ({ beforeLock: undefined as ((path: string) => Promise<void>) | undefined }))
+vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@deepseek-ai/dsh-atomic-write')>()
+  return { ...actual, withFileLock: async (...args: Parameters<typeof actual.withFileLock>) => {
+    await writer.beforeLock?.(args[0])
+    return actual.withFileLock(...args)
+  } }
+})
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>()
   return { ...actual, hostname: () => machine.name ?? actual.hostname() }
@@ -14,7 +22,7 @@ vi.mock('node:os', async (importOriginal) => {
 
 afterEach(async () => {
   machine.name = undefined
-  const { rm } = await import('node:fs/promises')
+  writer.beforeLock = undefined
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -55,6 +63,13 @@ async function fakeExecutable(path: string, body = '#!/bin/sh\nexit 0\n'): Promi
 }
 
 describe('MCP client setup', () => {
+  it.each(['nodePath', 'dshPath', 'descriptorPath', 'harnessHome', 'sourceTsconfigPath'] as const)(
+    'rejects relative deployment %s before inspecting clients', async (field) => {
+      const { options } = await fixture()
+      await expect(listMcpClients({ ...options, [field]: 'relative-path' })).rejects.toThrow('must be absolute')
+    },
+  )
+
   it.each([0, 2_147_483_648])('rejects an unsupported client-command deadline %s before inspection', async (commandTimeoutMs) => {
     const { options } = await fixture()
     const deployment = { ...options, commandTimeoutMs }
@@ -131,6 +146,32 @@ describe('MCP client setup', () => {
     expect(snapshot.clients.find(client => client.id === 'claude-code')).toMatchObject({ detected: false, state: 'not-installed' })
   })
 
+  // File-as-parent discovery reports platform-specific errors; MCP setup supports POSIX hosts.
+  it.skipIf(process.platform === 'win32')('keeps configuration-only discovery independent when a client parent is not a directory', async () => {
+    const { root, options } = await fixture()
+    const blocked = join(root, 'home', '.cursor')
+    await writeFile(blocked, 'preserved configuration parent')
+    await mkdir(join(root, 'home', '.workbuddy'))
+    await writeFile(join(root, 'home', '.workbuddy', 'mcp.json'), '{}')
+    const result = await listMcpClients({ ...options, applicationRoots: [] })
+    expect(result.clients.find(client => client.id === 'cursor')).toMatchObject({ state: 'failed', canSetup: false })
+    expect(result.clients.find(client => client.id === 'workbuddy')).toMatchObject({ state: 'not-configured', canSetup: true })
+    expect(await readFile(blocked, 'utf8')).toBe('preserved configuration parent')
+  })
+
+  // These bundled Codex fixtures exercise the executable and CLI-output boundary without a real client installation.
+  it.skipIf(process.platform === 'win32').each([
+    ['not an MCP list', '{}', 'failed'],
+    ['different transport', '[{"name":"agentharness","transport":{"type":"http"}}]', 'conflict'],
+  ])('inspects a bundled official client reporting %s', async (_label, contents, state) => {
+    const { root, options } = await fixture()
+    const executable = join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources', 'codex')
+    await mkdir(join(root, 'Applications', 'ChatGPT.app', 'Contents', 'Resources'), { recursive: true })
+    await fakeExecutable(executable, '#!/bin/sh\nprintf "%s" "$MCP_SETUP_LIST"\n')
+    const result = await listMcpClients({ ...options, environment: { ...options.environment, MCP_SETUP_LIST: contents } })
+    expect(result.clients.find(client => client.id === 'codex')).toMatchObject({ detected: true, state, canSetup: false })
+  })
+
   // MCP setup supports POSIX hosts; Windows maps a file-as-parent lookup to a different errno.
   it.skipIf(process.platform === 'win32').each(['list', 'setup-all'] as const)('keeps %s independent when one installed client has an unusable configuration directory', async (operation) => {
     const { root, options } = await fixture()
@@ -192,6 +233,7 @@ describe('MCP client setup', () => {
 
   it.each([
     ['malformed JSON', '{broken'],
+    ['non-object root', 'null'],
     ['non-object servers', JSON.stringify({ mcpServers: [] })],
     ['same-name conflict', JSON.stringify({ mcpServers: { 'agentharness': { command: 'other', args: [] } } })],
   ])('leaves %s unchanged', async (_label, contents) => {
@@ -220,6 +262,54 @@ describe('MCP client setup', () => {
     expect(result.outcome).toBe('failed')
     expect(result.client.detail).toContain('symbolic-link')
     expect(await readFile(target, 'utf8')).toBe('{}\n')
+  })
+
+  it.each([
+    ['malformed JSON', 'PRIVATE_INVALID_JSON', 'Configuration is not strict JSON.'],
+    ['non-object root', '[]', 'configuration root is not a JSON object'],
+    ['non-object servers', '{"mcpServers":null}', 'mcpServers is not a JSON object'],
+    ['conflicting registration', '{"mcpServers":{"agentharness":{"command":"other","args":[]}}}',
+      'a different agentharness entry already exists'],
+    ['compatible registration', undefined, undefined],
+  ])('rechecks %s committed after inspection before changing client configuration', async (_label, replacement, detail) => {
+    const { root, options } = await fixture()
+    await mkdir(join(root, 'Applications', 'Cursor.app'))
+    expect((await setupMcpClient(options, { clientId: 'cursor' })).outcome).toBe('configured')
+    const path = join(root, 'home', '.cursor', 'mcp.json')
+    const compatible = '\n' + await readFile(path, 'utf8')
+    await rm(path)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    writer.beforeLock = async (target) => {
+      if (target !== path) return
+      entered.resolve(undefined)
+      await release.promise
+    }
+    const pending = setupMcpClient(options, { clientId: 'cursor' })
+    try {
+      await Promise.race([entered.promise, pending.then(() => { throw new Error('Registration settled before acquiring its writer lock') })])
+      const contents = replacement ?? compatible
+      await writeFile(path, contents)
+      release.resolve(undefined)
+      const result = await pending
+      expect(result).toMatchObject(detail === undefined ? { outcome: 'configured', client: { state: 'configured' } }
+        : { outcome: 'failed', client: { state: 'failed', canSetup: false, detail } })
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_INVALID_JSON')
+      expect(await readFile(path, 'utf8')).toBe(contents)
+      await expect(readFile(path + '.lock')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally { release.resolve(undefined); await pending }
+  })
+
+  it('uses an existing secondary client configuration without creating an earlier alias', async () => {
+    const { root, options } = await fixture()
+    const path = join(root, 'home', '.codebuddy.json')
+    await writeFile(path, '{"mcpServers":{"existing":{"command":"local"}}}')
+    const result = await setupMcpClient(options, { clientId: 'codebuddy' })
+    expect(result).toMatchObject({ outcome: 'configured', client: { configPath: path } })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ mcpServers: {
+      existing: { command: 'local' }, agentharness: { type: 'stdio', command: options.nodePath },
+    } })
+    await expect(readFile(join(root, 'home', '.codebuddy', '.mcp.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reports invalid configuration without copying its contents into diagnostics', async () => {
@@ -327,8 +417,11 @@ describe('MCP client setup', () => {
     const ctx = new Context()
     try {
       Object.defineProperty(process, 'platform', { value: 'win32' })
-      expect(() => new McpClientSetupService(ctx, options)).not.toThrow()
+      const deployment = { ...options, platform: 'win32' as const }
+      const service = new McpClientSetupService(ctx, deployment)
       expect(ctx.get('mcpClientSetup') !== undefined).toBe(true)
+      expect((await service.list()).clients.every(client => client.state === 'unsupported' && !client.canSetup)).toBe(true)
+      expect(await service.setup({ clientId: 'cursor' })).toMatchObject({ outcome: 'unsupported' })
       await expect(readFile(options.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       Object.defineProperty(process, 'platform', platform)

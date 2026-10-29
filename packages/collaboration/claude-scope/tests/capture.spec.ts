@@ -133,6 +133,16 @@ describe('authorized original Claude tool observations', () => {
       .toEqual({ kind: 'omitted', reason: 'unsupported-tool' })
   })
 
+  it.each(['Edit', 'Bash'])('refuses malformed external %s arguments before retaining original fields', async (tool) => {
+    const { root, policy } = await fixture()
+    const input = parseClaudeScopeHook({ session_id: 'external', hook_event_name: 'PreToolUse', cwd: root,
+      tool_use_id: 'malformed-tool', tool_name: tool, tool_input: tool === 'Edit'
+        ? { file_path: join(root, 'source.txt'), old_string: 'before' } : { command: 'pnpm test', timeout: '1000' } })
+    if (input.event !== 'PreToolUse') throw new Error('Tool hook was not parsed')
+    expect(await authorizeClaudeScopeTool(input.tool, input.cwd, policy))
+      .toEqual({ kind: 'omitted', reason: 'unsupported-tool-input' })
+  })
+
   it('attributes reported success without copying tool response extras or absolute paths', async () => {
     const { root, policy } = await fixture()
     const input = await writeInput(root, policy, 'syncNonce=123')
@@ -156,6 +166,21 @@ describe('authorized original Claude tool observations', () => {
       fields: { rootIndex: 0, path: join('new', 'api.txt'), error: 'permission denied' }, omissions: [],
     })
     expect(result.text).not.toContain('unapplied content')
+  })
+
+  it('keeps a failure without an error string explicit while omitting the unreported output', async () => {
+    const { root, policy } = await fixture()
+    const authorized = await writeInput(root, policy, 'UNAPPLIED_PRIVATE_CONTENT')
+    const input = parseClaudeScopeHook({ session_id: 'external', hook_event_name: 'PostToolUseFailure',
+      tool_use_id: 'tool-1', tool_name: 'Write', tool_input: { file_path: join(root, 'new', 'api.txt'), content: 'UNAPPLIED_PRIVATE_CONTENT' } })
+    const result = renderClaudeScopeObservation(input, authorized, sourceId, 2048)
+    if (result.kind !== 'observation') throw new Error(result.reason)
+    expect(JSON.parse(result.text)).toMatchObject({ reportedStatus: 'failure',
+      fields: { rootIndex: 0, path: join('new', 'api.txt') }, omissions: ['unsupported-error-output'] })
+    expect(result.text).not.toContain('UNAPPLIED_PRIVATE_CONTENT')
+    expect(renderClaudeScopeToolContribution(input, authorized, () => true))
+      .toEqual({ kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure',
+        fields: { rootIndex: 0, path: 'new/api.txt' }, omissions: ['content'] })
   })
 
   it('counts complete UTF-8 output and omits whole fields instead of truncating source text', async () => {

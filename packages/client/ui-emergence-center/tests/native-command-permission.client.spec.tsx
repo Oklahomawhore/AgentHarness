@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ScopeAgentContributionCapture, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ScopeAgentContributionCapture, ScopeContributionInvitation, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
 import { NativeContributionPanel } from './native-contribution-panel-fixture.client.tsx'
 import type { NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from '../src/client/NativeLocalContributionPanel.tsx'
@@ -252,11 +252,20 @@ describe('native foreground command-result permission', () => {
     expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
   })
 
-  it('shows remote command permission and keeps stop distinct from joint leave', async () => {
+  it.each(['prepared', 'active'] as const)('shows %s remote command permission and keeps stop distinct from joint leave', async (phase) => {
     const f = remote()
+    const proposal = { ...capture.proposal, source }
+    const issued: ScopeContributionInvitation = { version: 1, kind: 'tool-contribution', ownerAddress: applicationEntry.ownerAddress,
+      grant: { version: 1, ...proposal, ...capture.limits, taskId: applicationEntry.taskId, ownerPeerId: applicationEntry.ownerPeerId,
+        grantId: 'command-grant' as ScopeContributionInvitation['grant']['grantId'],
+        generation: 'command-generation' as ScopeContributionInvitation['grant']['generation'] } }
+    const current: ScopeAgentContributionCapture = { ...capture, roots: ['/project', '/project/checks'], tools: ['write'],
+      commands: selectors, proposal, state: phase, collecting: phase === 'active',
+      invitation: phase === 'active' ? issued : null, application: phase === 'active' ? null : 'waiting' }
     f.rerender(<NativeContributionPanel {...f.props} entry={{ ...f.props.entry, value: { ...emptyStatus,
-      capture: { ...capture, commands: selectors, proposal: { ...capture.proposal, source } } } }} />)
-    expect(screen.getByText(command, { collapseWhitespace: false })).toBeTruthy()
+      capture: current } }} />)
+    expect(screen.getByText(zh[phase === 'active' ? 'native.commands.active' : 'contribution.application.waiting'])).toBeTruthy()
+    for (const shown of screen.getAllByText(command, { collapseWhitespace: false })) expect(shown.textContent).toBe(command)
     fireEvent.click(screen.getByRole('button', { name: zh['native.share.stop'] }))
     await act(async () => {})
     expect(f.actions.stopNativeContribution).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })

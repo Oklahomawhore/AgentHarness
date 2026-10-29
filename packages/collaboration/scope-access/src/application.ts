@@ -405,9 +405,6 @@ export class ContributionApplications {
     }
     this.owner.signal.throwIfAborted()
     if (retained === undefined) return { status: record.decision === 'approved' ? 'unavailable' : record.decision }
-    if ((record.entry.kind === 'scope-join-entry' || record.entry.kind === 'scope-group-entry') && record.readInvitation === undefined && record.decision !== 'approved') {
-      return { status: record.decision }
-    }
     const invitation = contributionInvitationSchema.parse({ version: 1,
       kind: contributionKind(retained.grant.source),
       ownerAddress: address, grant: retained.grant })

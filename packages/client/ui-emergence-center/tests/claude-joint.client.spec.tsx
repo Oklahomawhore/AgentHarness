@@ -47,6 +47,28 @@ function consent() {
 afterEach(cleanup)
 
 describe('Claude joint collaboration controls', () => {
+  it('explains that stopping a waiting joint capture also cancels its unadopted reading', () => {
+    const { subscriptionId: _subscriptionId, ...unadopted } = joint
+    const selected: ClaudeScopeSessionSummary = { ...session,
+      joint: { ...unadopted, state: 'waiting' }, contributionState: 'prepared', contributionApplicationState: 'waiting' }
+    const capture: NonNullable<ClaudeScopeContributionDetail['capture']> = { selection: joint.capture,
+      roots: ['/project'], source: { kind: 'tool-observations', tools: ['Write'] },
+      proposal: { contributorPeerId: 'source' as ScopeContributionEntry['ownerPeerId'], ...joint.capture,
+        source: { kind: 'tool-observations', name: 'File work', tools: ['Write'] } },
+      proposalText: 'pending-proposal', invitation: null,
+      application: { entry: group, limits: { expiresAt: group.expiresAt, maxSamples: 8, maxSampleBytes: 4096 }, state: 'waiting' } }
+    const port = actions()
+    render(<SourceContributionPanel session={selected} entry={value(selected, capture)} {...port} t={t} />)
+    expect(screen.getByText(zh['claude.joint.stopPendingHint'])).toBeTruthy()
+    expect(screen.queryByText(zh['claude.joint.stopActiveHint'])).toBeNull()
+    expect(screen.queryByLabelText(zh['contribution.application.paste'])).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['contribution.activate'] })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['contribution.stop'] }))
+    expect(port.stopContribution).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, expectedCapture: joint.capture })
+    expect(port.requestContribution).not.toHaveBeenCalled()
+    expect(port.leaveJointContribution).not.toHaveBeenCalled()
+  })
+
   it.each([single, group])('requires both permissions for $kind and sends the observed read revision', async (entry) => {
     const port = actions({ previewContributionText: vi.fn(async () => entry) })
     render(<SourceContributionPanel session={session} entry={value()} {...port} t={t} />)

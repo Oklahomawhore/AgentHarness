@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { contributionProposalSchema } from '../src/contribution-schema.ts'
-import { applicationRecordSchema } from '../src/application-schema.ts'
+import { applicationRecordSchema, groupRecordSchema } from '../src/application-schema.ts'
 import { plannedContributionGrant } from '../src/contribution.ts'
 import type { Config } from '../src/index.ts'
 import { cleanup, host, peer } from './helpers.ts'
@@ -213,6 +213,77 @@ it('reports unavailable for a malformed durable application without replacing it
   await expect(restored.access.contributionApplications({ taskId: f.task.id }))
     .rejects.toMatchObject({ code: 'scope-contribution/unavailable' })
   expect(restored.exit).toHaveBeenCalledWith(1)
+  expect(restored.pool.media).toEqual(before)
+  expect(restored.tasks.log()).toEqual(events)
+})
+
+it.each(['single', 'group'] as const)('restores terminal %s joint authority and refuses a durable plan missing its original read permission', async (kind) => {
+  const f = await fixture()
+  const entry = kind === 'group' ? f.group : (await f.owner.access.createContributionEntry({ participation: 'join',
+    sourceKind: 'tool-observations', taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.expiresAt })).entry
+  const request = { ...f.request, entry }
+  expect(await f.source.access.applyContribution(request, signal())).toEqual({ status: 'pending' })
+  const applicationId = kind === 'group'
+    ? (await f.owner.access.groupApplications({ entryId: entry.entryId })).entries[0]?.applicationId : undefined
+  if (kind === 'group' && applicationId === undefined) throw new Error('Missing retained group applicant')
+  await f.owner.access.approveContributionApplication({ entryId: entry.entryId, expectedProposal: request.proposal,
+    limits: request.limits, ownerAddress: f.ownerAddress, read: { responsibility: 'Frontend integration' },
+    ...(applicationId === undefined ? {} : { applicationId }) })
+  const terminal = await f.source.access.cancelContributionApplication(request, signal())
+  expect(terminal).toMatchObject({ status: 'ended', reason: 'left', readState: 'revoked' })
+  const events = f.owner.tasks.log()
+  await f.owner.ctx.fiber.dispose()
+  const restored = await host('release-application-owner', f.owner.pool, {}, events)
+  expect(await f.source.access.contributionApplicationStatus(request, signal())).toEqual(terminal)
+  expect(restored.tasks.log()).toEqual(events)
+  await restored.ctx.fiber.dispose()
+  if (kind === 'group') {
+    const rows = f.owner.pool.media.get('scope_group_applications')?.tables.get('entries')
+    if (rows === undefined) throw new Error('Missing retained group table')
+    const record = groupRecordSchema.parse(rows.get(entry.entryId))
+    rows.set(entry.entryId, { ...record, members: record.members.map(({ readInvitation: _read, ...member }) => member) })
+  } else {
+    const rows = f.owner.pool.media.get('scope_access')?.tables.get('applications')
+    if (rows === undefined) throw new Error('Missing retained application table')
+    const { readInvitation: _read, ...record } = applicationRecordSchema.parse(rows.get(entry.entryId))
+    rows.set(entry.entryId, record)
+  }
+  const before = structuredClone(f.owner.pool.media)
+  const damaged = await host('release-application-owner', f.owner.pool, {}, events)
+  await expect(damaged.access.identity()).rejects.toMatchObject({ code: 'invalid-record',
+    detail: { table: kind === 'group' ? 'entries' : 'applications', key: entry.entryId } })
+  expect(damaged.exit).toHaveBeenCalledWith(1)
+  expect(damaged.pool.media).toEqual(before)
+  expect(damaged.tasks.log()).toEqual(events)
+})
+
+it('paginates restored entries by identity when durable insertion order differs from identity order', async () => {
+  const f = await fixture()
+  for (let index = 0; index < 3; index++) await f.owner.access.createContributionEntry({ sourceKind: 'tool-observations',
+    taskId: f.task.id, ownerAddress: f.ownerAddress, expiresAt: f.expiresAt })
+  const events = f.owner.tasks.log()
+  const rows = f.owner.pool.media.get('scope_access')?.tables.get('applications')
+  if (rows === undefined) throw new Error('Missing durable application table')
+  const records = [...rows.values()].map(value => applicationRecordSchema.parse(value))
+  const ids = [3, 1, 4, 2].map(value => `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`)
+  expect(records).toHaveLength(ids.length)
+  await f.owner.ctx.fiber.dispose()
+  rows.clear()
+  for (const [index, record] of records.entries()) {
+    const selected = applicationRecordSchema.parse({ ...record, entry: { ...record.entry, entryId: ids[index] } })
+    rows.set(selected.entry.entryId, selected)
+  }
+  const restored = await host('release-application-owner', f.owner.pool, { maxResponseBytes: 1500 }, events)
+  const before = structuredClone(restored.pool.media)
+  let page = await restored.access.contributionApplications({ taskId: f.task.id })
+  const observed = page.entries.map(item => item.entry.entryId)
+  expect(page.nextEntryId).not.toBeNull()
+  for (let pages = 0; page.nextEntryId !== null && pages < ids.length; pages++) {
+    page = await restored.access.contributionApplications({ taskId: f.task.id, afterEntryId: page.nextEntryId })
+    observed.push(...page.entries.map(item => item.entry.entryId))
+  }
+  expect(page.nextEntryId).toBeNull()
+  expect(observed).toEqual(ids.toSorted())
   expect(restored.pool.media).toEqual(before)
   expect(restored.tasks.log()).toEqual(events)
 })

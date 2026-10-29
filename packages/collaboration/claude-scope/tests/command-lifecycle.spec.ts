@@ -141,6 +141,20 @@ it('contains a real stdout write failure without exposing the stream error', asy
   expect(f.stderr()).toBe('{"claudeScopeError":"transport-failed"}\n')
 })
 
+it('does not request application exit when stdout completion has already triggered owner disposal', async () => {
+  const f = await fixture()
+  const closed = Promise.withResolvers<undefined>()
+  let stopping: Promise<unknown> | undefined
+  f.sink.once('close', () => { stopping = f.ctx.fiber.dispose(); closed.resolve(undefined) })
+  f.input.end('{}'); f.start()
+  await closed.promise
+  if (stopping === undefined) throw new Error('Output completion did not begin owner disposal')
+  await stopping
+  expect(f.exit).not.toHaveBeenCalled()
+  expect(f.stdout()).toBe(JSON.stringify(output) + '\n')
+  expect(f.stderr()).toBe('')
+})
+
 it.each([1, 16_384])('retains its deadline until a pending stdout write with highWaterMark=%i settles', async (highWaterMark) => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const writing = Promise.withResolvers<undefined>()

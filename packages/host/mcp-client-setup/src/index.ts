@@ -72,7 +72,7 @@ interface ClientDefinition {
   readonly id: McpClientId
   readonly label: string
   readonly mechanism: McpClientSnapshot['mechanism']
-  readonly executable?: string
+  readonly executable: string
   readonly executableCandidates?: readonly string[]
   readonly applications: readonly string[]
   readonly configPaths?: readonly string[]
@@ -226,16 +226,13 @@ async function exists(path: string): Promise<boolean> {
 async function executable(definition: ClientDefinition, options: ResolvedOptions): Promise<string | undefined> {
   const override = options.executableOverrides[definition.id]
   if (override !== undefined) return override
-  const names = definition.executable === undefined ? [] : [definition.executable]
   for (const directory of options.path.split(delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = join(directory, name)
-      try {
-        await access(candidate, constants.X_OK)
-        return candidate
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'EACCES') throw error
-      }
+    const candidate = join(directory, definition.executable)
+    try {
+      await access(candidate, constants.X_OK)
+      return candidate
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'EACCES') throw error
     }
   }
   for (const root of options.applicationRoots) {

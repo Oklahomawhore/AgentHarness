@@ -59,6 +59,24 @@ async function open(): Promise<void> {
 }
 
 describe('same-Session combined source permission', () => {
+  it('submits complete future file contents only with the combined source permission explicitly confirmed', async () => {
+    const f = remote(); await open()
+    change('contribution.roots', '/project')
+    fireEvent.click(check('native.share.write'))
+    fireEvent.click(check('native.fileContent.consent'))
+    const submit = screen.getByRole<HTMLButtonElement>('button', { name: zh['native.share.request'] })
+    expect(submit.disabled).toBe(true)
+    fireEvent.click(check('native.work.remoteConsent'))
+    fireEvent.click(submit)
+    await waitFor(() => { expect(f.actions.requestNativeContribution).toHaveBeenCalledOnce() })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0]).toMatchObject({
+      sourceKind: 'native-work', agentId, expectedCapture: null, entry, roots: ['/project'], tools: ['write'],
+      commands: [], completedTurns: false, fileContent: 'completed-native-file',
+    })
+    expect(vi.mocked(f.actions.requestNativeContribution).mock.calls[0]?.[0].initialization).toBeUndefined()
+    expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('sends exactly selected categories with final answers=%s in one request', async (answers) => {
     const f = remote(); await open()
     for (const key of ['native.share.write', 'native.share.edit', 'native.commands.consent', 'native.work.completedTurns'] as const) {
