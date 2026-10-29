@@ -645,6 +645,9 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (domain.global.get().installationId === null) await domain.global.set({ installationId })
     this.lifetime.signal.throwIfAborted()
     this.installationId = installationId
+    for (const [key, projection] of domain.table('projections').entries()) {
+      if (key !== projection.projectionId) throw new Error('claude-scope: stored projection key does not match its identity')
+    }
     for (const [, lease] of domain.table('work_leases').entries()) {
       const session = domain.table('sessions').get(lease.sessionKey)
       if (session?.version !== 3 || session.contribution === undefined) throw new Error('claude-scope: work lease has no generation-3 local permit')

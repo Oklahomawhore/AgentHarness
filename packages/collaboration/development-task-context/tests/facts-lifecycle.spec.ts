@@ -84,3 +84,48 @@ it('recovers each due peer withdrawal before current fact delivery while preserv
   expect(restored.tasks.log().filter(entry => entry.change.kind === 'peer-contribution-ended')).toHaveLength(2)
   expect(await restored.project(child.id)).toEqual(frozen)
 })
+
+it('retains both artifacts from each frozen merge parent after the live parents are corrected or withdrawn', async () => {
+  const h = await host()
+  const parents = []
+  const grants = []
+  for (let parent = 0; parent < 2; parent++) {
+    const task = await h.tasks.create({ origin: { kind: 'root' }, objective: `Parent ${parent}`,
+      scope: 'Two API declarations', createdBy: h.human })
+    for (let artifact = 0; artifact < 2; artifact++) {
+      const key = `${parent}-${artifact}`
+      const grant = peerContributionGrantSchema.parse({ version: 1, taskId: task.id,
+        ownerPeerId: 'owner-peer', contributorPeerId: `peer-${key}`, grantId: `grant-${key}`, generation: 'generation',
+        captureId: `capture-${key}`, captureGeneration: 'capture-generation',
+        source: { name: `API ${artifact}`, method: 'post', path: `/api/${artifact}` },
+        expiresAt: Date.now() + 60_000, maxSamples: 4, maxSampleBytes: 8192 })
+      await h.tasks.openPeerContribution(grant)
+      await h.tasks.admitPeerContribution(peerContributionRequestSchema.parse({ grant,
+        sourceId: String(parent * 2 + artifact + 1).repeat(64), sequence: 1,
+        result: { state: 'valid', sha256: 'a'.repeat(64), facts: { requestBodyRequired: true,
+          requiredRequestFields: [`PARENT_${parent}_ARTIFACT_${artifact}`], responseStatuses: ['201'], deprecated: false } },
+      }), grant.contributorPeerId)
+      grants.push(grant)
+    }
+    const selected = h.tasks.get({ taskId: task.id })
+    parents.push({ taskId: task.id, revision: selected.revision })
+  }
+  const merge = await h.tasks.create({ origin: { kind: 'merge', parents },
+    objective: 'Preserve both parent decisions', scope: 'Historical declarations', createdBy: h.human })
+  const frozen = await h.project(merge.id)
+  for (let parent = 0; parent < 2; parent++) for (let artifact = 0; artifact < 2; artifact++) {
+    expect(frozen.text).toContain(`PARENT_${parent}_ARTIFACT_${artifact}`)
+  }
+  expect(frozen.text.match(/"basis":"frozen-parent-snapshot"/g)).toHaveLength(4)
+  const first = grants[0]
+  const last = grants[3]
+  if (first === undefined || last === undefined) throw new Error('Two parent artifact sets are required')
+  await h.tasks.admitPeerContribution(peerContributionRequestSchema.parse({ grant: first, sourceId: '5'.repeat(64), sequence: 2,
+    result: { state: 'valid', sha256: 'b'.repeat(64), facts: { requestBodyRequired: true,
+      requiredRequestFields: ['CURRENT_PARENT_CORRECTION'], responseStatuses: ['201'], deprecated: false } },
+  }), first.contributorPeerId)
+  await h.tasks.endPeerContribution({ grant: last, reason: 'revoked' }, last.ownerPeerId)
+  expect((await h.project(first.taskId)).text).toContain('CURRENT_PARENT_CORRECTION')
+  expect((await h.project(last.taskId)).text).not.toContain('PARENT_1_ARTIFACT_1')
+  expect(await h.project(merge.id)).toEqual(frozen)
+})

@@ -329,8 +329,14 @@ export function apply(ctx: Context): void {
       readScopeAccess: () => { void scopeAccess.refresh('inventory') },
       inviteScope: request => mutateScopeAccess(async () => unwrap(await ctx.remote.scopeAccess.invite(request))),
       revokeScope: async (request) => { await mutateScopeAccess(async () => { unwrap(await ctx.remote.scopeAccess.revoke(request)) }) },
-      receiveClaudeScope: request => mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receive(request))),
-      stopClaudeReceive: request => mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receiveLeave(request))),
+      receiveClaudeScope: async (request) => {
+        try { return await mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receive(request))) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
+      stopClaudeReceive: async (request) => {
+        try { return await mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receiveLeave(request))) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
       approveObservedScope: request => observedScopes.approve(request),
       endObservedScope: request => observedScopes.end(request),
       refreshObservedScopes: () => { observedScopes.refresh() },

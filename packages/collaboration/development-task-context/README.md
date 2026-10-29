@@ -34,7 +34,7 @@ Mount one backend and the consumer after the Agent and Task services. The text b
 
 Use `/reported` instead of `/text` to reconstruct eligible file-report groups without a model call. Both providers need no configuration. The Web profile mounts `/configured` and selects `/reported` by default; `/text` retains original publications.
 
-To deliver sampled OpenAPI declarations, mount `/facts` as the backend. Its `routes` match the complete recipient session label exactly; `unmatchedFields` explicitly selects fields for absent or unmatched labels. Both arrays are required. Field names form a closed set, and duplicate fields and duplicate or blank responsibility labels fail configuration. An empty field set retains status and attribution; conflict groups always retain all declaration fields and report the additional selection. Labels do not grant access or establish truth.
+To deliver sampled OpenAPI declarations, mount `/facts` as the backend. Its `routes` match the complete recipient session label exactly; `unmatchedFields` explicitly selects fields for absent or unmatched labels. Both arrays are required. Field names form a closed set, and duplicate fields and duplicate or blank responsibility labels fail configuration. Route declaration order does not change the backend identity or selection. An empty field set retains status and attribution; conflict groups always retain all declaration fields and report the additional selection. Labels do not grant access or establish truth.
 
 ```yaml
 - name: '@deepseek-ai/dsh-development-task-context/facts'

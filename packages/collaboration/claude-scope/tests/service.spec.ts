@@ -1110,6 +1110,31 @@ describe('Claude scope service', () => {
     expect(contexts.at(-1)!.appExit).toHaveBeenCalledWith(1)
   })
 
+  it.each(['current', 'prepared'] as const)('rejects a stored %s projection whose record identity differs from its table key', async (stage) => {
+    const first = await boot()
+    const task = await first.createTask('Persisted projection identity')
+    await first.connect(await first.observe('projection-identity'), task.id)
+    const records = first.facility.get('claude_scope')!.table('projections')
+    const cancellation = new AbortController()
+    if (stage === 'prepared') {
+      const put = records.put.bind(records)
+      vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+        await put(key, value)
+        cancellation.abort(new Error('Cancelled after exact output was stored'))
+      })
+      await expect(first.hook('projection-identity', 'UserPromptSubmit', {}, cancellation.signal))
+        .rejects.toThrow('Cancelled after exact output was stored')
+    } else await first.hook('projection-identity', 'UserPromptSubmit')
+    const [entry] = [...records.entries()]
+    if (entry === undefined) throw new Error('Hook did not persist its exact output')
+    const [key, record] = entry
+    const projection = claudeScopeDomainSpec.tables.projections.valueSchema.parse(record)
+    await records.put(key, { ...projection, projectionId: 'different-persisted-identity' })
+    await first.ctx.fiber.dispose()
+    await expect(boot(first.pool, first.directory).then(() => undefined)).rejects.toThrow('stored projection key does not match its identity')
+    expect(contexts.at(-1)!.appExit).toHaveBeenCalledWith(1)
+  })
+
   it('rejects join when an external Task clear races the durable grant write', async () => {
     const host = await boot()
     const task = await host.createTask('Join commit race')

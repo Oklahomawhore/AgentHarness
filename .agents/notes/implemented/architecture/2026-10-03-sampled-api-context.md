@@ -20,7 +20,7 @@ Host-only retirement proves a previously admitted chain instead of requiring its
 
 The [facts provider](../../../../packages/collaboration/development-task-context/README.md) reduces complete observation chains before selecting recipient fields. Invalid, unavailable, and revoked heads never restore older valid declarations. Each chain projects current records, at most one predecessor reference, and the total superseded count; older sources are explicitly omitted as superseded, so their history cannot exhaust the current-fact budget. Independent disagreements remain unresolved; a conflict group retains complete competing fields and attribution even when normal responsibility routing omits those fields. Routing is not permission. Budgeting includes the complete group and framing, and excludes a whole group when it cannot fit. Inherited publications remain frozen historical evidence rather than current declarations.
 
-Exact responsibility labels select explicitly configured fields. Configuration contributes to the provider revision. Native Session logs and external prepared-output records retain exact projection text; neither replay recomputes facts from later files. The existing text provider remains available for original publications.
+Exact responsibility labels select explicitly configured fields. Configuration contributes to the provider revision; route order is normalized. Artifact, source-chain and inherited-parent ordering share the same ordinal comparison so equivalent inputs retain exact text. Native Session logs and external prepared-output records retain exact projection text; neither replay recomputes facts from later files. The existing text provider remains available for original publications.
 
 ## Alternatives considered
 

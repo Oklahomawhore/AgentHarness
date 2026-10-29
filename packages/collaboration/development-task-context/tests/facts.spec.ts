@@ -266,6 +266,23 @@ it('rejects cancellation without producing a projection', async () => {
   await expect(backend().compute({ ...input([]), signal: abort.signal })).rejects.toThrow('cancelled sample')
 })
 
+it('keeps route order out of backend identity while retaining each exact responsibility selection', async () => {
+  const routes: Config['routes'] = [
+    { responsibility: 'qa', fields: ['responseStatuses'] },
+    { responsibility: 'frontend', fields: ['requiredRequestFields'] },
+  ]
+  const forward = backend({ routes, unmatchedFields: [] })
+  const reverse = backend({ routes: [...routes].reverse(), unmatchedFields: [] })
+  expect(forward.identity).toEqual(reverse.identity)
+  const source = [publication('sample', observation(1))]
+  expect(await forward.compute(input(source, 'frontend'))).toEqual(await reverse.compute(input(source, 'frontend')))
+  const frontend = await forward.compute(input(source, 'frontend'))
+  const qa = await forward.compute(input(source, 'qa'))
+  expect(frontend.text).toContain('"facts":{"requiredRequestFields":["sku"]}')
+  expect(qa.text).toContain('"facts":{"responseStatuses":["201","4XX","default"]}')
+  expect(frontend.activation).not.toEqual(qa.activation)
+})
+
 
 it('keeps recipient evidence stable across resampling, unrelated fields, raw sources and historical omissions', async () => {
   const service = backend()

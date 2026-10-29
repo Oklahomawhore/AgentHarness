@@ -397,12 +397,11 @@ export class ContributionApplications {
         if (grant.expiresAt <= Date.now()) await this.ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, grant.ownerPeerId)
         else await this.owner.contributions.invite({ ownerAddress: address, grant })
       } else await this.ctx.developmentTasks.expirePeerContributions({ taskId: grant.taskId })
-      retained = this.authority(record.entry, grant, grant)
     } else {
       await this.ctx.developmentTasks.endPeerContribution({ grant,
         reason: record.decision === 'cancelled' ? 'left' : 'revoked' }, record.entry.ownerPeerId)
-      retained = this.authority(record.entry, grant, grant)
     }
+    retained = this.authority(record.entry, grant, grant)
     this.owner.signal.throwIfAborted()
     if (retained === undefined) return { status: record.decision === 'approved' ? 'unavailable' : record.decision }
     const invitation = contributionInvitationSchema.parse({ version: 1,

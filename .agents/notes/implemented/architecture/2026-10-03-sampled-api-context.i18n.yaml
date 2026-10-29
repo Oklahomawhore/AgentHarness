@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-03-sampled-api-context.md
-2026-10-03-sampled-api-context.md: 84f180ff309faaf9884929bec43760a4f6f10da0
-2026-10-03-sampled-api-context.zh.md: dd828a9d5d53a50cc045bbcf1984891c88050b8b
+2026-10-03-sampled-api-context.md: 508a5901fdc2ed0c236fdeb2eba6cbe56fae9f88
+2026-10-03-sampled-api-context.zh.md: e6ab4380e9edef7c831ca1885fbe955a73ab98fe

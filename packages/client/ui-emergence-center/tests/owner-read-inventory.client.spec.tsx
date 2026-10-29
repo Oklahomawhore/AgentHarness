@@ -3,10 +3,10 @@
 import type { ReactNode } from 'react'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
+import { RemoteError, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type {
-  ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, RemoteResult, ScopeAccessList,
+  ClaudeScopeContributionDetail, ClaudeScopeSessionSummary, DevelopmentNodeId, DevelopmentTaskSnapshot, RemoteResult, ScopeAccessList,
   ScopeContributionApplicationApprovalRequest,
   ScopeContributionInvitation, ScopeGroupApplication, ScopeGroupEntry, ScopeGroupEntrySelection, ScopeGroupEntryStatus, ScopeInvitation,
 } from '@deepseek-ai/dsh-api-remotes/client'
@@ -109,8 +109,12 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     receiveTaskId: groupEntry.taskId, receiveState: 'pending' }
   let observed = recipientState === 'joined' ? receiving : recipient
   const sessions = vi.fn(async () => ok(recipientState === undefined ? [] : [observed]))
-  const receive = vi.fn(async () => { observed = receiving; return ok(observed) })
-  const receiveLeave = vi.fn(async () => { observed = recipient; return ok(observed) })
+  const receive = vi.fn(async (): Promise<RemoteResult<ClaudeScopeSessionSummary>> => { observed = receiving; return ok(observed) })
+  const receiveLeave = vi.fn(async (): Promise<RemoteResult<ClaudeScopeSessionSummary>> => {
+    observed = { ...recipient, readRevision: 2 }; return ok(observed)
+  })
+  const contributionDetail = vi.fn(async (): Promise<RemoteResult<ClaudeScopeContributionDetail>> =>
+    ok({ session: observed, capture: null }))
   const tasksList = vi.fn(async () => ok([task]))
   const remote = new TestRemote(runtime.ctx, {
     developmentRooms: { list: async () => ok({ nodeId, participants: [], rooms: [], presenceTtlMs: 15_000 }) },
@@ -120,7 +124,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     },
     developmentTaskAssignments: { list: async () => ok([]) },
     mcpClientSetup: { list: async () => ok({ clients: [] }) },
-    claudeScope: { sessions, receive, receiveLeave },
+    claudeScope: { sessions, receive, receiveLeave, contributionDetail },
     scopeAgentContext: {}, scopeAgentContributions: {},
     scopeAccess: {
       identity: async () => ok({ peerId: groupEntry.ownerPeerId, addresses: [groupEntry.ownerAddress] }),
@@ -129,6 +133,8 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
       contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
       groupEntries: async () => ok({ entries: [groupStatus()], nextEntryId: null }),
       groupApplications, approveContributionApplication: approve, closeGroupEntry,
+      previewContributionText: async () => ok(groupEntry),
+      probeContributionEntry: async () => ok({ status: 'ready' }),
     },
   })
   await runtime.declare({ 'sidebar.footer.action': { kind: 'list', scope: 'root' } })
@@ -145,7 +151,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     return value as HTMLElement
   })
   return { runtime, application, access, approve, revoke, list, groupApplications, sessions, receive, receiveLeave,
-    recipient, tasksList, closeGroupEntry,
+    recipient, tasksList, closeGroupEntry, contributionDetail,
     authority: () => readGrant,
     revokeFromAnotherClient() {
       readGrant = { invitation: readInvitation, state: 'revoked' }
@@ -255,6 +261,61 @@ describe('Emergence Center owner read inventory', () => {
     expect(subject.revoke).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: zh['access.revoke'] })).toBeNull()
     expect(within(subject.application).queryByText(zh['contribution.join.read.active'])).toBeNull()
+  })
+
+  it.each([
+    { operation: 'receive', lostReply: false }, { operation: 'stop', lostReply: false },
+    { operation: 'receive', lostReply: true }, { operation: 'stop', lostReply: true },
+  ] as const)('refreshes the mounted source permission after independent $operation (lost reply: $lostReply) without restoring earlier read consent', async ({ operation, lostReply }) => {
+    const subject = await mountOwner(false, operation === 'receive' ? 'available' : 'joined')
+    fireEvent.click(screen.getByRole('radio', { name: new RegExp(subject.recipient.sessionId) }))
+    const sourceElement = screen.getByRole('heading', { name: zh['contribution.sourceTitle'] }).closest('section')
+    if (sourceElement === null) throw new Error('Selected source panel missing')
+    const source = within(sourceElement)
+    const access = within(subject.access)
+    await source.findByText(zh['contribution.stopped'])
+    fireEvent.change(source.getByLabelText(zh['contribution.application.paste']), { target: { value: JSON.stringify(groupEntry) } })
+    fireEvent.click(source.getByRole('button', { name: zh['contribution.application.verify'] }))
+    const consent = await source.findByLabelText<HTMLInputElement>(zh['claude.joint.readConsent'])
+    const initialReads = subject.contributionDetail.mock.calls.length
+    const mutation = operation === 'receive' ? subject.receive : subject.receiveLeave
+    const commit = mutation.getMockImplementation()
+    if (commit === undefined) throw new Error('Read mutation fixture missing')
+    if (lostReply) mutation.mockImplementationOnce(async () => {
+      await commit()
+      return { ok: false, error: new RemoteError('gateway/internal', 'Reply lost after read mutation committed', {}) }
+    })
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      if (operation === 'receive') {
+        expect(consent.disabled).toBe(false)
+        fireEvent.click(consent)
+        expect(consent.checked).toBe(true)
+        fireEvent.change(access.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(readInvitation) } })
+        fireEvent.change(access.getByLabelText(zh['claude.chooseSession']), { target: { value: subject.recipient.sessionKey } })
+        fireEvent.click(access.getByRole('button', { name: zh['access.receive'] }))
+        await access.findByText(zh['access.state.pending'])
+        await waitFor(() => { expect(consent.disabled).toBe(true); expect(consent.checked).toBe(false) })
+        expect(source.getByText(zh['claude.joint.conflict'])).toBeTruthy()
+        expect(subject.contributionDetail.mock.calls.length).toBeGreaterThan(initialReads)
+        expect(subject.receive).toHaveBeenCalledOnce()
+      } else {
+        expect(consent.disabled).toBe(true)
+        expect(source.getByText(zh['claude.joint.conflict'])).toBeTruthy()
+      }
+      fireEvent.click(access.getByRole('button', { name: zh['access.stop'] }))
+      await waitFor(() => { expect(access.queryByRole('button', { name: zh['access.stop'] })).toBeNull() })
+      await waitFor(() => { expect(consent.disabled).toBe(false) })
+      expect(consent.checked).toBe(false)
+      expect(source.queryByText(zh['claude.joint.conflict'])).toBeNull()
+      expect(subject.contributionDetail.mock.calls.length).toBeGreaterThan(initialReads)
+      expect(subject.receiveLeave).toHaveBeenCalledExactlyOnceWith({ sessionKey: subject.recipient.sessionKey })
+      fireEvent.click(consent)
+      expect(consent.checked).toBe(true)
+      expect(source.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).value).toBe(JSON.stringify(groupEntry))
+      if (lostReply) expect(diagnostics).toHaveBeenCalledOnce()
+      else expect(diagnostics).not.toHaveBeenCalled()
+    } finally { diagnostics.mockRestore() }
   })
 
   it.each(['receive', 'stop'] as const)('refreshes the original Claude session after %s while inventory confirmation fails', async (operation) => {

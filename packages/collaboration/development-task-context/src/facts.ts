@@ -79,7 +79,7 @@ const SUFFIX = '\n</development-task-facts>'
 
 function sourceKey(source: DevelopmentTaskContextSourceRef): string { return JSON.stringify(source) }
 
-function ordered<T>(items: readonly T[], key: (item: T) => string): T[] {
+function ordered<T>(items: Iterable<T>, key: (item: T) => string): T[] {
   return [...items].sort((left, right) => key(left) < key(right) ? -1 : key(left) > key(right) ? 1 : 0)
 }
 
@@ -116,7 +116,7 @@ function groupCandidates(candidates: readonly Candidate[], parent?: DevelopmentT
     retained.push(candidate)
     artifacts.set(key, retained)
   }
-  return [...artifacts].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([artifactId, records]) => {
+  return ordered(artifacts, ([artifactId]) => artifactId).map(([artifactId, records]) => {
     const chains = new Map<string, Candidate[]>()
     for (const record of records) {
       const key = record.chain
@@ -126,7 +126,7 @@ function groupCandidates(candidates: readonly Candidate[], parent?: DevelopmentT
     }
     return {
       artifactId, ...(parent === undefined ? {} : { parent }),
-      chains: [...chains].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([, entries]) => {
+      chains: ordered(chains, ([chain]) => chain).map(([, entries]) => {
         const sequence = entries.reduce((latest, entry) => Math.max(latest, entry.observation.sequence), 0)
         return {
           heads: ordered(entries.filter(entry => entry.observation.sequence === sequence), entry => sourceKey(entry.source)),

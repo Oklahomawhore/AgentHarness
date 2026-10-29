@@ -34,7 +34,7 @@ kind: "package-reference"
 
 将 `/text` 换成 `/reported`，即可在不调用模型的情况下重建满足条件的文件报告组。这两个提供方都不需要配置。Web profile 挂载 `/configured`，默认选择 `/reported`；`/text` 保留原始 publication。
 
-要交付采样得到的 OpenAPI 声明，将 `/facts` 挂载为后端。其 `routes` 精确匹配接收者完整的 Session 标签；`unmatchedFields` 显式指定标签缺失或未匹配时选择的字段。这两个数组都必填。字段名属于闭合集合；重复字段、重复或空白职责标签会使配置失败。空字段集合仍保留状态与出处；冲突组始终保留全部声明字段，并报告额外选择的字段。标签不授予访问权限，也不确立事实真伪。
+要交付采样得到的 OpenAPI 声明，将 `/facts` 挂载为后端。其 `routes` 精确匹配接收者完整的 Session 标签；`unmatchedFields` 显式指定标签缺失或未匹配时选择的字段。这两个数组都必填。字段名属于闭合集合；重复字段、重复或空白职责标签会使配置失败。路由声明顺序不改变后端身份或选择结果。空字段集合仍保留状态与出处；冲突组始终保留全部声明字段，并报告额外选择的字段。标签不授予访问权限，也不确立事实真伪。
 
 ```yaml
 - name: '@deepseek-ai/dsh-development-task-context/facts'
