@@ -132,43 +132,45 @@ export function OwnerContributionApplications({ taskId, applications, groups, ow
         <Button variant="outline" disabled={pending || !ownerAddress}
           onClick={() => { recover(group.entry.entryId) }}>{t('contribution.application.recover')}</Button>
       </div>
-      {members.entries.map(item => <div key={item.applicationId} data-group-application={item.applicationId} className={css.record}>
-        <p role="status">{t(`contribution.application.owner.${item.result.status}`)}</p>
-        <p className={css.hint}>{t('contribution.join.permissions')}</p>
-        {(item.result.status === 'approved' || item.result.status === 'ended') && item.result.readState !== undefined
+      {members.entries.map((item) => {
+        const limits = item.limits
+        return <div key={item.applicationId} data-group-application={item.applicationId} className={css.record}>
+          <p role="status">{t(`contribution.application.owner.${item.result.status}`)}</p>
+          <p className={css.hint}>{t('contribution.join.permissions')}</p>
+          {(item.result.status === 'approved' || item.result.status === 'ended') && item.result.readState !== undefined
           && <p role="status" data-join-read-permission>{t(`contribution.join.read.${item.result.readState}`)}</p>}
-        <dl className={css.permission}>
-          <dt>{t('contribution.sourcePeer')}</dt><dd>{item.proposal.contributorPeerId}</dd>
-          <dt>{t('contribution.group.capture')}</dt><dd>{item.proposal.captureId}</dd>
-          <dt>{t('contribution.group.captureGeneration')}</dt><dd>{item.proposal.captureGeneration}</dd>
-          <ContributionSourceSummary source={item.proposal.source} t={t} />
-          {item.limits !== null && <>
-            <dt>{t('contribution.expires')}</dt><dd>{new Date(item.limits.expiresAt).toLocaleString()}</dd>
-            <dt>{t('contribution.maxSamples')}</dt><dd>{item.limits.maxSamples}</dd>
-            <dt>{t('contribution.maxBytes')}</dt><dd>{item.limits.maxSampleBytes}</dd>
-          </>}
-        </dl>
-        {(item.result.status === 'approved' || (item.result.status === 'ended' && item.result.readState === 'active'))
+          <dl className={css.permission}>
+            <dt>{t('contribution.sourcePeer')}</dt><dd>{item.proposal.contributorPeerId}</dd>
+            <dt>{t('contribution.group.capture')}</dt><dd>{item.proposal.captureId}</dd>
+            <dt>{t('contribution.group.captureGeneration')}</dt><dd>{item.proposal.captureGeneration}</dd>
+            <ContributionSourceSummary source={item.proposal.source} t={t} />
+            {limits !== null && <>
+              <dt>{t('contribution.expires')}</dt><dd>{new Date(limits.expiresAt).toLocaleString()}</dd>
+              <dt>{t('contribution.maxSamples')}</dt><dd>{limits.maxSamples}</dd>
+              <dt>{t('contribution.maxBytes')}</dt><dd>{limits.maxSampleBytes}</dd>
+            </>}
+          </dl>
+          {(item.result.status === 'approved' || (item.result.status === 'ended' && item.result.readState === 'active'))
           && <Button variant="ghost" disabled={pending} onClick={() => {
             void rejectContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
               expectedProposal: item.proposal })
           }}>{t('contribution.group.endMember')}</Button>}
-        {item.result.status === 'pending' && <div className={css.actions}>
-          {item.limits !== null && <JoinApproval pending={pending || !ownerAddress} t={t}
-            nativeWork={item.proposal.source.kind === 'native-work'}
-            claudeWork={item.proposal.source.kind === 'claude-work'}
-            outcomes={item.proposal.source.kind === 'completed-turn-outcomes'}
-            commands={item.proposal.source.kind === 'tool-observations' && item.proposal.source.version === 4} approve={(responsibility) => {
-              if (item.limits === null) return
-              void approveContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
-                expectedProposal: item.proposal, limits: item.limits, ownerAddress, read: { responsibility } })
-            }} />}
-          <Button variant="ghost" disabled={pending} onClick={() => {
-            void rejectContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
-              expectedProposal: item.proposal })
-          }}>{t('contribution.application.reject')}</Button>
-        </div>}
-      </div>)}
+          {item.result.status === 'pending' && <div className={css.actions}>
+            {limits !== null && <JoinApproval pending={pending || !ownerAddress} t={t}
+              nativeWork={item.proposal.source.kind === 'native-work'}
+              claudeWork={item.proposal.source.kind === 'claude-work'}
+              outcomes={item.proposal.source.kind === 'completed-turn-outcomes'}
+              commands={item.proposal.source.kind === 'tool-observations' && item.proposal.source.version === 4} approve={(responsibility) => {
+                void approveContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
+                  expectedProposal: item.proposal, limits, ownerAddress, read: { responsibility } })
+              }} />}
+            <Button variant="ghost" disabled={pending} onClick={() => {
+              void rejectContributionApplication(taskId, { entryId: group.entry.entryId, applicationId: item.applicationId,
+                expectedProposal: item.proposal })
+            }}>{t('contribution.application.reject')}</Button>
+          </div>}
+        </div>
+      })}
     </section>)}
     {applications?.entries.map((item) => {
       const proposal = item.proposal
