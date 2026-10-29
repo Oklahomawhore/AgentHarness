@@ -1285,10 +1285,9 @@ export default class ScopeAgentContextService extends TypertRemoteService {
   private cancelOwnedTurn(runtime: Runtime): void {
     if (runtime.disposing || runtime.activeTurn === undefined) return
     // New automatic permission commits only after the old activity retires; disposal also drains it.
-    const cancelledActivity = runtime.agent.whenIdle().finally(() => {
-      if (runtime.cancelledActivity === cancelledActivity) runtime.cancelledActivity = undefined
-    })
-    runtime.cancelledActivity = this.track(cancelledActivity)
+    runtime.cancelledActivity = this.track(runtime.agent.whenIdle().finally(() => {
+      runtime.cancelledActivity = undefined
+    }))
     const unsubmitted = runtime.unsubmittedInputs
     runtime.unsubmittedInputs = []
     runtime.activeTurn = undefined
