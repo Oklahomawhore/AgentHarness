@@ -1120,6 +1120,30 @@ describe('native reusable scope entry consent', () => {
 
 
 describe('remote completed final-answer permission', () => {
+  it.each([false, true])('shows retained answer-only permission with collecting=%s and stops only its capture', async (collecting) => {
+    const source = { kind: 'completed-turn-outcomes', version: 5, name: 'Approved final answers' } as const
+    const proposal = { ...capture.proposal, source }
+    const entry = { ...applicationEntry, sourceKind: source.kind }
+    const permission: ScopeAgentContributionCapture = { sourceKind: source.kind, routeRevision: 0,
+      selection: capture.selection, entry, proposal, limits: capture.limits, receiving: null,
+      state: 'active', collecting, application: null, issue: null, collectionIssue: null, pendingSamples: 0,
+      invitation: { version: 1, kind: 'turn-contribution', ownerAddress: entry.ownerAddress,
+        grant: { version: 1, ...proposal, ...capture.limits, taskId: entry.taskId, ownerPeerId: entry.ownerPeerId,
+          grantId: 'answer-grant' as ScopeContributionInvitation['grant']['grantId'],
+          generation: 'answer-generation' as ScopeContributionInvitation['grant']['generation'] } } }
+    const f = fixture({ ...emptyStatus, eligibility: collecting ? 'eligible' : 'not-live', revision: 1, capture: permission })
+    expect(screen.getByText(zh[collecting ? 'native.outcomes.active' : 'native.share.paused'])).toBeTruthy()
+    expect(screen.getByText(zh['native.outcomes.stopHint'])).toBeTruthy()
+    expect(screen.queryByLabelText(zh['contribution.roots'])).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.stop'] }))
+    await waitFor(() => { expect(f.actions.stopNativeContribution).toHaveBeenCalledExactlyOnceWith({
+      agentId, expectedCapture: capture.selection,
+    }) })
+    expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    expect(f.actions.leaveNativeJoin).not.toHaveBeenCalled()
+  })
+
   it('shares complete future answers through its own permission without filesystem or initialization authority', async () => {
     const f = fixture()
     const answerEntry = { ...applicationEntry, sourceKind: 'completed-turn-outcomes' as const }

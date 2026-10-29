@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ScopeAgentContributionCapture, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ScopeAgentContributionCapture, ScopeContributionInvitation, ScopeContributionTransfer } from '@deepseek-ai/dsh-api-remotes/client'
 import { NativeContributionPanel } from './native-contribution-panel-fixture.client.tsx'
 import type { NativeContributionActions } from '../src/client/NativeContributionPanel.tsx'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from '../src/client/NativeLocalContributionPanel.tsx'
@@ -121,13 +121,22 @@ describe('same-Session combined source permission', () => {
     expect(submit.disabled).toBe(true)
   })
 
-  it('keeps current capture categories immutable and stops the complete capture without leaving read permission', async () => {
+  it.each([false, true])('keeps the retained answer selection=%s immutable when stopping combined work', async (answers) => {
     const f = remote()
-    const combined = { ...capture, sourceKind: 'native-work' as const, entry, commands: source.commands, completedTurns: true,
-      proposal: { ...capture.proposal, source }, state: 'active' as const, collecting: true }
+    const proposal = { ...capture.proposal, source: { ...source, completedTurns: answers } }
+    const combined: ScopeAgentContributionCapture = { ...capture, sourceKind: 'native-work', entry,
+      tools: ['write'], commands: source.commands, completedTurns: answers,
+      proposal, state: 'active', collecting: true, application: null,
+      invitation: { version: 1, kind: 'native-work-contribution', ownerAddress: entry.ownerAddress,
+        grant: { version: 1, ...proposal, ...capture.limits, taskId: entry.taskId, ownerPeerId: entry.ownerPeerId,
+          grantId: 'native-work-grant' as ScopeContributionInvitation['grant']['grantId'],
+          generation: 'native-work-generation' as ScopeContributionInvitation['grant']['generation'] } } }
     f.rerender(<NativeContributionPanel {...f.props} entry={{ ...f.props.entry,
       value: { ...emptyStatus, capture: combined } }} />)
     expect(screen.getByText(zh['native.work.stopHint'])).toBeTruthy()
+    for (const label of screen.getAllByText(zh['native.work.completedTurns'])) {
+      expect(label.nextElementSibling?.textContent).toBe(zh[answers ? 'native.work.selected' : 'native.work.notSelected'])
+    }
     expect(screen.queryByRole('checkbox', { name: zh['native.work.completedTurns'] })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: zh['native.share.stop'] }))
     await waitFor(() => { expect(f.actions.stopNativeContribution).toHaveBeenCalledExactlyOnceWith({

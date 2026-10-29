@@ -48,6 +48,7 @@ describe.skipIf(process.platform === 'win32')('MCP descriptor startup', () => {
     }
     const fiber = ctx.plugin(McpClientSetupService, {
       nodePath: process.execPath, dshPath: join(directory, 'dsh.js'), nodeArgs: [],
+      commandTimeoutMs: 10_000,
       descriptorPath, harnessHome: directory,
     })
     const mounted = Promise.resolve(fiber)

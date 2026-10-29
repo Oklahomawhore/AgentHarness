@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -87,6 +87,24 @@ describe('authorized original Claude tool observations', () => {
     await rm(link)
     await symlink(outside, link)
     expect(await authorizeClaudeScopeTool(tool, root, policy)).toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+  })
+
+  it('omits a target whose existing ancestor is a regular file instead of a directory', async () => {
+    const { root, policy } = await fixture()
+    const file = join(root, 'regular-file')
+    await writeFile(file, 'existing file')
+    expect(await authorizeClaudeScopeTool({ id: 'blocked-target', name: 'Write',
+      input: { file_path: join(file, 'child.txt'), content: 'PRIVATE_INPUT' } }, root, policy))
+      .toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+  })
+
+  it.skipIf(process.platform === 'win32')('omits a target whose live ancestor contains a symlink loop', async () => {
+    const { root, policy } = await fixture()
+    const loop = join(root, 'loop')
+    await symlink(loop, loop)
+    expect(await authorizeClaudeScopeTool({ id: 'loop-target', name: 'Edit',
+      input: { file_path: join(loop, 'child.txt'), old_string: 'before', new_string: 'after' } }, root, policy))
+      .toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
   })
 
   it('includes changed tool arguments in the starting digest', async () => {

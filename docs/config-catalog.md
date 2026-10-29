@@ -1357,6 +1357,8 @@ export interface Config {
   readonly dshPath: string
   /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
   readonly nodeArgs: string[]
+  /** Complete official client inspection or registration command deadline, in milliseconds. */
+  readonly commandTimeoutMs: number
   /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
   readonly sourceTsconfigPath?: string
   /** Absolute private local Connection descriptor published by this Host. */
@@ -1366,7 +1368,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/mcp-client-setup/src/index.ts:45`](../packages/host/mcp-client-setup/src/index.ts)
+Source: [`packages/host/mcp-client-setup/src/index.ts:44`](../packages/host/mcp-client-setup/src/index.ts)
 
 <a id="deepseek-aidsh-host-open-in-app"></a>
 

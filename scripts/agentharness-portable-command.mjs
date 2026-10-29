@@ -356,6 +356,7 @@ function mcpSetupOptions(root, environment) {
     nodePath: join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
     dshPath: join(root, 'lib', 'bin.js'),
     nodeArgs: [],
+    commandTimeoutMs: 10_000,
     descriptorPath: join(home, 'mcp', 'connection.json'),
     harnessHome: home,
   }

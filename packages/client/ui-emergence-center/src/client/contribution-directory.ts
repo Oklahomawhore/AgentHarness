@@ -118,7 +118,9 @@ export function createContributionDirectory<K extends string, T>(
         if (current()) {
           state.mutationError = code(error)
           report(error)
-          publish(key, { ...snapshot[key], status: snapshot[key]?.status ?? 'loading', pending: true, error: state.mutationError })
+          // The mutation publishes this key before sending the Host request.
+          const entry = snapshot[key] as ContributionEntry<T>
+          publish(key, { ...entry, pending: true, error: state.mutationError })
         }
       } finally {
         // A connection reset cannot cancel a mutation already sent to the Host.
@@ -131,7 +133,8 @@ export function createContributionDirectory<K extends string, T>(
             if (!alive()) break
             if (observedGeneration !== generation || observedRevision !== state.revision) continue
             state.pending = false
-            publish(key, { ...snapshot[key], status: snapshot[key]?.status ?? 'error', pending: false })
+            const entry = snapshot[key] as ContributionEntry<T>
+            publish(key, { ...entry, pending: false })
             break
           }
         }

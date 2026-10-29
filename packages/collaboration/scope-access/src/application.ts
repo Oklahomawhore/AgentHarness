@@ -11,7 +11,7 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { DomainError } from '@deepseek-ai/dsh-storage-domain'
 import { invitationSchema } from './invitation-schema.ts'
 import { plannedContributionGrant, type ContributionAccess } from './contribution.ts'
-import { contributionInvitationSchema, contributionKind, contributionEntrySchema, groupEntrySchema,
+import { contributionInvitationSchema, contributionKind, singleContributionEntrySchema, groupEntrySchema,
   contributionLimitsSchema, contributionProposalSchema,
   validateContributionReceipt } from './contribution-schema.ts'
 import { applicationRequestSchema, applicationResponseSchema, groupApplicationRequestSchema, groupApplicationResponseSchema,
@@ -59,7 +59,6 @@ const recoverSchema = z.object({ entryId: z.uuid(), ownerAddress: z.string().min
 /** Owner application mailbox and authenticated source requests, sharing scope-access lifecycle and limits. */
 export class ContributionApplications {
   private tail: Promise<unknown> = Promise.resolve()
-  private domain!: ScopeAccessDomain
 
   constructor(private readonly ctx: Context, private readonly owner: Owner) {
     ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, request => owner.track(this.respond(request, 1))), 'scope-access: contribution applications')
@@ -92,7 +91,6 @@ export class ContributionApplications {
   private enqueue<T>(operation: (domain: ScopeAccessDomain) => Promise<T>): Promise<T> {
     const pending = this.tail.then(async () => {
       const domain = await this.owner.ready()
-      this.domain = domain
       this.owner.signal.throwIfAborted()
       return await operation(domain)
     })
@@ -183,10 +181,9 @@ export class ContributionApplications {
       }
       if (domain.table('applications').size >= this.owner.config.maxContributionApplications) throw this.failure('scope-contribution/capacity')
       const { participation, ...fields } = parsed
-      const entry = contributionEntrySchema.parse({ ...fields, ownerPeerId, entryId: randomUUID(), version: 1,
+      const entry = singleContributionEntrySchema.parse({ ...fields, ownerPeerId, entryId: randomUUID(), version: 1,
         kind: participation === 'join' ? 'scope-join-entry' : 'contribution-entry' })
       const result = this.encoded(entry)
-      if (entry.version !== 1) throw new Error('scope-access: single creation produced a group entry')
       await this.save({ entry, proposal: null, limits: null, decision: 'open', grant: null })
       return result
     }))
@@ -361,14 +358,12 @@ export class ContributionApplications {
       && record.proposal.captureId === proposal.captureId && record.proposal.captureGeneration === proposal.captureGeneration)
   }
 
-  private authority(record: ManagedApplicationRecord): DevelopmentTaskPeerContribution | undefined {
-    if (record.proposal === null) return undefined
-    const proposal = record.proposal
-    if (record.grant === null && this.captureClaimedElsewhere(this.domain, record.entry, proposal)) return undefined
-    const entries = this.ctx.developmentTasks.peerContributions({ taskId: record.entry.taskId })
-    if (entries.some(item => item.grant.ownerPeerId !== record.entry.ownerPeerId)) throw this.failure('scope-contribution/invalid-permission')
+  private authority(entry: ScopeContributionEntry, proposal: ScopeContributionProposal,
+    grant: DevelopmentTaskPeerContributionGrant | null): DevelopmentTaskPeerContribution | undefined {
+    const entries = this.ctx.developmentTasks.peerContributions({ taskId: entry.taskId })
+    if (entries.some(item => item.grant.ownerPeerId !== entry.ownerPeerId)) throw this.failure('scope-contribution/invalid-permission')
     return entries.find(item => this.matches(item.grant, proposal)
-      && (record.grant === null || isDeepStrictEqual(item.grant, record.grant)))
+      && (grant === null || isDeepStrictEqual(item.grant, grant)))
   }
 
   private within(limits: ScopeContributionLimits, maximum: ScopeContributionLimits): boolean {
@@ -390,27 +385,23 @@ export class ContributionApplications {
     if (record.decision === 'open') return { status: 'open' }
     if (record.decision === 'pending') return { status: 'pending' }
     if (record.decision !== 'approved' && record.grant === null) return { status: record.decision }
+    const grant = record.grant
+    if (grant === null) throw new Error('scope-access: approved application has no planned grant')
     const read = record.readInvitation === undefined ? undefined
       : await this.owner.reconcileRead(record.readInvitation, record.decision !== 'approved')
     const readFields = read === undefined ? {} : { readInvitation: { ...read.invitation, ownerAddress: address },
       readState: read.state === 'revoked' ? 'revoked' as const : read.invitation.expiresAt <= Date.now() ? 'expired' as const : 'active' as const }
-    let retained = this.authority(record)
+    let retained = this.authority(record.entry, grant, grant)
     if (record.decision === 'approved') {
-      const grant = record.grant
-      if (grant === null) throw new Error('scope-access: approved application has no planned grant')
-      if (retained !== undefined && !isDeepStrictEqual(retained.grant, grant)) throw this.failure('scope-contribution/source-conflict')
       if (retained === undefined) {
         if (grant.expiresAt <= Date.now()) await this.ctx.developmentTasks.endPeerContribution({ grant, reason: 'revoked' }, grant.ownerPeerId)
         else await this.owner.contributions.invite({ ownerAddress: address, grant })
       } else await this.ctx.developmentTasks.expirePeerContributions({ taskId: grant.taskId })
-      retained = this.authority(record)
+      retained = this.authority(record.entry, grant, grant)
     } else {
-      const grant = record.grant
-      if (grant !== null) {
-        await this.ctx.developmentTasks.endPeerContribution({ grant,
-          reason: record.decision === 'cancelled' ? 'left' : 'revoked' }, record.entry.ownerPeerId)
-        retained = this.authority(record)
-      }
+      await this.ctx.developmentTasks.endPeerContribution({ grant,
+        reason: record.decision === 'cancelled' ? 'left' : 'revoked' }, record.entry.ownerPeerId)
+      retained = this.authority(record.entry, grant, grant)
     }
     this.owner.signal.throwIfAborted()
     if (retained === undefined) return { status: record.decision === 'approved' ? 'unavailable' : record.decision }
@@ -479,7 +470,7 @@ export class ContributionApplications {
         throw this.failure('scope-contribution/source-conflict')
       }
       const request = { taskId: record.entry.taskId, proposal: record.proposal, ownerAddress: input.ownerAddress, ...input.limits }
-      const prior = this.authority(record)
+      const prior = this.authority(record.entry, record.proposal, record.grant)
       const grant = prior?.grant ?? plannedContributionGrant(record.entry.ownerPeerId, request)
       if (!this.matches(grant, record.proposal) || !isDeepStrictEqual({ expiresAt: grant.expiresAt,
         maxSamples: grant.maxSamples, maxSampleBytes: grant.maxSampleBytes }, input.limits)

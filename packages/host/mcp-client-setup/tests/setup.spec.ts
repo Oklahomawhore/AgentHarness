@@ -41,6 +41,7 @@ async function fixture(): Promise<{ root: string; options: McpClientSetupOptions
       nodePath: '/opt/agentharness/runtime/node',
       dshPath: '/opt/agentharness/lib/bin.js',
       nodeArgs: [],
+      commandTimeoutMs: 10_000,
       descriptorPath: join(home, '.dsh', 'mcp', 'connection.json'),
       harnessHome: join(home, '.dsh'),
       applicationRoots: [apps],
@@ -54,6 +55,36 @@ async function fakeExecutable(path: string, body = '#!/bin/sh\nexit 0\n'): Promi
 }
 
 describe('MCP client setup', () => {
+  it.each([0, 2_147_483_648])('rejects an unsupported client-command deadline %s before inspection', async (commandTimeoutMs) => {
+    const { options } = await fixture()
+    const deployment = { ...options, commandTimeoutMs }
+    await expect(listMcpClients(deployment)).rejects.toThrow('commandTimeoutMs')
+  })
+
+  // exec replaces the fixture shell, so command cancellation leaves no descendant timer process.
+  it.skipIf(process.platform === 'win32')('bounds official client inspection by its configured deadline', async () => {
+    const { root, options } = await fixture()
+    await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nexec "$MCP_SETUP_NODE" -e \'setTimeout(() => process.stdout.write("[]"), 250)\'\n')
+    const deployment = { ...options, commandTimeoutMs: 25,
+      environment: { ...options.environment, MCP_SETUP_NODE: process.execPath } }
+    const snapshot = await listMcpClients(deployment)
+    expect(snapshot.clients.find(client => client.id === 'codex')).toMatchObject({
+      detected: true, state: 'failed', canSetup: false,
+      detail: 'Could not inspect Codex MCP settings; run codex mcp list --json locally for diagnostics.',
+    })
+  })
+
+  it.skipIf(process.platform === 'win32')('bounds official registration without exposing command output', async () => {
+    const { root, options } = await fixture()
+    await fakeExecutable(join(root, 'bin', 'claude'), '#!/bin/sh\nexec "$MCP_SETUP_NODE" -e \'process.stdout.write("PRIVATE_COMMAND_OUTPUT"); setTimeout(() => {}, 2000)\'\n')
+    const result = await setupMcpClient({ ...options, commandTimeoutMs: 100,
+      environment: { ...options.environment, MCP_SETUP_NODE: process.execPath } }, { clientId: 'claude-code' })
+    expect(result).toMatchObject({ outcome: 'failed', client: {
+      state: 'failed', detail: 'Client MCP registration command failed.',
+    } })
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_COMMAND_OUTPUT')
+  })
+
   it('keeps one account’s clients distinct across separate Hosts and stable on the same Host', async () => {
     const { options } = await fixture()
     machine.name = 'first-host'

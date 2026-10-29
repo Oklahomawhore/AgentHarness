@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useLayoutEffect } from 'react'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { ScopeAgentContributionInitialization, ScopeAgentLocalContributionStatus } from '@deepseek-ai/dsh-api-remotes/client'
@@ -45,6 +46,33 @@ function fixture(initial: ScopeAgentLocalContributionStatus | undefined = local,
 }
 
 describe('recorded native tool consent', () => {
+  it('keeps permission blank when the retained local grant expires before passive effects run', async () => {
+    vi.useFakeTimers()
+    try {
+      const expiresAt = Date.UTC(2030, 0, 1)
+      vi.setSystemTime(expiresAt - 1)
+      const f = fixture(undefined)
+      const expiring: ScopeAgentLocalContributionStatus = { ...local,
+        capture: { ...localCapture, grant: { ...localCapture.grant, expiresAt } } }
+      function AdvanceClock() {
+        useLayoutEffect(() => { vi.setSystemTime(expiresAt) }, [expiresAt])
+        return null
+      }
+      f.rerender(<><AdvanceClock /><NativeContributionPanel {...f.props}
+        localEntry={{ value: expiring, status: 'ready', pending: false }} /></>)
+      fireEvent.click(screen.getByText(zh['native.share.title']))
+      await act(async () => {
+        change(zh['native.invitation'], 'entry')
+        fireEvent.click(screen.getByRole('button', { name: zh['native.share.verify'] }))
+      })
+      expect(screen.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('')
+      expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.hours']).value).toBe('')
+      expect(sharing().checked).toBe(false)
+      expect(submit().disabled).toBe(true)
+      expect(f.actions.requestNativeContribution).not.toHaveBeenCalled()
+    } finally { cleanup(); vi.useRealTimers() }
+  })
+
   it('keeps historical initialization and complete-file permission mutually exclusive without upgrading saved records', async () => {
     const f = fixture()
     await f.verify()

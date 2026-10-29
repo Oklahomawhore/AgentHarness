@@ -20,7 +20,7 @@ Write 和 Edit 发布有界的原始请求字段及 Claude 报告的结果。前
 
 共享[上下文后端](2026-10-02-recipient-task-context-backend.zh.md) 准备接收者文本和来源覆盖情况。本适配器先持久化确切输出，再通过 UserPromptSubmit 或 PostToolBatch 返回。Claude 的只追加 hook 交付接收前驱标记，断开后收到明确的撤回通知。独立接收的上下文以证据缓存键和前驱标识每次新出现的投影，因此 owner 恢复会取代实际的不可用通知。连续未变化的输出只复用最新的确切记录；恢复历史记录时保留其原始 ID 和正文。外部准备输出记录不伪造原生 Session id、原生日志事件、Task 投影确认或模型采用证据。
 
-命令只通过常规 `dsh --profile` 应用运行。它等待应用就绪、读取有界 stdin、通过 Connection 认证、检查 Host generation，并在退出前完整输出一份有界 Hook JSON。EOF 结束输入采集，不结束请求。私有描述符和生命周期 OS 锁防止 Host 同时拥有描述符；取消处理负责等待传输与输出结束。
+命令只通过常规 `dsh --profile` 应用运行。它等待应用就绪、读取有界 stdin、通过 Connection 认证、检查 Host generation，并在退出前完整输出一份有界 Hook JSON。EOF 结束输入采集，不结束请求。一次性命令拥有并结束 stdout，等待待完成写入结束后才报告成功或清除截止时间。私有描述符和生命周期 OS 锁防止 Host 同时拥有描述符；取消处理负责等待传输与输出结束。
 
 ## Alternatives considered
 

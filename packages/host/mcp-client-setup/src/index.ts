@@ -27,7 +27,6 @@ export type * from './types.ts'
 const runFile = promisify(execFile)
 const SERVER_NAME = 'agentharness'
 const CLIENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/
-const COMMAND_TIMEOUT_MS = 10_000
 
 /** Runtime facts shared by the installed command and Host Remote service. */
 export interface McpClientSetupOptions extends Config {
@@ -49,6 +48,8 @@ export interface Config {
   readonly dshPath: string
   /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
   readonly nodeArgs: string[]
+  /** Complete official client inspection or registration command deadline, in milliseconds. */
+  readonly commandTimeoutMs: number
   /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
   readonly sourceTsconfigPath?: string
   /** Absolute private local Connection descriptor published by this Host. */
@@ -135,6 +136,9 @@ const CLIENTS: readonly ClientDefinition[] = [
 ]
 
 function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
+  if (!Number.isSafeInteger(options.commandTimeoutMs) || options.commandTimeoutMs < 1 || options.commandTimeoutMs > 2_147_483_647) {
+    throw new TypeError('mcp-client-setup: commandTimeoutMs must be an integer from 1 through 2147483647')
+  }
   if (![options.nodePath, options.dshPath, options.descriptorPath, options.harnessHome].every(isAbsolute)) {
     throw new TypeError('mcp-client-setup: launcher, descriptor, and Harness home paths must be absolute')
   }
@@ -165,6 +169,7 @@ function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
     nodePath: options.nodePath,
     dshPath: options.dshPath,
     nodeArgs,
+    commandTimeoutMs: options.commandTimeoutMs,
     ...(options.sourceTsconfigPath === undefined ? {} : { sourceTsconfigPath: options.sourceTsconfigPath }),
     descriptorPath: options.descriptorPath,
     harnessHome: options.harnessHome,
@@ -309,12 +314,13 @@ async function inspectCodex(
   command: string,
   expected: McpEntry,
   environment: NodeJS.ProcessEnv,
+  commandTimeoutMs: number,
 ): Promise<{ state: McpClientSnapshot['state']; detail?: string }> {
   try {
     const { stdout } = await runFile(command, ['mcp', 'list', '--json'], {
       encoding: 'utf8',
       env: environment,
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout: commandTimeoutMs,
     })
     const list: unknown = JSON.parse(stdout)
     if (!Array.isArray(list)) return { state: 'failed', detail: 'Codex returned an invalid MCP list.' }
@@ -356,7 +362,7 @@ async function inspectClient(
       detail: 'The supported registration command is not available on PATH.',
     }
     else if (definition.id === 'codex' && command !== undefined) {
-      observation = await inspectCodex(command, entry, options.environment)
+      observation = await inspectCodex(command, entry, options.environment, options.commandTimeoutMs)
     }
     else if (path !== undefined) observation = await inspectJson(path, entry)
     else observation = { state: 'manual', detail: 'No supported registration mechanism is available.' }
@@ -427,14 +433,14 @@ async function configureJson(client: InspectedClient): Promise<void> {
   })
 }
 
-async function configureCli(client: InspectedClient, environment: NodeJS.ProcessEnv): Promise<void> {
+async function configureCli(client: InspectedClient, environment: NodeJS.ProcessEnv, commandTimeoutMs: number): Promise<void> {
   if (client.executable === undefined || client.definition.addArguments === undefined) {
     throw new Error('supported registration command is unavailable')
   }
   await runFile(client.executable, [...client.definition.addArguments(client.entry)], {
     encoding: 'utf8',
     env: environment,
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: commandTimeoutMs,
   })
 }
 
@@ -461,7 +467,7 @@ export async function setupMcpClient(
   if (!before.snapshot.canSetup) return { outcome: 'failed', client: before.snapshot }
   try {
     if (definition.mechanism === 'json') await configureJson(before)
-    else await configureCli(before, resolved.environment)
+    else await configureCli(before, resolved.environment, resolved.commandTimeoutMs)
     const after = await inspectClient(definition, resolved, request.displayName)
     if (after.snapshot.state !== 'configured') {
       return { outcome: 'failed', client: { ...after.snapshot, detail: after.snapshot.detail ?? 'Registration completed but verification did not pass.' } }
@@ -509,6 +515,7 @@ export class McpClientSetupService extends TypertRemoteService {
     nodePath: s.string().required(),
     dshPath: s.string().required(),
     nodeArgs: s.array(s.string()).required(),
+    commandTimeoutMs: s.number().step(1).min(1).max(2_147_483_647).required(),
     sourceTsconfigPath: s.string(),
     descriptorPath: s.string().required(),
     harnessHome: s.string().required(),

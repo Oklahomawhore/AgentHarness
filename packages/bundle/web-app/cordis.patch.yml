@@ -143,6 +143,7 @@
     - id: mcp-client-setup
       name: '@deepseek-ai/dsh-host-mcp-client-setup'
       config:
+        commandTimeoutMs: 10000
         nodePath: !!js process.env.AGENTHARNESS_MCP_NODE ?? process.execPath
         dshPath: !!js process.env.AGENTHARNESS_DSH_PATH ?? process.argv[1]
         nodeArgs: !!js >-

@@ -78,6 +78,7 @@ async function configureMcpClient(portableRoot, clientHome, harnessHome, environ
   const result = await setupMcpClient({
     home: clientHome, path: fixtureBin, applicationRoots: [applications], environment,
     nodePath: join(portableRoot, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'), dshPath: join(portableRoot, 'lib', 'bin.js'), nodeArgs: [],
+    commandTimeoutMs: 10_000,
     descriptorPath: join(harnessHome, 'mcp', 'connection.json'), harnessHome, username: 'portable-fixture',
   }, { clientId: 'cursor' })
   if (process.platform === 'win32') {

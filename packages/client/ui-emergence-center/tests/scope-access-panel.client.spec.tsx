@@ -20,6 +20,48 @@ const inventory: ScopeAccessValue = {
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
+it.each([
+  { address: '/ip6/::1/tcp/43120/p2p/owner-peer', label: '[::1]:43120', local: true },
+  { address: '/ip6/2001:db8::20/tcp/43120/p2p/owner-peer', label: '[2001:db8::20]:43120', local: false },
+  { address: '/dns4/owner.example/tcp/43120/p2p/owner-peer', label: '/dns4/owner.example/tcp/43120/p2p/owner-peer', local: false },
+])('keeps the exact published $address while displaying its local or network destination', async ({ address, label, local }) => {
+  const { props } = await mount({ taskId: invitation.taskId, entry: { status: 'ready', pending: false,
+    value: { ...inventory, identity: { ...inventory.identity, addresses: [address] } } } })
+  const option = screen.getByRole<HTMLOptionElement>('option', {
+    name: zh[local ? 'access.addressLocal' : 'access.addressNetwork'].replace('{address}', label),
+  })
+  expect(option.value).toBe(address)
+  expect(screen.queryByText(zh['access.addressLocalHint']) !== null).toBe(local)
+  inviteSelectedTask()
+  await waitFor(() => { expect(props.inviteScope).toHaveBeenCalledOnce() })
+  expect(vi.mocked(props.inviteScope).mock.calls[0]?.[0].ownerAddress).toBe(address)
+})
+
+it('keeps the invitation available when receive has no confirmed result', async () => {
+  const receiveClaudeScope = vi.fn<ScopeAccessPanelProps['receiveClaudeScope']>(async () => undefined)
+  const { props, rerender } = await mount({ receiveClaudeScope })
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
+  await waitFor(() => { expect(receiveClaudeScope).toHaveBeenCalledOnce() })
+  expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
+  rerender(<ScopeAccessPanel {...props} entry={{ value: inventory, status: 'ready', pending: false,
+    error: 'contribution/unknown-outcome' }} />)
+  expect(screen.getByRole('alert').textContent).toBe(zh['access.failed'])
+  expect(receiveClaudeScope).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, invitation })
+})
+
+it('uses the explicitly selected invitation duration for the owner request', async () => {
+  const { props } = await mount({ taskId: invitation.taskId })
+  const before = Date.now()
+  fireEvent.change(screen.getByLabelText(zh['access.hours']), { target: { value: '2' } })
+  inviteSelectedTask()
+  await waitFor(() => { expect(props.inviteScope).toHaveBeenCalledOnce() })
+  const expiresAt = vi.mocked(props.inviteScope).mock.calls[0]?.[0].expiresAt
+  expect(expiresAt).toBeGreaterThanOrEqual(before + 7_200_000)
+  expect(expiresAt).toBeLessThanOrEqual(Date.now() + 7_200_000)
+})
+
 function renderPanel(overrides: Partial<ScopeAccessPanelProps> = {}) {
   const props: ScopeAccessPanelProps = {
     sessions: { status: 'ready', sessions: [session] },

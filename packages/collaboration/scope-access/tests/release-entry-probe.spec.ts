@@ -21,6 +21,15 @@ async function fixture() {
   return { owner, source, entry }
 }
 
+it('denies a nonpositive entry deadline before contacting its owner or changing storage', async () => {
+  const { owner, source, entry } = await fixture()
+  const before = structuredClone([owner.pool.media, source.pool.media])
+  const sends = vi.spyOn(source.transport, 'request')
+  expect(await source.access.probeContributionEntry({ entry: { ...entry, expiresAt: 0 } })).toEqual({ status: 'denied' })
+  expect(sends).not.toHaveBeenCalled()
+  expect([owner.pool.media, source.pool.media]).toEqual(before)
+})
+
 it.each([
   ['scope-transport/capacity', 'capacity'],
   ['scope-transport/request-too-large', 'capacity'],

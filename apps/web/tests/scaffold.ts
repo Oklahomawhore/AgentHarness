@@ -563,6 +563,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         id: 'scaffold-mcp-client-setup', name: 'cordis:scaffold-mcp-client-setup',
         config: {
           nodePath: process.execPath, dshPath: join(mcpFixtureRoot, 'dsh.mjs'), nodeArgs: [],
+          commandTimeoutMs: 10_000,
           harnessHome, descriptorPath: join(harnessHome, 'mcp', 'connection.json'),
         },
       }] },
