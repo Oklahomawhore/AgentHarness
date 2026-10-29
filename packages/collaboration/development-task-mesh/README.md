@@ -52,4 +52,4 @@ No invariant companion is published because the Task service validates incoming 
 
 ### Dev Note
 
-Use this package’s source, tests, and architecture documentation as the maintainer reference.
+Assignment dependency checks defer `TASK_NOT_FOUND` and propagate other failures. Incoming schemas and typed owner commands determine the closed discriminants used by dispatch.

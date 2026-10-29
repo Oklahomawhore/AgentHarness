@@ -129,6 +129,22 @@ async function approvedSource() {
 }
 
 describe('development Task Mesh channel', () => {
+  it('keeps an orphan mutation pending without blocking another peer’s independent history', async () => {
+    const ctx = await setup()
+    const channel = ctx.developmentMesh.channel('development-task/v1')!
+    const orphan = developmentTaskEventSchema.parse({ ...contextPublished(), seq: 1, revision: 1 })
+    const persisted = vi.fn()
+    ctx.on('development-task/persist', persisted)
+    await channel.receive([{ kind: 'task-event', entry: orphan }], REMOTE)
+    expect(ctx.developmentTasks.log()).toEqual([])
+    expect(persisted).not.toHaveBeenCalled()
+    const independent = developmentTaskEventSchema.parse({ ...created(), nodeId: 'independent-peer', taskId: 'independent-task' })
+    await channel.receive([{ kind: 'task-event', entry: independent }], independent.nodeId)
+    expect(ctx.developmentTasks.log()).toEqual([independent])
+    expect(persisted).toHaveBeenCalledOnce()
+    expect(await channel.heads()).toEqual({ 'task:independent-peer': 1 })
+  })
+
   it('reads only local deltas and sends the context blocks required by the selected creation events', async () => {
     const ctx = await setup()
     const channel = ctx.developmentMesh.channel('development-task/v1')!

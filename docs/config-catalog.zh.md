@@ -641,7 +641,7 @@ Requires: `webServer` · `developmentRooms` · `credentials`
 ```ts config-catalog
 /** Explicit authentication, topology, and resource bounds for one Mesh node. */
 export interface Config {
-  /** Absolute WebSocket upgrade path without a trailing slash. */
+  /** Canonical absolute URL pathname without a trailing slash. */
   readonly path: string
   /** Credential reference resolving the shared cluster secret. */
   readonly secretRef: string
@@ -655,7 +655,7 @@ export interface Config {
   readonly reconnectMaxDelayMs: number
   /** Deadline for one owner command response. */
   readonly commandTimeoutMs: number
-  /** Maximum signed WebSocket envelope bytes. */
+  /** Maximum signed WebSocket envelope bytes; each peer's initial hello must fit. */
   readonly maxMessageBytes: number
   /** Maximum channel events carried by one delta frame. */
   readonly maxEventsPerFrame: number
@@ -665,7 +665,7 @@ export interface Config {
 export interface PeerConfig {
   /** Stable remote node identity expected during authentication. */
   readonly nodeId: string
-  /** HTTP(S) origin used to derive the Mesh WebSocket endpoint. */
+  /** Fragment-free WS(S) URL used to derive the Mesh WebSocket endpoint. */
   readonly url: string
   /** Whether this node owns outbound reconnect attempts for the pair. */
   readonly connect: boolean

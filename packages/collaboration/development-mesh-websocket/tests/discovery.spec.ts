@@ -49,7 +49,7 @@ afterEach(async () => {
   vi.clearAllMocks()
 })
 
-async function provider(nodeId: string, peers: PeerConfig[] = []) {
+async function provider(nodeId: string, peers: PeerConfig[] = [], maxMessageBytes = 256 * 1024) {
   const ctx = new Context()
   contexts.push(ctx)
   const socket = new DatagramSocket()
@@ -63,7 +63,7 @@ async function provider(nodeId: string, peers: PeerConfig[] = []) {
     discovery: { enabled: true, cluster: 'provider-test', multicastAddress: '239.255.73.67', port: 45892,
       announceIntervalMs: 10000, peerTtlMs: 30000, maxDatagramBytes: 2048 },
     reconnectInitialDelayMs: 1000, reconnectMaxDelayMs: 1000, commandTimeoutMs: 1000,
-    maxMessageBytes: 256 * 1024, maxEventsPerFrame: 4096 })
+    maxMessageBytes, maxEventsPerFrame: 4096 })
   const send = (changes: Readonly<Record<string, unknown>>) => {
     socket.emit('message', peerPacket(Buffer.from(secret), {
       clusterId: ctx.developmentMesh.list().clusterId, path: '/mesh', ...changes,
@@ -108,6 +108,41 @@ it('connects discovered endpoints, preserves configured topology and removes aut
   second.send({ ...firstAnnouncement, state: 'offline' })
   expect(first.ctx.developmentMesh.list().peers).toEqual([expect.objectContaining({ nodeId: 'node-c', state: 'offline' })])
   expect(second.ctx.developmentMesh.list().peers).toEqual([])
+})
+
+it('rejects a discovered identity whose complete hello exceeds the byte budget and continues discovery', async () => {
+  const node = await provider('node-z', [], 400)
+  node.send({ nodeId: 'p'.repeat(200), port: node.ctx.webServer.port })
+  expect(node.ctx.developmentMesh.list().peers).toEqual([])
+  expect(node.socket.closed).toBe(false)
+  node.send({ nodeId: 'node-a', port: node.ctx.webServer.port })
+  expect(node.ctx.developmentMesh.list().peers).toEqual([
+    expect.objectContaining({ nodeId: 'node-a', state: 'offline', direction: 'accept' }),
+  ])
+})
+
+it('cancels a failed discovered peer\'s pending reconnect when its authenticated goodbye arrives', async () => {
+  const node = await provider('node-a')
+  const instanceId = randomUUID()
+  const offline = Promise.withResolvers<undefined>()
+  node.ctx.on('development-mesh/peer-changed', (peer) => {
+    if (peer.nodeId === 'node-z' && peer.state === 'offline' && peer.lastError !== undefined) offline.resolve(undefined)
+  })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const baseline = vi.getTimerCount()
+    node.send({ nodeId: 'node-z', port: node.ctx.webServer.port, instanceId })
+    await offline.promise
+    expect(vi.getTimerCount()).toBe(baseline + 1)
+    node.send({ nodeId: 'node-z', port: node.ctx.webServer.port, instanceId, state: 'offline' })
+    expect(node.ctx.developmentMesh.list().peers).toEqual([])
+    expect(vi.getTimerCount()).toBe(baseline)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(node.ctx.developmentMesh.list().peers).toEqual([])
+  } finally {
+    await node.ctx.fiber.dispose()
+    vi.useRealTimers()
+  }
 })
 
 function fixture(overrides: Partial<LanDiscoveryConfig> = {}) {

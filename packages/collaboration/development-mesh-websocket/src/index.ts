@@ -41,7 +41,7 @@ const HEADER_MAC = 'x-dsh-mesh-mac'
 export interface PeerConfig {
   /** Stable remote node identity expected during authentication. */
   readonly nodeId: string
-  /** HTTP(S) origin used to derive the Mesh WebSocket endpoint. */
+  /** Fragment-free WS(S) URL used to derive the Mesh WebSocket endpoint. */
   readonly url: string
   /** Whether this node owns outbound reconnect attempts for the pair. */
   readonly connect: boolean
@@ -49,7 +49,7 @@ export interface PeerConfig {
 
 /** Explicit authentication, topology, and resource bounds for one Mesh node. */
 export interface Config {
-  /** Absolute WebSocket upgrade path without a trailing slash. */
+  /** Canonical absolute URL pathname without a trailing slash. */
   readonly path: string
   /** Credential reference resolving the shared cluster secret. */
   readonly secretRef: string
@@ -63,7 +63,7 @@ export interface Config {
   readonly reconnectMaxDelayMs: number
   /** Deadline for one owner command response. */
   readonly commandTimeoutMs: number
-  /** Maximum signed WebSocket envelope bytes. */
+  /** Maximum signed WebSocket envelope bytes; each peer's initial hello must fit. */
   readonly maxMessageBytes: number
   /** Maximum channel events carried by one delta frame. */
   readonly maxEventsPerFrame: number
@@ -206,6 +206,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     super(ctx)
     this.nodeId = ctx.developmentRooms.list().nodeId
     if (!config.path.startsWith('/') || config.path.endsWith('/')) throw new TypeError('development-mesh-websocket: path must be absolute without a trailing slash')
+    if (new URL(config.path, 'http://mesh.invalid').pathname !== config.path) throw new TypeError('development-mesh-websocket: path must be a canonical URL pathname')
     credentialRef(config.secretRef)
     if (config.reconnectInitialDelayMs > config.reconnectMaxDelayMs) throw new TypeError('development-mesh-websocket: reconnect delay bounds are inverted')
     if (config.discovery.peerTtlMs <= config.discovery.announceIntervalMs) throw new TypeError('development-mesh-websocket: peerTtlMs must exceed announceIntervalMs')
@@ -317,7 +318,10 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
         this.clusterId,
         this.secret,
         {
-          up: (peer) => { this.upsertDiscoveredPeer(peer) },
+          up: (peer) => {
+            try { this.upsertDiscoveredPeer(peer) }
+            catch (error) { this.ctx.logger.warn('development Mesh LAN peer %s rejected: %s', peer.nodeId, errorMessage(error)) }
+          },
           down: (nodeId) => { this.removeDiscoveredPeer(nodeId) },
           collision: (nodeId) => { this.ctx.logger.error('development Mesh node id collision: %s', nodeId) },
           error: (error) => { this.ctx.logger.warn('development Mesh LAN discovery: %s', error.message) },
@@ -331,7 +335,12 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     if (!NODE_PATTERN.test(peer.nodeId)) throw new TypeError('development-mesh-websocket: peer nodeId must use lower-kebab-case')
     const url = new URL(peer.url)
     if (url.protocol !== 'ws:' && url.protocol !== 'wss:') throw new TypeError('development-mesh-websocket: peer url must use ws or wss')
-    return { nodeId: peer.nodeId as DevelopmentNodeId, url: peer.url, connect: peer.connect, source }
+    if (url.hash !== '') throw new TypeError('development-mesh-websocket: peer url must not contain a fragment')
+    const nodeId = peer.nodeId as DevelopmentNodeId
+    if (Buffer.byteLength(this.encode(nodeId, 1, { type: 'hello' }), 'utf8') > this.config.maxMessageBytes) {
+      throw new TypeError('development-mesh-websocket: maxMessageBytes cannot carry the authenticated hello')
+    }
+    return { nodeId, url: peer.url, connect: peer.connect, source }
   }
 
   private createPeer(config: ResolvedPeer): PeerRuntime {
@@ -424,7 +433,8 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     socket.on('message', (data: RawData, isBinary: boolean) => {
       if (peer.socket !== socket || socket.readyState !== WebSocket.OPEN) return
       if (isBinary) { socket.close(1003, 'text frames only'); return }
-      const bytes = Buffer.isBuffer(data) ? data : data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.concat(data)
+      // ws emits text messages as Buffers; binaryType affects only the rejected binary frames.
+      const bytes = data as Buffer
       if (bytes.byteLength > this.config.maxMessageBytes) { socket.close(1009, 'frame too large'); return }
       let frame: SignedFrame
       try { frame = this.verifyEnvelope(bytes, peer) } catch (error) {
@@ -541,28 +551,33 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
 
   private send(peer: PeerRuntime, body: Body, socket = peer.socket): Promise<void> {
     if (socket !== peer.socket || socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('development Mesh socket is not open'))
+    const seq = peer.sendSeq + 1
+    const bytes = this.encode(peer.config.nodeId, seq, body)
+    if (Buffer.byteLength(bytes, 'utf8') > this.config.maxMessageBytes) {
+      return Promise.reject(new MeshFrameSizeError('development Mesh frame exceeds maxMessageBytes'))
+    }
+    peer.sendSeq = seq
+    return new Promise((resolve, reject) => {
+      socket.send(bytes, (error) => {
+        if (error == null) resolve()
+        else reject(error)
+      })
+    })
+  }
+
+  private encode(targetNodeId: DevelopmentNodeId, seq: number, body: Body): string {
     const frame: SignedFrame = {
       version: PROTOCOL_VERSION,
       nodeId: this.nodeId,
-      targetNodeId: peer.config.nodeId,
+      targetNodeId,
       nonce: randomUUID(),
-      seq: peer.sendSeq + 1,
+      seq,
       at: Date.now(),
       body,
     }
     const payload = Buffer.from(JSON.stringify(frame)).toString('base64url')
     const envelope: WireEnvelope = { payload, mac: this.hmac(payload) }
-    const bytes = JSON.stringify(envelope)
-    if (Buffer.byteLength(bytes, 'utf8') > this.config.maxMessageBytes) {
-      return Promise.reject(new MeshFrameSizeError('development Mesh frame exceeds maxMessageBytes'))
-    }
-    peer.sendSeq = frame.seq
-    return new Promise((resolve, reject) => {
-      socket.send(bytes, (error) => {
-        if (error == null) resolve()
-        else reject(error instanceof Error ? error : new Error(errorMessage(error)))
-      })
-    })
+    return JSON.stringify(envelope)
   }
 
   private verifyEnvelope(bytes: Buffer, peer: PeerRuntime): SignedFrame {

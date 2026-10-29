@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createHmac, randomUUID } from 'node:crypto'
+import http from 'node:http'
 import CredentialProvider, { type CredentialInfo, type CredentialRef, type ResolvedCredential } from '@deepseek-ai/dsh-credentials'
 import DevelopmentRoomService, {
   type DevelopmentNodeId,
@@ -512,6 +513,10 @@ describe('authenticated generic development Mesh', () => {
   it.each([
     ['relative path', { path: 'relative' }, 'path must be absolute'],
     ['trailing slash', { path: '/mesh/' }, 'without a trailing slash'],
+    ['path fragment', { path: '/mesh#fragment' }, 'path must be a canonical URL pathname'],
+    ['path query', { path: '/mesh?query' }, 'path must be a canonical URL pathname'],
+    ['unescaped path space', { path: '/mesh space' }, 'path must be a canonical URL pathname'],
+    ['path traversal segment', { path: '/a/../mesh' }, 'path must be a canonical URL pathname'],
     ['inverted reconnect delays', { reconnectInitialDelayMs: 101 }, 'delay bounds are inverted'],
     ['zero timeout', { commandTimeoutMs: 0 }, 'commandTimeoutMs must be a positive safe integer'],
     ['fractional frame count', { maxEventsPerFrame: 1.5 }, 'maxEventsPerFrame must be a positive safe integer'],
@@ -521,10 +526,63 @@ describe('authenticated generic development Mesh', () => {
     ['multibyte cluster overflow', { discovery: { ...discovery, cluster: '界'.repeat(43) } }, 'cluster must be 1-128 UTF-8 bytes'],
     ['invalid peer identity', { peers: [{ nodeId: 'UpperCase', url: 'ws://127.0.0.1:1', connect: false }] }, 'lower-kebab-case'],
     ['HTTP peer URL', { peers: [{ nodeId: 'other-node', url: 'http://127.0.0.1:1', connect: false }] }, 'must use ws or wss'],
+    ['fragmented peer URL', { peers: [{ nodeId: 'other-node', url: 'ws://127.0.0.1:1/#fragment', connect: false }] }, 'must not contain a fragment'],
     ['duplicate peers', { peers: Array.from({ length: 2 }, () => ({ nodeId: 'other-node', url: 'ws://127.0.0.1:1', connect: false })) }, 'peer node ids must be unique'],
   ] satisfies [string, Partial<Config>, string][])('rejects %s before acquiring transport resources', async (_name, overlay, message) => {
     const node = await baseNode('config-validation')
     expect(() => new DevelopmentMeshWebSocketService(node.ctx, { ...config([]), ...overlay })).toThrow(message)
+  })
+
+  it('authenticates and routes commands through a canonical percent-encoded pathname', async () => {
+    const owner = await baseNode('encoded-path-owner')
+    const source = await baseNode('encoded-path-source')
+    const path = '/mesh%20scope/%23facts'
+    await startMesh(owner, [peer(source, false)], { path })
+    await startMesh(source, [peer(owner, true)], { path })
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    owner.ctx.effect(() => owner.ctx.developmentMesh.register('encoded-path/v1', {
+      heads: () => ({}), read: () => [], receive: () => {}, command: payload => payload,
+    }))
+    await expect(source.ctx.developmentMesh.command(owner.nodeId, 'encoded-path/v1', 'path accepted')).resolves.toBe('path accepted')
+  })
+
+  it('rejects a byte budget that cannot carry its initial authenticated hello before connecting', async () => {
+    const owner = await baseNode('tiny-budget-owner')
+    const source = await baseNode('tiny-budget-source')
+    await startMesh(owner, [peer(source, false)])
+    const starting = source.ctx.plugin(DevelopmentMeshWebSocketService, { ...config([peer(owner, true)]), maxMessageBytes: 1 })
+    await expect(starting.then(() => undefined))
+      .rejects.toThrow('maxMessageBytes cannot carry the authenticated hello')
+    expect(owner.ctx.developmentMesh.list().peers[0]?.state).toBe('offline')
+  })
+
+  it('accepts the exact authenticated hello byte budget and rejects one byte less before opening another connection', async () => {
+    const owner = await baseNode('exact-budget-owner')
+    const source = await baseNode('exact-budget-source')
+    await owner.ctx.plugin(DevelopmentMeshWebSocketService, config([peer(source, false)]))
+    const sending = vi.spyOn(WebSocket.prototype, 'send')
+    try {
+      const original = await source.ctx.plugin(DevelopmentMeshWebSocketService, config([peer(owner, true)]))
+      await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+      const hello = sending.mock.calls.find(([bytes]) => {
+        if (typeof bytes !== 'string') return false
+        const outer = JSON.parse(bytes) as { payload: string }
+        const frame = JSON.parse(Buffer.from(outer.payload, 'base64url').toString('utf8')) as { nodeId: string; body: { type: string } }
+        return frame.nodeId === source.nodeId && frame.body.type === 'hello'
+      })?.[0]
+      if (typeof hello !== 'string') throw new Error('Source did not send its authenticated hello')
+      const maxMessageBytes = Buffer.byteLength(hello, 'utf8')
+      await original.dispose()
+      await waitFor(() => owner.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+      const before = sending.mock.calls.length
+      const rejected = await baseNode(source.nodeId)
+      const rejectedConfig = { ...config([peer(owner, true)]), maxMessageBytes: maxMessageBytes - 1 }
+      expect(() => new DevelopmentMeshWebSocketService(rejected.ctx, rejectedConfig))
+        .toThrow('maxMessageBytes cannot carry the authenticated hello')
+      expect(sending.mock.calls).toHaveLength(before)
+      await source.ctx.plugin(DevelopmentMeshWebSocketService, { ...config([peer(owner, true)]), maxMessageBytes })
+      await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    } finally { sending.mockRestore() }
   })
 
   it('routes local commands with the local identity and rejects missing local handlers', async () => {
@@ -611,6 +669,127 @@ describe('authenticated generic development Mesh', () => {
     expect(source.ctx.developmentMesh.list().peers[0]?.state).toBe('online')
   })
 
+  it.each(['heads', 'read'] as const)('closes a connection when registered channel %s cannot synchronize, then reconnects after removal', async (failure) => {
+    const owner = await baseNode('sync-failure-owner')
+    const source = await baseNode('sync-failure-source')
+    await startMesh(owner, [peer(source, false)])
+    await startMesh(source, [peer(owner, true)], { reconnectInitialDelayMs: 1000, reconnectMaxDelayMs: 1000 })
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    const message = `channel ${failure} rejected synchronization`
+    const remove = source.ctx.developmentMesh.register('failing-sync/v1', {
+      heads: () => { if (failure === 'heads') throw new Error(message); return {} },
+      read: () => { if (failure === 'read') throw new Error(message); return [] },
+      receive: () => {},
+    })
+    source.ctx.effect(() => remove)
+    await waitFor(() => source.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+    expect(source.ctx.developmentMesh.list().peers[0]).toMatchObject({ lastError: message, pendingSync: 0 })
+    remove()
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    expect(source.ctx.developmentMesh.list().peers[0]?.lastError).toBeUndefined()
+  })
+
+  it('closes the failed connection when the initial hello write reports an I/O error', async () => {
+    const owner = await baseNode('hello-io-owner')
+    const source = await baseNode('hello-io-source')
+    await owner.ctx.plugin(DevelopmentMeshWebSocketService, config([peer(source, false)]))
+    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply supplies the originating socket below.
+    const original = WebSocket.prototype.send
+    let rejected = false
+    const sending = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (this: WebSocket, ...args) {
+      const bytes: unknown = args[0]
+      if (!rejected && typeof bytes === 'string') {
+        const outer = JSON.parse(bytes) as { payload: string }
+        const frame = JSON.parse(Buffer.from(outer.payload, 'base64url').toString('utf8')) as { nodeId: string; body: { type: string } }
+        if (frame.nodeId === source.nodeId && frame.body.type === 'hello') {
+          const callback = args.findLast(value => typeof value === 'function')
+          if (typeof callback !== 'function') throw new Error('Mesh hello has no write callback')
+          rejected = true
+          queueMicrotask(() => { callback(new Error('initial hello write refused')) })
+          return
+        }
+      }
+      Reflect.apply(original, this, args)
+    })
+    try {
+      await source.ctx.plugin(DevelopmentMeshWebSocketService, {
+        ...config([peer(owner, true)]), reconnectInitialDelayMs: 1000, reconnectMaxDelayMs: 1000,
+      })
+      await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+        && source.ctx.developmentMesh.list().peers[0]?.lastError?.includes('initial hello write refused') === true,
+      () => [source, owner].map(node => node.ctx.developmentMesh.list()))
+      expect(rejected).toBe(true)
+    } finally { sending.mockRestore() }
+  })
+
+  it('reconnects after a synchronous socket acquisition failure for the configured peer', async () => {
+    const owner = await baseNode('socket-resource-owner')
+    const source = await baseNode('socket-resource-source')
+    await startMesh(owner, [peer(source, false)])
+    const original = http.request.bind(http)
+    let rejected = false
+    const acquiring = vi.spyOn(http, 'request').mockImplementation((...args) => {
+      const options: unknown = args[0]
+      if (!rejected && typeof options === 'object' && options !== null
+        && 'host' in options && options.host === '127.0.0.1'
+        && 'port' in options && Number(options.port) === owner.ctx.webServer.port
+        && 'path' in options && options.path === config([]).path) {
+        rejected = true
+        throw Object.assign(new Error('temporary socket acquisition refused'), { code: 'EMFILE' })
+      }
+      return original(...args)
+    })
+    try {
+      await startMesh(source, [peer(owner, true)], { reconnectInitialDelayMs: 1000, reconnectMaxDelayMs: 1000 })
+      expect(rejected).toBe(true)
+      expect(source.ctx.developmentMesh.list().peers[0]).toMatchObject({
+        state: 'offline', lastError: 'temporary socket acquisition refused',
+      })
+      acquiring.mockRestore()
+      await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+      owner.ctx.effect(() => owner.ctx.developmentMesh.register('socket-resource/v1', {
+        heads: () => ({}), read: () => [], receive: () => {}, command: payload => payload,
+      }))
+      await expect(source.ctx.developmentMesh.command(owner.nodeId, 'socket-resource/v1', 'after acquisition recovery'))
+        .resolves.toBe('after acquisition recovery')
+      expect(source.ctx.developmentMesh.list().peers[0]?.lastError).toBeUndefined()
+    } finally { acquiring.mockRestore() }
+  })
+
+  it('keeps a replacement socket online when an earlier connection\'s channel read rejects late', async () => {
+    const owner = await baseNode('stale-read-owner')
+    const source = await baseNode('stale-read-source')
+    await startMesh(owner, [peer(source, false)])
+    await startMesh(source, [peer(owner, true)])
+    await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<readonly unknown[]>()
+    let first = true
+    source.ctx.effect(() => source.ctx.developmentMesh.register('stale-read/v1', {
+      heads: () => ({}), receive: () => {},
+      read: async () => {
+        if (!first) return []
+        first = false
+        entered.resolve(undefined)
+        return await gate.promise
+      },
+    }))
+    try {
+      await entered.promise
+      await owner.stopMesh?.()
+      await waitFor(() => source.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+      await startMesh(owner, [peer(source, false)])
+      await waitFor(() => [source, owner].every(node => node.ctx.developmentMesh.list().peers[0]?.state === 'online'))
+      gate.reject(new Error('old channel read failed'))
+      await waitFor(() => source.ctx.developmentMesh.list().peers[0]?.pendingSync === 0)
+      expect(source.ctx.developmentMesh.list().peers[0]).toMatchObject({ state: 'online', pendingSync: 0 })
+      expect(source.ctx.developmentMesh.list().peers[0]?.lastError).toBeUndefined()
+    } finally {
+      gate.resolve([])
+      await gate.promise.catch(() => undefined)
+    }
+  })
+
   it.each([
     ['binary frame', 1003, 'text frames only'],
     ['oversized text', 1009, 'frame too large'],
@@ -650,5 +829,75 @@ describe('authenticated generic development Mesh', () => {
     } else if (violation === 'reused nonce') {
       expect(node.ctx.developmentMesh.list().peers[0]?.lastError).toBe('replayed envelope nonce')
     }
+  })
+
+  it.each(['missing node', 'wrong target', 'missing nonce', 'missing timestamp', 'missing signature', 'stale timestamp', 'fractional timestamp', 'reused nonce'] as const)(
+    'refuses a WebSocket upgrade with %s', async (violation) => {
+      const node = await baseNode('upgrade-validation')
+      await startMesh(node, [{ nodeId: 'attacker-node', url: 'ws://127.0.0.1:1', connect: false }])
+      const at = Date.now()
+      const nonce = randomUUID()
+      const path = config([]).path
+      const headers: Record<string, string> = {
+        'x-dsh-mesh-node': 'attacker-node', 'x-dsh-mesh-target': node.nodeId,
+        'x-dsh-mesh-nonce': nonce, 'x-dsh-mesh-at': String(at),
+        'x-dsh-mesh-mac': signature(`attacker-node\n${node.nodeId}\n${nonce}\n${String(at)}\n${path}`),
+      }
+      const connect = () => {
+        const socket = new WebSocket(`ws://127.0.0.1:${String(node.ctx.webServer.port)}${path}`, { headers })
+        rawSockets.push(socket)
+        return socket
+      }
+      if (violation === 'reused nonce') {
+        const original = connect()
+        await new Promise<void>((resolve, reject) => { original.once('open', resolve); original.once('error', reject) })
+        await introduce(node, original)
+        const closed = new Promise<void>((resolve) => { original.once('close', () => { resolve() }) })
+        original.close(1000)
+        await closed
+        await waitFor(() => node.ctx.developmentMesh.list().peers[0]?.state === 'offline')
+      } else if (violation === 'missing node') delete headers['x-dsh-mesh-node']
+      else if (violation === 'wrong target') headers['x-dsh-mesh-target'] = 'other-node'
+      else if (violation === 'missing nonce') delete headers['x-dsh-mesh-nonce']
+      else if (violation === 'missing timestamp') delete headers['x-dsh-mesh-at']
+      else if (violation === 'missing signature') delete headers['x-dsh-mesh-mac']
+      else if (violation === 'stale timestamp') headers['x-dsh-mesh-at'] = String(at - 60_000)
+      else headers['x-dsh-mesh-at'] = '1.5'
+      const socket = connect()
+      const status = await new Promise<number>((resolve, reject) => {
+        socket.once('open', () => { resolve(101) })
+        socket.once('error', reject)
+        socket.once('unexpected-response', (_request, response) => {
+          response.resume()
+          resolve(response.statusCode ?? 0)
+          socket.terminate()
+        })
+      })
+      expect(status).toBe(403)
+      expect(node.ctx.developmentMesh.list().peers[0]?.state).toBe('offline')
+    },
+  )
+
+  it('expires old replay nonces while preserving sequence checks on the live connection', async () => {
+    const node = await baseNode('nonce-window')
+    await startMesh(node, [{ nodeId: 'attacker-node', url: 'ws://127.0.0.1:1', connect: false }])
+    const observed = Promise.withResolvers<unknown>()
+    node.ctx.effect(() => node.ctx.developmentMesh.register('nonce-window/v1', {
+      heads: () => ({}), read: () => [], receive: () => {},
+      command: (payload) => { observed.resolve(payload); return null },
+    }))
+    const socket = await rawConnect(node)
+    const oldNonce = randomUUID()
+    socket.send(envelope(node, 1, { type: 'hello' }, 'attacker-node', { nonce: oldNonce }))
+    await waitFor(() => node.ctx.developmentMesh.list().peers[0]?.state === 'online')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(Date.now() + 30_001)
+      socket.send(envelope(node, 2, { type: 'pull', channel: 'unknown/v1', heads: {} }))
+      socket.send(envelope(node, 3, { type: 'command', commandId: randomUUID(), channel: 'nonce-window/v1', payload: 'after expiry' },
+        'attacker-node', { nonce: oldNonce }))
+      await expect(observed.promise).resolves.toBe('after expiry')
+      expect(node.ctx.developmentMesh.list().peers[0]?.state).toBe('online')
+    } finally { vi.useRealTimers() }
   })
 })
