@@ -47,7 +47,7 @@ function canonical(publication: DevelopmentTaskContextPublication, tool: NonNull
 }
 
 /**
- * Compile one complete selected file group without consulting a filesystem or exporting private tool outcomes.
+ * Reconstruct one complete version-one live file group without filesystem access or private tool outcomes.
  * @param context - All publications from exactly one current or frozen Task snapshot.
  * @param group - The file group's original reports, excluding superseded, withdrawn, and self-published sources.
  * @param maxBytes - The complete context allowance, also bounding intermediate reconstructed text allocations.
@@ -57,13 +57,13 @@ export function replayReportedFile(context: readonly DevelopmentTaskContextPubli
   group: readonly ReportSource[], maxBytes: number): ReportedFile | undefined {
   const reports = group.flatMap((item) => {
     const tool = observation(item.publication)
-    return tool === undefined ? [] : [{ ...item, tool }]
+    return tool?.version !== 1 ? [] : [{ ...item, tool }]
   })
   reports.sort((a, b) => a.tool.sequence - b.tool.sequence)
   const [first, second] = reports
   if (first === undefined || second === undefined || reports.length !== group.length) return undefined
   const base = first.tool
-  if (base.version !== 1 || base.tool !== 'Write' || base.reportedStatus !== 'success'
+  if (base.tool !== 'Write' || base.reportedStatus !== 'success'
     || base.omissions.length !== 0 || base.fields.content === undefined || base.fields.error !== undefined
     || base.fields.content.includes('\r') || !base.fields.content.isWellFormed() || Buffer.byteLength(base.fields.content, 'utf8') > maxBytes) return undefined
   const interval = publicationInterval(first.publication)
@@ -81,7 +81,6 @@ export function replayReportedFile(context: readonly DevelopmentTaskContextPubli
   for (const item of reports) {
     const publication = item.publication
     const tool = item.tool
-    if (tool.version !== 1) return undefined
     if (publication.uri !== undefined || !canonical(publication, tool) || publication.publishedBy !== first.publication.publishedBy
       || !isDeepStrictEqual(publication.peerContribution ?? publication.localContribution, authority)
       || tool.fields.rootIndex !== base.fields.rootIndex || tool.fields.path !== base.fields.path) return undefined
