@@ -26,7 +26,7 @@ Trusted Mesh observation intervals and independent peer contribution grants use 
 
 Optional observation metadata, peer publication branches, and authorization events preserve the existing row keys and records. They require no SQL migration or domain-version change; records without observation metadata and content-addressed inherited blocks remain unchanged. [Task admission](../development-task/README.md) owns provenance, binding checks, authorization, and original-event receipts. Peer publication cloning uses canonical field order so strict durable parsing preserves new inherited-block hashes as well as legacy hashes.
 
-The Web bundle routes `development_context_tasks` to SQLite. The lifecycle-era `development_tasks` domain and Mission records are not mounted or imported, so incompatible records remain untouched rather than preventing startup. Replicated current-format rows remain readable while their owner is offline.
+The Web bundle routes `development_context_tasks` to SQLite, with a one-time snapshot copy from the JSON backend for a previously unmaterialized SQLite unit. Existing current-format JSON Tasks, inherited blocks, and bindings remain available after adoption; the JSON file remains an unchanged backup. See [SQLite adoption](../../storage/storage-sqlite/README.md#observable-behavior) for interruption and source-ownership rules. The lifecycle-era `development_tasks` domain and Mission records are not mounted or imported, so incompatible records remain untouched rather than preventing startup. Replicated current-format rows remain readable while their owner is offline.
 
 ## Model Experience
 

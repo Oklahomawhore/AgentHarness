@@ -2960,6 +2960,12 @@ export interface Config {
    * {@link JournalMode}.
    */
   journalMode?: JournalMode
+  /**
+   * Backend supplying each new unit's initial snapshot. Copied atomically once;
+   * existing destination units never consult the source. Stop other writers
+   * during migration. The source stays untouched; domain recovery validates records.
+   */
+  bootstrapFrom?: string
 }
 
 /**

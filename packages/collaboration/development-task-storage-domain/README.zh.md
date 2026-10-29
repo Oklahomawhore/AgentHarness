@@ -28,7 +28,7 @@ kind: "package-reference"
 
 可选观察元数据、peer publication 分支和授权事件保留现有行键与记录，无需 SQL 迁移或 domain 版本变化；不含观察元数据的记录和内容寻址继承 block 保持原样。[Task 准入](../development-task/README.zh.md)负责来源归属、binding 检查、授权和原事件 receipt。Peer publication 复制使用规范字段顺序，使严格持久解析同时保留新继承 block hash 与旧 hash。
 
-Web bundle 把 `development_context_tasks` 路由到 SQLite。生命周期版本的 `development_tasks` domain 和 Mission 记录不会被挂载或导入，因此不兼容记录会保持原样，也不会阻止启动。Task owner 离线时，当前格式的已复制行仍可读取。
+Web bundle 把 `development_context_tasks` 路由到 SQLite；SQLite 中尚不存在该单元时，会一次性从 JSON 后端复制快照。现有当前格式的 JSON Task、继承 block 和绑定在接管后仍可用，JSON 文件保留为未改动的备份。中断与来源所有权规则见 [SQLite 接管](../../storage/storage-sqlite/README.zh.md#observable-behavior)。生命周期版本的 `development_tasks` domain 和 Mission 记录不会被挂载或导入，因此不兼容记录会保持原样，也不会阻止启动。Task owner 离线时，当前格式的已复制行仍可读取。
 
 <a id="model-experience"></a>
 

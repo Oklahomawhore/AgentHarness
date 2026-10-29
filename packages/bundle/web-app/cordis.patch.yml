@@ -45,7 +45,7 @@
   config:
     backend: json
     routes:
-      development_tasks: sqlite
+      development_context_tasks: sqlite
 
 - insert:
     # Host-owned opt-in sampled when a new Web session receives its preset
@@ -61,6 +61,7 @@
       config:
         path: !!js dshHomePath('development-tasks.sqlite')
         journalMode: wal
+        bootstrapFrom: json
 
     - id: message-feedback
       name: '@deepseek-ai/dsh-message-feedback'

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,6 +17,7 @@ import type {
 import { peerContributionGrantSchema, peerContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageSqlite from '@deepseek-ai/dsh-storage-sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as DevelopmentTaskStorageDomain from '../src/index.ts'
@@ -32,18 +33,26 @@ afterEach(async () => {
   root = undefined
 })
 
-async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes = 1024): Promise<Context> {
+async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes = 1024, medium: 'sqlite' | 'json' | 'bootstrap' = 'sqlite'): Promise<Context> {
   if (root === undefined) root = await mkdtemp(join(tmpdir(), 'dsh-task-storage-'))
   const configPath = join(root, `cordis-${nodeId}.yml`)
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-storage'",
-    "- name: '@deepseek-ai/dsh-storage-sqlite'",
-    '  config:',
-    `    path: ${JSON.stringify(join(root, nodeId === 'node-a' ? 'tasks.sqlite' : `tasks-${nodeId}.sqlite`))}`,
-    '    journalMode: wal',
+    ...medium === 'sqlite' ? [] : [
+      "- name: '@deepseek-ai/dsh-storage-json'", '  config:',
+      `    root: ${JSON.stringify(join(root, 'storage'))}`,
+    ],
+    ...medium === 'json' ? [] : [
+      "- name: '@deepseek-ai/dsh-storage-sqlite'",
+      '  config:',
+      `    path: ${JSON.stringify(join(root, nodeId === 'node-a' ? 'tasks.sqlite' : `tasks-${nodeId}.sqlite`))}`,
+      '    journalMode: wal',
+      ...medium === 'bootstrap' ? ['    bootstrapFrom: json'] : [],
+    ],
     "- name: '@deepseek-ai/dsh-storage-domain'",
     '  config:',
-    '    backend: sqlite',
+    `    backend: ${medium === 'sqlite' ? 'sqlite' : 'json'}`,
+    ...medium === 'bootstrap' ? ['    routes:', '      development_context_tasks: sqlite'] : [],
     "- name: '@deepseek-ai/dsh-development-room'",
     '  config:',
     `    nodeId: ${nodeId}`,
@@ -76,6 +85,7 @@ async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes 
     ['@deepseek-ai/dsh-storage', Storage],
     ['@deepseek-ai/dsh-storage-sqlite', StorageSqlite],
     ['@deepseek-ai/dsh-storage-domain', StorageDomain],
+    ['@deepseek-ai/dsh-storage-json', StorageJson],
     ['@deepseek-ai/dsh-development-room', DevelopmentRoomService],
     ['@deepseek-ai/dsh-development-room-storage-domain', DevelopmentRoomStorageDomain],
     ['@deepseek-ai/dsh-development-task', DevelopmentTaskService],
@@ -149,6 +159,40 @@ function remoteSample(identity: DevelopmentTaskObservedIntervalIdentity, sequenc
 }
 
 describe('development-task SQLite storage composition', () => {
+  it('preserves JSON Tasks, inherited blocks and bindings during one-way SQLite adoption', async () => {
+    const first = await boot(86_400_000, 'node-a', 1024, 'json')
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const parent = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Retained contract', scope: 'api', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: parent.id, participantId: owner, text: 'API revision one' })
+    const child = await first.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: parent.id, revision: parent.revision + 1 } },
+      objective: 'Retained frontend', scope: 'frontend', createdBy: owner })
+    await first.developmentTasks.checkout({ taskId: child.id, participantId: agent })
+    const retained = { log: first.developmentTasks.log(), blocks: first.developmentTasks.blocks(),
+      assignments: first.developmentTasks.assignmentLog() }
+    await close(first)
+    const source = join(root!, 'storage', 'development_context_tasks.json')
+    const sourceBytes = await readFile(source)
+    const restored = await boot(86_400_000, 'node-a', 1024, 'bootstrap')
+    expect(restored.developmentTasks.log()).toEqual(retained.log)
+    expect(restored.developmentTasks.blocks()).toEqual(retained.blocks)
+    expect(restored.developmentTasks.assignmentLog()).toEqual(retained.assignments)
+    expect(storedTaskRows().events).toHaveLength(retained.log.length)
+    expect(storedTaskRows().blocks).toHaveLength(retained.blocks.length)
+    expect(storedAssignmentRows()).toHaveLength(retained.assignments.length)
+    await restored.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await restored.developmentTasks.publishContext({ taskId: child.id, participantId: owner, text: 'SQLite revision' })
+    expect(await readFile(source)).toEqual(sourceBytes)
+    const current = restored.developmentTasks.log()
+    await close(restored)
+    await writeFile(source, '{invalid stale backup')
+    const reopened = await boot(86_400_000, 'node-a', 1024, 'bootstrap')
+    expect(reopened.developmentTasks.log()).toEqual(current)
+    expect(await readFile(source, 'utf8')).toBe('{invalid stale backup')
+  })
+
   it('keeps SQLite assignment rows restorable after a delayed context acknowledgement is rejected', async () => {
     const first = await boot()
     const owner = participant('owner')

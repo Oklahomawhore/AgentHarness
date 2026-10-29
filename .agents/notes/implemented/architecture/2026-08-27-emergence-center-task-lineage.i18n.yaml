@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-27-emergence-center-task-lineage.md
-2026-08-27-emergence-center-task-lineage.md: cdccf07b569ab4a322724250846ff7a385b5ffb2
-2026-08-27-emergence-center-task-lineage.zh.md: 3144115e09b407efeffdddc3b0e34f607ea58b24
+2026-08-27-emergence-center-task-lineage.md: 9aff540f692c06c76bdf2968b9989a5b4d1ae743
+2026-08-27-emergence-center-task-lineage.zh.md: a0e606b8e85cb745bb5ac5d27e04fb2e70f37949
