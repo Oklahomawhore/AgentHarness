@@ -34,6 +34,7 @@ English | [中文](README.zh.md)
 - Callers may exclude selected publications before the 256 KiB default block limit is enforced. Oversized blocks fail with `LIMIT_EXCEEDED`; content is never truncated.
 - Each Agent session has an opaque binding id. Several sessions of the same Cursor, Codex, or Claude identity may connect to different Tasks without replacing one another.
 - A binding commits before Room reconciliation. Exact committed assignment replicas return the current binding without another write or notification, including after acknowledgement or clear. Joining the new Room and leaving an unused prior Room report independent outcomes, while model context reads only the binding. A leave command can require the displayed checkout epoch; the owner queue rejects a stale command before ending local contributions or clearing a newer binding.
+- Storage and Mesh callers validate event field types and integer ranges before restore or replica admission. The Task service verifies authenticated ownership, sequence continuity, revisions and lineage before durable publication.
 - Background Room repair records failures per Task and permits another retry after settlement. Only one background repair runs at a time; disposal stops its timer and waits for the active repair.
 
 <a id="observed-context-admission"></a>

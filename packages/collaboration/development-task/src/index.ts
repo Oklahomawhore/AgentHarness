@@ -1336,7 +1336,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
    * @param candidates - validated persisted events.
    */
   restoreLog(candidates: readonly DevelopmentTaskLogEntry[]): void {
-    const pending = candidates.map(entry => this.normalizeEntry(entry))
+    const pending = candidates.map(entry => this.freezeEntry(entry))
     while (pending.length > 0) {
       const index = pending.findIndex(entry => this.canRestore(entry))
       if (index < 0) throw new DevelopmentTaskError('durable Task events have unresolved lineage or sequence dependencies', 'REPLICA_CONFLICT')
@@ -1395,7 +1395,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
    */
   acceptLogReplica(candidate: DevelopmentTaskLogEntry, sourceNodeId: DevelopmentNodeId): Promise<DevelopmentTaskSnapshot> {
     return this.enqueue(async () => {
-      const entry = this.normalizeEntry(candidate)
+      const entry = this.freezeEntry(candidate)
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated Task event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
@@ -2122,14 +2122,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
       const task = this.tasks.get(parent.taskId)
       return task !== undefined && task.revision >= parent.revision
     })
-  }
-
-  private normalizeEntry(entry: DevelopmentTaskLogEntry): DevelopmentTaskLogEntry {
-    if (!Number.isSafeInteger(entry.seq) || entry.seq < 1 || !Number.isSafeInteger(entry.revision) || entry.revision < 1
-      || !Number.isSafeInteger(entry.at) || entry.at < 0) {
-      throw new DevelopmentTaskError('Task event sequence, revision, or timestamp is invalid', 'REPLICA_CONFLICT')
-    }
-    return this.freezeEntry(entry)
   }
 
   private freezeEntry(entry: DevelopmentTaskLogEntry): DevelopmentTaskLogEntry {
