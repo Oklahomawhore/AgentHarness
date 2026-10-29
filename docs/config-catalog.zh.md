@@ -401,7 +401,7 @@ export interface ClaudeScopeSetupConfig {
 }
 ```
 
-来源： [`packages/collaboration/claude-scope/src/index.ts:67`](../packages/collaboration/claude-scope/src/index.ts)
+来源： [`packages/collaboration/claude-scope/src/index.ts:57`](../packages/collaboration/claude-scope/src/index.ts)
 
 <a id="deepseek-aidsh-claude-scopecommand"></a>
 

@@ -1,4 +1,4 @@
-/** Local Claude session identity, authorized capture, and command-hook transport data. */
+/** Public Claude session, hook transport, and Remote failure types shared by Host and Client programs. */
 
 export type {} from '@deepseek-ai/cordis'
 
@@ -213,6 +213,11 @@ export interface ClaudeScopeContributionDetail {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
+    'claude-scope/project-invalid': {}
+    'claude-scope/configuration-conflict': {}
+    'claude-scope/configuration-invalid': {}
+    'claude-scope/configuration-too-large': {}
+    'claude-scope/write-failed': {}
     'claude-scope/stale-capture': {
       readonly sessionKey: ClaudeScopeSessionKey
       readonly expectedCapture: ClaudeScopeContributionSelection | null

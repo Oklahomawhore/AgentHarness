@@ -52,7 +52,7 @@ kind: "package-library"
 <a id="known-limitations-and-deferred-work"></a>
 
 - **不支持协作管理页面**：启动时将 `ui-emergence-center` 与其依赖的 Node 专用 MCP、Claude Hook 和 scope 服务一同禁用。页面不会调用缺失的管理 API；普通 Worker 会话仍可使用。
-- **Task 存储使用易失 VFS**：启动时禁用 `storage-sqlite`，仅将 `storage-domain` 中已有的 `development_tasks: sqlite` 路由改为既有 JSON 后端。其他设置与路由保持不变，包括显式选择的其他后端；自定义 SQLite 路由仍不受支持。这项 Worker 专用配置不能在 Worker 替换后保留数据；Node Web profile 仍使用 SQLite。
+- **Task 存储使用易失 VFS**：启动时禁用 `storage-sqlite`，仅将 `storage-domain` 中已有的 `development_context_tasks: sqlite` 路由改为既有 JSON 后端。其他设置与路由保持不变，包括显式选择的其他后端；自定义 SQLite 路由仍不受支持。这项 Worker 专用配置不能在 Worker 替换后保留数据；Node Web profile 仍使用 SQLite。
 - **不支持配置本机 MCP 客户端**：启动时会禁用 `mcp-client-setup`。Worker 没有原生 Node 可执行文件或外部客户端配置文件，因此不会提供占位可执行文件路径。
 - **浏览器预览不支持本机 Claude 钩子**：启动时会禁用 `claude-scope` 条目。项目钩子需要本机 Node 启动器和操作系统文件锁，无法把外部 Claude 进程连接到内存中的 Worker。
 - **worker 组合写明文会话日志**（`compression: 'none'` boot patch）：不带 Zstandard 编解码器，导出日志是 `.jsonl`，不会是 `.jsonl.zstd`。

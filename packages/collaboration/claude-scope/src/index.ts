@@ -53,16 +53,6 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-declare module '@deepseek-ai/dsh-typert-protocol' {
-  interface RemoteErrorDetailsMap {
-    'claude-scope/project-invalid': {}
-    'claude-scope/configuration-conflict': {}
-    'claude-scope/configuration-invalid': {}
-    'claude-scope/configuration-too-large': {}
-    'claude-scope/write-failed': {}
-  }
-}
-
 /** Explicit retention and complete-output bounds for the local adapter. */
 export interface Config extends ClaudeScopeDescriptorConfig {
   /** Project hook installer inputs; installation does not authorize collection. */

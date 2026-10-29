@@ -1543,6 +1543,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
     return this.projectEntry(current, entry, code)
   }
 
+  /** Every projected creation ties its inherited sources to the immutable origin before persistence or recovery. */
   private projectEntry(
     current: TaskRecord | undefined,
     entry: DevelopmentTaskLogEntry,
@@ -1552,9 +1553,18 @@ export class DevelopmentTaskService extends TypertRemoteService {
       case 'task-created': {
         if (current !== undefined) throw new DevelopmentTaskError('Task already exists', code)
         this.validateOriginReferences(entry.change.origin, code)
-        if (entry.change.inheritedContextBlockId !== undefined
-          && !this.contextBlocks.has(entry.change.inheritedContextBlockId)) {
+        const parents = this.parentRefsFromOrigin(entry.change.origin)
+        const blockId = entry.change.inheritedContextBlockId
+        if ((parents.length === 0) !== (blockId === undefined)) {
+          throw new DevelopmentTaskError('Task inheritance block must match its creation relation', code)
+        }
+        const block = blockId === undefined ? undefined : this.contextBlocks.get(blockId)
+        if (blockId !== undefined && block === undefined) {
           throw new DevelopmentTaskError('Task references an unavailable inherited-context block', 'PARENT_REVISION_UNAVAILABLE')
+        }
+        if (block !== undefined && JSON.stringify(block.sources.map(source => [source.parent.taskId, source.parent.revision]))
+          !== JSON.stringify(parents.map(parent => [parent.taskId, parent.revision]))) {
+          throw new DevelopmentTaskError('Task inherited-context sources differ from its selected parent revisions', code)
         }
         return {
           id: entry.taskId,

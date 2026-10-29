@@ -11,8 +11,11 @@ import { createHost, rootTask, run, TestNetwork, type TestHost } from './fixture
 const hosts: TestHost[] = []
 const roots: string[] = []
 afterEach(async () => {
-  await Promise.all(hosts.splice(0).reverse().map(host => host.close()))
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  const owned = hosts.splice(0)
+  // Restarted hosts share a root; every context must close before that root is removed.
+  await Promise.all(owned.map(host => host.ctx.fiber.dispose()))
+  const directories = new Set([...roots.splice(0), ...owned.map(host => host.root)])
+  await Promise.all([...directories].map(root => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })))
 })
 
 async function coldRoot() {

@@ -30,7 +30,7 @@ English | [中文](README.zh.md)
 
 - Root has no parent, Fork pins one exact parent revision, and Merge pins two to sixteen unique parent revisions. Parent edges never change.
 - Fork and Merge create independent Tasks without mutating or changing the state of their parents.
-- Inherited blocks contain each parent's name, initial context, and admitted publications at the selected revision. This service does not capture private Sessions, tool or editor history, or model reasoning.
+- Inherited blocks contain each parent's name, initial context, and admitted publications at the selected revision. Creation, replica admission, and recovery require Root to have no inherited block and Fork/Merge to have one whose ordered parent ids and revisions match the creation relation. This service does not capture private Sessions, tool or editor history, or model reasoning.
 - Callers may exclude selected publications before the 256 KiB default block limit is enforced. Oversized blocks fail with `LIMIT_EXCEEDED`; content is never truncated.
 - Each Agent session has an opaque binding id. Several sessions of the same Cursor, Codex, or Claude identity may connect to different Tasks without replacing one another.
 - A binding commits before Room reconciliation. Joining the new Room and leaving an unused prior Room report independent outcomes, while model context reads only the binding. A leave command can require the displayed checkout epoch; the owner queue rejects a stale command before ending local contributions or clearing a newer binding.

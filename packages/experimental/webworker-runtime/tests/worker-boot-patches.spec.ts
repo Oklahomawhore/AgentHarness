@@ -81,7 +81,7 @@ describe('worker deployment boot patches', () => {
   })
 
   it('keeps unrelated storage routes while replacing native Task storage and its unsupported UI', async () => {
-    const config = { backend: 'json', routes: { development_tasks: 'sqlite', settings: 'custom' } }
+    const config = { backend: 'json', routes: { development_context_tasks: 'sqlite', settings: 'custom' } }
     const rows = [
       { id: 'storage-domain', config },
       { id: 'storage-sqlite', name: '@deepseek-ai/dsh-storage-sqlite' },
@@ -89,7 +89,7 @@ describe('worker deployment boot patches', () => {
     ]
     const result = await bootRows(rows)
     expect(result.patches).toEqual([
-      { id: 'storage-domain', config: { backend: 'json', routes: { development_tasks: 'json', settings: 'custom' } } },
+      { id: 'storage-domain', config: { backend: 'json', routes: { development_context_tasks: 'json', settings: 'custom' } } },
       { id: 'storage-sqlite', disabled: true },
       { id: 'ui-emergence-center', disabled: true },
     ])
@@ -97,7 +97,7 @@ describe('worker deployment boot patches', () => {
   })
 
   it('preserves a Task storage route that already selects another backend', async () => {
-    const rows = [{ id: 'storage-domain', config: { backend: 'json', routes: { development_tasks: 'custom' } } }]
+    const rows = [{ id: 'storage-domain', config: { backend: 'json', routes: { development_context_tasks: 'custom' } } }]
     const result = await bootRows(rows)
     expect(result.patches).toEqual([])
     expect(result.source).toEqual(rows)
