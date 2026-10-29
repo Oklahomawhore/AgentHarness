@@ -28,7 +28,7 @@ kind: "package-reference"
 
 ## 语义
 
-- Root 没有父节点；Fork 固定一个准确的父 revision；Merge 固定两个至十六个不重复的父 revision。父边创建后永不修改。
+- Root 没有父节点；Fork 固定一个准确的父 revision；Merge 固定至少两个不同父 Task 的精确 revision，创建时受 `maxMergeParents` 限制。父边创建后永不修改；复制准入和恢复都会拒绝重复的父 Task id。
 - Fork 和 Merge 创建独立 Task，不修改父 Task，也不改变父 Task 状态。
 - 继承 block 包含每个父 Task 在所选 revision 的名称、初始上下文和已准入 publication。创建、复制准入与恢复都要求 Root 不带继承块，Fork/Merge 带有继承块，且块中父任务 id 与 revision 的顺序必须匹配创建关系。本 service 不采集私有 Session、工具或编辑器历史，也不采集模型推理。
 - 调用方可在执行默认 256 KiB block 限制前排除部分 publication。超限返回 `LIMIT_EXCEEDED`，不会截断内容。

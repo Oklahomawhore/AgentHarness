@@ -378,7 +378,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
   private accept(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const nodeId = this.header(req, HEADER_NODE)
     const peer = nodeId === undefined ? undefined : this.peers.get(nodeId as DevelopmentNodeId)
-    if (peer === undefined || peer.config.connect || peer.socket !== undefined
+    if (peer === undefined || peer.config.connect || peer.socket !== undefined || peer.state === 'isolated'
       || !this.verifyUpgrade(req, peer.config.nodeId)) {
       this.reject(socket)
       return
@@ -422,7 +422,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     }
     if (socket.readyState === WebSocket.OPEN) introduce(); else socket.once('open', introduce)
     socket.on('message', (data: RawData, isBinary: boolean) => {
-      if (peer.socket !== socket) return
+      if (peer.socket !== socket || socket.readyState !== WebSocket.OPEN) return
       if (isBinary) { socket.close(1003, 'text frames only'); return }
       const bytes = Buffer.isBuffer(data) ? data : data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.concat(data)
       if (bytes.byteLength > this.config.maxMessageBytes) { socket.close(1009, 'frame too large'); return }
@@ -615,9 +615,10 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
   private disconnected(peer: PeerRuntime, socket: WebSocket | undefined, error?: unknown): void {
     if (socket !== undefined && peer.socket !== socket) return
     peer.socket = undefined
-    if (peer.removed || peer.state === 'isolated') return
-    if (error !== undefined && peer.lastError === undefined) peer.lastError = errorMessage(error)
+    if (peer.removed) return
     void this.peerOffline(peer.config.nodeId)
+    if (peer.state === 'isolated') return
+    if (error !== undefined && peer.lastError === undefined) peer.lastError = errorMessage(error)
     if (this.stopping) peer.state = 'offline'; else this.setState(peer, 'offline')
     if (!this.stopping && peer.config.connect) {
       peer.reconnectTimer = setTimeout(() => { peer.reconnectTimer = undefined; this.connect(peer) }, peer.reconnectDelayMs)

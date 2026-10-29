@@ -20,7 +20,7 @@ English | [中文](README.zh.md)
 
 ## Behavior
 
-Configured peers and authenticated IPv4 multicast discovery can coexist. The lower node id owns dialing, reconnect uses bounded backoff, and channel heads resume missing deltas after reconnect. A reused event identity with different content marks the peer conflicted and stops accepting its data. Commands time out independently of replication.
+Configured peers and authenticated IPv4 multicast discovery can coexist. The lower node id owns dialing, reconnect uses bounded backoff, and channel heads resume missing deltas after reconnect. A reused event identity with different content isolates and disconnects the peer; channels still receive its offline notification. An isolated peer cannot open another incoming connection. Frames arriving on a closing socket cannot dispatch new commands. Commands time out independently of replication.
 
 Discovery requires successful socket binding and multicast membership. Datagram send failures are reported as warnings while the listener and its configured announcement interval stay active, including after the first send. Successful local startup does not establish peer discovery or delivery. Invalid announcement byte limits still reject startup. Startup failure releases configured peer sockets and reconnect timers acquired before discovery becomes ready.
 

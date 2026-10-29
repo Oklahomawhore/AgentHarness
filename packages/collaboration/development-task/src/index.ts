@@ -1849,7 +1849,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
     origin: DevelopmentTaskOrigin,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): void {
-    for (const parent of origin.kind === 'root' ? [] : origin.kind === 'fork' ? [origin.parent] : origin.parents) {
+    const parents = this.parentRefsFromOrigin(origin)
+    if (origin.kind === 'merge' && new Set(parents.map(parent => parent.taskId)).size !== parents.length) {
+      throw new DevelopmentTaskError('Merge parents must be unique', code)
+    }
+    for (const parent of parents) {
       const task = this.tasks.get(parent.taskId)
       if (task === undefined || parent.revision > task.revision) {
         throw new DevelopmentTaskError(

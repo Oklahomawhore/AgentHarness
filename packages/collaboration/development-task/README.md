@@ -28,7 +28,7 @@ English | [中文](README.zh.md)
 
 ## Semantics
 
-- Root has no parent, Fork pins one exact parent revision, and Merge pins two to sixteen unique parent revisions. Parent edges never change.
+- Root has no parent, Fork pins one exact parent revision, and Merge pins at least two distinct parent Tasks at fixed revisions, bounded by `maxMergeParents` on creation. Parent edges never change; replica admission and recovery reject repeated parent Task ids.
 - Fork and Merge create independent Tasks without mutating or changing the state of their parents.
 - Inherited blocks contain each parent's name, initial context, and admitted publications at the selected revision. Creation, replica admission, and recovery require Root to have no inherited block and Fork/Merge to have one whose ordered parent ids and revisions match the creation relation. This service does not capture private Sessions, tool or editor history, or model reasoning.
 - Callers may exclude selected publications before the 256 KiB default block limit is enforced. Oversized blocks fail with `LIMIT_EXCEEDED`; content is never truncated.

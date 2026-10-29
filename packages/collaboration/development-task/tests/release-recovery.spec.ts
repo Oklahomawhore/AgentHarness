@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentMeshService, { type DevelopmentMeshSnapshot } from '@deepseek-ai/dsh-development-mesh'
 import DevelopmentRoomService, { type DevelopmentNodeId, type DevelopmentParticipantId } from '@deepseek-ai/dsh-development-room'
@@ -150,6 +151,37 @@ async function generatedLineage() {
 }
 
 describe('Task inherited-context replica validation', () => {
+  it.each(['replica', 'restore'] as const)('rejects %s of a Merge repeating a parent even with a matching content-addressed block', async (admission) => {
+    const { source, merge, forkBlock } = await generatedLineage()
+    const recipient = await setup('recipient-node')
+    const entry = source.tasks.log().find(item => item.taskId === merge.id)
+    const parent = forkBlock.sources[0]
+    if (entry?.change.kind !== 'task-created' || parent === undefined) throw new Error('Generated Merge evidence is missing')
+    const sources = [parent, parent]
+    const block = developmentTaskContextBlockSchema.parse({
+      id: `context-${createHash('sha256').update(JSON.stringify({ version: 1, sources })).digest('hex')}`,
+      createdAt: forkBlock.createdAt, sources,
+    })
+    const wire = developmentTaskEventSchema.parse({ ...entry, change: {
+      ...entry.change, origin: { kind: 'merge', parents: sources.map(item => item.parent) }, inheritedContextBlockId: block.id,
+    } })
+    const previous = source.tasks.log().filter(item => item.seq < entry.seq)
+    const blocks = [...source.tasks.blocks(), block]
+    const persisted = vi.fn<(candidate: DevelopmentTaskLogEntry) => void>()
+    if (admission === 'restore') {
+      recipient.tasks.restoreContextBlocks(blocks)
+      recipient.ctx.on('development-task/persist', persisted)
+      expect(() => { recipient.tasks.restoreLog([...previous, wire]) }).toThrow(expect.objectContaining({ code: 'REPLICA_CONFLICT' }))
+    } else {
+      for (const item of blocks) await recipient.tasks.acceptContextReplica(item)
+      for (const prior of previous) await recipient.tasks.acceptLogReplica(prior, prior.nodeId)
+      recipient.ctx.on('development-task/persist', persisted)
+      await expect(recipient.tasks.acceptLogReplica(wire, wire.nodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    }
+    expect(persisted).not.toHaveBeenCalled()
+    expect(recipient.tasks.log()).toEqual(previous)
+  })
+
   it.each(['root-block', 'fork-missing', 'merge-missing', 'merge-count', 'merge-order'] as const)(
     'rejects parsed Task lineage corruption: %s', async (mismatch) => {
       const { source, root, fork, merge, forkBlock, reverseBlock } = await generatedLineage()
