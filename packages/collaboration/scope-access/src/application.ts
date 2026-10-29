@@ -377,7 +377,8 @@ export class ContributionApplications {
   }
 
   private async expire(record: ManagedApplicationRecord): Promise<ManagedApplicationRecord> {
-    if ((record.decision === 'open' || record.decision === 'pending') && record.entry.expiresAt <= Date.now()) {
+    if ((record.decision === 'open' || record.decision === 'pending')
+      && (record.entry.expiresAt <= Date.now() || (record.limits !== null && record.limits.expiresAt <= Date.now()))) {
       const ended: ManagedApplicationRecord = { ...record, decision: 'expired' }
       await this.save(ended)
       return ended

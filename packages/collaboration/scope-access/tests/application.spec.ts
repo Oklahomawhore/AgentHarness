@@ -49,6 +49,28 @@ it('claims one entry, approves narrower permission, and retrieves original Task 
   expect((await b.access.list()).subscriptions).toEqual([])
 })
 
+it.each([false, true])('expires pending source consent before the entry deadline with owner restore=%s', async (restoreOwner) => {
+  const { a, b, task, request, ownerAddress } = await application()
+  const selected = { ...request, limits: { ...request.limits, expiresAt: request.entry.expiresAt - 10_000 } }
+  expect(await b.access.applyContribution(selected, signal())).toEqual({ status: 'pending' })
+  await b.ctx.fiber.dispose()
+  const events = a.tasks.log()
+  if (restoreOwner) await a.ctx.fiber.dispose()
+  vi.spyOn(Date, 'now').mockReturnValue(selected.limits.expiresAt)
+  const owner = restoreOwner ? await host('application-owner', a.pool, {}, events) : a
+  expect(Date.now()).toBeLessThan(selected.entry.expiresAt)
+  const page = await owner.access.contributionApplications({ taskId: task.id })
+  expect(page.entries).toMatchObject([{ proposal: selected.proposal, result: { status: 'expired' } }])
+  const source = await host('application-source', b.pool)
+  expect(await source.access.contributionApplicationStatus(selected, signal())).toEqual({ status: 'expired' })
+  expect(await source.access.applyContribution(selected, signal())).toEqual({ status: 'expired' })
+  await expect(owner.access.approveContributionApplication({ entryId: selected.entry.entryId,
+    expectedProposal: selected.proposal, limits: selected.limits, ownerAddress }))
+    .rejects.toMatchObject({ code: 'scope-contribution/grant-ended' })
+  expect(owner.tasks.log()).toEqual(events)
+  expect((await owner.access.list()).grants).toEqual([])
+})
+
 it.each(['expiresAt', 'maxSamples', 'maxSampleBytes'] as const)('rejects owner widening of source %s consent', async (field) => {
   const { a, b, request, task, ownerAddress } = await application()
   await b.access.applyContribution(request, signal())

@@ -74,6 +74,42 @@ it('retains two independently approved members behind the same group entry and r
   expect(f.retained().members).toHaveLength(2)
 })
 
+it.each([false, true])('expires only the group member whose source consent ended with owner restore=%s', async (restoreOwner) => {
+  const f = await fixture({}, 2)
+  const selected = { ...f.requestB, limits: { ...f.requestB.limits, expiresAt: f.created.entry.expiresAt - 10_000 } }
+  expect(await f.b.access.applyContribution(selected, signal())).toEqual({ status: 'pending' })
+  expect(await f.c.access.applyContribution(f.requestC, signal())).toEqual({ status: 'pending' })
+  await f.b.ctx.fiber.dispose()
+  const events = f.a.tasks.log()
+  if (restoreOwner) await f.a.ctx.fiber.dispose()
+  vi.spyOn(Date, 'now').mockReturnValue(selected.limits.expiresAt)
+  const owner = restoreOwner ? await host(f.a.transport.peerId, f.a.pool, {}, events) : f.a
+  const page = await owner.access.groupApplications({ entryId: f.created.entry.entryId })
+  const expired = page.entries.find(item => item.proposal.captureId === selected.proposal.captureId)
+  const pending = page.entries.find(item => item.proposal.captureId === f.requestC.proposal.captureId)
+  expect(expired?.result).toEqual({ status: 'expired' })
+  expect(pending?.result).toEqual({ status: 'pending' })
+  if (expired === undefined || pending === undefined) throw new Error('Missing retained group members')
+  const source = await host(f.b.transport.peerId, f.b.pool)
+  expect(await source.access.contributionApplicationStatus(selected, signal())).toEqual({ status: 'expired' })
+  expect(await source.access.applyContribution(selected, signal())).toEqual({ status: 'expired' })
+  await expect(owner.access.approveContributionApplication({ entryId: f.created.entry.entryId,
+    applicationId: expired.applicationId, expectedProposal: selected.proposal, limits: selected.limits,
+    ownerAddress: f.ownerAddress, read: { responsibility: 'Expired local consent' } }))
+    .rejects.toMatchObject({ code: 'scope-contribution/grant-ended' })
+  expect(owner.tasks.log()).toEqual(events)
+  expect((await owner.access.list()).grants).toEqual([])
+  await owner.access.approveContributionApplication({ entryId: f.created.entry.entryId,
+    applicationId: pending.applicationId, expectedProposal: f.requestC.proposal, limits: f.requestC.limits,
+    ownerAddress: f.ownerAddress, read: { responsibility: 'Independent current consent' } })
+  expect((await f.c.access.contributionApplicationStatus(f.requestC, signal())).status).toBe('approved')
+  expect((await owner.access.groupEntries({ taskId: f.task.id })).entries)
+    .toMatchObject([{ applicationCount: 2, state: 'open' }])
+  expect(await source.access.applyContribution({ ...selected, limits: f.requestC.limits,
+    proposal: contributionProposalSchema.parse({ ...selected.proposal, captureGeneration: randomUUID() }) }, signal()))
+    .toEqual({ status: 'capacity' })
+})
+
 it('closes future admission while preserving pending approval and independently revocable approved members', async () => {
   const f = await fixture()
   await f.b.access.applyContribution(f.requestB, signal())
