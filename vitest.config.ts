@@ -102,6 +102,9 @@ const windowsRunnerCoverageExclusions = process.platform === 'win32'
       // win32.spec's injected bindings and exercised natively by every
       // Windows suite through the real backend.
       'packages/session/session-persistence-jsonl/src/lease.ts',
+      // Private descriptors require POSIX ownership and locks. Windows keeps
+      // the refusal test; supported hosts retain this file's per-file 100%.
+      'packages/client/connection/src/local-access.ts',
     ]
   : []
 
