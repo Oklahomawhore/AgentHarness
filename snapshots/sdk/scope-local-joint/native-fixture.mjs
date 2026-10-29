@@ -1,5 +1,6 @@
 /** Existing local responsibility receives live independent-owner updates without losing its Task, tools or permission. */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -21,6 +22,10 @@ const jointPolicy = { goal: 'Update my client when the shared API changes.', act
 const api = version => `export const API_VERSION = 'REMOTE_API_V${version}';\n`
 const client = version => `export const CLIENT_VERSION = 'CLIENT_V${version}';\n`
 const recoveredFact = 'LOCAL_AFTER_RECOVERY_CHANGE: finish my original client responsibility after leaving the shared scope.'
+const artifactCanary = 'LOCAL_ARTIFACT_WITHDRAWN_DURING_COMPUTE'
+const artifactIdentity = { kind: 'openapi-artifact', version: 1, artifactId: 'joint-client-artifact',
+  sourceName: 'Client API declaration', grantId: 'joint-client-artifact-grant', operation: { method: 'post', path: '/client' } }
+const digest = value => createHash('sha256').update(value).digest('hex')
 const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 const contexts = messages => messages.filter(message => ['development-task-context', 'scope-agent-context'].includes(message.source.kind))
 const reply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
@@ -33,7 +38,7 @@ async function until(label, predicate, signal) {
     await setTimeout(10, undefined, { signal })
   }
 }
-/** Actual native Writes supply every file observation; no projection or tool result is injected. */
+/** Actual native Writes supply file observations; a separate authorized observer owns the artifact withdrawal. */
 export async function apply(ctx) {
   const lifetime = new AbortController()
   ctx.effect(() => () => lifetime.abort(new Error('local joint fixture disposed')))
@@ -89,6 +94,10 @@ export async function apply(ctx) {
   let correction
   let remoteEndedRevision
   let recovery
+  let artifactRequest
+  let artifactPublication
+  let artifactHistory
+  let artifactRevocation
   const pending = new Set()
   const own = promise => {
     pending.add(promise)
@@ -133,8 +142,19 @@ export async function apply(ctx) {
       await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: 'joint-client-binding' })
       const epoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
       target = { taskId: task.id, taskBindingId: 'joint-client-binding', expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
+      await ctx.developmentRooms.announce({ id: 'joint-artifact-observer', kind: 'agent', displayName: 'Client artifact observer' })
+      await ctx.developmentTasks.checkout({ taskId: task.id, participantId: 'joint-artifact-observer', bindingId: 'joint-artifact-binding' })
+      const artifactEpoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
+      artifactRequest = { taskId: task.id, participantId: 'joint-artifact-observer', bindingId: 'joint-artifact-binding',
+        expectedBindingEpoch: { nodeId: artifactEpoch.nodeId, seq: artifactEpoch.seq } }
+      artifactPublication = (await ctx.developmentTasks.admitObservedContext({ ...artifactRequest,
+        sourceId: digest('joint-artifact/valid'), text: artifactCanary,
+        observation: { ...artifactIdentity, sequence: 1, state: 'valid', sha256: digest(artifactCanary),
+          facts: { operationId: 'clientOperation', requestBodyRequired: true,
+            requiredRequestFields: ['client'], responseStatuses: ['200'], deprecated: false } },
+      })).publication
       originalAssignments = ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment)
-      assert.equal(originalAssignments.length, 2)
+      assert.equal(originalAssignments.length, 3)
       assert.deepEqual((await ctx.scopeAgentContext.status({ agentId: agent.id })).localTask, target)
       assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).assignment.taskId, task.id)
       await ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null, taskId: task.id,
@@ -147,7 +167,11 @@ export async function apply(ctx) {
       await waitUntil('baseline publication', () => localReports().length === 1)
       assert.equal(await readFile(join(root, 'baseline.ts'), 'utf8'), 'export const BASELINE = true;\n')
     } else if (turn === 3 && step === 1) {
-      await waitUntil('completed local response and pause', () => paused !== undefined)
+      await waitUntil('completed local response and pause', () => {
+        const ended = agent.session.snapshotEvents().find(event => event.type === 'turn/end' && event.data.turn === 2)
+        if (ended !== undefined) assert.equal(ended.data.reason.kind, 'completed', JSON.stringify(ended.data))
+        return paused !== undefined
+      })
       await paused
       assert.equal(state().usedBudget, 1)
       assert.equal(state().mode, 'paused')
@@ -181,6 +205,34 @@ export async function apply(ctx) {
       assert.notEqual(jointBinding.retainedLocal.bindingId, localBinding)
       assert.notEqual(jointBinding.retainedLocal.bindingId, jointBinding.id)
       assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.collecting, true)
+    } else if (turn === 2 && step === 1) {
+      const backend = ctx.developmentTaskContextBackend
+      const descriptor = Object.getOwnPropertyDescriptor(backend, 'compute')
+      const compute = backend.compute
+      let captured = false
+      const restore = () => {
+        if (descriptor === undefined) delete backend.compute
+        else Object.defineProperty(backend, 'compute', descriptor)
+      }
+      ctx.effect(() => restore)
+      backend.compute = async input => {
+        const output = await compute.call(backend, input)
+        if (!captured && input.view.task.id === task.id) {
+          captured = true
+          assert.ok(output.text.includes(artifactCanary))
+          assert.ok(input.view.task.context.some(item => item.id === artifactPublication.id))
+          artifactRevocation = (await ctx.developmentTasks.revokeObservedArtifact({ ...artifactRequest,
+            sourceId: digest('joint-artifact/revoked'), text: 'Client artifact collection ended.',
+            observation: { ...artifactIdentity, sequence: 2, state: 'revoked', reason: 'grant-ended' },
+          })).publication
+        }
+        return output
+      }
+      try {
+        return await next()
+      } finally {
+        restore()
+      }
     } else if ((turn === 4 || turn === 5) && step === 2) {
       const version = turn - 3
       await waitUntil(`client V${version} dual publication`, () => localReports().length === version + 1 && remoteReports().length === version)
@@ -311,6 +363,22 @@ export async function apply(ctx) {
       assert.equal(state().mode, 'paused')
     } else assert.equal(remote, undefined)
     const events = activeAgent.session.snapshotEvents()
+    if (currentTurn === 1) {
+      assert.ok(body(local).includes(artifactCanary))
+      const persisted = events.find(event => event.type === 'user/message' && event.data.id === local.id)
+      assert.ok(persisted)
+      artifactHistory ??= structuredClone(persisted)
+    } else if (currentTurn >= 2) {
+      assert.ok(artifactRevocation)
+      assert.ok(!JSON.stringify(options.messages).includes(artifactCanary), 'revoked local artifact canary reached the actual model request')
+      assert.ok(body(local).includes('Client artifact collection ended.'))
+      assert.ok(local.source.projection.omittedSources.some(item => item.reason === 'superseded'
+        && item.source.publicationId === artifactPublication.id))
+      assert.ok(local.source.projection.selectedSources.some(item => item.kind === 'publication'
+        && item.publicationId === artifactRevocation.id))
+      assert.deepEqual(events.find(event => event.seq === artifactHistory.seq), artifactHistory)
+      assert.ok(body(artifactHistory.data).includes(artifactCanary))
+    }
     if (currentTurn === 6) {
       assert.equal(events.filter(event => event.type === 'user/message' && event.data.id === recovery.messageId).length, 1)
       if (currentStep === 1) {

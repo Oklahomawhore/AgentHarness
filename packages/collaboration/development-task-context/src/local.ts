@@ -56,8 +56,23 @@ export function nextTaskContextExpiry(context: DevelopmentTaskContextView['task'
 }
 
 /**
+ * Detect newly committed direct-source withdrawals without invalidating ordinary additions or frozen inherited history.
+ * @param captured - earlier snapshot of the same Task used for computation.
+ * @param current - latest retained Task snapshot after computation or persistence.
+ * @returns whether a new interval termination or artifact revocation requires recomputation.
+ */
+export function hasNewTaskContextWithdrawal(
+  captured: DevelopmentTaskContextView['task'], current: DevelopmentTaskContextView['task'],
+): boolean {
+  const withdrawn = (item: DevelopmentTaskContextView['task']['context'][number]): boolean =>
+    isTerminalPublication(item) || item.observation?.state === 'revoked'
+  const known = new Set(captured.context.filter(withdrawn).map(item => item.id))
+  return current.context.some(item => withdrawn(item) && !known.has(item.id))
+}
+
+/**
  * Compute a current local Root Task projection for one unchanged assignment interval.
- * Ordinary additions preserve the captured revision; new terminal notices or provider replacement cause recomputation.
+ * Ordinary additions preserve the captured revision; new source withdrawals or provider replacement cause recomputation.
  * @param ctx - authoritative Task, Room, and context backend services; caller owns their lifetime.
  * @param target - exact task-bound identity, independent of any remote grant or subscription.
  * @param maxContextBytes - complete model-visible UTF-8 text budget; this helper adds no framing.
@@ -86,9 +101,7 @@ export async function readLocalTaskContext(ctx: Context, target: DevelopmentTask
     signal.throwIfAborted()
     if (assignmentFor(ctx, target) === undefined) return { status: 'left' }
     if (taskIdentity(localTasks(ctx)) !== taskIdentity(tasks) || ctx.get('developmentTaskContextBackend')?.identity !== identity) continue
-    const terminals = new Set(view.task.context.filter(isTerminalPublication).map(item => item.id))
-    const latest = tasks.get({ taskId: target.taskId })
-    if (latest.context.some(item => isTerminalPublication(item) && !terminals.has(item.id))) continue
+    if (hasNewTaskContextWithdrawal(view.task, tasks.get({ taskId: target.taskId }))) continue
     const fields = { ...output, ...target, kind: 'local-task' as const, version: 1 as const,
       taskRevision: view.task.revision, ownerNodeId: view.task.ownerNodeId, backend: { ...identity }, maxContextBytes }
     const projection = localContextProjectionSchema.parse({ ...fields, projectionId: localContextProjectionDigest(fields) })

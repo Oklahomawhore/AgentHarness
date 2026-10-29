@@ -382,6 +382,58 @@ describe('recipient Task context backend', () => {
     expect(contextEvents(live.agent.session.snapshotEvents())[0]).toMatchObject({ data: { source: { revision: 4 } } })
   })
 
+  it('recomputes a slow native projection when an individual observed artifact is revoked', async () => {
+    const live = await harness(FactsBackend)
+    const task = await live.create()
+    await live.checkout(task.id)
+    const participantId = 'local-api-sampler' as DevelopmentParticipantId
+    await live.ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Local API sampler' })
+    const { assignment } = await live.ctx.developmentTasks.checkout({ taskId: task.id, participantId,
+      bindingId: 'local-api-binding' as DevelopmentTaskBindingId })
+    const epoch = live.ctx.developmentTasks.assignmentLog().at(-1)!
+    const identity = { taskId: task.id, participantId, bindingId: assignment.bindingId,
+      expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
+    const artifact: DevelopmentTaskOpenApiObservationIdentity = {
+      kind: 'openapi-artifact', version: 1,
+      artifactId: 'local-orders' as DevelopmentTaskOpenApiObservationIdentity['artifactId'],
+      sourceName: 'Local Orders API', grantId: 'local-grant' as DevelopmentTaskOpenApiObservationIdentity['grantId'],
+      sequence: 1, operation: { method: 'post', path: '/orders' },
+    }
+    const admitted = await live.ctx.developmentTasks.admitObservedContext({ ...identity,
+      sourceId: 'a'.repeat(64) as DevelopmentTaskObservedSourceId, text: 'Sampled local API declaration',
+      observation: { ...artifact, state: 'valid', sha256: 'b'.repeat(64), facts: { requestBodyRequired: true,
+        requiredRequestFields: ['REVOKED_NATIVE_API_CANARY'], responseStatuses: ['201'], deprecated: false } },
+    })
+    const held = holdNextComputation(live.ctx)
+    const original = createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'Preserve my ordinary implementation request during artifact revocation' }] })
+    live.agent.followup(original)
+    const pending = live.agent.whenIdle()
+    const settled = Promise.allSettled([pending])
+    try {
+      const captured = await held.started
+      expect(captured.view.task.context).toContainEqual(admitted.publication)
+      await live.ctx.developmentTasks.revokeObservedArtifact({ ...identity,
+        sourceId: 'c'.repeat(64) as DevelopmentTaskObservedSourceId, text: 'Local API permission ended',
+        observation: { ...artifact, sequence: 2, state: 'revoked', reason: 'grant-ended' },
+      })
+      held.release()
+      await pending
+      expect(live.adapter.requests).toHaveLength(1)
+      const request = live.adapter.requests[0]!
+      expect(request.messages.filter(message => message.id === original.id)).toHaveLength(1)
+      expect(requestText(request)).toContain('Preserve my ordinary implementation request during artifact revocation')
+      expect(live.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(1)
+      expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(1)
+      expect(requestText(request)).not.toContain('REVOKED_NATIVE_API_CANARY')
+      expect(requestText(request)).toContain('"evidence":"revoked"')
+      expect(held.spy).toHaveBeenCalledTimes(2)
+    } finally {
+      held.release()
+      await settled
+    }
+  })
+
   it.each(['before-compute', 'after-compute'] as const)('rechecks binding after authority read %s', async (position) => {
     const live = await harness()
     const first = await live.create('First authority scope')

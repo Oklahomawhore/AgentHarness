@@ -11,9 +11,8 @@ import { scopeOf, scopeChainOf } from '@deepseek-ai/dsh-scope'
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import { z } from 'zod'
 import { localTaskContextSourceSchema as sourceSchema } from './local-schema.ts'
-import { replaceLocalTaskContext, nextTaskContextExpiry } from './local.ts'
+import { replaceLocalTaskContext, nextTaskContextExpiry, hasNewTaskContextWithdrawal } from './local.ts'
 import type {} from './backend.ts'
-import { isTerminalPublication } from './publication.ts'
 import type { DevelopmentTaskBindingEpoch, DevelopmentTaskContextProjection, DevelopmentTaskContextSource } from './types.ts'
 
 export type * from './types.ts'
@@ -210,13 +209,10 @@ export function apply(ctx: Context, config: Config): void {
             await ctx.developmentTasks.currentContextView(assignment.taskId)
             if (isCancelled()) return cancelled()
             if (!stillBound() || ctx.get('developmentTaskContextBackend')?.identity !== providerIdentity) continue
-            const terminalIds = new Set(view.task.context.filter(isTerminalPublication).map(item => item.id))
-            const latest = ctx.developmentTasks.get({ taskId: assignment.taskId })
-            if (latest.context.some(item => isTerminalPublication(item) && !terminalIds.has(item.id))) continue
+            if (hasNewTaskContextWithdrawal(view.task, ctx.developmentTasks.get({ taskId: assignment.taskId }))) continue
             isCurrent = () => stillBound() && expiresAt > Date.now()
               && ctx.get('developmentTaskContextBackend')?.identity === providerIdentity
-              && !ctx.developmentTasks.get({ taskId: assignment.taskId }).context
-                .some(item => isTerminalPublication(item) && !terminalIds.has(item.id))
+              && !hasNewTaskContextWithdrawal(view.task, ctx.developmentTasks.get({ taskId: assignment.taskId }))
             if (projection !== undefined) {
               if (Buffer.byteLength(projection.text, 'utf8') > config.maxContextBytesPerStep) {
                 throw new Error(`development-task-context: backend output for Task ${view.task.id} exceeds maxContextBytesPerStep`)

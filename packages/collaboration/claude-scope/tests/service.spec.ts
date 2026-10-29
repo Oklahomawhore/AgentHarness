@@ -12,7 +12,8 @@ import DevelopmentTaskMeshService from '@deepseek-ai/dsh-development-task-mesh'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
 import * as RoomStorage from '@deepseek-ai/dsh-development-room-storage-domain'
 import DevelopmentTaskService, { DevelopmentTaskError, type DevelopmentParticipantId, type DevelopmentTaskId, type DevelopmentTaskObservedIntervalIdentity } from '@deepseek-ai/dsh-development-task'
-import { developmentTaskObservedReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
+import { developmentTaskObservedReceiptSchema, localContributionGrantSchema,
+  localContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
 import * as TaskStorage from '@deepseek-ai/dsh-development-task-storage-domain'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
 import FactsBackend from '@deepseek-ai/dsh-development-task-context/facts'
@@ -1749,6 +1750,141 @@ describe('independent Claude contribution permits', () => {
     expect(result.output.hookSpecificOutput?.additionalContext).not.toContain('PRIVATE_RETIRED_FIELD_CANARY')
     expect(result.output.hookSpecificOutput?.additionalContext).toContain('ended')
     expect(slow).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['computation', 'projection write'] as const)(
+    'recomputes local Task evidence withdrawn during %s before returning Hook context', async (phase) => {
+      const host = await boot()
+      const task = await host.createTask('Native and Claude owners retain separate responsibilities')
+      const participantId = 'native-responsibility-agent' as DevelopmentParticipantId
+      await host.ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Native source Agent' })
+      const checked = await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      const epoch = host.ctx.developmentTasks.assignmentLog().at(-1)
+      if (epoch === undefined) throw new Error('Native checkout did not retain its epoch')
+      const grant = localContributionGrantSchema.parse({ version: 1, taskId: task.id, participantId,
+        bindingId: checked.assignment.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq },
+        captureId: 'native-local-capture', captureGeneration: 'native-local-generation',
+        source: { kind: 'completed-turn-outcomes', version: 5, name: 'Native source responsibility' },
+        expiresAt: Date.now() + 60_000, maxSamples: 3, maxSampleBytes: 4096,
+      })
+      await host.ctx.developmentTasks.openLocalContribution(grant)
+      const text = 'PRIVATE_RETIRED_LOCAL_REPORT_CANARY'
+      await host.ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant, sequence: 1,
+        sourceId: scopeDigest(['native-local-report']), result: {
+          kind: 'completed-turn-outcome', version: 5, text, sha256: createHash('sha256').update(text).digest('hex'),
+        } }))
+      await host.connect(await host.observe('local-withdrawal-reader'), task.id)
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      host.ctx.effect(() => () => { release.resolve(undefined) }, 'release test projection barrier')
+      const compute = host.backend.compute.bind(host.backend)
+      const computed = vi.spyOn(host.backend, 'compute')
+      if (phase === 'computation') computed.mockImplementationOnce(async (input) => {
+        entered.resolve(undefined)
+        await release.promise
+        return compute(input)
+      })
+      else {
+        const records = host.facility.get('claude_scope')!.table('projections')
+        const put = records.put.bind(records)
+        vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+          await put(key, value)
+          entered.resolve(undefined)
+          await release.promise
+        })
+      }
+      const cancellation = new AbortController()
+      const pending = host.hook('local-withdrawal-reader', 'UserPromptSubmit', {}, cancellation.signal)
+      const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its projection barrier') })
+      try {
+        await Promise.race([entered.promise, unexpectedlySettled])
+        await host.ctx.developmentTasks.endLocalContribution({ grant, reason: 'revoked' })
+        release.resolve(undefined)
+        const result = await pending
+        expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(text)
+        expect(result.output.hookSpecificOutput?.additionalContext).toContain('ended')
+        expect(computed).toHaveBeenCalledTimes(2)
+      } finally {
+        release.resolve(undefined)
+        cancellation.abort(new Error('test projection settled'))
+        await Promise.allSettled([pending, unexpectedlySettled])
+      }
+    },
+  )
+
+  it('recomputes a slow Task projection after its sampled API artifact is revoked', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    const retired = 'PRIVATE_RETIRED_ARTIFACT_FIELD_CANARY'
+    await scenario.change('retiring-contract', apiDocument([retired]))
+    const backend = host.ctx.developmentTaskContextBackend
+    const compute = backend.compute.bind(backend)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    host.ctx.effect(() => () => { release.resolve(undefined) }, 'release test artifact projection barrier')
+    const computed = vi.spyOn(backend, 'compute').mockImplementationOnce(async (input) => {
+      entered.resolve(undefined)
+      await release.promise
+      return compute(input)
+    })
+    const cancellation = new AbortController()
+    const pending = host.hook('api-frontend', 'UserPromptSubmit', {}, cancellation.signal)
+    const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its artifact projection barrier') })
+    try {
+      await Promise.race([entered.promise, unexpectedlySettled])
+      await host.scope.leave({ sessionKey: scenario.a })
+      expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.at(-1)?.observation?.state).toBe('revoked')
+      release.resolve(undefined)
+      const result = await pending
+      expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(retired)
+      expect(result.output.hookSpecificOutput?.additionalContext).toContain('"evidence":"revoked"')
+      expect(computed).toHaveBeenCalledTimes(2)
+    } finally {
+      release.resolve(undefined)
+      cancellation.abort(new Error('test artifact projection settled'))
+      await Promise.allSettled([pending, unexpectedlySettled])
+    }
+  })
+
+  it('recomputes a slow Task projection after its Mesh source interval ends', async () => {
+    const owner = await boot()
+    const task = await owner.createTask('Remote source and local recipient responsibilities')
+    const source = await bootRemote({ owner, offline: false, dropAdmission: false, dropEnd: false })
+    const key = await source.observe('retiring-mesh-source')
+    await source.connect(key, task.id)
+    const identity = await remoteIdentity(owner, source, key)
+    await owner.ctx.developmentTasks.approveObservedInterval(identity)
+    const retired = 'PRIVATE_RETIRED_MESH_REPORT_CANARY'
+    const input = source.tool('retiring-remote-write', retired)
+    await source.hook('retiring-mesh-source', 'PreToolUse', input)
+    await source.hook('retiring-mesh-source', 'PostToolUse', input)
+    await owner.connect(await owner.observe('mesh-withdrawal-reader'), task.id)
+    const compute = owner.backend.compute.bind(owner.backend)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    owner.ctx.effect(() => () => { release.resolve(undefined) }, 'release test Mesh projection barrier')
+    const computed = vi.spyOn(owner.backend, 'compute').mockImplementationOnce(async (request) => {
+      entered.resolve(undefined)
+      await release.promise
+      return compute(request)
+    })
+    const cancellation = new AbortController()
+    const pending = owner.hook('mesh-withdrawal-reader', 'UserPromptSubmit', {}, cancellation.signal)
+    const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its Mesh projection barrier') })
+    try {
+      await Promise.race([entered.promise, unexpectedlySettled])
+      await source.scope.leave({ sessionKey: key })
+      expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.at(-1)?.observedIntervalEnded).toBe(true)
+      release.resolve(undefined)
+      const result = await pending
+      expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(retired)
+      expect(result.output.hookSpecificOutput?.additionalContext).toContain('ended')
+      expect(computed).toHaveBeenCalledTimes(2)
+    } finally {
+      release.resolve(undefined)
+      cancellation.abort(new Error('test Mesh projection settled'))
+      await Promise.allSettled([pending, unexpectedlySettled])
+    }
   })
 
   it('does not turn a Hook queued before activation into a lease under the newly active permit', async () => {

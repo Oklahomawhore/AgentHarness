@@ -12,11 +12,11 @@ import { createLibp2p } from 'libp2p'
 import { tcp } from '@libp2p/tcp'
 import { noise } from '@libp2p/noise'
 import { yamux } from '@libp2p/yamux'
-import { generateKeyPair, privateKeyToProtobuf } from '@libp2p/crypto/keys'
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyFromRaw, privateKeyToProtobuf } from '@libp2p/crypto/keys'
 import { multiaddr } from '@multiformats/multiaddr'
 import Transport, { type Config } from '../src/libp2p.ts'
 import type { ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
-import { identityKey } from '../src/identity.ts'
+import { identityKey, loadIdentity } from '../src/identity.ts'
 import { encode, readJson, responsePayload, writeJson } from '../src/wire.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -229,13 +229,37 @@ describe('direct authenticated scope transport', () => {
   })
 
   it('rejects a stored key whose public half does not match its signing key', async () => {
-    const ctx = await credentials(await directory())
-    const bytes = privateKeyToProtobuf(await generateKeyPair('Ed25519'))
-    bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1
+    const path = await directory()
+    const ctx = await credentials(path)
+    const signingKey = await generateKeyPair('Ed25519')
+    const otherKey = await generateKeyPair('Ed25519')
+    const raw = new Uint8Array([...signingKey.raw.subarray(0, 32), ...otherKey.publicKey.raw])
+    const bytes = privateKeyToProtobuf(privateKeyFromRaw(raw))
+    const decoded = privateKeyFromProtobuf(bytes)
+    expect(decoded.publicKey.raw).toEqual(otherKey.publicKey.raw)
+    const message = new Uint8Array()
+    const signature = await decoded.sign(message)
+    expect(await signingKey.publicKey.verify(message, signature)).toBe(true)
+    expect(await decoded.publicKey.verify(message, signature)).toBe(false)
     const record = { kind: 'grant', payload: { version: 1, privateKey: Buffer.from(bytes).toString('base64') } } as const
     await ctx.credentials.modifyRecord(identityKey, () => Promise.resolve(record))
-    await expect(ctx.plugin(Transport, config)).rejects.toMatchObject({ code: 'scope-transport/identity-invalid' })
+    const persisted = await readFile(join(path, 'credentials.yml'))
+    const failure = await loadIdentity(ctx.credentials, new AbortController().signal).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: 'scope-transport/identity-invalid', message: 'scope-transport/identity-invalid',
+    })
+    expect(failure).not.toHaveProperty('cause')
     expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
+    expect(await readFile(join(path, 'credentials.yml'))).toEqual(persisted)
+    await ctx.fiber.dispose()
+    const restarted = await credentials(path)
+    const restartedFailure = await loadIdentity(restarted.credentials, new AbortController().signal).catch((error: unknown) => error)
+    expect(restartedFailure).toMatchObject({
+      code: 'scope-transport/identity-invalid', message: 'scope-transport/identity-invalid',
+    })
+    expect(restartedFailure).not.toHaveProperty('cause')
+    expect(await restarted.credentials.readRecord(identityKey)).toEqual(record)
+    expect(await readFile(join(path, 'credentials.yml'))).toEqual(persisted)
   })
 
   it('rejects a well-formed stored key of an unsupported signing type without replacing its record', async () => {

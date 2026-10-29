@@ -790,7 +790,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/development-task-context/src/index.ts:27`](../packages/collaboration/development-task-context/src/index.ts)
+来源： [`packages/collaboration/development-task-context/src/index.ts:26`](../packages/collaboration/development-task-context/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-contextconfigured"></a>
 
@@ -2353,7 +2353,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/collaboration/scope-access/src/index.ts:52`](../packages/collaboration/scope-access/src/index.ts)
+来源： [`packages/collaboration/scope-access/src/index.ts:53`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 

@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-development-room'
 import type {} from '@deepseek-ai/dsh-development-task'
 import type { DevelopmentParticipantId, DevelopmentTaskContextView, DevelopmentTaskId, DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
 import type {} from '@deepseek-ai/dsh-development-task-context/backend'
+import { hasNewTaskContextWithdrawal } from '@deepseek-ai/dsh-development-task-context/local'
 import type { DevelopmentTaskContextPeerCapture } from '@deepseek-ai/dsh-development-task-context/types'
 import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
@@ -891,7 +892,7 @@ export default class ScopeAccessService extends TypertRemoteService {
           return this.ctx.developmentTaskContextBackend.identity === identity
             && (originalCapture === undefined || isDeepStrictEqual(peerCapture,
               this.originalPeerCapture(currentDomain, authority.invitation, originalCapture)))
-            && this.contributions.terminalRevision(view.task.id) <= view.task.revision
+            && !hasNewTaskContextWithdrawal(view.task, this.ctx.developmentTasks.get({ taskId: view.task.id }))
         }
         if (!await fresh()) return respond({ status: 'unavailable' })
         await this.persistProjection(currentDomain, projection)

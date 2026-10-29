@@ -18,9 +18,9 @@ import {
   DevelopmentTaskError, observedIntervalId, type DevelopmentParticipantId, type DevelopmentTaskBindingId,
   type DevelopmentTaskObservedSourceId, type DevelopmentTaskObservedIntervalIdentity,
   type DevelopmentTaskObservedReceipt, type DevelopmentTaskObservedInterval,
-  type DevelopmentTaskContextView,
 } from '@deepseek-ai/dsh-development-task'
 import type DevelopmentTaskContextBackend from '@deepseek-ai/dsh-development-task-context/backend'
+import { hasNewTaskContextWithdrawal } from '@deepseek-ai/dsh-development-task-context/local'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { authorizeClaudeScopeTool, claudeScopeToolArgumentDigest, parseClaudeScopeHook, renderClaudeScopeObservation } from './capture.ts'
@@ -1075,12 +1075,14 @@ export default class ClaudeScopeService extends TypertRemoteService {
       })
       signal.throwIfAborted()
       if (this.ctx.developmentTaskContextBackend.identity !== identity || !this.current(domain, session, grant, change)) continue
-      if (peerEvidenceEnded(view, await this.ctx.developmentTasks.currentContextView(grant.taskId))) continue
+      await this.ctx.developmentTasks.currentContextView(grant.taskId)
+      if (hasNewTaskContextWithdrawal(view.task, this.ctx.developmentTasks.get({ taskId: grant.taskId }))) continue
       signal.throwIfAborted()
       const saved = await this.storeProjection(domain, session, grant, change, projection, signal, identity)
       signal.throwIfAborted()
       if (!saved || this.ctx.developmentTaskContextBackend.identity !== identity) continue
-      if (peerEvidenceEnded(view, await this.ctx.developmentTasks.currentContextView(grant.taskId))) continue
+      await this.ctx.developmentTasks.currentContextView(grant.taskId)
+      if (hasNewTaskContextWithdrawal(view.task, this.ctx.developmentTasks.get({ taskId: grant.taskId }))) continue
       signal.throwIfAborted()
       if (!this.current(domain, session, grant, change)) continue
       return projection
@@ -1154,17 +1156,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
     this.tail = result.catch(() => {}) // Each caller retains its own rejection; later operations may proceed.
     return result
   }
-}
-
-/** Compare direct evidence only; frozen inherited parent snapshots retain their historical meaning. */
-function peerEvidenceEnded(captured: DevelopmentTaskContextView, current: DevelopmentTaskContextView): boolean {
-  const key = (item: NonNullable<DevelopmentTaskContextView['task']['context'][number]['peerContribution']>) =>
-    JSON.stringify([item.grant.grantId, item.grant.generation])
-  const known = new Set(captured.task.context.flatMap(item => item.peerContribution === undefined ? [] : [key(item.peerContribution)]))
-  const ended = new Set(captured.task.context.flatMap(item =>
-    item.peerContribution?.ended === undefined ? [] : [key(item.peerContribution)]))
-  return current.task.context.some(item => item.peerContribution?.ended !== undefined
-    && known.has(key(item.peerContribution)) && !ended.has(key(item.peerContribution)))
 }
 
 function summary(session: ScopeSession): ClaudeScopeSessionSummary {

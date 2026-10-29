@@ -1175,7 +1175,7 @@ def smoke_sdk_scope_context(executable: Path, update_snapshots: bool, *, scenari
         "scope-dual-contribution": "scope-dual-contribution-context-order-r3",
         "scope-group-join": "scope-group-join-context-order-r5",
         "scope-joint-automatic": "scope-joint-automatic-maintenance-r5",
-        "scope-local-joint": "scope-local-joint-admission-order-r8",
+        "scope-local-joint": "scope-local-joint-admission-order-r9",
         "scope-native-contribution": "scope-native-contribution-context-order-r5",
         "scope-owner-idle": "scope-owner-idle-context-order-r5",
         "scope-owner-participation": "scope-owner-participation-context-order-r3",
