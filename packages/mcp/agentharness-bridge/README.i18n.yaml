@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/mcp/agentharness-bridge/README.md
-README.md: aa98b610828fc2c1f877429d2e67cddc44299eea
-README.zh.md: cfd43a8d6e6248e8bda888e0bba947c07ad092e8
+README.md: 49ca3a3b090d9693905bac4d4f1c8ed1b84f074f
+README.zh.md: 7990856b917a9dc4bf5b1931baaf202a2c656fd7

@@ -12,7 +12,7 @@ Status: implemented
 
 [Claude scope](../../../../packages/collaboration/claude-scope/README.zh.md)为一个 Session 记录本地采集许可，支持的选择由[来源模式决策](2026-10-03-independent-tool-observations.zh.md)定义。不含路径的 proposal 标识贡献者 PeerId 与耐久 capture generation。Owner 独立批准该 proposal 对应的本地 Root Task、精确来源许可、到期时间、样本数和样本字节限制。独立的 [scope-access 贡献邀请](../../../../packages/collaboration/scope-access/README.zh.md)只有通过在线 owner 核验后才激活已准备的采集。读取订阅与贡献许可各自拥有生命周期。
 
-[Task 服务](../../../../packages/collaboration/development-task/README.zh.md)在耐久队列中串行处理授权、准入和终结事件。认证来自 transport；publication 保留贡献者 PeerId，不虚构 Mesh 节点或 participant。Owner 根据获批 selector 生成出处，并在 OpenAPI 模式下生成工件身份。精确重试恢复原 receipt；既有来源的正文变化会被拒绝。Receipt 区分批准、采样和终结提交。来源端保留 outbox 或待撤回记录，直到收到匹配的 owner receipt。公开准入方法负责 grant 校验与终结幂等性；私有队列终结提交依赖这些已确定的结果。
+[Task 服务](../../../../packages/collaboration/development-task/README.zh.md)在耐久队列中串行处理授权、准入和终结事件。认证来自 transport；publication 保留贡献者 PeerId，不虚构 Mesh 节点或 participant。Owner 根据获批 selector 生成出处，并在 OpenAPI 模式下生成工件身份。精确重试恢复原 receipt；既有来源的正文变化会被拒绝。Receipt 区分批准、采样和终结提交。来源端保留 outbox 或待撤回记录，直到收到匹配的 owner receipt。公开准入方法负责 grant 校验与终结幂等性；私有队列终结提交依赖这些已确定的结果。 恢复和贡献清单访问将保留的所有者与固定传输身份进行核对；路由恢复检查当前公告地址，不重复该身份比较。
 
 只有获授权的 Write 或 Edit lease 才采集许可的来源。Hook 在等待本地队列前保留其 capture generation。替换许可不能授权较早排队的 Hook。接收的上下文和生成的投影不是采集来源。OpenAPI 采样中的无效或缺失文件产生明确的不可用证据，而不是让旧的有效字段保持当前状态。
 

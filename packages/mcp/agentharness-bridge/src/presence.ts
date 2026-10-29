@@ -2,17 +2,14 @@
 
 import { AgentHarnessRpcClient } from './rpc.ts'
 import type { AgentHarnessBridgeOptions } from './index.ts'
+import { z } from 'zod'
 
-interface DirectoryLease {
-  readonly presenceTtlMs?: number
-}
+const directoryLease = z.object({ presenceTtlMs: z.number().int().positive() })
 
 /** Explicit lease policy; request cancellation and byte limits remain shared with MCP calls. */
 export interface AgentHarnessBridgePresenceOptions extends AgentHarnessBridgeOptions {
   /** Delay after a failed announcement or heartbeat. */
   readonly retryMs: number
-  /** Host TTL used only when the response omits a valid TTL. */
-  readonly fallbackTtlMs: number
   /** Lower bound for one-third-TTL renewal scheduling. */
   readonly minHeartbeatMs: number
   /** Upper bound for one-third-TTL renewal scheduling. */
@@ -43,31 +40,24 @@ export class AgentHarnessBridgePresenceLease {
     return this.current ?? Promise.resolve()
   }
 
-  private isStopped(): boolean {
-    return this.lifetime.signal.aborted
-  }
-
   private async cycle(): Promise<void> {
-    if (this.isStopped()) return
     let delay = this.options.retryMs
     try {
       this.mayBeAnnounced = true
-      const directory = await this.rpc.call<DirectoryLease>(
+      const directory = directoryLease.parse(await this.rpc.call<unknown>(
         this.announced ? 'developmentRooms/heartbeat' : 'developmentRooms/announce',
         { request: this.announced
           ? { participantId: this.options.participantId }
           : { id: this.options.participantId, kind: 'agent', displayName: this.options.displayName } },
         this.lifetime.signal,
-      )
+      ))
       this.announced = true
-      const ttl = typeof directory.presenceTtlMs === 'number' && Number.isFinite(directory.presenceTtlMs)
-        && directory.presenceTtlMs > 0 ? directory.presenceTtlMs : this.options.fallbackTtlMs
-      delay = Math.min(this.options.maxHeartbeatMs, Math.max(this.options.minHeartbeatMs, Math.floor(ttl / 3)))
+      delay = Math.min(this.options.maxHeartbeatMs, Math.max(this.options.minHeartbeatMs, Math.floor(directory.presenceTtlMs / 3)))
     } catch {
-      // Bounded connection and RPC failures are retried; no remote error text reaches stdio.
+      // Invalid leases and bounded RPC failures disclose no remote error text to stdio.
       this.announced = false
     }
-    if (this.isStopped()) return
+    if (this.lifetime.signal.aborted) return
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.current = this.cycle()

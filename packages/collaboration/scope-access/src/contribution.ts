@@ -278,7 +278,7 @@ export class ContributionAccess {
       if (prior === undefined || prior.grant.generation !== request.generation) throw this.failure('scope-contribution/stale-selection')
       const identity = await this.ctx.scopeTransport.identity()
       this.owner.signal.throwIfAborted()
-      if (identity.peerId !== prior.grant.ownerPeerId || !identity.addresses.includes(request.ownerAddress)) {
+      if (!identity.addresses.includes(request.ownerAddress)) {
         throw this.failure('scope-contribution/invalid-permission')
       }
       const invitation = contributionInvitationSchema.parse({ version: 1, kind: contributionKind(prior.grant.source),

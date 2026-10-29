@@ -25,7 +25,7 @@ kind: "package-bundle"
 
 使用 `dsh --profile mcp --connection /absolute/private/connection.json` 启动。默认 descriptor 位于 `$DSH_HOME/mcp/connection.json`。`--participant-id` 和 `--display-name` 覆盖本地身份；省略时按 OS 用户和主机名一次性解析。`--url` 只用于可选的 origin 绑定，不能绕过 descriptor 认证。`--help` 输出用法，不读取 descriptor，也不连接 Host。
 
-Bundle patch 显式提供所有时间和字节上限：`requestTimeoutMs`、`maxDescriptorBytes`、`maxRequestBytes`、`maxResponseBytes`、`leaseRetryMs`、`leaseFallbackTtlMs`、`leaseMinHeartbeatMs` 和 `leaseMaxHeartbeatMs`。修改部署策略时替换该 row 的完整 Config。请求 deadline 覆盖 descriptor 认证、API 请求及完整响应读取。超时码标识正在等待的阶段：`authentication-timeout`、`request-timeout` 或 `response-timeout`；整个过程使用同一截止时间。请求和响应上限包含 RPC JSON envelope。
+Bundle patch 显式提供所有时间和字节上限：`requestTimeoutMs`、`maxDescriptorBytes`、`maxRequestBytes`、`maxResponseBytes`、`leaseRetryMs`、`leaseMinHeartbeatMs` 和 `leaseMaxHeartbeatMs`。修改部署策略时替换该 row 的完整 Config。请求 deadline 覆盖 descriptor 认证、API 请求及完整响应读取。超时码标识正在等待的阶段：`authentication-timeout`、`request-timeout` 或 `response-timeout`；整个过程使用同一截止时间。请求和响应上限包含 RPC JSON envelope。
 
 每次 RPC 都读取当前私有 descriptor，并将 launch token 换成正常 Connection cookie。Cookie 只进入 HTTP header；token 和 cookie 均不进入 argv 或诊断。Descriptor 缺失或 Host 不可用时返回安全错误码，presence 会重试。Descriptor 为已安装的同用户客户端提供普通本地 Host 权限，不是逐 Task 读取授权，也不是独立所有者凭据。
 
@@ -37,7 +37,7 @@ Server 暴露九项 `agentharness_task_*` 工具及 `agentharness://tasks/{taskI
 
 发布上下文要求 binding 已连接到所请求的 Task，否则返回 `POLICY_REJECTED` 及该 binding 的 assignment。Status 和 publication 在 MCP 响应交付前记录所返回的 Task revision。Server 从 Host 读取 binding 状态，不保留本地 Task 副本。
 
-Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SIGTERM 使用 dsh launcher 的有界关闭。Presence 在应用 ready 后启动，在 Host TTL 的有界分段时间内续租，续租失败后重新 announce。Dispose 取消普通请求和续租并等待结算，然后尝试具有独立 deadline 的 withdraw，包括尚未收到 announce 回复的情况。Host 不可用时以 TTL 到期作为后备。MCP 取消会传递到认证及每一步后续 RPC，但不能撤销 Host 已提交的修改。Profile 修改在下次进程启动时生效。
+Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SIGTERM 使用 dsh launcher 的有界关闭。Presence 在应用 ready 后启动，要求 Host TTL 为正整数，在该 TTL 的有界分段时间内续租，租期回复无效或续租失败后重新 announce。Dispose 取消普通请求和续租并等待结算，然后尝试具有独立 deadline 的 withdraw，包括尚未收到 announce 回复的情况。Host 不可用时以 TTL 到期作为后备。MCP 取消会传递到认证及每一步后续 RPC，但不能撤销 Host 已提交的修改。Profile 修改在下次进程启动时生效。
 
 <a id="model-experience"></a>
 

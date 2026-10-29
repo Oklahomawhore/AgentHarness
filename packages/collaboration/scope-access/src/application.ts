@@ -336,7 +336,7 @@ export class ContributionApplications {
     return this.manage(() => this.enqueue(async (domain) => {
       recoverSchema.parse(input)
       const entry = domain.table('applications').get(input.entryId)?.entry ?? this.requireGroup(input.entryId).entry
-      if (await this.address(input.ownerAddress) !== entry.ownerPeerId) throw this.failure('scope-contribution/invalid-permission')
+      await this.address(input.ownerAddress)
       return this.encoded({ ...entry, ownerAddress: input.ownerAddress })
     }))
   }

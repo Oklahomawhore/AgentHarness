@@ -82,7 +82,7 @@ async function fixture(args: readonly string[] = []) {
     connectionPath: options.connectionPath, requestTimeoutMs: options.requestTimeoutMs,
     maxDescriptorBytes: options.maxDescriptorBytes, maxRequestBytes: options.maxRequestBytes, maxResponseBytes: options.maxResponseBytes,
     participantId: 'stdio-agent', displayName: 'Stdio Agent',
-    leaseRetryMs: 250, leaseFallbackTtlMs: 1500, leaseMinHeartbeatMs: 500, leaseMaxHeartbeatMs: 5000,
+    leaseRetryMs: 250, leaseMinHeartbeatMs: 500, leaseMaxHeartbeatMs: 5000,
   }
   const commitReady = () => {
     ready = true

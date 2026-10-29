@@ -16,6 +16,55 @@ const sourceArgs = ['--import', import.meta.resolve('tsx/esm'), join(repository,
 const builtArgs = [join(repository, 'apps/cli/lib/bin.js')]
 const deadlineMs = 60_000
 
+it.skipIf(process.platform === 'win32')('built: re-announces an invalid Host lease while keeping MCP tools available', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-lease-'))
+  const calls: string[] = []
+  let announcements = 0
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith('/?token=') === true) {
+      response.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-lease=v1.test.cookie; Path=/; HttpOnly' }).end()
+      return
+    }
+    request.setEncoding('utf8')
+    let body = ''
+    request.on('data', (chunk: string) => { body += chunk })
+    request.on('end', () => {
+      const rpc = JSON.parse(body) as { method: string; rpcId: string }
+      calls.push(rpc.method)
+      const value = rpc.method === 'developmentTasks/list' ? []
+        : { presenceTtlMs: rpc.method === 'developmentRooms/announce' && announcements++ === 0 ? 0 : 1500 }
+      response.writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ type: 'server-response', rpcId: rpc.rpcId, result: { ok: true, value } }))
+    })
+  })
+  let client: Client | undefined
+  try {
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('expected TCP fixture')
+    await mkdir(join(home, 'mcp'), { mode: 0o700 })
+    await writeFile(join(home, 'mcp/connection.json'), JSON.stringify({ version: 1, generation: 'lease-fixture',
+      launchUrl: `http://127.0.0.1:${String(address.port)}/?token=private-lease-fixture` }), { mode: 0o600 })
+    client = (await bridge(builtArgs, home, 'built')).client
+    expect(await client.callTool({ name: 'agentharness_task_list', arguments: {} }))
+      .toMatchObject({ structuredContent: { items: [] } })
+    await expect.poll(() => announcements, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
+    const second = calls.indexOf('developmentRooms/announce', calls.indexOf('developmentRooms/announce') + 1)
+    expect(calls.slice(0, second)).not.toContain('developmentRooms/heartbeat')
+    await expect.poll(() => calls.includes('developmentRooms/heartbeat'), { timeout: 15_000 }).toBe(true)
+    await client.close()
+    client = undefined
+    expect(calls.at(-1)).toBe('developmentRooms/withdraw')
+  } finally {
+    try { await client?.close() } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+      await rm(home, { recursive: true, force: true })
+    }
+  }
+}, deadlineMs)
+
 function environment(home: string, mode: string): Record<string, string> {
   const env: Record<string, string> = { HOME: home, USERPROFILE: home, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1' }
   for (const name of ['PATH', 'SystemRoot', 'WINDIR', 'TMPDIR', 'TEMP', 'TMP']) {
