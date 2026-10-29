@@ -10,7 +10,7 @@ import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room
 import type { ScopeContributionLimits } from '@deepseek-ai/dsh-scope-access/types'
 import { nativeContributionDomain, nativeDigest } from '../src/state.ts'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
-import { initializationPlanDigest, initializationSchema, pendingInitialization, recordedProof, recordedReport } from '../src/initialization.ts'
+import { executionDigest, initializationPlanDigest, initializationSchema, pendingInitialization, recordedProof, recordedReport } from '../src/initialization.ts'
 import { nativeToolPath, nativeToolReport } from '../src/capture.ts'
 import type { ScopeAgentContributionRequest } from '../src/types.ts'
 import { toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
@@ -216,6 +216,65 @@ it('uses the newest bounded original order, exact canonical roots, and retains e
   expect(nativeContributionDomain.tables.sessions.valueSchema.safeParse(reordered).success).toBe(false)
   const { version: _version, ...legacy } = row
   expect(nativeContributionDomain.tables.sessions.valueSchema.safeParse(legacy).success).toBe(false)
+})
+
+it.each(['write', 'edit'] as const)('initializes only the selected directory and %s history without executing it again', async (tool) => {
+  const f = await fixture({ roots: ['private-history', 'selected-history'] })
+  await f.write('private-write', 'PRIVATE_ROOT_ORIGINAL', 'private-history/private.txt')
+  await run(f.source, f.agent, [toolCallResponse('private-edit', 'edit', {
+    file_path: 'private-history/private.txt', old_string: 'PRIVATE_ROOT_ORIGINAL', new_string: 'PRIVATE_ROOT_CURRENT',
+  })])
+  await f.write('selected-write', 'SELECTED_ORIGINAL', 'selected-history/shared.txt')
+  await run(f.source, f.agent, [toolCallResponse('selected-edit', 'edit', {
+    file_path: 'selected-history/shared.txt', old_string: 'SELECTED_ORIGINAL', new_string: 'SELECTED_CURRENT',
+  })])
+  await expect.poll(() => f.localRow().samples.filter(sample => sample.receipt !== undefined).length).toBe(4)
+  const original = f.localRow().samples.find(sample => sample.callId === `selected-${tool}`)
+  if (original === undefined || original.turnProof !== undefined || original.sample.result.kind !== 'tool-observation') {
+    throw new Error('Selected real tool completion missing')
+  }
+  expect(original.sample.result.fields.rootIndex).toBe(1)
+  const proof = recordedProof(f.agent.session, original)
+  if (proof === undefined) throw new Error('Selected original dispatch proof missing')
+  const events = structuredClone(f.agent.session.snapshotEvents())
+  const filesystem = f.agent.ctx.get('fs')
+  if (filesystem === undefined) throw new Error('Original filesystem provider missing')
+  const writes = vi.spyOn(filesystem, 'writeText')
+  const executions = vi.fn()
+  const stop = f.source.ctx.on('tools/execute', (_execution, next) => { executions(); return next() }, { global: true })
+  releases.push(stop)
+  const selectedRoot = f.roots[1]
+  if (selectedRoot === undefined) throw new Error('Selected real directory missing')
+  const remote = await f.begin({ roots: [selectedRoot], tools: [tool] })
+  const initialization = remote.request.initialization
+  if (initialization === undefined) throw new Error('Explicit historical permission missing')
+  expect(f.reports()).toEqual([])
+  await remote.approve()
+  await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(1)
+  const row = f.remoteRow()
+  expect(row.capture?.initialization).toMatchObject({ state: 'frozen',
+    coverage: { recorded: 4, selected: 1, omitted: 3, unconfirmed: 0, inFlight: 0 }, plan: { sources: [proof] } })
+  expect(row.samples).toHaveLength(1)
+  expect(row.samples[0]).toMatchObject({ callId: original.callId, rootCallId: original.rootCallId,
+    callSeq: original.callSeq, resultSeq: original.resultSeq, argumentDigest: original.argumentDigest,
+    completionDigest: original.completionDigest,
+    sample: { sequence: 1, result: { kind: 'tool-observation', version: 2, tool: original.sample.result.tool,
+      reportedStatus: 'success', fields: { ...original.sample.result.fields, rootIndex: 0 },
+      origin: { kind: 'recorded-local-tools', executionDigest: executionDigest(initialization, proof) } } } })
+  const exported = row.samples[0]?.sample.result
+  if (exported === undefined || !('kind' in exported) || exported.kind !== 'tool-observation') {
+    throw new Error('Selected historical report missing')
+  }
+  expect(exported.fields).toEqual({ ...original.sample.result.fields, rootIndex: 0 })
+  expect(f.reports()).toHaveLength(1)
+  expect(f.reports()[0]?.peerToolObservation).toMatchObject(exported)
+  expect(JSON.stringify(f.reports())).not.toContain('PRIVATE_ROOT_')
+  expect(JSON.stringify(f.reports())).not.toContain('private-history')
+  expect(writes).not.toHaveBeenCalled()
+  expect(executions).not.toHaveBeenCalled()
+  expect(f.agent.session.snapshotEvents()).toEqual(events)
+  expect(await readFile(join(f.source.workspace, 'private-history/private.txt'), 'utf8')).toBe('PRIVATE_ROOT_CURRENT')
+  expect(await readFile(join(selectedRoot, 'shared.txt'), 'utf8')).toBe('SELECTED_CURRENT')
 })
 
 it('marks initialization unavailable when local consent ends before owner approval while retaining future-only sharing', async () => {
