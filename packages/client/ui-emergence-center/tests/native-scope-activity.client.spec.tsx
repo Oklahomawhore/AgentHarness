@@ -86,7 +86,6 @@ describe('recorded automatic collaboration activity', () => {
   })
   it('attributes a combined response to both revisions only under the shared-scope controls', () => {
     const value = localObservation(compositeExecution)
-    if (value.eligibility === 'not-live') throw new Error('Missing combined fixture')
     const combined = { ...snapshot(), observation: { ...value, activity: { ...empty,
       completed: { ...completed, bindingId: compositeExecution.binding!.id, localTaskRevision: 12 } } } }
     const view = render(<NativeScopeActivity snapshot={combined} local={false} t={t} />)
@@ -98,7 +97,6 @@ describe('recorded automatic collaboration activity', () => {
 
   it('uses the same presentation for an exact owner-local assignment', () => {
     const value = localObservation(localExecution)
-    if (value.eligibility === 'not-live') throw new Error('Missing local fixture')
     const live = { ...snapshot(), observation: { ...value, activity: { ...empty, completed } } }
     const view = render(<NativeScopeActivity snapshot={live} local t={t} />)
     expect(screen.getByText(t('native.activity.completed', { turn: 3, revision: 7 }))).not.toBeNull()

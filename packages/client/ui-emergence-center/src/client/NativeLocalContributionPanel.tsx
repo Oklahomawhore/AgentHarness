@@ -99,7 +99,7 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
     {receivingElsewhere && <p className={css.notice}>{t('native.local.remoteRead')}</p>}
     {ready && assignment === null && capture === null && <form className={css.form} onSubmit={(event) => {
       event.preventDefault()
-      if (canConnect && chosen !== undefined) void perform(() => checkoutNativeLocalTask(agentId, chosen.id))
+      if (catalogReady && canConnect && chosen !== undefined) void perform(() => checkoutNativeLocalTask(agentId, chosen.id))
     }}>
       <label className={css.field} htmlFor={`${id}-task`}>{t('native.local.task')}
         <select id={`${id}-task`} value={selected ?? ''} disabled={!catalogReady || !canConnect}
@@ -112,7 +112,7 @@ export function NativeLocalContributionPanel({ agentId, entry, tasks, catalogRea
       <Button type="submit" disabled={!catalogReady || chosen === undefined || !canConnect}>{t('native.local.connect')}</Button>
     </form>}
     {assignment != null && <>
-      <p role="status" className={css.state}>{t('native.local.connected', { task: title ?? assignment.taskId })}</p>
+      <p role="status" className={css.state}>{t('native.local.connected', { task: title })}</p>
       <p className={css.hint}>{t('native.local.receiveHint')}</p>
       <NativeLocalAutomaticPanel
         key={`${assignment.taskId}/${assignment.bindingId}/${assignment.expectedBindingEpoch.nodeId}/${assignment.expectedBindingEpoch.seq}/${executionBinding ?? ''}`}

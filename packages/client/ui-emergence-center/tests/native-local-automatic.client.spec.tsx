@@ -35,6 +35,33 @@ function SubmitBeforeEffects() {
 }
 
 describe('owner-local automatic permission', () => {
+  it.each(['not-live', 'delegated', 'fork'] as const)('blocks fresh automatic permission for a %s execution observation', (eligibility) => {
+    const scope = localSnapshot()
+    const observation = eligibility === 'not-live' ? { agentId: assigned.agentId, eligibility }
+      : { ...localObservation(state), eligibility }
+    const f = fixture({ ...scope, observation })
+    const optIn = screen.getByRole('checkbox', { name: zh['native.local.allowAutomatic'] })
+    expect(optIn).toHaveProperty('disabled', true)
+    fireEvent.submit(optIn.closest('form')!)
+    expect(f.actScope).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: zh['native.local.leave'] })).toHaveProperty('disabled', eligibility === 'not-live')
+  })
+
+  it('keeps a retained automatic draft unsubmitted while execution status is pending, unavailable or missing', () => {
+    const f = fixture()
+    allow()
+    for (const scope of [{ ...f.props.scope, pending: true }, { ...f.props.scope, phase: 'error' as const },
+      { ...f.props.scope, observation: null }]) {
+      f.rerender(<NativeLocalContributionPanel {...f.props} scope={scope} />)
+      const consent = screen.getByRole<HTMLInputElement>('checkbox', { name: zh['native.local.allowAutomatic'] })
+      expect(consent.checked).toBe(true)
+      expect(consent.disabled).toBe(true)
+      expect(screen.getByLabelText<HTMLInputElement>(zh['native.goal']).value).toBe('Coordinate retries')
+      fireEvent.submit(consent.closest('form')!)
+      expect(f.actScope).not.toHaveBeenCalled()
+    }
+  })
+
   it('keeps a recorded local read issue separate from automatic permission', () => {
     const current = { ...localExecution, mode: 'paused' as const, pauseReason: 'coverage' as const, automatic: null }
     const f = fixture(localSnapshot(current))

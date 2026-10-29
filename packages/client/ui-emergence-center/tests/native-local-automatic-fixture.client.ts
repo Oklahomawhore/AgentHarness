@@ -11,7 +11,7 @@ export const localExecution: ScopeAgentBindingStatus = { ...state, version: 2, m
   binding: { kind: 'local-task', id: 'execution-local' as NonNullable<ScopeAgentBindingStatus['binding']>['id'],
     target: { taskId: target.taskId, taskBindingId: target.taskBindingId, bindingEpoch: target.expectedBindingEpoch,
       participantId: localCapture.grant.participantId } } }
-export function localObservation(value = state, localTask = target): ScopeAgentStatusResult {
+export function localObservation(value = state, localTask = target): Extract<ScopeAgentStatusResult, { state: unknown }> {
   return { agentId: value.agentId, eligibility: 'eligible', state: value,
     localTask, readStateSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['readStateSeq'],
     asOfSeq: 10 as Extract<ScopeAgentStatusResult, { state: unknown }>['asOfSeq'],

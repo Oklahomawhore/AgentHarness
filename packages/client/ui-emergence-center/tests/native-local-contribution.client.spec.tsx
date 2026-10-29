@@ -3,6 +3,7 @@ import { useLayoutEffect } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ScopeAgentLocalContributionCapture } from '@deepseek-ai/dsh-api-remotes/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { NativeLocalContributionPanel, type NativeLocalContributionActions } from '../src/client/NativeLocalContributionPanel.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -38,6 +39,15 @@ function fillPermission(): void {
 }
 
 describe('current Session owner-local consent', () => {
+  it.each(['not-live', 'delegated', 'fork'] as const)('explains an unavailable %s Session without offering a connection', (eligibility) => {
+    const f = fixture({ ...unbound, eligibility })
+    expect(screen.getByText(zh[`native.local.eligibility.${eligibility}`])).toBeTruthy()
+    const connect = screen.getByRole('button', { name: zh['native.local.connect'] })
+    expect(connect).toHaveProperty('disabled', true)
+    fireEvent.submit(connect.closest('form')!)
+    expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
+  })
+
   it.each(['loading', 'error'] as const)('delays gateway recovery advice until the local confirmation settles from %s', (status) => {
     const value = { ...assigned, capture: localCapture }
     const f = fixture(value)
@@ -137,6 +147,21 @@ describe('current Session owner-local consent', () => {
     expect(f.actions.requestNativeLocalContribution).not.toHaveBeenCalled()
   })
 
+  it('refuses a stale Task form while its directory is unavailable or its selected Task has disappeared', () => {
+    const f = fixture()
+    const task = screen.getByRole('combobox')
+    fireEvent.change(task, { target: { value: binding.taskId } })
+    f.rerender(<NativeLocalContributionPanel {...f.props} catalogReady={false} />)
+    const connect = screen.getByRole('button', { name: zh['native.local.connect'] })
+    expect(connect).toHaveProperty('disabled', true)
+    fireEvent.submit(connect.closest('form')!)
+    expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
+    f.rerender(<NativeLocalContributionPanel {...f.props} tasks={[]} />)
+    expect(screen.getByText(zh['native.local.empty'])).toBeTruthy()
+    fireEvent.submit(screen.getByRole('button', { name: zh['native.local.connect'] }).closest('form')!)
+    expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
+  })
+
   it('requires separate consent and submits the observed binding epoch with only selected tools', async () => {
     const f = fixture(assigned)
     expect(screen.getByText(zh['native.local.receiveHint'])).toBeTruthy()
@@ -184,6 +209,52 @@ describe('current Session owner-local consent', () => {
     expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
   })
 
+  it('shows pending and paused collection separately from an owner rejection and retries only the displayed capture', async () => {
+    const f = fixture({ ...assigned, capture: { ...localCapture, state: 'opening', collecting: false } })
+    expect(screen.getByText(zh['native.local.opening'])).toBeTruthy()
+    f.rerender(<NativeLocalContributionPanel {...f.props} entry={{ ...f.props.entry, value: { ...assigned,
+      capture: { ...localCapture, collecting: false, pendingSamples: 2, collectionIssue: 'durability-failed', issue: 'capacity' } } }} />)
+    expect(screen.getByText(zh['native.share.paused'])).toBeTruthy()
+    expect(screen.getByText(zh['native.share.collection.durability-failed'])).toBeTruthy()
+    expect(screen.getByText(zh['native.local.issue.capacity'])).toBeTruthy()
+    expect(screen.getByText(makeTranslate(zh)('native.share.pending', { count: 2 }))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.stop'] }))
+    await waitFor(() => { expect(f.actions.stopNativeLocalContribution).toHaveBeenCalledExactlyOnceWith({
+      agentId, expectedCapture: localCapture.selection,
+    }) })
+  })
+
+  it.each([false, true])('displays the immutable combined source with completed answers=%s', (completedTurns) => {
+    const capture: ScopeAgentLocalContributionCapture = { ...localCapture, sourceKind: 'native-work',
+      tools: ['edit'], commands: [], completedTurns,
+      grant: { ...localCapture.grant, source: { kind: 'native-work', version: 6, name: 'Approved native work',
+        tools: ['Edit'], commands: [], completedTurns, fileContent: 'completed-native-file' } } }
+    const f = fixture({ ...assigned, capture })
+    expect(screen.getByText(zh['native.work.active'])).toBeTruthy()
+    expect(screen.getByText(zh['native.work.stopHint'])).toBeTruthy()
+    expect(screen.getByText(zh[completedTurns ? 'native.work.selected' : 'native.work.notSelected'])).toBeTruthy()
+    expect(screen.getByText(zh['native.share.edit'])).toBeTruthy()
+    expect(screen.getByText(zh['native.fileContent.complete'])).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: zh['native.work.completedTurns'] })).toBeNull()
+    expect(f.actions.requestNativeLocalContribution).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('submits combined file work with complete contents=%s only after its own consent', async (complete) => {
+    const f = fixture(assigned)
+    fillPermission()
+    fireEvent.change(screen.getByLabelText(zh['contribution.sourceKind']), { target: { value: 'native-work' } })
+    if (complete) fireEvent.click(screen.getByRole('checkbox', { name: zh['native.fileContent.consent'] }))
+    expect(screen.getByRole('button', { name: zh['native.local.enable'] })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('checkbox', { name: zh['native.work.localConsent'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['native.local.enable'] }))
+    await waitFor(() => { expect(f.actions.requestNativeLocalContribution).toHaveBeenCalledOnce() })
+    const request = vi.mocked(f.actions.requestNativeLocalContribution).mock.calls[0]![0]
+    expect(request).toMatchObject({ ...binding, sourceKind: 'native-work', roots: ['/project'],
+      tools: ['write'], commands: [], completedTurns: false })
+    expect(request.fileContent).toBe(complete ? 'completed-native-file' : undefined)
+    expect(f.actions.checkoutNativeLocalTask).not.toHaveBeenCalled()
+  })
+
   it('does not connect a second receiver and single-flights an already sent checkout', async () => {
     const f = fixture()
     f.rerender(<NativeLocalContributionPanel {...f.props} receivingElsewhere />)
@@ -202,6 +273,21 @@ describe('current Session owner-local consent', () => {
 
 
 describe('owner-local completed final-answer permission', () => {
+  it('shows approved final answers without file fields and stops their exact capture', async () => {
+    const capture: ScopeAgentLocalContributionCapture = { sourceKind: 'completed-turn-outcomes',
+      selection: localCapture.selection, state: 'active', collecting: true, pendingSamples: 0, issue: null, collectionIssue: null,
+      grant: { ...localCapture.grant, source: { kind: 'completed-turn-outcomes', version: 5, name: 'Approved final answers' } } }
+    const f = fixture({ ...assigned, capture })
+    expect(screen.getByText(zh['native.outcomes.active'])).toBeTruthy()
+    expect(screen.getByText(zh['native.outcomes.stopHint'])).toBeTruthy()
+    expect(screen.getByText(zh['native.outcomes.source'])).toBeTruthy()
+    expect(screen.queryByText(zh['contribution.roots'])).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['native.share.stop'] }))
+    await waitFor(() => { expect(f.actions.stopNativeLocalContribution).toHaveBeenCalledExactlyOnceWith({
+      agentId, expectedCapture: localCapture.selection,
+    }) })
+  })
+
   it('uses separate consent with no file fields and sends only the selected source permission', async () => {
     const f = fixture(assigned)
     fillPermission()
