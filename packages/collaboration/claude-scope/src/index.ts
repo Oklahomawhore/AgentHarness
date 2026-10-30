@@ -1049,7 +1049,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
       if (grant === undefined || (grant.remote !== undefined && grant.remote.intervalId === undefined)) {
         if (previous === undefined) return undefined
         const withdrawal = previous.kind === 'withdrawal' && previous.maxContextBytes === this.config.maxContextBytes
-          ? previous : withdrawnScopeProjection(session, this.config.maxContextBytes)
+          ? previous : withdrawnScopeProjection(previous, this.config.maxContextBytes)
         const saved = await this.storeProjection(domain, session, grant, change, withdrawal, signal)
         if (saved) return withdrawal
         continue

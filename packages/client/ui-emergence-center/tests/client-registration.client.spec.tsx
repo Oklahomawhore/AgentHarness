@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeTranslate, RemoteError, SlotTestRuntime, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetupResult, DevelopmentParticipantAnnounceRequest,
+  ClaudeScopeJointSummary, ClaudeScopeLeaveJointRequest, ClaudeScopeRecoverJointRequest,
   DevelopmentTaskCreateRequest, DevelopmentTaskLineageRequest, DevelopmentTaskPublishContextRequest,
   DevelopmentTaskSnapshot, DevelopmentTaskAssignment, DevelopmentParticipantSnapshot, DevelopmentTaskGetRequest,
   DevelopmentTaskApproveObservedIntervalRequest, DevelopmentTaskEndObservedIntervalRequest,
@@ -191,6 +192,12 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     Promise<RemoteResult<DevelopmentTaskObservedInterval>>>().mockRejectedValue(new Error('No observed approval configured'))
     const endObserved = vi.fn<(request: DevelopmentTaskEndObservedIntervalRequest) =>
     Promise<RemoteResult<DevelopmentTaskObservedReceipt>>>().mockRejectedValue(new Error('No observed ending configured'))
+    const contributionDetail = vi.fn(async (_request: { sessionKey: ClaudeScopeSessionSummary['sessionKey'] }) =>
+      ok({ ...sourceDetail, session: currentSessions[0] ?? session }))
+    const leaveJoint = vi.fn<(request: ClaudeScopeLeaveJointRequest) => Promise<RemoteResult<ClaudeScopeSessionSummary>>>()
+      .mockRejectedValue(new Error('No joint departure configured'))
+    const recoverJoint = vi.fn<(request: ClaudeScopeRecoverJointRequest) => Promise<RemoteResult<ClaudeScopeSessionSummary>>>()
+      .mockRejectedValue(new Error('No joint recovery configured'))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
@@ -200,7 +207,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       mcpClientSetup: { list: clientsList, setup: setupClient },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
         prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource, requestContribution: requestSource,
-        contributionDetail: async () => ok({ ...sourceDetail, session: currentSessions[0] ?? session }) },
+        contributionDetail, leaveJoint, recoverJoint },
       scopeAccess: {
         identity: async () => ok({ peerId: applicationEntry.ownerPeerId, addresses: [applicationEntry.ownerAddress] }),
         list: async () => ok({ grants: [], subscriptions: [] }),
@@ -241,6 +248,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
       nativeStatus, localStatus, permissionDraft, observedCandidates, observedIntervals, approveObserved, endObserved,
+      contributionDetail, leaveJoint, recoverJoint,
       issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
@@ -780,6 +788,72 @@ describe('Collaboration client registration lifecycle', () => {
       await screen.findByLabelText(zh['contribution.application.paste'])
       expect(subject.leave).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey })
     } finally { await subject.runtime.dispose() }
+  })
+
+  it('recovers retained Claude joint reading after a lost route reply, preserves an unsubmitted source draft and leaves the same joint', async () => {
+    const subscriptionId = 'retained-reading' as NonNullable<ClaudeScopeJointSummary['subscriptionId']>
+    const joint: ClaudeScopeJointSummary = { id: 'retained-joint' as ClaudeScopeJointSummary['id'], capture: capture.selection,
+      expectedReadRevision: 2, state: 'active', intent: 'adopt', cleanupPending: false,
+      subscriptionId }
+    const selected: ClaudeScopeSessionSummary = { ...session, readRevision: 3, joint,
+      receiveSubscriptionId: subscriptionId }
+    const subject = await mountPanel([selected])
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      const sourceElement = screen.getByRole('heading', { name: zh['contribution.sourceTitle'] }).closest('section')
+      if (sourceElement === null) throw new Error('Selected source panel missing')
+      const source = within(sourceElement)
+      await source.findByText(zh['contribution.stopped'])
+      await source.findByText(zh['claude.joint.state.active'])
+      const draft = source.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste'])
+      fireEvent.change(draft, { target: { value: 'Unsubmitted next source permission' } })
+      const recovered: ClaudeScopeSessionSummary = { ...selected, readRevision: 4 }
+      subject.recoverJoint.mockImplementationOnce(async () => {
+        subject.contributionDetail.mockResolvedValue(ok({ session: recovered, capture: null }))
+        subject.sessions.mockResolvedValue(ok([recovered]))
+        return { ok: false, error: new RemoteError('gateway/internal', 'Private reply lost after route commit', {}) }
+      })
+      const sessionReads = subject.sessions.mock.calls.length
+      fireEvent.click(source.getByText(zh['native.route.title']))
+      fireEvent.change(source.getByLabelText(zh['native.route.new']),
+        { target: { value: ' /ip4/192.0.2.22/tcp/40123/p2p/owner-peer ' } })
+      fireEvent.click(source.getByRole('button', { name: zh['native.route.apply'] }))
+      await source.findByText(zh['contribution.error.unknown'])
+      await waitFor(() => { expect(source.getByLabelText<HTMLInputElement>(zh['native.route.new']).value).toBe('') })
+      expect(subject.recoverJoint).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, jointId: joint.id,
+        expectedReadRevision: 3, ownerAddress: '/ip4/192.0.2.22/tcp/40123/p2p/owner-peer' })
+      expect(subject.sessions.mock.calls.length).toBeGreaterThan(sessionReads)
+      expect(subject.contributionDetail).toHaveBeenLastCalledWith({ sessionKey: session.sessionKey })
+      expect(source.getByText(zh['claude.joint.state.active'])).toBeTruthy()
+      expect(draft.value).toBe('Unsubmitted next source permission')
+      expect(source.queryByText('Private reply lost after route commit')).toBeNull()
+      const { receiveSubscriptionId: _subscription, ...withoutReading } = recovered
+      const departed: ClaudeScopeSessionSummary = { ...withoutReading, readRevision: 5,
+        joint: { ...joint, state: 'ended', intent: 'leave' } }
+      subject.leaveJoint.mockImplementationOnce(async () => {
+        subject.contributionDetail.mockResolvedValue(ok({ session: departed, capture: null }))
+        subject.sessions.mockResolvedValue(ok([departed]))
+        return ok(departed)
+      })
+      fireEvent.click(source.getByRole('button', { name: zh['claude.joint.leave'] }))
+      await source.findByText(zh['claude.joint.state.ended'])
+      expect(subject.leaveJoint).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, jointId: joint.id })
+      expect(source.queryByRole('button', { name: zh['claude.joint.leave'] })).toBeNull()
+      expect(source.queryByLabelText(zh['native.route.new'])).toBeNull()
+      expect(source.queryByText(zh['contribution.error.unknown'])).toBeNull()
+      expect(draft.value).toBe('Unsubmitted next source permission')
+      expect(subject.requestSource).not.toHaveBeenCalled()
+      expect(subject.prepare).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.stopSource).not.toHaveBeenCalled()
+      expect(subject.join).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(diagnostics).toHaveBeenCalledOnce()
+    } finally {
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
+    }
   })
 
   it('confirms a remote observation approval after its reply is lost, then ends only that binding and keeps it ended on refresh', async () => {

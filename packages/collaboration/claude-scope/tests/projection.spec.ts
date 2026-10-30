@@ -42,7 +42,7 @@ it('records exact external projection and withdrawal text with scope, supersessi
   expect(projection.omittedSources).toEqual([{
     source: { kind: 'publication', taskId: grant.taskId, revision: 3, publicationId: 'own-source' }, reason: 'self-published',
   }])
-  const withdrawal = withdrawnScopeProjection({ ...session, lastProjectionId: projection.projectionId }, 10_000)
+  const withdrawal = withdrawnScopeProjection(projection, 10_000)
   await expect(withdrawal.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/withdrawal.txt', import.meta.url)))
   expect(withdrawal.text).not.toContain('fixture-68')
   expect(projection.text).not.toContain('private-claude-session')
@@ -58,5 +58,5 @@ it('bounds the complete text including framing and rejects a provider that excee
   vi.spyOn(backend, 'compute').mockResolvedValue({ activation: { kind: 'exact' }, text: '界'.repeat(1000), selectedSources: [], omittedSources: [] })
   await expect(computeScopeProjection(input)).rejects.toThrow('backend exceeds complete projection budget')
   await expect(computeScopeProjection({ ...input, maxContextBytes: 1 })).rejects.toThrow('projection framing exceeds maxContextBytes')
-  expect(() => withdrawnScopeProjection(session, 1)).toThrow('withdrawal exceeds maxContextBytes')
+  expect(() => withdrawnScopeProjection(projection, 1)).toThrow('withdrawal exceeds maxContextBytes')
 })

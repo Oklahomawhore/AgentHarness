@@ -364,8 +364,12 @@ it.each(['local', 'peer'] as const)('reports an actual %s timeout independently 
   stage = 'complete'
 })
 
-it('makes insufficient command attribution capacity visible without publishing invented evidence', async () => {
+it.each(['completed', 'rejected'] as const)('makes insufficient %s command attribution capacity visible without publishing invented evidence', async (settlement) => {
   const f = await fixture('peer', { maxSampleBytes: 512 })
+  if (settlement === 'rejected') releases.push(f.source.ctx.on('tools/post-execute', async (execution, _result, next) => {
+    if (execution.name === 'bash') return { kind: 'block', feedback: [{ type: 'text', text: 'Command settlement rejected' }] }
+    return next()
+  }))
   await f.execute('small-allowance', 7, 'ACTUAL_BUT_UNDELIVERABLE')
   await expect.poll(async () => (await f.status()).capture?.collectionIssue).toBe('attribution-budget')
   expect(f.reports()).toEqual([])
