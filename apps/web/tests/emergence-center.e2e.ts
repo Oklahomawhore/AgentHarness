@@ -2,7 +2,7 @@
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { mkdir, readFile } from 'node:fs/promises'
-import type { Browser, ConsoleMessage, Page } from 'playwright'
+import type { Browser, ConsoleMessage, Page, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentTaskBindingId } from '@deepseek-ai/dsh-development-task'
@@ -330,6 +330,57 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     expect(await authorization.getByRole('button', { name: '允许此绑定共享工作观察', exact: true }).count()).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 30_000)
+
+  it('restores the selected Task and ended observation after transport reconnects', async () => {
+    const recoveryPage = await browser.newPage({ locale: ZH_BROWSER_LOCALE, storageState: await page.context().storageState() })
+    try {
+      const recoveryTripwire = watchConsole(recoveryPage)
+      const sockets: WebSocketRoute[] = []
+      let allowRecovery = false
+      await recoveryPage.routeWebSocket('**/api/remote.mux', (route) => {
+        sockets.push(route)
+        if (sockets.length === 1 || allowRecovery) route.connectToServer()
+      })
+      const url = new URL(scaffold.authenticatedUrl)
+      url.hash = 'agentharness=collaboration'
+      await recoveryPage.goto(url.href, { waitUntil: 'load' })
+      const panel = recoveryPage.locator('[data-emergence-center]')
+      const task = scaffold.ctx.developmentTasks.list({ limit: 200 }).find(item => item.objective === '网页汇合任务')
+      if (task === undefined) throw new Error('Expected the retained Merge Task')
+      await panel.locator('button', { hasText: task.objective }).first().click()
+      await panel.getByRole('heading', { name: task.objective, exact: true }).waitFor()
+      const observations = panel.getByRole('region', { name: '远程工作观察授权', exact: true })
+      await observations.getByText('已终止此绑定的共享；重新加入需创建新的绑定。', { exact: true }).waitFor()
+      const intervals = await scaffold.ctx.developmentTasks.observedIntervals({ taskId: task.id })
+      for (const marker of ['重连前的实时更新', '重连后的实时更新']) {
+        await scaffold.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: task.createdBy, text: marker })
+        await panel.getByRole('paragraph').filter({ hasText: new RegExp(`^${marker}$`, 'u') }).waitFor()
+        if (marker === '重连前的实时更新') {
+          expect(sockets).toHaveLength(1)
+          await sockets[0]!.close({ code: 4001, reason: 'collaboration recovery acceptance' })
+          await expect.poll(() => sockets.length).toBe(2)
+          await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor()
+          allowRecovery = true
+          // A fresh attempt forwards its opening frames; a previously held socket has already lost them.
+          await sockets[1]!.close({ code: 4001, reason: 'collaboration endpoint restored' })
+          await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor({ state: 'hidden' })
+          await panel.getByRole('heading', { name: task.objective, exact: true }).waitFor()
+          await observations.getByText('已终止此绑定的共享；重新加入需创建新的绑定。', { exact: true }).waitFor()
+        }
+      }
+      await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor({ state: 'hidden' })
+      expect(await observations.getByRole('button', { name: '允许此绑定共享工作观察', exact: true }).count()).toBe(0)
+      expect(await scaffold.ctx.developmentTasks.observedIntervals({ taskId: task.id })).toEqual(intervals)
+      expect(sockets).toHaveLength(3)
+      expect(recoveryTripwire.pageErrors).toEqual([])
+      expect(recoveryTripwire.warnings.some(warning => /gap repair|discontinuous/iu.test(warning))).toBe(false)
+    } catch (error) {
+      await saveFailureShot(recoveryPage, 'web-e2e-emergence-center-reconnect')
+      throw error
+    } finally {
+      await recoveryPage.close()
+    }
+  })
 
   it('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, ['created.expected.md'])

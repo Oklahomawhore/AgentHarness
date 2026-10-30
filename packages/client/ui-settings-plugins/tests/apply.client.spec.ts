@@ -12,6 +12,7 @@ import type {
   ConfigurablePluginsTabFace, PluginsSettingsSectionInjected,
 } from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { SubagentModelSelectionCardController } from '../src/client/subagent-model-selection-card-controller.ts'
+import type { ScopeContextCardFace } from '../src/client/scope-context-card-controller.ts'
 import { apply as hostApply } from '../src/index.ts'
 
 // These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
@@ -206,6 +207,37 @@ describe('ui-settings-plugins apply', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
     ctx.emit('connection/reset')
     expect(reset).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads the summary model catalog through its registered card and stops reads after disposal', async () => {
+    const { ctx, slots, models, remote, describeSettings } = await bench()
+    describeSettings.mockResolvedValue({ ok: true, value: {
+      writable: true, hasDocument: true, namespaces: [{ ns: 'scope-context',
+        schema: { type: 'object', dict: {} }, value: { mode: 'reported', provider: '', model: '', maxCalls: 4 },
+        applies: 'restart', secrets: [], revision: 0 }],
+    } })
+    ctx.emit('connection/reset')
+    declareRoot(slots)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    try {
+      await fiber.await()
+      const entry = slots.entries('settings.plugin.item').find(item => item.options.key === 'scope-context')
+      if (entry?.inject === undefined) throw new Error('Summary settings card missing')
+      // The slot registry erases each card's injected face type.
+      const face = (entry.inject as unknown as () => ScopeContextCardFace)()
+      await vi.waitFor(() => { expect(face.hooks.scopeContextCard.getSnapshot().writable).toBe(true) })
+      models.mockClear()
+      face.chooseMode('semantic')
+      await vi.waitFor(() => { expect(face.hooks.scopeContextCard.getSnapshot().catalogStatus).toBe('ready') })
+      expect(models).toHaveBeenCalledOnce()
+      await fiber.dispose()
+      models.mockClear()
+      face.retryCatalog()
+      remote.emit('llm/adapters-updated', [])
+      expect(models).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 
   it('ignores a credential change for a reference no card watches', async () => {

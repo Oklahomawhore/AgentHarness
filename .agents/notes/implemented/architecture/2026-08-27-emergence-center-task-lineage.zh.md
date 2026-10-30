@@ -49,3 +49,5 @@ Status: implemented
 该设计明确放弃谱系编辑、Task 删除或 rebase、自动语义合并、完整 Session 继承、局域网传输加密和一个 Task 多个 Run。启用 Mesh 时共享 cluster secret 成为必需条件；旧 Room-only 协议不能与带版本 Mesh 互通，因此升级需要统一维护窗口。
 
 验证覆盖 Root/Fork/Merge invariant、精确 revision 上下文选择与限制、逐行重启恢复、Room 自愈、同一客户端的独立 Session binding、真实三节点认证增量复制与重连、篡改/重放/冲突拒绝、STDIO MCP 工具与 resource 交付、直接可见的 Agent 指引、有界 DAG UI 和徽标几何、真实 Loader 的 keyless transcript，以及便携安装、升级与 cluster credential 流程。[分配 API 回放](../../../../snapshots/session/cordis-task-assignment-retry/snapshot.yml)验证检查结果会向后续模型请求提供已提交事件的重试语义；这不代表真实模型已采用这些信息。 [谱系 SDK 回放](../../../../snapshots/sdk/task-lineage-parent-revisions/snapshot.yml)拒绝摘要自洽的伪造快照，以同一所有者序号重试规范子任务，并在父任务变化后记录规范继承事实。该回放还会在引用的 Task 版本到达前拒绝未来确认。受控回复不证明真实模型采用。
+
+[浏览器协作流程](../../../../apps/web/tests/emergence-center.e2e.ts)验证所选 Task 和已终止的观察许可在传输断开及一次不可用的重连后保持不变，并在恢复的连接上继续接收 Host 的新发布。
