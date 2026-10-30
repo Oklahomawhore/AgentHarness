@@ -71,12 +71,12 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   const openedAt = Date.now()
   const trace = (phase: string, url: string): void => {
     const path = new URL(url).pathname
-    if (!path.startsWith('/api/')) return
+    if (!path.startsWith('/api/claudeScope/') && !path.startsWith('/api/scopeAccess/')) return
     rpcTrace.push(`${String(Date.now() - openedAt)}ms ${phase} ${path}`)
     if (rpcTrace.length > 64) rpcTrace.shift()
   }
   page.on('request', (request) => { trace('request', request.url()) })
-  page.on('response', (response) => { trace('headers', response.url()) })
+  page.on('response', (response) => { trace(`headers:${String(response.status())}`, response.url()) })
   page.on('requestfinished', (request) => { trace('finished', request.url()) })
   page.on('requestfailed', (request) => { trace('failed', request.url()) })
   page.on('console', (message) => {
