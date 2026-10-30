@@ -36,6 +36,7 @@ interface View {
   readonly tripwire: ReturnType<typeof watchConsole>
   readonly errors: string[]
   readonly injectedFailures: Set<string>
+  readonly rpcTrace: string[]
 }
 
 function replay(): ReplayOverrideDoc {
@@ -66,6 +67,18 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   const tripwire = watchConsole(page)
   const errors: string[] = []
   const injectedFailures = new Set<string>()
+  const rpcTrace: string[] = []
+  const openedAt = Date.now()
+  const trace = (phase: string, url: string): void => {
+    const path = new URL(url).pathname
+    if (!path.startsWith('/api/')) return
+    rpcTrace.push(`${String(Date.now() - openedAt)}ms ${phase} ${path}`)
+    if (rpcTrace.length > 64) rpcTrace.shift()
+  }
+  page.on('request', (request) => { trace('request', request.url()) })
+  page.on('response', (response) => { trace('headers', response.url()) })
+  page.on('requestfinished', (request) => { trace('finished', request.url()) })
+  page.on('requestfailed', (request) => { trace('failed', request.url()) })
   page.on('console', (message) => {
     if (message.type() !== 'error') return
     if (message.text().includes('net::ERR_FAILED') && injectedFailures.has(new URL(message.location().url, scaffold.baseUrl).pathname)) return
@@ -75,7 +88,7 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   if (collaboration) url.hash = 'agentharness=collaboration'
   await page.goto(url.href, { waitUntil: 'load' })
   await page.locator(collaboration ? '[data-emergence-center]' : '[class*="frame"]').first().waitFor({ timeout: 30_000 })
-  return { scaffold, page, tripwire, errors, injectedFailures }
+  return { scaffold, page, tripwire, errors, injectedFailures, rpcTrace }
 }
 
 async function hook(scaffold: WebScaffold, generation: string, input: ClaudeScopeHookRequest['input']): Promise<ClaudeScopeHookResult> {
@@ -225,6 +238,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
         await saveFailureShot(view.page, `web-e2e-contribution-${role}`)
         console.error('contribution acceptance diagnostics', { role, errors: view.errors,
           warnings: view.tripwire.warnings, pageErrors: view.tripwire.pageErrors,
+          rpcTrace: view.rpcTrace,
           aria: await view.page.locator('body').ariaSnapshot() })
       }
     })
