@@ -2357,21 +2357,29 @@ describe('independent ordinary work contribution', () => {
       .toEqual({ kind: 'tool-observations', tools: ['Edit', 'Write'] })
   })
 
-  it.skipIf(process.platform === 'win32')('enforces tool consent, original arguments, and live root resolution at completion', async () => {
+  it('enforces tool consent and original arguments before publishing a completion', async () => {
     const f = await toolContributionHosts(['Write'])
     const input = { tool_use_id: 'lease', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'new.txt'), content: 'approved' } }
     await f.source.hook('tool-contributor', 'PreToolUse', input)
     expect((await f.source.hook('tool-contributor', 'PostToolUse', { ...input, tool_input: { ...input.tool_input, content: 'different' } })).receipt.reason)
       .toBe('tool-lease-changed')
-    const outside = join(f.owner.directory, 'outside.txt')
-    await writeFile(outside, 'private')
-    await symlink(outside, input.tool_input.file_path)
-    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('path-outside-grant')
     expect((await f.source.hook('tool-contributor', 'PreToolUse', { tool_use_id: 'edit', tool_name: 'Edit',
       tool_input: { file_path: join(f.source.directory, 'another.txt'), old_string: 'a', new_string: 'b' } })).receipt.reason)
       .toBe('tool-outside-contribution')
     expect((await f.source.hook('tool-contributor', 'PreToolUse', { tool_use_id: 'bash', tool_name: 'Bash',
       tool_input: { command: 'cat private' } })).receipt.reason).toBe('unsupported-contribution-tool')
+    expect(f.reports()).toEqual([])
+  })
+
+  // Windows symbolic-link creation can require privileges unavailable to the test process.
+  it.skipIf(process.platform === 'win32')('rechecks the live contribution root when a permitted path becomes an outside symlink', async () => {
+    const f = await toolContributionHosts(['Write'])
+    const input = { tool_use_id: 'lease', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'new.txt'), content: 'approved' } }
+    await f.source.hook('tool-contributor', 'PreToolUse', input)
+    const outside = join(f.owner.directory, 'outside.txt')
+    await writeFile(outside, 'private')
+    await symlink(outside, input.tool_input.file_path)
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('path-outside-grant')
     expect(f.reports()).toEqual([])
   })
 
