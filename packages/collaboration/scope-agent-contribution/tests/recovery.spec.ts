@@ -139,7 +139,7 @@ describe('native completion durability recovery', () => {
     const path = join(source.root, 'domains', `${nativeLocalContributionDomain.name}.json`)
     const bytes = await readFile(path, 'utf8')
     const original = source.ctx.storageDomain.get(nativeLocalContributionDomain.name)?.table('sessions').get(agent.id)
-    expect(original?.samples).toHaveLength(1)
+    expect(original).toHaveProperty('samples', [expect.anything()])
     const entry = [...source.ctx.loader.entries()].find(item => item.options.name === 'contribution')
     if (entry === undefined) throw new Error('Missing contribution Loader entry')
     await entry.update({ disabled: true })
