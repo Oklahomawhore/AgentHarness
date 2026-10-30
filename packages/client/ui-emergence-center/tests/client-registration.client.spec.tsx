@@ -6,7 +6,9 @@ import { makeTranslate, RemoteError, SlotTestRuntime, TestRemote } from '@deepse
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetupResult, DevelopmentParticipantAnnounceRequest,
   DevelopmentTaskCreateRequest, DevelopmentTaskLineageRequest, DevelopmentTaskPublishContextRequest,
-  DevelopmentTaskSnapshot, DevelopmentTaskAssignment, DevelopmentParticipantSnapshot,
+  DevelopmentTaskSnapshot, DevelopmentTaskAssignment, DevelopmentParticipantSnapshot, DevelopmentTaskGetRequest,
+  DevelopmentTaskApproveObservedIntervalRequest, DevelopmentTaskEndObservedIntervalRequest,
+  DevelopmentTaskObservedCandidate, DevelopmentTaskObservedInterval, DevelopmentTaskObservedReceipt,
   DevelopmentRoomDirectorySnapshot, McpClientSnapshot, RemoteResult, ScopeAgentBindingStatus, ScopeAgentBindRequest,
   ScopeAgentBindingRequest,
   ScopeAgentResumeRequest, ScopeAgentContributionStatus, ScopeAgentContributionRequest, ClaudeScopeContributionDetail,
@@ -181,11 +183,19 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     const nativeStatus = vi.fn(async () => ok(contribution))
     const localStatus = vi.fn(async () => ok(localContribution))
     const permissionDraft = vi.fn(async (): Promise<RemoteResult<ScopeAgentContributionPermissionDraft | null>> => ok(null))
+    const observedCandidates = vi.fn(async (_request: DevelopmentTaskGetRequest):
+    Promise<RemoteResult<readonly DevelopmentTaskObservedCandidate[]>> => ok([]))
+    const observedIntervals = vi.fn(async (_request: DevelopmentTaskGetRequest):
+    Promise<RemoteResult<readonly DevelopmentTaskObservedInterval[]>> => ok([]))
+    const approveObserved = vi.fn<(request: DevelopmentTaskApproveObservedIntervalRequest) =>
+    Promise<RemoteResult<DevelopmentTaskObservedInterval>>>().mockRejectedValue(new Error('No observed approval configured'))
+    const endObserved = vi.fn<(request: DevelopmentTaskEndObservedIntervalRequest) =>
+    Promise<RemoteResult<DevelopmentTaskObservedReceipt>>>().mockRejectedValue(new Error('No observed ending configured'))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
       developmentTasks: { list: tasksList, lineage, publishContext, create,
-        observedCandidates: async () => ok([]), observedIntervals: async () => ok([]) },
+        observedCandidates, observedIntervals, approveObservedInterval: approveObserved, endObservedInterval: endObserved },
       developmentTaskAssignments: { list: assignmentsList, checkout },
       mcpClientSetup: { list: clientsList, setup: setupClient },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
@@ -230,7 +240,8 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
-      nativeStatus, localStatus, permissionDraft, issuedApproval: () => approved }
+      nativeStatus, localStatus, permissionDraft, observedCandidates, observedIntervals, approveObserved, endObserved,
+      issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
 
@@ -768,6 +779,58 @@ describe('Collaboration client registration lifecycle', () => {
       await screen.findByRole('button', { name: zh['claude.join'] })
       await screen.findByLabelText(zh['contribution.application.paste'])
       expect(subject.leave).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey })
+    } finally { await subject.runtime.dispose() }
+  })
+
+  it('confirms a remote observation approval after its reply is lost, then ends only that binding and keeps it ended on refresh', async () => {
+    const subject = await mountPanel()
+    const identity: DevelopmentTaskApproveObservedIntervalRequest = {
+      taskId: task.id, sourceNodeId: 'independent-source' as DevelopmentTaskObservedCandidate['sourceNodeId'],
+      participantId: 'remote-api-agent' as DevelopmentTaskObservedCandidate['participantId'],
+      bindingId: 'remote-api-binding' as DevelopmentTaskObservedCandidate['bindingId'],
+      expectedBindingEpoch: { nodeId: 'independent-source' as DevelopmentTaskObservedCandidate['sourceNodeId'], seq: 3 },
+    }
+    const approved: DevelopmentTaskObservedReceipt = { taskId: task.id, ownerNodeId: task.ownerNodeId,
+      intervalId: 'approved-remote-api' as DevelopmentTaskObservedReceipt['intervalId'], revision: 2,
+      event: { nodeId: task.ownerNodeId, seq: 2 } }
+    const active: DevelopmentTaskObservedInterval = { ...identity, id: approved.intervalId, state: 'active', approvalReceipt: approved }
+    const ended: DevelopmentTaskObservedReceipt = { ...approved, revision: 3, event: { ...approved.event, seq: 3 } }
+    try {
+      subject.observedCandidates.mockResolvedValue(ok([{ ...identity, sessionLabel: 'Independent API Agent' }]))
+      fireEvent.click(screen.getByRole('button', { name: zh['observed.refresh'] }))
+      await screen.findByText('Independent API Agent')
+      expect(subject.observedCandidates).toHaveBeenLastCalledWith({ taskId: task.id })
+      expect(subject.approveObserved).not.toHaveBeenCalled()
+      expect(subject.endObserved).not.toHaveBeenCalled()
+      subject.approveObserved.mockImplementationOnce(async () => {
+        subject.observedIntervals.mockResolvedValue(ok([active]))
+        return { ok: false, error: new RemoteError('gateway/internal', 'Private reply lost after owner approval', {}) }
+      })
+      fireEvent.click(screen.getByRole('button', { name: zh['observed.approve'] }))
+      await screen.findByText(zh['observed.actionFailed'])
+      await screen.findByText(zh['observed.active'])
+      expect(subject.approveObserved).toHaveBeenCalledExactlyOnceWith(identity)
+      expect(screen.queryByText('Private reply lost after owner approval')).toBeNull()
+      expect(screen.queryByRole('button', { name: zh['observed.approve'] })).toBeNull()
+      subject.endObserved.mockImplementationOnce(async () => {
+        subject.observedIntervals.mockResolvedValue(ok([{ ...active, state: 'ended', endReceipt: ended }]))
+        return ok(ended)
+      })
+      fireEvent.click(screen.getByRole('button', { name: zh['observed.end'] }))
+      await screen.findByText(zh['observed.ended'])
+      expect(subject.endObserved).toHaveBeenCalledExactlyOnceWith(identity)
+      const reads = subject.observedIntervals.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: zh['observed.refresh'] }))
+      await waitFor(() => { expect(subject.observedIntervals).toHaveBeenCalledTimes(reads + 1) })
+      await subject.runtime.flush()
+      expect(screen.getByText(zh['observed.ended'])).toBeTruthy()
+      expect(screen.queryByText(zh['observed.actionFailed'])).toBeNull()
+      expect(screen.queryByRole('button', { name: zh['observed.approve'] })).toBeNull()
+      expect(screen.queryByRole('button', { name: zh['observed.end'] })).toBeNull()
+      expect(subject.approveObserved).toHaveBeenCalledOnce()
+      expect(subject.endObserved).toHaveBeenCalledOnce()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(subject.requestNative).not.toHaveBeenCalled()
     } finally { await subject.runtime.dispose() }
   })
 

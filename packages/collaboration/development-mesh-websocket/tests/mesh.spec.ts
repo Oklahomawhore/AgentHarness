@@ -383,6 +383,46 @@ describe('authenticated generic development Mesh', () => {
     await waitForTask(third, firstFork.id, 3)
   })
 
+  it('isolates one conflicting node while the other two owners keep replicating and routing commands', async () => {
+    const first = await baseNode('isolation-node-a')
+    const second = await baseNode('isolation-node-b')
+    const third = await baseNode('isolation-node-c')
+    await startThree(first, second, third)
+    const original = await first.ctx.developmentTasks.create({ origin: { kind: 'root' },
+      objective: 'Preserve the original owner responsibility', scope: 'First owner scope', createdBy: first.humanId })
+    await Promise.all([waitForTask(second, original.id), waitForTask(third, original.id)])
+    const created = first.ctx.developmentTasks.log().find(entry => entry.taskId === original.id)
+    if (created?.change.kind !== 'task-created') throw new Error('Original Task creation event missing')
+    await first.stopMesh?.()
+    await waitFor(() => [second, third].every(node => node.ctx.developmentMesh.list().peers
+      .find(item => item.nodeId === first.nodeId)?.state === 'offline'))
+    const socket = await rawConnect(second, first.nodeId)
+    socket.send(envelope(second, 1, { type: 'hello' }, first.nodeId))
+    await waitFor(() => second.ctx.developmentMesh.list().peers.find(item => item.nodeId === first.nodeId)?.state === 'online')
+    const closed = new Promise<void>((resolve) => { socket.once('close', () => { resolve() }) })
+    socket.send(envelope(second, 2, { type: 'events', channel: 'development-task/v1', events: [{
+      kind: 'task-event', entry: { ...created, change: { ...created.change, objective: 'Conflicting owner responsibility' } },
+    }] }, first.nodeId))
+    await closed
+    expect(second.ctx.developmentMesh.list().peers.find(item => item.nodeId === first.nodeId))
+      .toMatchObject({ state: 'isolated', conflicts: 1 })
+    expect(second.ctx.developmentMesh.list().peers.find(item => item.nodeId === third.nodeId)?.state).toBe('online')
+    expect(third.ctx.developmentMesh.list().peers.find(item => item.nodeId === second.nodeId)?.state).toBe('online')
+    const independent = await second.ctx.developmentTasks.create({ origin: { kind: 'root' },
+      objective: 'Continue the second owner responsibility', scope: 'Unaffected owner work', createdBy: second.humanId })
+    await waitForTask(third, independent.id)
+    const updated = await third.ctx.developmentTasks.publishContext({ taskId: independent.id,
+      participantId: second.humanId, text: 'The unaffected owners can still share an update.' })
+    expect(updated).toMatchObject({ ownerNodeId: second.nodeId, revision: 2 })
+    await waitForTask(third, independent.id, 2)
+    expect(second.ctx.developmentTasks.get({ taskId: independent.id }).context)
+      .toEqual([expect.objectContaining({ text: 'The unaffected owners can still share an update.' })])
+    expect([second, third].map(node => node.ctx.developmentTasks.get({ taskId: original.id }).objective))
+      .toEqual([original.objective, original.objective])
+    expect(second.ctx.developmentMesh.list().peers.find(item => item.nodeId === first.nodeId))
+      .toMatchObject({ state: 'isolated', conflicts: 1 })
+  })
+
   it.each(['request', 'response'] as const)('keeps the connection usable after rejecting an oversized %s', async (direction) => {
     const source = await baseNode('size-source')
     const owner = await baseNode('size-owner')

@@ -199,6 +199,27 @@ it('ends due Task authority before refusing a repeated owner approval at its ori
   } finally { clock.mockRestore() }
 })
 
+it.each(['cancelled', 'rejected', 'expired'] as const)('preserves an application already %s when its owner retries rejection', async (terminal) => {
+  const f = await fixture()
+  await f.source.access.applyContribution(f.request, signal())
+  const selection = { entryId: f.single.entryId, expectedProposal: f.request.proposal }
+  if (terminal === 'cancelled') await f.source.access.cancelContributionApplication(f.request, signal())
+  else if (terminal === 'rejected') await f.owner.access.rejectContributionApplication(selection)
+  else {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(f.expiresAt)
+    try {
+      expect(await f.source.access.contributionApplicationStatus(f.request, signal())).toEqual({ status: 'expired' })
+    } finally { clock.mockRestore() }
+  }
+  const retained = structuredClone(f.owner.pool.media)
+  const events = f.owner.tasks.log()
+  expect(await f.owner.access.rejectContributionApplication(selection)).toMatchObject({ result: { status: terminal } })
+  expect(await f.source.access.contributionApplicationStatus(f.request, signal())).toEqual({ status: terminal })
+  expect(f.owner.pool.media).toEqual(retained)
+  expect(f.owner.tasks.log()).toEqual(events)
+  expect(f.owner.tasks.peerContributions({ taskId: f.task.id })).toEqual([])
+})
+
 it('reports unavailable for a malformed durable application without replacing it or opening Task authority', async () => {
   const f = await fixture()
   await f.source.access.applyContribution(f.request, signal())

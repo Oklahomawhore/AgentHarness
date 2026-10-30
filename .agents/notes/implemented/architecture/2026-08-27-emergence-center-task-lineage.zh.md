@@ -51,3 +51,5 @@ Status: implemented
 验证覆盖 Root/Fork/Merge invariant、精确 revision 上下文选择与限制、逐行重启恢复、Room 自愈、同一客户端的独立 Session binding、真实三节点认证增量复制与重连、篡改/重放/冲突拒绝、STDIO MCP 工具与 resource 交付、直接可见的 Agent 指引、有界 DAG UI 和徽标几何、真实 Loader 的 keyless transcript，以及便携安装、升级与 cluster credential 流程。[分配 API 回放](../../../../snapshots/session/cordis-task-assignment-retry/snapshot.yml)验证检查结果会向后续模型请求提供已提交事件的重试语义；这不代表真实模型已采用这些信息。 [谱系 SDK 回放](../../../../snapshots/sdk/task-lineage-parent-revisions/snapshot.yml)拒绝摘要自洽的伪造快照，以同一所有者序号重试规范子任务，并在父任务变化后记录规范继承事实。该回放还会在引用的 Task 版本到达前拒绝未来确认。受控回复不证明真实模型采用。
 
 [浏览器协作流程](../../../../apps/web/tests/emergence-center.e2e.ts)验证所选 Task 和已终止的观察许可在传输断开及一次不可用的重连后保持不变，并在恢复的连接上继续接收 Host 的新发布。
+
+客户端注册测试在审批回复丢失后确认所有者已保留的审批，并验证刷新仍保留明确结束的观察状态。已终结的贡献申请在重试后保持原决定，不创建授权。真实三节点测试验证隔离冲突 peer 后，其他所有者仍能复制 Task 并路由更新。
