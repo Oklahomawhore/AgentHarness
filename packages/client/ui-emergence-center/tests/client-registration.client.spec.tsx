@@ -17,6 +17,7 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer,
   ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
   ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest, ScopeAgentContributionPermissionDraft,
+  ScopeAgentContributionRecoverRouteRequest, ScopeContributionEntry,
   McpClientSetupRequest, McpClientSetupResult, McpClientSetupSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -24,6 +25,7 @@ import { apply, inject } from '../src/client/index.ts'
 import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
 import { zh } from '../src/client/locales.ts'
 import { assigned, binding, localCapture, unbound } from './native-local-contribution-fixture.client.ts'
+import { compositeExecution, localExecution, localObservation, target } from './native-local-automatic-fixture.client.ts'
 import { bound, invitation, observation, observable, state } from './native-scope-fixture.client.ts'
 import { agentId, applicationEntry, capture, emptyStatus } from './native-contribution-fixture.client.ts'
 
@@ -198,6 +200,11 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       .mockRejectedValue(new Error('No joint departure configured'))
     const recoverJoint = vi.fn<(request: ClaudeScopeRecoverJointRequest) => Promise<RemoteResult<ClaudeScopeSessionSummary>>>()
       .mockRejectedValue(new Error('No joint recovery configured'))
+    const scopeStatus = vi.fn(async () => ok(observation(execution, ++executionSeq)))
+    const recoverNativeRoute = vi.fn<(request: ScopeAgentContributionRecoverRouteRequest) =>
+    Promise<RemoteResult<ScopeAgentContributionStatus>>>().mockRejectedValue(new Error('No native route recovery configured'))
+    const leaveNativeJoin = vi.fn<(request: ScopeAgentContributionStopRequest) => Promise<RemoteResult<ScopeAgentContributionStatus>>>()
+      .mockRejectedValue(new Error('No native joint departure configured'))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
@@ -220,13 +227,12 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         probeContributionEntry: async () => ok({ status: 'ready' }),
       },
       scopeAgentContext: {
-        status: async () => ok({ ...observation(execution, ++executionSeq),
-          subscriptionState: execution.binding === null ? 'unbound' : 'active' }),
+        status: scopeStatus,
         bind, pause, resume, leave: leaveScope,
       },
       scopeAgentContributions: {
         status: nativeStatus, localStatus, permissionDraft,
-        request: requestNative, stop: stopNative, requestLocal, stopLocal,
+        request: requestNative, stop: stopNative, requestLocal, stopLocal, recoverRoute: recoverNativeRoute, leaveJoin: leaveNativeJoin,
       },
     })
     if (native) {
@@ -248,7 +254,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
       nativeStatus, localStatus, permissionDraft, observedCandidates, observedIntervals, approveObserved, endObserved,
-      contributionDetail, leaveJoint, recoverJoint,
+      contributionDetail, leaveJoint, recoverJoint, scopeStatus, recoverNativeRoute, leaveNativeJoin,
       issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
@@ -788,6 +794,102 @@ describe('Collaboration client registration lifecycle', () => {
       await screen.findByLabelText(zh['contribution.application.paste'])
       expect(subject.leave).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey })
     } finally { await subject.runtime.dispose() }
+  })
+
+  it('recovers the original native joint route after a lost reply and separates source stop from leaving its retained local goal', async () => {
+    if (compositeExecution.binding?.kind !== 'local-task-scope' || localExecution.binding?.kind !== 'local-task'
+      || compositeExecution.automatic === null || localExecution.automatic === null) throw new Error('Missing combined local permission')
+    const joinEntry: ScopeContributionEntry = { ...applicationEntry, kind: 'scope-join-entry' }
+    const read = { ...invitation, taskId: joinEntry.taskId, ownerAddress: joinEntry.ownerAddress,
+      recipientPeerId: capture.proposal.contributorPeerId, expiresAt: capture.limits.expiresAt }
+    const combined: ScopeAgentBindingStatus = { ...compositeExecution, version: 4, agentId,
+      binding: { ...compositeExecution.binding, invitation: read, originalCapture: capture.selection } }
+    const granted: ScopeContributionInvitation = { version: 1, kind: 'tool-contribution', ownerAddress: joinEntry.ownerAddress,
+      grant: { version: 1, ownerPeerId: joinEntry.ownerPeerId, taskId: joinEntry.taskId, ...capture.proposal, ...capture.limits,
+        grantId: 'native-joint-grant' as ScopeContributionInvitation['grant']['grantId'],
+        generation: 'native-joint-generation' as ScopeContributionInvitation['grant']['generation'] } }
+    const joinedCapture: NonNullable<ScopeAgentContributionStatus['capture']> = { ...capture, entry: joinEntry,
+      invitation: granted, state: 'active', collecting: true, application: null, receivingIntent: 'adopt',
+      receiving: { adoptionId: 'original-native-join' as NonNullable<typeof capture.receiving>['adoptionId'],
+        state: 'active', invitation: read, localTask: target, automatic: compositeExecution.automatic } }
+    const joined: ScopeAgentContributionStatus = { ...emptyStatus, revision: 1, capture: joinedCapture }
+    const relocated = { ...joinEntry, ownerAddress: '/ip4/192.0.2.26/tcp/40123/p2p/owner-peer' }
+    const routedCapture = { ...joinedCapture, routeRevision: 1, entry: relocated }
+    const routed: ScopeAgentContributionStatus = { ...joined, revision: 2, capture: routedCapture }
+    const stopped: ScopeAgentContributionStatus = { ...routed, revision: 3,
+      capture: { ...routedCapture, state: 'ending', collecting: false, receivingIntent: 'cancel-pending', issue: 'owner-unavailable' } }
+    const subject = await mountPanel([], true)
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const t = makeTranslate(zh)
+    try {
+      subject.scopeStatus.mockResolvedValue(ok(localObservation(combined)))
+      subject.localStatus.mockResolvedValue(ok(assigned))
+      subject.nativeStatus.mockResolvedValue(ok(joined))
+      fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+      const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+      fireEvent.click(controls.getByRole('radio', { name: zh['native.target.remote'] }))
+      await controls.findByText(t('native.currentGoal', { goal: compositeExecution.automatic.goal }))
+      const sharing = controls.getByText(zh['native.share.title']).closest('details')
+      if (sharing === null) throw new Error('Native sharing controls missing')
+      if (!sharing.open) fireEvent.click(controls.getByText(zh['native.share.title']))
+      const source = within(sharing)
+      await source.findByText(zh['native.share.active'])
+      await source.findByText(zh['native.join.state.active'])
+      subject.previewContributionText.mockResolvedValueOnce(ok(relocated))
+      subject.recoverNativeRoute.mockImplementationOnce(async () => {
+        subject.nativeStatus.mockResolvedValue(ok(routed))
+        return { ok: false, error: new RemoteError('gateway/internal', 'Private native route reply lost after commit', {}) }
+      })
+      fireEvent.click(source.getByText(zh['native.route.title']))
+      fireEvent.change(source.getByLabelText(zh['native.route.paste']), { target: { value: 'same joint at replacement address' } })
+      fireEvent.click(source.getByRole('button', { name: zh['native.route.verify'] }))
+      await source.findByText(relocated.ownerAddress)
+      fireEvent.click(source.getByRole('button', { name: zh['native.route.apply'] }))
+      await source.findByText(zh['contribution.error.unknown'])
+      await waitFor(() => { expect(source.getByLabelText<HTMLTextAreaElement>(zh['native.route.paste']).value).toBe('') })
+      expect(subject.recoverNativeRoute).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection,
+        expectedOwnerAddress: joinEntry.ownerAddress, expectedRouteRevision: 0, entry: relocated,
+        receive: { expectedReadStateSeq: localObservation(combined).readStateSeq } })
+      expect(source.queryByText('Private native route reply lost after commit')).toBeNull()
+      subject.stopNative.mockImplementationOnce(async () => {
+        subject.nativeStatus.mockResolvedValue(ok(stopped))
+        return ok(stopped)
+      })
+      fireEvent.click(source.getByRole('button', { name: zh['native.share.stop'] }))
+      await source.findByText(zh['native.join.confirming'])
+      expect(subject.stopNative).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })
+      expect(subject.leaveNativeJoin).not.toHaveBeenCalled()
+      expect(subject.leaveScope).not.toHaveBeenCalled()
+      expect(controls.getByText(t('native.currentGoal', { goal: compositeExecution.automatic.goal }))).toBeTruthy()
+      const local: ScopeAgentBindingStatus = { ...localExecution, agentId, mode: 'paused', pauseReason: 'user',
+        usedBudget: combined.usedBudget, binding: { ...localExecution.binding, id: compositeExecution.binding.retainedLocal.bindingId } }
+      subject.leaveNativeJoin.mockImplementationOnce(async () => {
+        subject.nativeStatus.mockResolvedValue(ok({ ...emptyStatus, revision: 4 }))
+        const observed = localObservation(local)
+        subject.scopeStatus.mockResolvedValue(ok({ ...observed, asOfSeq: 11 as typeof observed.asOfSeq,
+          readStateSeq: 11 as typeof observed.readStateSeq }))
+        return ok({ ...emptyStatus, revision: 4 })
+      })
+      fireEvent.click(source.getByRole('button', { name: zh['native.join.leave'] }))
+      await source.findByText(zh['native.share.none'])
+      expect(subject.leaveNativeJoin).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: capture.selection })
+      fireEvent.click(controls.getByRole('button', { name: zh['native.refresh'] }))
+      fireEvent.click(controls.getByRole('radio', { name: zh['native.target.local'] }))
+      await controls.findByText(t('native.currentGoal', { goal: localExecution.automatic.goal }))
+      expect(controls.getByText(t('native.budget', { used: combined.usedBudget, limit: localExecution.automatic.activationLimit,
+        steps: localExecution.automatic.maxStepsPerTurn }))).toBeTruthy()
+      expect(controls.getByRole('button', { name: t('native.resumeRemaining', {
+        count: localExecution.automatic.activationLimit - combined.usedBudget }) })).toBeTruthy()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(subject.resume).not.toHaveBeenCalled()
+      expect(subject.requestNative).not.toHaveBeenCalled()
+      expect(subject.requestLocal).not.toHaveBeenCalled()
+      expect(subject.checkout).not.toHaveBeenCalled()
+      expect(diagnostics).toHaveBeenCalledOnce()
+    } finally {
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
+    }
   })
 
   it('recovers retained Claude joint reading after a lost route reply, preserves an unsubmitted source draft and leaves the same joint', async () => {

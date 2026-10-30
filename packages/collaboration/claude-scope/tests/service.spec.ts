@@ -3008,19 +3008,23 @@ it('refuses a restored tool sample that disagrees with its durable completion', 
 
 // Valid public peer syntax permits real route validation; the controlled transport owns no sockets or private keys.
 const jointOwnerPeer = '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy'
-async function jointApplication(kind: 'single' | 'group' = 'group') {
+async function jointApplication(kind: 'single' | 'group' = 'group', sourceKind: 'tool-observations' | 'claude-work' = 'tool-observations') {
   const pair = await contributionPair(jointOwnerPeer)
   const task = await pair.owner.createTask('Joint external session collaboration')
   const key = await pair.source.observe('joint-source')
   const ownerAddress = (await pair.owner.transport.identity()).addresses[0]!
   const expiresAt = Date.now() + 60000
   const issued = kind === 'group'
-    ? await pair.owner.ctx.scopeAccess.createGroupEntry({ taskId: task.id, ownerAddress, expiresAt, maxMembers: 4 })
-    : await pair.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+    ? await pair.owner.ctx.scopeAccess.createGroupEntry({ taskId: task.id, ownerAddress, expiresAt, maxMembers: 4,
+      ...(sourceKind === 'claude-work' ? { sourceKind } : {}) })
+    : await pair.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind,
       taskId: task.id, ownerAddress, expiresAt })
   const limits = { expiresAt, maxSamples: 8, maxSampleBytes: 4096 }
+  const source = sourceKind === 'claude-work'
+    ? { kind: 'claude-work' as const, tools: ['Write' as const], commands: [], stopReports: true }
+    : { kind: 'tool-observations' as const, tools: ['Write' as const] }
   const request = { sessionKey: key, expectedCapture: null, roots: [pair.source.directory],
-    source: { kind: 'tool-observations' as const, tools: ['Write' as const] }, entry: issued.entry, limits,
+    source, entry: issued.entry, limits,
     receive: { expectedReadRevision: 0 } }
   const detail = (source = pair.source) => source.scope.contributionDetail({ sessionKey: key })
   const waiting = async (source = pair.source) => {
@@ -3060,33 +3064,45 @@ async function jointWrite(source: Awaited<ReturnType<typeof contributionPair>>['
 }
 
 describe('Claude joint receiving consent', () => {
-  it.each(['single', 'group'] as const)('adopts a %s entry without a second read action and omits only its original capture', async (kind) => {
-    const f = await jointApplication(kind)
+  it.each([
+    ['single', 'tool-observations'], ['group', 'tool-observations'],
+    ['single', 'claude-work'], ['group', 'claude-work'],
+  ] as const)('adopts a %s %s entry without a second read action and omits only its original capture', async (kind, sourceKind) => {
+    const f = await jointApplication(kind, sourceKind)
     await f.source.scope.requestContribution(f.request)
     await f.waiting()
     const approved = await f.approve()
     const active = await f.active()
     expect(active.contributionState).toBe('active')
     expect(active.readRevision).toBe(1)
+    expect((f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession).version)
+      .toBe(sourceKind === 'claude-work' ? 3 : 2)
     expect(f.source.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
     await jointWrite(f.source, 'joint-source', 'ORIGINAL_JOINT_WRITE')
-    const result = await f.source.hook('joint-source', 'UserPromptSubmit')
+    const result = await f.source.hook('joint-source', 'UserPromptSubmit', { prompt_id: 'joint-work-turn' })
     expect(result.receipt.status).toBe('projected')
     expect(result.output.hookSpecificOutput?.additionalContext).toContain('Joint external session collaboration')
     expect(result.output.hookSpecificOutput?.additionalContext).not.toContain('ORIGINAL_JOINT_WRITE')
+    if (sourceKind === 'claude-work') {
+      expect((await f.source.hook('joint-source', 'Stop', { prompt_id: 'joint-work-turn',
+        last_assistant_message: 'ORIGINAL_JOINT_REPLY', stop_hook_active: false })).receipt.status).toBe('published')
+      const own = await f.source.hook('joint-source', 'UserPromptSubmit', { prompt_id: 'next-work-turn' })
+      expect(own.output.hookSpecificOutput?.additionalContext).not.toContain('ORIGINAL_JOINT_REPLY')
+    }
     if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing joint read approval')
     const manual = await f.source.observe('same-peer-manual-reader')
     await f.source.scope.receive({ sessionKey: manual, invitation: approved.readInvitation })
     const other = await f.source.hook('same-peer-manual-reader', 'UserPromptSubmit')
     expect(other.output.hookSpecificOutput?.additionalContext).toContain('ORIGINAL_JOINT_WRITE')
+    if (sourceKind === 'claude-work') expect(other.output.hookSpecificOutput?.additionalContext).toContain('ORIGINAL_JOINT_REPLY')
     const subscriptions = (await f.source.ctx.scopeAccess.list()).subscriptions
     expect(subscriptions.find(item => item.id === active.receiveSubscriptionId)).toMatchObject({ version: 2,
       originalCapture: active.joint?.capture })
     expect(subscriptions.find(item => item.id !== active.receiveSubscriptionId)?.version).toBeUndefined()
   })
 
-  it('retains approved receiving after source stop, then leaves it without revoking the owner-issued read grant', async () => {
-    const f = await jointApplication()
+  it.each(['tool-observations', 'claude-work'] as const)('retains approved %s receiving after source stop, then leaves it without revoking the owner-issued read grant', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
     await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
     const before = await f.active()
     await f.source.scope.contributionLeave({ sessionKey: f.key, expectedCapture: before.joint!.capture })
@@ -3115,8 +3131,8 @@ describe('Claude joint receiving consent', () => {
     expect((await restored.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
   })
 
-  it('restores the exact allocated subscription after ensure committed but its reply was lost', async () => {
-    const f = await jointApplication()
+  it.each(['tool-observations', 'claude-work'] as const)('restores the exact allocated %s subscription after ensure committed but its reply was lost', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
     const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
     vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementation(async (plan) => {
       await ensure(plan)
@@ -3179,14 +3195,16 @@ describe('Claude joint receiving consent', () => {
     } finally { leave.mockRestore() }
   })
 
-  it('recovers both active routes with one durable intent and rejects stale management after manual replacement', async () => {
-    const f = await jointApplication()
+  it.each(['tool-observations', 'claude-work'] as const)('recovers both active %s routes with one durable intent and rejects stale management after manual replacement', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
     await f.source.scope.requestContribution(f.request); await f.waiting()
     const approval = await f.approve()
     const before = await f.active()
     const request = { sessionKey: f.key, jointId: before.joint!.id, expectedReadRevision: before.readRevision,
       ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/2/') }
     const changed = await f.source.scope.recoverJoint(request)
+    expect((f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession).version)
+      .toBe(sourceKind === 'claude-work' ? 3 : 2)
     expect(changed.readRevision).toBe(before.readRevision + 1)
     expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(request.ownerAddress)
     await expect.poll(async () => (await f.source.ctx.scopeAccess.list()).subscriptions[0]?.invitation.ownerAddress)
