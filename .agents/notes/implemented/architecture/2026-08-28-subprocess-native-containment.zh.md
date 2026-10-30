@@ -18,6 +18,8 @@ detached POSIX 进程组、Windows direct-parent 遍历与 PTY 后代扫描只�
 
 新分配的 PTY 会在可能失败的进程检查之前建立既有提供方记录与原生退出监听器。JavaScript 引用消失后，原生句柄仍可能保留进程，因此垃圾回收不能替代拆卸。检查失败会等待与已发布会话相同的句柄终止；清理失败时仍保留提供方所有权，供 dispose 与宿主退出处理，而不是释放该分配。
 
+原生退出与 scope 为空是独立事实。scope 不存在且 launch request 尚未消费时，判断依赖直接进程的存活状态，因此在缺少原生退出通知时先等待该 scope 会无法结算。终端清理先在既有 TERM/KILL 等待内确认原生退出，再启动范围观察；退出缺失时保留失败所有权，不启动观察器。原生退出已确认后，仍须等待整个范围为空。
+
 ### Linux scope 与 one-shot bootstrap
 
 同一 runtime 第一次符合条件的 Linux 普通或 PTY 调用会深入检查准确 runner 入口、libc `execve` 与 `fcntl` bindings、可读的 user manager 与保留 literal argv 的 transient-scope 支持。失败的深度 probe 会重试，第一次成功则会缓存。之后每次符合条件的调用仍会在 target 执行前轻量检查 user manager 是否可达。native 路径一旦选定，scope、协议、状态查询或 pre-exec failure 都由本次启动报告，绝不切换到 fallback。

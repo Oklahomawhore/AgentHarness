@@ -368,6 +368,13 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
 
   private async closeManagedRange(owner: BoundProcessOwner): Promise<void> {
     owner.signal('SIGTERM')
+    const nativeExit = this.done.then(() => undefined, () => undefined)
+    if (!this.exited) await raceWithDelay(nativeExit, this.graceMs, undefined)
+    if (!this.exited) {
+      owner.signal('SIGKILL')
+      await raceWithDelay(nativeExit, this.graceMs, undefined)
+    }
+    if (!this.exited) throw new Error(`terminal cleanup failed; exit unconfirmed for pid: ${this.pid}`)
     const observation = owner.waitForExit()
     const first = await raceWithDelay(observation.then(
       () => ({ kind: 'stopped' as const }),
@@ -387,10 +394,6 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
       }
       await observation
     }
-    if (!this.exited) {
-      await raceWithDelay(this.done.then(() => undefined), this.graceMs, undefined)
-    }
-    if (!this.exited) throw new Error(`terminal cleanup failed; exit unconfirmed for pid: ${this.pid}`)
   }
 
   private settleExitIfGone(): void {

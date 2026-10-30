@@ -52,7 +52,7 @@ Collect mode keeps the last `maxBytes` of a stream in memory — errors and fina
 
 Normal disposal terminates every running managed range and terminal session and awaits quiescence. During a JavaScript-observable host exit — direct `process.exit()`, default uncaught exceptions, default unhandled rejections — synchronous finalization asks a Linux scope to kill its members, kills each Windows runner so its sole Job handle closes, and uses the existing PGID, `taskkill`, or captured-identity operation for fallbacks. It creates no promises or timers and does not claim quiescence. The same exit removes the private per-process spill directory when it holds no completed spill file; completed spill files remain as full-output recovery artifacts until an external cleanup. Unhandled `SIGTERM`/`SIGINT`/`SIGHUP`, `SIGKILL`, fatal OOM, native crashes, and power loss need an external supervisor.
 
-A newly allocated PTY is tracked before process inspection. If inspection fails, allocation waits for the same teardown as a published handle; failed cleanup remains owned for later disposal. A missing exit notification reports an unconfirmed exit, not a verified surviving process.
+A newly allocated PTY is tracked before process inspection. If inspection fails, allocation waits for the same teardown as a published handle; failed cleanup remains owned for later disposal. A missing exit notification reports an unconfirmed exit, not a verified surviving process. Linux scope teardown confirms native exit before observing the managed range; an unconfirmed exit rejects cleanup while the provider retains ownership.
 
 ### What can go wrong
 

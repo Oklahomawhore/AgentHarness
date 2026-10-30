@@ -228,17 +228,21 @@ describe('direct authenticated scope transport', () => {
     expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
   })
 
-  it('rejects a stored key whose public half does not match its signing key', async () => {
+  it.each([64, 96])('rejects a stored key whose public half does not match its signing key (%i-byte material)', async (size) => {
     const path = await directory()
     const ctx = await credentials(path)
     const signingKey = await generateKeyPair('Ed25519')
     const otherKey = await generateKeyPair('Ed25519')
     const raw = new Uint8Array([...signingKey.raw.subarray(0, 32), ...otherKey.publicKey.raw])
-    const bytes = privateKeyToProtobuf(privateKeyFromRaw(raw))
+    // The legacy protobuf carries a valid 64-byte key plus an independent public key.
+    const bytes = size === 64 ? privateKeyToProtobuf(privateKeyFromRaw(raw))
+      : new Uint8Array([0x08, 0x01, 0x12, 96, ...signingKey.raw, ...otherKey.publicKey.raw])
     const decoded = privateKeyFromProtobuf(bytes)
+    expect(decoded.type).toBe('Ed25519')
+    expect(decoded.raw).toEqual(size === 64 ? raw : signingKey.raw)
     expect(decoded.publicKey.raw).toEqual(otherKey.publicKey.raw)
     const message = new Uint8Array()
-    const signature = await decoded.sign(message)
+    const signature = await (size === 64 ? signingKey : decoded).sign(message)
     expect(await signingKey.publicKey.verify(message, signature)).toBe(true)
     expect(await decoded.publicKey.verify(message, signature)).toBe(false)
     const record = { kind: 'grant', payload: { version: 1, privateKey: Buffer.from(bytes).toString('base64') } } as const

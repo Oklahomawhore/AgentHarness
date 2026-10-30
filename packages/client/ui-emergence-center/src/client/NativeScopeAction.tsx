@@ -161,6 +161,14 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
     } finally { busy.current = false }
   }
   const close = (): void => { setOpen(false); trigger.current?.focus() }
+  const invitationInput = <>
+    <label className={css.field} htmlFor={`${id}-invitation`}>{t('native.invitation')}
+      <textarea id={`${id}-invitation`} rows={4} value={invitationText} onChange={(event) => {
+        setInvitationText(event.target.value); setAutomaticSelection(null); setSuccess(false)
+      }} /></label>
+    {entryPreview.kind === 'invalid' && <p role="alert" className={css.notice}>{t(entryPreview.reason === 'json'
+      ? 'native.invalidInvitation' : entryPreview.reason === 'unsupported' ? 'native.entry.unsupported' : 'native.entry.incomplete')}</p>}
+  </>
   return <div ref={root} data-native-scope className={css.root}>
     <button ref={trigger} type="button" className={capacityLimited ? `${css.trigger} ${css.capacityTrigger}` : css.trigger} aria-label={t('native.trigger')}
       aria-expanded={open} aria-controls={`${id}-panel`} aria-describedby={capacityLimited ? `${id}-capacity` : undefined}
@@ -221,9 +229,7 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
         {snapshot.phase === 'unavailable' && <p className={css.hint}>{t('native.unavailable')}</p>}
         {terminal && <p className={css.notice}>{t(`native.subscription.${observation.subscriptionState}`)}</p>}
         {bound !== null && <>
-          <dl className={css.details}><dt>{t('native.task')}</dt><dd>{bound.invitation.taskId}</dd>
-            <dt>{t('native.owner')}</dt><dd>{bound.invitation.ownerPeerId}</dd>
-            <dt>{t('native.responsibility')}</dt><dd>{bound.invitation.responsibility}</dd></dl>
+          <dl className={css.details}><dt>{t('native.responsibility')}</dt><dd>{bound.invitation.responsibility}</dd></dl>
           {state?.automatic !== null && state?.automatic !== undefined && <p className={css.goal}>{t('native.currentGoal', { goal: state.automatic.goal })}</p>}
           {bound.kind === 'local-task-scope' && bound.retainedLocal.automatic !== null
             && <p className={css.hint}>{t('native.local.retainedPolicy', { goal: bound.retainedLocal.automatic.goal })}</p>}
@@ -238,17 +244,19 @@ function SessionScopeAction({ useNativeScope, useNativeContributions, useNativeL
             <Button disabled={!ready} onClick={() => { void act({ kind: 'leave', expectedBindingId: bound.id }) }}>{t('native.leave')}</Button>
           </div>
           <p className={css.hint}>{t('native.pauseHint')}</p>
+          <details className={css.disclosure}>
+            <summary>{t('native.local.bindingDetails')}</summary>
+            <dl className={css.details}><dt>{t('native.task')}</dt><dd>{bound.invitation.taskId}</dd>
+              <dt>{t('native.owner')}</dt><dd>{bound.invitation.ownerPeerId}</dd></dl>
+          </details>
           {!terminal && mode !== 'left' && observation !== null && observation.eligibility !== 'not-live' && <NativeReadRoute
             key={`${bound.id}/${bound.invitation.ownerAddress}/${observation.readStateSeq}`}
             current={bound.invitation.ownerAddress} ready={ready} t={t} update={ownerAddress => act({ kind: 'updateRoute',
               request: { expectedBindingId: bound.id, expectedReadStateSeq: observation.readStateSeq, ownerAddress } })} />}
         </>}
-        <label className={css.field} htmlFor={`${id}-invitation`}>{t('native.invitation')}
-          <textarea id={`${id}-invitation`} rows={4} value={invitationText} onChange={(event) => {
-            setInvitationText(event.target.value); setAutomaticSelection(null); setSuccess(false)
-          }} /></label>
-        {entryPreview.kind === 'invalid' && <p role="alert" className={css.notice}>{t(entryPreview.reason === 'json'
-          ? 'native.invalidInvitation' : entryPreview.reason === 'unsupported' ? 'native.entry.unsupported' : 'native.entry.incomplete')}</p>}
+        {bound === null ? invitationInput : <details className={css.disclosure}>
+          <summary>{t('native.otherEntry')}</summary>{invitationInput}
+        </details>}
         {((!bound && !sharingEntry) || (bound !== null && mode !== 'enabled' && !terminal)) && <form className={css.form} onSubmit={(event) => {
           event.preventDefault()
           if (!editable) return

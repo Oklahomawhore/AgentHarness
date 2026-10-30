@@ -32,6 +32,9 @@
 .details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 12px; line-height: 18px; }
 .details dt { color: var(--dsw-alias-label-secondary); }
 .details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.disclosure > summary { min-height: 30px; padding-block: 4px; cursor: pointer; }
+.disclosure > summary:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
+.disclosure[open] > summary { margin-bottom: 8px; }
 .actions, .footer { display: flex; flex-wrap: wrap; gap: 8px; }
 .footer { justify-content: space-between; padding-top: 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); }
 @media (max-width: 440px) { .triggerState { display: none; } .panel { padding: 16px; } }

@@ -244,10 +244,40 @@ describe('LocalTerminalHandle', () => {
     }
     const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner)
     handle.captureRootIdentity()
+    pty.emitExit()
 
     await expect(handle.terminate()).rejects.toBe(failure)
     expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
     expect(waitForExit).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for descendants after native exit and force-kills the remaining managed range', async () => {
+    vi.useFakeTimers()
+    const pty = new FakePty()
+    const stopped = Promise.withResolvers<undefined>()
+    const signals: Array<'SIGTERM' | 'SIGKILL'> = []
+    const waitForExit = vi.fn(() => stopped.promise)
+    const owner: BoundProcessOwner = {
+      signal(signal) {
+        signals.push(signal)
+        if (signal === 'SIGKILL') stopped.resolve(undefined)
+      },
+      waitForExit,
+      terminateForHostExit: vi.fn(),
+    }
+    const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner)
+    handle.captureRootIdentity()
+    pty.emitExit()
+
+    let settled = false
+    const terminating = handle.terminate().then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(5)
+    expect(waitForExit).toHaveBeenCalledOnce()
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(5)
+    await terminating
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(settled).toBe(true)
   })
 
   it('preserves both failed managed-range observations after force-kill', async () => {
@@ -264,6 +294,7 @@ describe('LocalTerminalHandle', () => {
     }
     const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner)
     handle.captureRootIdentity()
+    pty.emitExit()
 
     await expect(handle.terminate()).rejects.toMatchObject({
       errors: [firstFailure, finalFailure],
@@ -320,28 +351,34 @@ describe('LocalTerminalHandle', () => {
     const pty = new FakePty()
     const failure = new Error('scope stayed unreadable')
     const cleanup = vi.fn()
+    const waitForExit = vi.fn(async () => { throw failure })
     const owner: BoundProcessOwner = {
       signal: vi.fn(),
-      waitForExit: vi.fn(async () => { throw failure }),
+      waitForExit,
       terminateForHostExit: vi.fn(),
       cleanup,
     }
     const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner)
     handle.captureRootIdentity()
 
-    await expect(handle.terminate()).rejects.toThrow('terminal managed-range cleanup failed')
-    await expect(handle.terminate()).rejects.toThrow('terminal managed-range cleanup failed')
+    await expect(handle.terminate()).rejects.toThrow('exit unconfirmed for pid: 123')
+    await expect(handle.terminate()).rejects.toThrow('exit unconfirmed for pid: 123')
+    expect(waitForExit).not.toHaveBeenCalled()
     expect(cleanup).not.toHaveBeenCalled()
     pty.emitExit()
     await expect(handle.done).resolves.toEqual({ exitCode: 0, signal: null })
     await vi.waitFor(() => { expect(cleanup).toHaveBeenCalledOnce() })
+    await expect(handle.terminate()).rejects.toThrow('terminal managed-range cleanup failed')
+    await expect(handle.terminate()).rejects.toThrow('terminal managed-range cleanup failed')
+    expect(cleanup).toHaveBeenCalledOnce()
   })
 
-  it('waits for the node-pty exit event after the managed range becomes empty', async () => {
+  it('waits for the node-pty exit event before observing the managed range', async () => {
     const pty = new FakePty()
+    const waitForExit = vi.fn(async () => {})
     const owner: BoundProcessOwner = {
       signal: vi.fn(),
-      waitForExit: async () => {},
+      waitForExit,
       terminateForHostExit: vi.fn(),
     }
     const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 100, 'linux', owner)
@@ -351,18 +388,21 @@ describe('LocalTerminalHandle', () => {
     const terminating = handle.terminate().then(() => { settled = true })
     await new Promise(resolve => setImmediate(resolve))
     expect(settled).toBe(false)
+    expect(waitForExit).not.toHaveBeenCalled()
 
     pty.emitExit()
     await terminating
+    expect(waitForExit).toHaveBeenCalledOnce()
   })
 
-  it('rejects when a managed range stops but node-pty never publishes exit', async () => {
+  it('does not begin range observation when node-pty never publishes exit', async () => {
     vi.useFakeTimers()
     const pty = new FakePty()
     const signals: Array<'SIGTERM' | 'SIGKILL'> = []
+    const waitForExit = vi.fn(async () => {})
     const owner: BoundProcessOwner = {
       signal: (signal) => { signals.push(signal) },
-      waitForExit: async () => {},
+      waitForExit,
       terminateForHostExit: vi.fn(),
     }
     const handle = new LocalTerminalHandle(pty.asPty(), new FakeInspector(), 10, 'linux', owner)
@@ -370,9 +410,10 @@ describe('LocalTerminalHandle', () => {
 
     const terminating = handle.terminate()
     const rejected = expect(terminating).rejects.toThrow('terminal cleanup failed; exit unconfirmed for pid: 123')
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(20)
     await rejected
-    expect(signals).toEqual(['SIGTERM'])
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(waitForExit).not.toHaveBeenCalled()
   })
 
   it('force-kills descendants around the shell during synchronous host exit', () => {
@@ -711,6 +752,18 @@ describe('LocalTerminalHandle', () => {
 
 describe('LocalTerminalHandle on Windows', () => {
   const win32 = 'win32' as NodeJS.Platform
+
+  it('kills the allocated native terminal on host exit before process identity is captured', async () => {
+    const pty = new FakePty()
+    const inspector = new FakeInspector()
+    const handle = new LocalTerminalHandle(pty.asPty(), inspector, 10, win32)
+
+    handle.terminateForHostExit()
+
+    expect(pty.kills).toEqual(['SIGHUP'])
+    expect(inspector.processes).toEqual([])
+    await expect(handle.done).resolves.toEqual({ exitCode: null, signal: 'SIGTERM' })
+  })
 
   it('delivers SIGINT as a Ctrl-C input write without inspector signalling', async () => {
     const pty = new FakePty()

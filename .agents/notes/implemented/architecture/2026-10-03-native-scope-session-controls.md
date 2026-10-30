@@ -24,6 +24,8 @@ Mode headings distinguish passive reading from a pause of granted automatic work
 
 Recorded shared-context details come from the current Session surface and the exact receiving binding, independently of automatic permission. The read-only status exposes complete shared-message UTF-8 bytes and selected or omitted source counts without bodies. A replacement or withdrawal can be recorded before a request is sent, so these details do not attest dispatch, model understanding, or current owner authorization. Missing, withdrawn, departed, and mismatched records yield no summary. The Client rereads after completed steps and existing lifecycle or management updates; inspecting the details does not request context or start work.
 
+After connection, full Task/device identifiers and the entry document use native disclosures. Keeping setup material beside active controls makes a connected Session look unfinished. Responsibility, permission, and pause/leave controls remain directly available; expanding a disclosure performs no management action.
+
 ## Alternatives considered
 
 **A separate picker of all Sessions.** Cold history cannot establish live eligibility. The current Session action makes the receiving identity explicit and uses a read-only Host check.

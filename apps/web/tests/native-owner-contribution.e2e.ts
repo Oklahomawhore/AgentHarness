@@ -1715,8 +1715,12 @@ describe.skipIf(process.platform === 'win32')('web e2e: recipient budget without
     await collaboration.click()
     expect(await bPanel.getByRole('radio', { name: '他人分享的目标', exact: true }).isChecked()).toBe(true)
     const receivingDetails = bPanel.locator(':scope > dl')
-    await receivingDetails.getByText(joined.state.binding.invitation.ownerPeerId, { exact: true }).waitFor()
     await receivingDetails.getByText(joined.state.binding.invitation.responsibility, { exact: true }).waitFor()
+    const connectionDetails = bPanel.locator('details').filter({ has: sourcePage.getByText('连接详情', { exact: true }) })
+    expect(await connectionDetails.getByText(joined.state.binding.invitation.ownerPeerId, { exact: true }).isHidden()).toBe(true)
+    await connectionDetails.locator('summary').click()
+    await connectionDetails.getByText(joined.state.binding.invitation.ownerPeerId, { exact: true }).waitFor()
+    await connectionDetails.locator('summary').click()
     const recorded = sourcePage.getByRole('region', { name: '已记录共享上下文', exact: true })
     await recorded.getByText(`共享内容 ${String(remoteFrameBytes)} 字节 · 纳入 ${String(projection.selectedSources.length)} 条来源记录。`,
       { exact: true }).waitFor()

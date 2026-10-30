@@ -14,10 +14,6 @@
   - paragraph: 累计已用 3 / 3 次 · 每轮最多 2 步
   - paragraph: 保留的本地目标：维护客户端重试实现
   - paragraph: 共享范围只增加获准上下文，不替换本地目标或文件许可。
-  - term: 共享 Task
-  - definition: {{ownerTaskId}}
-  - term: 来源设备
-  - definition: {{ownerPeerId}}
   - term: 邀请中的职责
   - definition: 维护客户端重试实现；原本地目标保持不变。
   - paragraph: 本地目标：维护我负责的客户端重试逻辑，结合共享接口事实。
@@ -32,9 +28,9 @@
     - paragraph: 这是保存在当前会话中的记录，不代表模型请求已发送、模型已理解或读取权限当前仍有效。
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 连接详情
   - group: 更新所有者连接地址
-  - text: 粘贴协作入口
-  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{ownerTaskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
+  - group: 其他协作入口
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作" [checked]

@@ -52,7 +52,7 @@ kind: "package-reference"
 
 正常 dispose 会终止每个仍在运行的受管范围与终端会话并等待其完全停稳。在 JavaScript 可观察的宿主退出期间——直接 `process.exit()`、默认未捕获异常、默认未处理 rejection——同步最终清理会请求 Linux scope 终止其成员，同步终止每个 Windows runner 以关闭其唯一 Job handle，并为 fallback 使用既有 PGID、`taskkill` 或已捕获身份操作。它不创建 Promise 或定时器，也不声称已经完全停稳。同一退出阶段会删除未持有任何已完成 spill 文件的每进程私有 spill 目录；已完成的 spill 文件作为完整输出恢复产物保留，直到外部机制清理。未处理的 `SIGTERM`/`SIGINT`/`SIGHUP`、`SIGKILL`、fatal OOM、native crash 与断电需要外部 supervisor。
 
-新分配的 PTY 会在进程检查前纳入跟踪。若检查失败，分配操作会等待与已发布句柄相同的拆卸；清理失败时仍保留所有权，供后续 dispose 处理。缺少退出通知表示退出未确认，不表示已证实进程仍存活。
+新分配的 PTY 会在进程检查前纳入跟踪。若检查失败，分配操作会等待与已发布句柄相同的拆卸；清理失败时仍保留所有权，供后续 dispose 处理。缺少退出通知表示退出未确认，不表示已证实进程仍存活。Linux scope 拆卸会先确认原生退出，再观察受管范围；退出未确认时清理会拒绝，提供方仍保留所有权。
 
 ### 可能出错的地方
 

@@ -18,6 +18,8 @@ An ordinary `SubprocessHandle` has no PID or public startup state. `.done` repor
 
 A newly allocated PTY acquires its existing provider record and native exit listener before fallible process inspection. Native handles can retain the process after JavaScript references disappear, so garbage collection cannot replace teardown. Failed inspection awaits the same handle termination as a published session; failed cleanup retains provider ownership for disposal and host-exit handling rather than releasing the allocation.
 
+Native exit and scope emptiness are independent facts. An absent scope with an unconsumed launch request depends on direct-process liveness, so waiting for that scope before a missing native exit can never settle. Terminal cleanup confirms native exit within its existing TERM/KILL waits before starting the range observer; missing exit preserves failed ownership without starting an observer. Confirmed native exit still requires the complete range to become empty.
+
 ### Linux scope and one-shot bootstrap
 
 The first eligible Linux ordinary or PTY call in one runtime deeply checks the exact runner entry, the libc `execve` and `fcntl` bindings, the readable user manager, and literal-argv transient-scope support. Failed deep probes are retried, while the first success is cached. Each later eligible call still performs a lightweight user-manager reachability probe before target execution. Once selected, a scope, protocol, state-query, or pre-exec failure is reported through that launch and never switches to fallback.

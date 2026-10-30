@@ -43,25 +43,29 @@ function textOf(message: Message): string {
 async function layouts(page: Page, stage: string): Promise<void> {
   const directory = process.env.DSH_NATIVE_SCOPE_SHOTS
   if (directory !== undefined) await mkdir(directory, { recursive: true })
-  for (const viewport of [DESKTOP, NARROW]) {
-    await page.setViewportSize(viewport)
-    const panel = page.locator(PANEL)
-    await panel.waitFor()
-    await expect.poll(async () => {
-      const bounds = await panel.boundingBox()
-      return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width
-    }).toBe(true)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-    expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-    await assertNativeNumberFieldsFit(panel)
-    if (directory !== undefined) {
-      await page.screenshot({ path: join(directory, `${stage}-${String(viewport.width)}.png`), fullPage: true })
-      if (stage === 'budget' && viewport.width === NARROW.width) {
-        await page.locator(ACTIVITY).scrollIntoViewIfNeeded()
-        await page.screenshot({ path: join(directory, `${stage}-activity-${String(viewport.width)}.png`), fullPage: true })
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme })
+    for (const viewport of [DESKTOP, NARROW]) {
+      await page.setViewportSize(viewport)
+      const panel = page.locator(PANEL)
+      await panel.waitFor()
+      await expect.poll(async () => {
+        const bounds = await panel.boundingBox()
+        return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width
+      }).toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await assertNativeNumberFieldsFit(panel)
+      if (directory !== undefined) {
+        await page.screenshot({ path: join(directory, `${stage}-${colorScheme}-${String(viewport.width)}.png`), fullPage: true })
+        if (stage === 'budget' && viewport.width === NARROW.width) {
+          await page.locator(ACTIVITY).scrollIntoViewIfNeeded()
+          await page.screenshot({ path: join(directory, `${stage}-activity-${colorScheme}-${String(viewport.width)}.png`), fullPage: true })
+        }
       }
     }
   }
+  await page.emulateMedia({ colorScheme: 'light' })
   await page.setViewportSize(DESKTOP)
 }
 
@@ -207,6 +211,21 @@ describe.skipIf(process.platform === 'win32')('web e2e: native Session scope con
     await layouts(page, 'invitation')
     await panel.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => (await state()).mode).toBe('passive')
+    await expect.poll(() => panel.getByText('frontend', { exact: true }).isVisible()).toBe(true)
+    await expect.poll(() => panel.getByRole('button', { name: '离开共享上下文', exact: true }).isVisible()).toBe(true)
+    await expect.poll(() => panel.getByText(invitation.taskId, { exact: true }).isHidden()).toBe(true)
+    await expect.poll(() => panel.getByText(invitation.ownerPeerId, { exact: true }).isHidden()).toBe(true)
+    await expect.poll(() => input.isHidden()).toBe(true)
+    const connectionDetails = panel.getByText('连接详情', { exact: true })
+    await connectionDetails.focus(); await page.keyboard.press('Enter')
+    await expect.poll(() => panel.getByText(invitation.ownerPeerId, { exact: true }).isVisible()).toBe(true)
+    await connectionDetails.click()
+    const anotherEntry = panel.getByText('其他协作入口', { exact: true })
+    await anotherEntry.focus(); await page.keyboard.press('Enter')
+    await expect.poll(() => input.isVisible()).toBe(true)
+    expect(await input.inputValue()).toBe(invitationText)
+    await anotherEntry.click()
+    await layouts(page, 'connected')
     expect(requests).toHaveLength(1)
     expect((await observation()).activity).toEqual({ request: null, completed: null, evaluation: null })
     expect(await panel.locator(ACTIVITY).count()).toBe(0)

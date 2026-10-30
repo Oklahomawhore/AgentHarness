@@ -11,10 +11,6 @@
   - status: 自动协作已暂停
   - paragraph: 自动启动额度已用完。增加有限额度后才能恢复。
   - paragraph: 累计已用 1 / 1 次 · 每轮最多 1 步
-  - term: 共享 Task
-  - definition: {{taskId}}
-  - term: 来源设备
-  - definition: {{ownerPeerId}}
   - term: 邀请中的职责
   - definition: frontend
   - paragraph: 本地目标：按已授权的订单接口事实更新前端。
@@ -27,9 +23,9 @@
     - paragraph: 这是保存在当前会话中的记录，不代表模型请求已发送、模型已理解或读取权限当前仍有效。
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 连接详情
   - group: 更新所有者连接地址
-  - text: 粘贴协作入口
-  - textbox "粘贴协作入口": "{\"version\":1,\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"recipientPeerId\":\"{{recipientPeerId}}\",\"taskId\":\"{{taskId}}\",\"grantId\":\"{{grantId}}\",\"generation\":\"{{generation}}\",\"expiresAt\":{{expiresAt}},\"responsibility\":\"frontend\"}"
+  - group: 其他协作入口
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作" [checked]
