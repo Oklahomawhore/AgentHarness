@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
@@ -24,7 +25,7 @@ async function host(backend: 'text' | 'facts' = 'text'): Promise<CommandHost> {
   return fixture
 }
 
-async function launch(fixture: CommandHost, rawInput: string | undefined, overrides: Partial<Config> = {}) {
+async function launch(fixture: Pick<CommandHost, 'directory' | 'descriptorPath'>, rawInput: string | undefined, overrides: Partial<Config> = {}) {
   const profile = `claude-hook-${randomUUID()}`
   const home = join(fixture.directory, 'home')
   const directory = join(home, 'profiles', profile)
@@ -383,29 +384,12 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     expect(result.stdout).toBe('')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
-  it('rejects malformed input and complete byte budgets with classified stderr', async () => {
+  it('rejects the complete response byte budget with classified stderr', async () => {
     const fixture = await host()
-    const malformed = await (await launch(fixture, '{')).done
-    expect(malformed.exitCode).toBe(1)
-    expect(malformed.stdout).toBe('')
-    expect(malformed.stderr).toBe(await readFile(new URL('./expected/invalid.stderr.json', import.meta.url), 'utf8'))
-    const tooLarge = await (await launch(fixture, '"中文"', { maxRequestBytes: 7 })).done
-    expect(tooLarge.exitCode).toBe(1)
-    expect(tooLarge.stdout).toBe('')
-    expect(tooLarge.stderr).toBe('{"claudeScopeError":"input-too-large"}\n')
     const response = await run(fixture, { hook_event_name: 'SessionStart', session_id: 'bounded' }, { maxResponseBytes: 1 })
     expect(response.exitCode).toBe(1)
     expect(response.stdout).toBe('')
     expect(response.stderr).toBe('{"claudeScopeError":"response-too-large"}\n')
-  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
-
-  it('settles input collection when the command deadline expires before stdin EOF', async () => {
-    const fixture = await host()
-    const result = await (await launch(fixture, undefined, { timeoutMs: 20 })).done
-    expect(result.signal).toBeUndefined()
-    expect(result.exitCode).toBe(1)
-    expect(result.stdout).toBe('')
-    expect(result.stderr).toBe('{"claudeScopeError":"request-timeout"}\n')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('refuses a stale generation and invalid launch token without leaking the capability', async () => {
@@ -426,6 +410,39 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     expect(rejected.stdout).toBe('')
     expect(rejected.stderr).toBe('{"claudeScopeError":"authentication-failed"}\n')
     expect(await fixture.ctx.claudeScope.sessions()).toEqual([])
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+})
+
+describe('Claude command stdin before Host authentication', () => {
+  async function inputFixture(): Promise<Pick<CommandHost, 'directory' | 'descriptorPath'>> {
+    const directory = await mkdtemp(join(tmpdir(), 'claude-command-input-'))
+    disposers.push(() => rm(directory, { recursive: true, force: true }))
+    return { directory, descriptorPath: join(directory, 'connection.json') }
+  }
+
+  it('rejects malformed and oversized input before accessing a Host descriptor', async () => {
+    const fixture = await inputFixture()
+    const malformed = await (await launch(fixture, '{')).done
+    expect(malformed.signal).toBeUndefined()
+    expect(malformed.exitCode).toBe(1)
+    expect(malformed.stdout).toBe('')
+    expect(malformed.stderr).toBe(await readFile(new URL('./expected/invalid.stderr.json', import.meta.url), 'utf8'))
+    const tooLarge = await (await launch(fixture, '"中文"', { maxRequestBytes: 7 })).done
+    expect(tooLarge.signal).toBeUndefined()
+    expect(tooLarge.exitCode).toBe(1)
+    expect(tooLarge.stdout).toBe('')
+    expect(tooLarge.stderr).toBe('{"claudeScopeError":"input-too-large"}\n')
+    await expect(stat(fixture.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+  it('settles input collection when the command deadline expires before stdin EOF', async () => {
+    const fixture = await inputFixture()
+    const result = await (await launch(fixture, undefined, { timeoutMs: 20 })).done
+    expect(result.signal).toBeUndefined()
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe('{"claudeScopeError":"request-timeout"}\n')
+    await expect(stat(fixture.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 })
 

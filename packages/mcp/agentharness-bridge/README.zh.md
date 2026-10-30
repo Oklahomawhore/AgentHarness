@@ -37,7 +37,7 @@ Server 暴露九项 `agentharness_task_*` 工具及 `agentharness://tasks/{taskI
 
 发布上下文要求 binding 已连接到所请求的 Task，否则返回 `POLICY_REJECTED` 及该 binding 的 assignment。Status 和 publication 在 MCP 响应交付前记录所返回的 Task revision。Server 从 Host 读取 binding 状态，不保留本地 Task 副本。
 
-Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SIGTERM 使用 dsh launcher 的有界关闭。Presence 在应用 ready 后启动，要求 Host TTL 为正整数，在该 TTL 的有界分段时间内续租，租期回复无效或续租失败后重新 announce。Dispose 取消普通请求和续租并等待结算，然后尝试具有独立 deadline 的 withdraw，包括尚未收到 announce 回复的情况。Host 不可用时以 TTL 到期作为后备。MCP 取消会传递到认证及每一步后续 RPC，但不能撤销 Host 已提交的修改。Profile 修改在下次进程启动时生效。
+Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SIGTERM 使用 dsh launcher 的有界关闭。协议 SDK 管理 transport 回调。Presence 在应用 ready 后启动，要求 Host TTL 为正整数，在该 TTL 的有界分段时间内续租，租期回复无效或续租失败后重新 announce。Dispose 取消普通请求和续租并等待结算，然后尝试具有独立 deadline 的 withdraw，包括尚未收到 announce 回复的情况。Host 不可用时以 TTL 到期作为后备。MCP 取消会传递到认证及每一步后续 RPC，但不能撤销 Host 已提交的修改。Profile 修改在下次进程启动时生效。
 
 <a id="model-experience"></a>
 

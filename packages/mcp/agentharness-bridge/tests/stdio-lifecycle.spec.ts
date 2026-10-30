@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply, type Config } from '../src/stdio.ts'
 import { connectionOptions } from './connection.ts'
 
-interface OwnedIo { input: PassThrough; output: PassThrough; transport?: StdioServerTransport }
+interface OwnedIo { input: PassThrough; output: PassThrough }
 let io: OwnedIo | undefined
 
 vi.mock('@modelcontextprotocol/sdk/server/stdio.js', async (importOriginal) => {
@@ -19,7 +19,6 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', async (importOriginal) => {
       const owned = io
       if (owned === undefined) throw new Error('Missing owned stdio streams')
       super(owned.input, owned.output)
-      owned.transport = this
     }
   } }
 })
@@ -43,7 +42,7 @@ async function fixture(args: readonly string[] = []) {
     try { await ctx.fiber.dispose() }
     finally {
       lines.close()
-      const closed = [once(owned.input, 'close'), once(owned.output, 'close')]
+      const closed = [owned.input, owned.output].map(stream => stream.closed ? Promise.resolve() : once(stream, 'close'))
       owned.input.destroy()
       owned.output.destroy()
       await Promise.all(closed)
@@ -70,7 +69,10 @@ async function fixture(args: readonly string[] = []) {
   const listeners = new Set<() => void>()
   let ready = false
   const exits: number[] = []
-  provideCmdline(ctx, { args, exit: (code) => { exits.push(code) }, ready: {
+  provideCmdline(ctx, { args, exit: (code) => {
+    exits.push(code)
+    void dispose().catch(() => {}) // The registered closer awaits the same shutdown promise.
+  }, ready: {
     onReady: (listener) => {
       if (ready) listener()
       else listeners.add(listener)
@@ -192,11 +194,13 @@ describe('MCP stdio lifecycle', () => {
     } finally { await f.dispose() }
   })
 
-  it('cancels deferred transport-close and presence callbacks when disposed before readiness', async () => {
+  it('cancels deferred EOF exit and presence callbacks when disposed before readiness', async () => {
     const f = await fixture()
     try {
       await apply(f.ctx, f.config)
-      await f.owned.transport?.close()
+      const ended = once(f.owned.input, 'end')
+      f.owned.input.end()
+      await ended
       expect(f.exits).toEqual([])
       await f.dispose()
       f.commitReady()
@@ -206,13 +210,49 @@ describe('MCP stdio lifecycle', () => {
     } finally { await f.dispose() }
   })
 
-  it.skipIf(process.platform === 'win32')('requests bounded launcher exit when the ready protocol transport closes', async () => {
+  it('does not announce after EOF during transport opening requests shutdown at readiness', async () => {
+    const f = await fixture()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply supplies the owned opening transport.
+    const original = StdioServerTransport.prototype.start
+    const starting = vi.spyOn(StdioServerTransport.prototype, 'start').mockImplementationOnce(async function (this: StdioServerTransport) {
+      await Reflect.apply(original, this, [])
+      entered.resolve(undefined)
+      await release.promise
+    })
+    const opening = apply(f.ctx, f.config)
+    try {
+      await entered.promise
+      const ended = once(f.owned.input, 'end')
+      f.owned.input.end()
+      await ended
+      expect(f.exits).toEqual([])
+      release.resolve(undefined)
+      await opening
+      f.commitReady()
+      await f.dispose()
+      expect(f.exits).toEqual([0])
+      expect(f.calls.every(method => method === 'developmentRooms/withdraw')).toBe(true)
+      expect(f.listeners.size).toBe(0)
+      expect(f.owned.input.listenerCount('data')).toBe(0)
+    } finally {
+      release.resolve(undefined)
+      await opening.catch(() => undefined)
+      starting.mockRestore()
+      await f.dispose()
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('requests bounded launcher exit on EOF after readiness', async () => {
     const f = await fixture()
     try {
       await apply(f.ctx, f.config)
       f.commitReady()
       await f.announced.promise
-      await f.owned.transport?.close()
+      const ended = once(f.owned.input, 'end')
+      f.owned.input.end()
+      await ended
       expect(f.exits).toEqual([0])
       await f.dispose()
       expect(f.calls.at(-1)).toBe('developmentRooms/withdraw')

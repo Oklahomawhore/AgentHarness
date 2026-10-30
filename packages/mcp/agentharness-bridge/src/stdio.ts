@@ -111,10 +111,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   const transport = new StdioServerTransport()
   let opening: Promise<void> = Promise.resolve()
-  let cancelClosed = (): void => {}
   ctx.effect(() => async () => {
     lifetime.abort()
-    cancelClosed()
     try { await opening } catch {
       // connect failure is reported by Loader; disposal still closes partially acquired resources.
     }
@@ -124,12 +122,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   opening = server.connect(transport)
   await opening
   if (lifetime.signal.aborted) return
-  const protocolClose = transport.onclose
-  transport.onclose = () => {
-    protocolClose?.()
-    if (!lifetime.signal.aborted) cancelClosed = ready.onReady(() => { exit(0) })
-  }
   ctx.effect(() => ready.onReady(() => {
-    if (!lifetime.signal.aborted) void lease.start()
+    void lease.start()
   }), 'mcp: start presence after readiness')
 }

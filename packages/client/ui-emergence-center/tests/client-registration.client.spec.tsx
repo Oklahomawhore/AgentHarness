@@ -18,6 +18,7 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
   ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest, ScopeAgentContributionPermissionDraft,
   ScopeAgentContributionRecoverRouteRequest, ScopeContributionEntry,
+  ScopeContributionInventory, ScopeContributionInventoryRequest, ScopeContributionRecoverRequest, ScopeContributionEndResult,
   McpClientSetupRequest, McpClientSetupResult, McpClientSetupSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -205,6 +206,12 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     Promise<RemoteResult<ScopeAgentContributionStatus>>>().mockRejectedValue(new Error('No native route recovery configured'))
     const leaveNativeJoin = vi.fn<(request: ScopeAgentContributionStopRequest) => Promise<RemoteResult<ScopeAgentContributionStatus>>>()
       .mockRejectedValue(new Error('No native joint departure configured'))
+    const contributionInventory = vi.fn(async (_request: ScopeContributionInventoryRequest):
+    Promise<RemoteResult<ScopeContributionInventory>> => ok({ entries: [], nextGrantId: null }))
+    const recoverContributionInvitation = vi.fn<(request: ScopeContributionRecoverRequest) =>
+    Promise<RemoteResult<ScopeContributionApproval>>>().mockRejectedValue(new Error('No grant recovery configured'))
+    const revokeContribution = vi.fn<(request: { grant: ScopeContributionInvitation['grant'] }) =>
+    Promise<RemoteResult<ScopeContributionEndResult>>>().mockRejectedValue(new Error('No contribution revocation configured'))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
@@ -218,7 +225,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       scopeAccess: {
         identity: async () => ok({ peerId: applicationEntry.ownerPeerId, addresses: [applicationEntry.ownerAddress] }),
         list: async () => ok({ grants: [], subscriptions: [] }),
-        contributionInventory: async () => ok({ entries: [], nextGrantId: null }),
+        contributionInventory, recoverContributionInvitation, revokeContribution,
         contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
         groupEntries: async () => ok({ entries: [], nextEntryId: null }),
         groupApplications: async () => ok({ entries: [], nextApplicationId: null }),
@@ -255,6 +262,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
       nativeStatus, localStatus, permissionDraft, observedCandidates, observedIntervals, approveObserved, endObserved,
       contributionDetail, leaveJoint, recoverJoint, scopeStatus, recoverNativeRoute, leaveNativeJoin,
+      contributionInventory, recoverContributionInvitation, revokeContribution,
       issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
@@ -470,6 +478,65 @@ describe('Collaboration client registration lifecycle', () => {
       reply.resolve(task)
       await pending
       await subject.runtime.dispose()
+    }
+  })
+
+  it('recovers the original owner grant and retains its terminal state after a lost revocation reply', async () => {
+    const granted: ScopeContributionInvitation = { version: 1, kind: 'tool-contribution', ownerAddress: applicationEntry.ownerAddress,
+      grant: { version: 1, taskId: task.id, ownerPeerId: applicationEntry.ownerPeerId, ...capture.proposal, ...capture.limits,
+        grantId: 'owner-original-grant' as ScopeContributionInvitation['grant']['grantId'],
+        generation: 'owner-original-generation' as ScopeContributionInvitation['grant']['generation'] } }
+    const receipt = { taskId: task.id, ownerPeerId: granted.grant.ownerPeerId, contributorPeerId: granted.grant.contributorPeerId,
+      grantId: granted.grant.grantId, generation: granted.grant.generation,
+      captureId: granted.grant.captureId, captureGeneration: granted.grant.captureGeneration, revision: 2,
+      event: { nodeId: task.ownerNodeId, seq: 2, kind: 'peer-contribution-opened' as const } }
+    const active: ScopeContributionInventory = { entries: [{ state: 'active', grant: granted.grant, openReceipt: receipt }], nextGrantId: null }
+    const ended: ScopeContributionInventory = { entries: [{ state: 'ended', grant: granted.grant, reason: 'revoked',
+      endReceipt: { ...receipt, revision: 3, event: { ...receipt.event, seq: 3, kind: 'peer-contribution-ended' } } }], nextGrantId: null }
+    const subject = await mountPanel([session])
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      subject.contributionInventory.mockResolvedValue(ok(active))
+      const originalText = JSON.stringify(granted)
+      subject.recoverContributionInvitation.mockResolvedValue(ok({ invitation: granted, text: originalText }))
+      fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
+      const element = screen.getByText(zh['contribution.ownerTitle']).parentElement
+      if (element === null) throw new Error('Owner controls missing')
+      const owner = within(element)
+      fireEvent.click(owner.getByRole('button', { name: zh['contribution.refreshOwner'] }))
+      await owner.findByText(zh['contribution.ownerActive'])
+      fireEvent.click(owner.getByRole('button', { name: zh['contribution.recover'] }))
+      await owner.findByDisplayValue(originalText)
+      const selection = { taskId: task.id, grantId: granted.grant.grantId, generation: granted.grant.generation,
+        ownerAddress: granted.ownerAddress }
+      expect(subject.recoverContributionInvitation).toHaveBeenCalledExactlyOnceWith(selection)
+      subject.revokeContribution.mockImplementationOnce(async () => {
+        subject.contributionInventory.mockResolvedValue(ok(ended))
+        return { ok: false, error: new RemoteError('gateway/internal', 'Private owner revocation reply lost after commit', {}) }
+      })
+      fireEvent.click(owner.getByRole('button', { name: zh['contribution.revoke'] }))
+      expect(owner.queryByDisplayValue(originalText)).toBeNull()
+      await owner.findByText(zh['contribution.end.revoked'])
+      await owner.findByText(zh['contribution.error.unknown'])
+      expect(subject.revokeContribution).toHaveBeenCalledExactlyOnceWith({ grant: granted.grant })
+      expect(owner.queryByText('Private owner revocation reply lost after commit')).toBeNull()
+      expect(owner.queryByRole('button', { name: zh['contribution.revoke'] })).toBeNull()
+      fireEvent.click(owner.getByRole('button', { name: zh['contribution.recoverEnded'] }))
+      await owner.findByDisplayValue(originalText)
+      expect(subject.recoverContributionInvitation).toHaveBeenCalledTimes(2)
+      expect(subject.recoverContributionInvitation).toHaveBeenLastCalledWith(selection)
+      expect(owner.getByText(zh['contribution.end.revoked'])).toBeTruthy()
+      expect(owner.queryByText(zh['contribution.ownerActive'])).toBeNull()
+      expect(subject.contributionInventory).toHaveBeenLastCalledWith({ taskId: task.id })
+      expect(subject.approve).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.stopSource).not.toHaveBeenCalled()
+      expect(subject.leave).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(diagnostics).toHaveBeenCalledOnce()
+    } finally {
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
     }
   })
 
