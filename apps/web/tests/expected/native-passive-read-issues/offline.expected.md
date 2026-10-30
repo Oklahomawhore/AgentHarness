@@ -11,18 +11,14 @@
   - status: 工作时更新
   - paragraph: 已记录共享上下文不可用；正常工作时仍会重新核验。
   - paragraph: 累计已用 0 次自动启动额度
-  - term: 共享 Task
-  - definition: {{taskId}}
-  - term: 来源设备
-  - definition: {{ownerPeerId}}
   - term: 邀请中的职责
   - definition: 继续当前实现并采用所有者的共享说明。
   - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 连接详情
   - group: 更新所有者连接地址
-  - text: 粘贴协作入口
-  - textbox "粘贴协作入口": "{\"version\":1,\"entryId\":\"{{uuid}}\",\"taskId\":\"{{taskId}}\",\"ownerPeerId\":\"{{ownerPeerId}}\",\"ownerAddress\":\"{{ownerAddress}}\",\"expiresAt\":{{entryExpiresAt}},\"kind\":\"scope-join-entry\",\"sourceKind\":\"tool-observations\"}"
+  - group: 其他协作入口
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作"

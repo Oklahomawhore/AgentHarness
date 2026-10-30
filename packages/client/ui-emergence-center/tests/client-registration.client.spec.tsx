@@ -13,9 +13,10 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ClaudeScopePrepareContributionRequest, ClaudeScopeActivateContributionRequest, ScopeContributionApproval,
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer,
   ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
-  ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest,
+  ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest, ScopeAgentContributionPermissionDraft,
   McpClientSetupRequest, McpClientSetupResult, McpClientSetupSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { apply, inject } from '../src/client/index.ts'
 import type { EmergenceCenterPanelFace } from '../src/client/slots.ts'
 import { zh } from '../src/client/locales.ts'
@@ -177,6 +178,9 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       if (text === approved?.text) return ok(approved.invitation)
       return ok(applicationEntry)
     })
+    const nativeStatus = vi.fn(async () => ok(contribution))
+    const localStatus = vi.fn(async () => ok(localContribution))
+    const permissionDraft = vi.fn(async (): Promise<RemoteResult<ScopeAgentContributionPermissionDraft | null>> => ok(null))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
@@ -204,7 +208,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         bind, pause, resume, leave: leaveScope,
       },
       scopeAgentContributions: {
-        status: async () => ok(contribution), localStatus: async () => ok(localContribution), permissionDraft: async () => ok(null),
+        status: nativeStatus, localStatus, permissionDraft,
         request: requestNative, stop: stopNative, requestLocal, stopLocal,
       },
     })
@@ -226,7 +230,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       setup, projectSetup, removeSetup, join, leave,
       announce, withdraw, publishContext, create, bind, pause, resume, leaveScope, requestNative, stopNative,
       prepare, approve, activate, stopSource, requestSource, previewContributionText, checkout, requestLocal, stopLocal, setupClient,
-      issuedApproval: () => approved }
+      nativeStatus, localStatus, permissionDraft, issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
 
@@ -531,6 +535,62 @@ describe('Collaboration client registration lifecycle', () => {
       expect(source.queryByRole('alert')).toBeNull()
       expect(subject.prepare).not.toHaveBeenCalled()
       expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
+  it('updates both native permissions from the selected Session notification and stops observing them on unload', async () => {
+    const subject = await mountPanel([], true)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+      const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+      await controls.findByText(zh['native.share.none'])
+      subject.nativeStatus.mockResolvedValue(ok({ ...emptyStatus, revision: 1, capture }))
+      subject.localStatus.mockResolvedValue(ok({ ...assigned, revision: 1, capture: localCapture }))
+      await act(async () => { subject.remote.emit('scope-agent-contribution/changed', [agentId, 1]) })
+      await controls.findByText(zh['native.share.parallel'])
+      await controls.findByRole('button', { name: zh['native.share.stop'] })
+      fireEvent.click(controls.getByRole('radio', { name: zh['native.target.remote'] }))
+      await controls.findByText(zh['contribution.application.waiting'])
+      expect(controls.getByRole('button', { name: zh['native.share.stop'] })).toBeTruthy()
+      expect(subject.nativeStatus).toHaveBeenLastCalledWith({ agentId })
+      expect(subject.localStatus).toHaveBeenLastCalledWith({ agentId })
+      const reads = [subject.nativeStatus.mock.calls.length, subject.localStatus.mock.calls.length]
+      await act(async () => { subject.remote.emit('scope-agent-contribution/changed', [SessionId('another-source'), 2]) })
+      expect([subject.nativeStatus.mock.calls.length, subject.localStatus.mock.calls.length]).toEqual(reads)
+      expect(subject.requestNative).not.toHaveBeenCalled()
+      expect(subject.requestLocal).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+      await subject.feature.dispose()
+      await act(async () => { subject.remote.emit('scope-agent-contribution/changed', [agentId, 2]) })
+      expect([subject.nativeStatus.mock.calls.length, subject.localStatus.mock.calls.length]).toEqual(reads)
+      expect(screen.queryByRole('dialog', { name: zh['native.title'] })).toBeNull()
+    } finally { await subject.runtime.dispose() }
+  })
+
+  it('fills a native source draft through the mounted Host suggestion without granting sharing or automatic work', async () => {
+    const subject = await mountPanel([], true)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+      const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+      fireEvent.change(controls.getByLabelText(zh['native.invitation']), { target: { value: JSON.stringify(applicationEntry) } })
+      fireEvent.click(controls.getByText(zh['native.share.title']))
+      fireEvent.click(await controls.findByRole('button', { name: zh['native.share.verify'] }))
+      await controls.findByText(applicationEntry.ownerPeerId)
+      expect(subject.permissionDraft).not.toHaveBeenCalled()
+      subject.permissionDraft.mockResolvedValueOnce(ok({ agentId, roots: ['/suggested-project'], tools: ['write'],
+        durationHours: 2, maxSamples: 6, maxSampleBytes: 8192 }))
+      fireEvent.click(controls.getByRole('button', { name: zh['native.suggestion.use'] }))
+      await waitFor(() => { expect(controls.getByLabelText<HTMLInputElement>(zh['contribution.roots']).value).toBe('/suggested-project') })
+      expect(controls.getByLabelText<HTMLInputElement>(zh['contribution.hours']).value).toBe('2')
+      expect(controls.getByLabelText<HTMLInputElement>(zh['contribution.maxSamples']).value).toBe('6')
+      expect(controls.getByLabelText<HTMLInputElement>(zh['contribution.maxBytes']).value).toBe('8192')
+      expect(controls.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.write'] }).checked).toBe(true)
+      expect(controls.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.edit'] }).checked).toBe(false)
+      expect(controls.getByRole<HTMLInputElement>('checkbox', { name: zh['native.share.consent'] }).checked).toBe(false)
+      expect(subject.permissionDraft).toHaveBeenCalledExactlyOnceWith({ agentId })
+      expect(subject.requestNative).not.toHaveBeenCalled()
+      expect(subject.requestLocal).not.toHaveBeenCalled()
       expect(subject.bind).not.toHaveBeenCalled()
     } finally { await subject.runtime.dispose() }
   })

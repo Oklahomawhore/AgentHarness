@@ -13,9 +13,10 @@ import { tcp } from '@libp2p/tcp'
 import { noise } from '@libp2p/noise'
 import { yamux } from '@libp2p/yamux'
 import { generateKeyPair, privateKeyFromProtobuf, privateKeyFromRaw, privateKeyToProtobuf } from '@libp2p/crypto/keys'
+import { peerIdFromPrivateKey, peerIdFromString } from '@libp2p/peer-id'
 import { multiaddr } from '@multiformats/multiaddr'
 import Transport, { type Config } from '../src/libp2p.ts'
-import type { ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
+import type { ScopePeerId, ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
 import { identityKey, loadIdentity } from '../src/identity.ts'
 import { encode, readJson, responsePayload, writeJson } from '../src/wire.ts'
 
@@ -132,6 +133,24 @@ describe('direct authenticated scope transport', () => {
     expect(calls).toBe(0)
     expect(await peer.scopeTransport.request(destination, protocol, null, new AbortController().signal)).toBe('allowed')
     expect(calls).toBe(1)
+  })
+
+  it('rejects a hashed target identity after Noise authenticates a different peer without invoking its handler', async () => {
+    const owner = await boot()
+    const peer = await boot()
+    const destination = target(await owner.scopeTransport.identity())
+    const hashedIdentity = peerIdFromString(peerIdFromPrivateKey(await generateKeyPair('RSA', 2048)).toString())
+    expect(hashedIdentity.type).toBe('RSA')
+    expect(hashedIdentity.publicKey).toBeUndefined()
+    const peerId = hashedIdentity.toString() as ScopePeerId
+    const wrongIdentity = { peerId, address: destination.address.replace(destination.peerId, peerId) }
+    const handler = vi.fn(async () => 'allowed')
+    register(owner, handler)
+    await expect(peer.scopeTransport.request(wrongIdentity, protocol, null, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'scope-transport/invalid-target' })
+    expect(handler).not.toHaveBeenCalled()
+    expect(await peer.scopeTransport.request(destination, protocol, null, new AbortController().signal)).toBe('allowed')
+    expect(handler).toHaveBeenCalledOnce()
   })
 
   it('reuses one atomically committed key across concurrent starts and restart', async () => {

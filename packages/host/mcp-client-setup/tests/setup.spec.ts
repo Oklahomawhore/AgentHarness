@@ -1,6 +1,7 @@
-import { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import fs, { chmod, lstat, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { McpClientSetupService, listMcpClients, setupAllMcpClients, setupMcpClient, type McpClientSetupOptions } from '../src/index.ts'
@@ -63,6 +64,36 @@ async function fakeExecutable(path: string, body = '#!/bin/sh\nexit 0\n'): Promi
 }
 
 describe('MCP client setup', () => {
+  it('discovers a private macOS application from the default user Applications directory without inspecting system clients', async () => {
+    const { root, options } = await fixture()
+    const home = join(root, 'home')
+    const application = join(home, 'Applications', 'Cursor.app')
+    await mkdir(application, { recursive: true })
+    const { applicationRoots: _applicationRoots, ...deployment } = options
+    const systemRoot = join('/Applications')
+    const blocked: string[] = []
+    const access = fs.access
+    const inspection = vi.spyOn(fs, 'access').mockImplementation(async (path, mode) => {
+      if (typeof path === 'string' && (path === systemRoot || path.startsWith(`${systemRoot}${sep}`))) {
+        blocked.push(path)
+        throw Object.assign(new Error('System applications are absent from this fixture'), { code: 'ENOENT' })
+      }
+      return access(path, mode)
+    })
+    syncBuiltinESMExports()
+    try {
+      const listed = await listMcpClients({ ...deployment, platform: 'darwin', path: '',
+        environment: { ...deployment.environment, PATH: '' } })
+      expect(listed.clients.filter(client => client.detected).map(client => client.id)).toEqual(['cursor'])
+      expect(listed.clients.find(client => client.id === 'cursor')).toMatchObject({
+        detected: true, configPath: join(home, '.cursor', 'mcp.json'), state: 'not-configured', canSetup: true,
+      })
+      expect(inspection).toHaveBeenCalledWith(application)
+      expect(blocked).toContain(join(systemRoot, 'Cursor.app'))
+      await expect(readFile(join(home, '.cursor', 'mcp.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally { inspection.mockRestore(); syncBuiltinESMExports() }
+  })
+
   it.each(['nodePath', 'dshPath', 'descriptorPath', 'harnessHome', 'sourceTsconfigPath'] as const)(
     'rejects relative deployment %s before inspecting clients', async (field) => {
       const { options } = await fixture()

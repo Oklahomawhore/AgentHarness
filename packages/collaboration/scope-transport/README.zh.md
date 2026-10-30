@@ -57,7 +57,7 @@ kind: "package-reference"
 
 [配置目录](../../../docs/config-catalog.zh.md) 从提供方 schema 生成接受的字段。
 
-监听地址只接受显式 IPv4/IPv6 TCP multiaddr。端口为零时由操作系统分配。`identity()` 等待初始化完成，返回公开 PeerId 和带 `/p2p/<PeerId>` 后缀的已绑定地址。请求目标必须在该后缀中包含完全一致的预期 PeerId；Noise 验证目标持有对应私钥。
+监听地址只接受显式 IPv4/IPv6 TCP multiaddr。端口为零时由操作系统分配。`identity()` 等待初始化完成，返回公开 PeerId 和带 `/p2p/<PeerId>` 后缀的已绑定地址。请求目标必须在该后缀中包含完全一致的预期 PeerId。Noise 认证已连接的对端；提供方在打开应用流之前，将其 PeerId 与目标比较。
 
 `@deepseek-ai/dsh-scope-transport/address` 向持久化恢复路由的消费方公开相同的直连地址校验。目标必须保留预期 PeerId，并使用具有非零端口的显式 IP/TCP 地址。校验检查地址语法和身份选择，不证明网络可达。
 

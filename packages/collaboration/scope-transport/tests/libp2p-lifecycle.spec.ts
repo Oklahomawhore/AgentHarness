@@ -55,6 +55,18 @@ function target(identity: ScopeTransportIdentity) {
 }
 
 describe('libp2p scope provider lifecycle', () => {
+  it('rejects empty listeners through direct construction before creating an identity or node', async () => {
+    const { ctx, path } = await credentials()
+    const nodesBefore = vi.mocked(createLibp2p).mock.calls.length
+    try {
+      expect(() => new Transport(ctx, { ...config, listenAddresses: [] }))
+        .toThrow('scope-transport: listenAddresses must not be empty')
+      expect(vi.mocked(createLibp2p)).toHaveBeenCalledTimes(nodesBefore)
+      expect(await ctx.credentials.listRecords()).toEqual([])
+      await expect(readFile(join(path, 'credentials.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it.each([
     { options: { listenAddresses: ['/ip4/127.0.0.1/tcp/0', '/ip4/127.0.0.1/tcp/0'] }, message: 'duplicate listenAddresses' },
     { options: { maxConnections: Number.MAX_SAFE_INTEGER + 1 }, message: 'invalid maxConnections' },

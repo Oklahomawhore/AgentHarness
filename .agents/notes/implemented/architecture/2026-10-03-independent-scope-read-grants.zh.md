@@ -24,6 +24,8 @@ Owner 不可达表示授权未知。接收方在该状态下不返回缓存投�
 
 传输监听选择与应用权限独立。[Web 组合](../../../../packages/bundle/web-app/README.zh.md#scope-collaboration-network)使用持久设置管理监听，每次 provider 启动只采样一次；保存新值既不改变活动 socket，也不改变授权。邀请控件只接受 Host 当前公布的地址；地址标识连接目标，但不证明远端可达。配置优先级和恢复规则归属[传输 README](../../../../packages/collaboration/scope-transport/README.zh.md#persistent-listener-settings)。
 
+直连提供方将加密协议选择交给固定的 TCP／Noise 组合。未安装 relay 传输时，relay 准入回调没有消费方；检查协商得到的 Noise 标签重复了这一固定选择。提供方仍将已建立连接的 PeerId 与请求的规范 PeerId 比较：哈希身份可能不向 Noise 提供预期公钥，因此握手成功本身不能固定请求的目标。[真实传输回归](../../../../packages/collaboration/scope-transport/tests/transport.spec.ts)在处理器执行前拒绝这种目标。空监听配置也仍在直接构造时校验，先于身份或节点创建。
+
 ## Alternatives considered
 
 **复用互信 Mesh 副本。** 集群共享凭据与全局复制披露了受邀 Task 以外的内容。独立读取协议仅携带已授权投影文本和覆盖，观察写入区间仍属于另一套授权系统。

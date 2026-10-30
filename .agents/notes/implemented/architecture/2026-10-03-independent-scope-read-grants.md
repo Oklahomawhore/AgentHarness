@@ -24,6 +24,8 @@ An unavailable owner means authorization is unknown. The receiver returns no cac
 
 Transport listener selection is independent of application permission. The [Web composition](../../../../packages/bundle/web-app/README.md#scope-collaboration-network) uses settings-backed listeners sampled once per provider startup; saving a new value changes neither active sockets nor grants. Invitation controls accept only the Host’s currently published addresses, which identify connection targets without proving remote reachability. Configuration precedence and recovery belong to the [transport README](../../../../packages/collaboration/scope-transport/README.md#persistent-listener-settings).
 
+The direct provider delegates encryption selection to its fixed TCP/Noise composition. Relay admission callbacks have no consumer without a relay transport, and checking the negotiated Noise label repeats that fixed selection. It still compares the established PeerId with the requested canonical PeerId: hashed identities may not supply an expected public key to Noise, so a successful handshake alone does not pin the requested destination. The [real transport regressions](../../../../packages/collaboration/scope-transport/tests/transport.spec.ts) reject such a target before its handler runs. Empty-listener validation also remains at direct construction, before identity or node creation.
+
 ## Alternatives considered
 
 **Reuse trusted Mesh replication.** Shared cluster credentials and global replication disclose more than the invited Task. The independent read protocol carries only authorized projection text and coverage, while observed-write intervals remain a separate authorization system.
