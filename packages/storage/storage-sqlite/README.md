@@ -33,7 +33,7 @@ Choose it when writes are frequent and point-sized — each key maps to exactly 
 
 ### Configuration
 
-Two fields: the database path and the journal mode. `:memory:` opens an in-process database whose contents disappear with the process.
+Configure the database path, journal mode, and optional initial-snapshot backend. `:memory:` opens an in-process database whose contents disappear with the process.
 
 ```yaml
 - name: '@deepseek-ai/dsh-storage'
@@ -49,12 +49,16 @@ Two fields: the database path and the journal mode. `:memory:` opens an in-proce
 |---|---|---|
 | `path` | required | SQLite database file path, or `:memory:` |
 | `journalMode` | `wal` | Journal mode: `wal`, `delete`, `truncate`, or `persist` |
+| `bootstrapFrom` | absent | Registered backend providing new units’ initial snapshots |
 
 `wal` suits local disks; a rollback-journal mode (`delete`/`truncate`/`persist`) fits filesystems where WAL's shared-memory files do not work, such as network mounts. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-storage-sqlite) is the exhaustive source for every accepted field and its JSDoc.
 
+<a id="observable-behavior"></a>
 ### Observable behavior
 
-Missing directories and database files are created owner-only (`0o700`/`0o600`); an existing database keeps its modes. A unit whose stored format version differs from its descriptor rejects `version-mismatch`, and a database stamped with a physical layout version other than the current one rejects outright — no migration, pre-release stance. Failures carry stable `StorageError` codes, and writes are durable once resolved.
+When `bootstrapFrom` is configured, a unit absent from SQLite copies its source snapshot in one transaction with its tables and version stamp. A failed import leaves no completed-unit stamp or partial rows, so reopening can retry. Existing destination units never read the source, even when every destination record has been deleted. Source files remain untouched. Stop other writers during adoption; after success, SQLite is authoritative. This copies opaque records without changing their format; domain schemas and owners validate them during recovery.
+
+Missing directories and database files are created owner-only (`0o700`/`0o600`); an existing database keeps its modes. A unit whose stored format version differs from its descriptor rejects `version-mismatch`, and a database stamped with a physical layout version other than the current one rejects outright — no format-version conversion. Failures carry stable `StorageError` codes, and writes are durable once resolved.
 
 -----
 
@@ -71,7 +75,7 @@ The backend is a document-per-row layout over one `node:sqlite` connection, desi
 - **Document per row.** Each unit table becomes a physical STRICT table `u_<unit>_<table> (key TEXT PRIMARY KEY, value TEXT)` whose `value` column holds the record's JSON text; the global singleton lives in a shared `unit_globals` table. One key update touches exactly one row — the reason to route a high-churn domain here.
 - **Single-statement atomicity.** Every write primitive is one prepared statement, so SQLite's per-statement atomicity satisfies the KV contract without explicit transactions; write ordering stays the caller's responsibility (the domain layer's write chain).
 - **Names validated before DDL.** Unit and table names must match `UNIT_NAME_RE` before they reach DDL, so no external input is ever interpolated into SQL identifiers.
-- **Versions fail loud.** The physical layout version lives in `PRAGMA user_version` (fresh databases stamp it last); unit format versions live in the `units` table. Any other stamped value rejects — no migrations.
+- **Versions fail loud.** The physical layout version lives in `PRAGMA user_version` (fresh databases stamp it last); unit format versions live in the `units` table. Any other stamped value rejects — no format-version conversion.
 
 ### Open sequence
 
@@ -81,7 +85,7 @@ Opening the database creates the parent as `0o700`, exclusively creates a missin
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: backend registration, `path`/`journalMode` config, unit table |
+| [`src/index.ts`](src/index.ts) | Plugin entry: backend registration, configuration, atomic snapshot adoption, unit tables |
 | [`src/schema.ts`](src/schema.ts) | Open sequence, physical layout version, metadata tables, record table naming |
 | [`src/unit.ts`](src/unit.ts) | One opened unit: prepared statements, JSON value parse, close |
 | — | No runtime invariant companion is published; schema-version and unit-version consistency are open-time checks that reject before a unit exists, and durability needs the backend round-trip tests in the shared KV conformance suite; this package exposes no continuously observable in-process relation. |

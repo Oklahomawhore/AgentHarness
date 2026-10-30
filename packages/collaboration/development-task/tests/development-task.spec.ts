@@ -1,12 +1,17 @@
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentRoomService, {
   type DevelopmentParticipantId,
 } from '@deepseek-ai/dsh-development-room'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import DevelopmentTaskService, {
+  observedIntervalId,
   type Config,
   type DevelopmentTaskAdmitObservedContextRequest,
   type DevelopmentTaskBindingId,
+  type DevelopmentTaskAssignmentLogEntry,
+  type DevelopmentTaskLogEntry,
   type DevelopmentTaskId,
   type DevelopmentTaskObservedSourceId,
   type DevelopmentTaskArtifactId,
@@ -16,7 +21,9 @@ import DevelopmentTaskService, {
   type DevelopmentNodeId,
   type DevelopmentTaskObservedIntervalIdentity,
 } from '../src/index.ts'
-import { developmentTaskAssignmentEventSchema, developmentTaskContextBlockSchema, developmentTaskEventSchema, openApiObservationInputSchema } from '../src/schema.ts'
+import { developmentTaskAdmitRemoteObservedContextRequestSchema, developmentTaskAssignmentEventSchema,
+  developmentTaskContextBlockSchema, developmentTaskEventSchema, developmentTaskObservedIntervalIdentitySchema,
+  developmentTaskOpenApiObservationSchema, openApiObservationInputSchema } from '../src/schema.ts'
 
 const contexts: Context[] = []
 const participant = (value: string): DevelopmentParticipantId => value as DevelopmentParticipantId
@@ -149,6 +156,97 @@ describe('owner-approved remote observation intervals', () => {
     await expect(source.tasks.approveObservedInterval(identity)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
   })
 
+  it('refuses a known human or another home node before persisting remote observation approval', async () => {
+    const { owner, source, identity } = await remoteObservationScenario()
+    const human = participant('remote-human')
+    await source.rooms.announce({ id: human, kind: 'human', displayName: 'Remote human owner' })
+    const profile = source.rooms.list().participants.find(item => item.id === human)
+    if (profile === undefined) throw new Error('Remote human profile was not announced')
+    await owner.rooms.acceptPresenceReplica(profile, profile.nodeId)
+    const other = await setup({}, 'node-c')
+    const otherTask = await other.tasks.create(rootRequest('Other Agent responsibility'))
+    const otherBinding = await other.tasks.checkout({ taskId: otherTask.id, participantId: participant('agent') })
+    const otherEpoch = other.tasks.assignmentLog().at(-1)
+    if (otherEpoch === undefined) throw new Error('Other Agent checkout was not retained')
+    const selections = [
+      developmentTaskObservedIntervalIdentitySchema.parse({ ...identity, participantId: human }),
+      developmentTaskObservedIntervalIdentitySchema.parse({ ...identity, sourceNodeId: otherEpoch.nodeId,
+        bindingId: otherBinding.assignment.bindingId, expectedBindingEpoch: { nodeId: otherEpoch.nodeId, seq: otherEpoch.seq } }),
+    ]
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    for (const selection of selections) await expect(owner.tasks.approveObservedInterval(selection))
+      .rejects.toMatchObject({ code: 'PARTICIPANT_NOT_AVAILABLE' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(owner.tasks.log()).toEqual(before)
+    expect(await owner.tasks.observedIntervals({ taskId: identity.taskId })).toEqual([])
+    const approved = await owner.tasks.approveObservedInterval(identity)
+    expect(approved).toMatchObject({ state: 'active', approvalReceipt: { event: { seq: (before.at(-1)?.seq ?? 0) + 1 } } })
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('waits for remote Agent presence while keeping approval candidates scoped to their Task and home node', async () => {
+    const { owner, source, task, identity, bound } = await remoteObservationScenario()
+    await owner.tasks.acceptAssignmentReplica(bound, identity.sourceNodeId)
+    const otherTask = await owner.tasks.create(rootRequest('Another shared responsibility'))
+    const otherCreation = owner.tasks.log().at(-1)
+    if (otherCreation === undefined) throw new Error('Other Task creation was not retained')
+    await source.tasks.acceptLogReplica(otherCreation, otherCreation.nodeId)
+    const other = await source.tasks.checkout({ taskId: otherTask.id, participantId: identity.participantId })
+    const otherEpoch = source.tasks.assignmentLog().at(-1)
+    if (otherEpoch === undefined) throw new Error('Other Task checkout was not retained')
+    await owner.tasks.acceptAssignmentReplica(otherEpoch, identity.sourceNodeId)
+    await owner.tasks.checkout({ taskId: task.id, participantId: participant('agent') })
+    const delayedId = participant('delayed-remote-agent')
+    await source.rooms.announce({ id: delayedId, kind: 'agent', displayName: 'Delayed remote Agent' })
+    const delayed = await source.tasks.checkout({ taskId: task.id, participantId: delayedId })
+    const delayedEpoch = source.tasks.assignmentLog().at(-1)
+    const profile = source.rooms.list().participants.find(item => item.id === delayedId)
+    if (delayedEpoch === undefined || profile === undefined) throw new Error('Delayed Agent evidence is missing')
+    await owner.tasks.acceptAssignmentReplica(delayedEpoch, identity.sourceNodeId)
+    const selection = developmentTaskObservedIntervalIdentitySchema.parse({ taskId: task.id, sourceNodeId: profile.nodeId,
+      participantId: delayedId, bindingId: delayed.assignment.bindingId,
+      expectedBindingEpoch: { nodeId: delayedEpoch.nodeId, seq: delayedEpoch.seq } })
+    expect(owner.tasks.observedCandidates({ taskId: task.id })).toEqual([{ ...identity, sessionLabel: 'Backend API' }])
+    expect(owner.tasks.observedCandidates({ taskId: otherTask.id })).toEqual([{
+      taskId: otherTask.id, sourceNodeId: otherEpoch.nodeId, participantId: identity.participantId,
+      bindingId: other.assignment.bindingId, expectedBindingEpoch: { nodeId: otherEpoch.nodeId, seq: otherEpoch.seq },
+    }])
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.approveObservedInterval(selection)).rejects.toMatchObject({ code: 'PARTICIPANT_NOT_AVAILABLE' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    await owner.rooms.acceptPresenceReplica(profile, profile.nodeId)
+    expect(owner.tasks.observedCandidates({ taskId: task.id })).toEqual([{ ...identity, sessionLabel: 'Backend API' }, selection])
+    expect(await owner.tasks.approveObservedInterval(selection)).toMatchObject({ state: 'active', participantId: delayedId,
+      approvalReceipt: { event: { seq: (before.at(-1)?.seq ?? 0) + 1 } } })
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an observation before its real interval is approved and admits the unchanged request after approval', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ taskId: identity.taskId,
+      participantId: identity.participantId, bindingId: identity.bindingId, expectedBindingEpoch: identity.expectedBindingEpoch,
+      intervalId: observedIntervalId(identity), sourceId: request.sourceId, text: request.text, observation: request.observation })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)).rejects.toMatchObject({ code: 'POLICY_REJECTED' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    const approved = await owner.tasks.approveObservedInterval(identity)
+    expect(approved.id).toBe(input.intervalId)
+    const admitted = await owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)
+    expect(admitted).toMatchObject({ outcome: 'published', receipt: { intervalId: approved.id,
+      event: { seq: (before.at(-1)?.seq ?? 0) + 2 } } })
+    expect(persisted).toHaveBeenCalledTimes(2)
+    expect((await owner.tasks.acceptObservedRemote(input, identity.sourceNodeId)).receipt).toEqual(admitted.receipt)
+    expect(persisted).toHaveBeenCalledTimes(2)
+  })
+
   it('returns only the admitted publication and receipt as unrelated Task history grows beyond a Mesh frame', async () => {
     const { owner, identity, request } = await remoteObservationScenario({ maxEventsPerTask: 256 })
     const interval = await owner.tasks.approveObservedInterval(identity)
@@ -241,6 +339,91 @@ describe('owner-approved remote observation intervals', () => {
     expect(await owner.tasks.acceptObservedIntervalEnd(identity, identity.sourceNodeId)).toEqual(ended)
   })
 
+  it('reserves a safe terminal sequence before committing a remote artifact', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ ...fields, intervalId: interval.id,
+      observation: artifactObservation(Number.MAX_SAFE_INTEGER) })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    const admitted = await owner.tasks.acceptObservedRemote({ ...input,
+      observation: artifactObservation(Number.MAX_SAFE_INTEGER - 1) }, sourceNodeId)
+    expect(admitted.receipt.event.seq).toBe((before.at(-1)?.seq ?? 0) + 1)
+    const ended = await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+    expect(owner.tasks.get({ taskId: identity.taskId }).context.at(-2)?.observation)
+      .toMatchObject({ state: 'revoked', sequence: Number.MAX_SAFE_INTEGER })
+    expect(ended.event.seq).toBe(admitted.receipt.event.seq + 1)
+    expect(await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)).toEqual(ended)
+    expect(persisted).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a remote revocation sample and retains retirement for the interval end operation', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const admitted = await owner.tasks.acceptObservedRemote({ ...fields, intervalId: interval.id }, sourceNodeId)
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({
+      ...revocation(fields), intervalId: interval.id,
+    })
+    const before = owner.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    owner.ctx.on('development-task/persist', persisted)
+    await expect(owner.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(owner.tasks.log()).toEqual(before)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(await owner.tasks.observedIntervals({ taskId: identity.taskId })).toEqual([interval])
+    const ended = await owner.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+    expect(ended.event.seq).toBe(admitted.receipt.event.seq + 1)
+    expect(owner.tasks.get({ taskId: identity.taskId }).context.map(item => item.observation?.state))
+      .toEqual(['valid', 'revoked', undefined])
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('bounds the complete multibyte remote observation and can still emit its terminal successor at the exact limit', async () => {
+    const { owner, identity, request } = await remoteObservationScenario()
+    const interval = await owner.tasks.approveObservedInterval(identity)
+    const { sourceNodeId, ...fields } = request
+    const { state: _state, sha256: _digest, facts: _facts, ...artifact } = artifactObservation(9)
+    const observation = openApiObservationInputSchema.parse({ ...artifact,
+      sourceName: 'API 职责🙂', state: 'unavailable', reason: 'too-large' })
+    if (observation.state !== 'unavailable') throw new Error('Expected unavailable artifact evidence')
+    const input = developmentTaskAdmitRemoteObservedContextRequestSchema.parse({ ...fields, intervalId: interval.id, observation })
+    const complete = developmentTaskOpenApiObservationSchema.parse({ ...observation,
+      observerNodeId: sourceNodeId, sourceId: input.sourceId,
+      binding: { id: identity.bindingId, epoch: identity.expectedBindingEpoch } })
+    const bytes = Buffer.byteLength(JSON.stringify(complete), 'utf8')
+    expect(bytes).toBeGreaterThan(JSON.stringify(complete).length)
+    const saved = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(owner.tasks.log())))
+    for (const limit of [bytes - 1, bytes]) {
+      const bounded = await setup({ maxTextBytes: limit })
+      bounded.tasks.restoreLog(saved)
+      const before = bounded.tasks.log()
+      const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+      bounded.ctx.on('development-task/persist', persisted)
+      const retry = limit === bytes ? input : { ...input, observation: { ...observation, sourceName: 'API' } }
+      if (limit < bytes) {
+        await expect(bounded.tasks.acceptObservedRemote(input, sourceNodeId)).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+        expect(bounded.tasks.log()).toEqual(before)
+        expect(persisted).not.toHaveBeenCalled()
+      }
+      const admitted = await bounded.tasks.acceptObservedRemote(retry, sourceNodeId)
+      expect(admitted.receipt.event.seq).toBe((before.at(-1)?.seq ?? 0) + 1)
+      const admittedBytes = Buffer.byteLength(JSON.stringify(admitted.publication.observation), 'utf8')
+      expect(admittedBytes).toBeLessThanOrEqual(limit)
+      if (limit === bytes) expect(admittedBytes).toBe(limit)
+      await bounded.tasks.acceptObservedIntervalEnd(identity, sourceNodeId)
+      const terminal = bounded.tasks.get({ taskId: identity.taskId }).context.at(-2)?.observation
+      expect(terminal).toMatchObject({ state: 'revoked', sequence: 10 })
+      expect(Buffer.byteLength(JSON.stringify(terminal), 'utf8')).toBe(admittedBytes - 1)
+      expect(persisted).toHaveBeenCalledTimes(2)
+    }
+  })
+
   it('keeps authority and receipts unchanged when opening or ending persistence fails', async () => {
     const { owner, identity, request } = await remoteObservationScenario()
     const failOpen = owner.ctx.on('development-task/persist', () => { throw new Error('disk unavailable') })
@@ -262,6 +445,18 @@ describe('owner-approved remote observation intervals', () => {
 })
 
 describe('DevelopmentTaskService', () => {
+  it.each([1, 64, 250])('defaults Task catalog reads within the configured %i result limit', async (maxLineageTasks) => {
+    const { tasks } = await setup({ maxLineageTasks })
+    const first = await tasks.create(rootRequest('Catalog first'))
+    await tasks.create(rootRequest('Catalog second'))
+    await tasks.create(rootRequest('Catalog third'))
+    expect(tasks.list({})).toHaveLength(Math.min(3, maxLineageTasks))
+    expect(tasks.list({ limit: 1 })).toHaveLength(1)
+    expect(tasks.lineage({ taskId: first.id }).tasks).toEqual([first])
+    expect(() => tasks.list({ limit: maxLineageTasks + 1 })).toThrow('limit must be between')
+    expect(() => tasks.lineage({ taskId: first.id, limit: maxLineageTasks + 1 })).toThrow('limit must be between')
+  })
+
   it('admits typed artifact evidence without promoting publication text that copies its JSON', async () => {
     const { tasks } = await setup()
     const task = await tasks.create(rootRequest('Artifact admission'))
@@ -480,6 +675,236 @@ describe('DevelopmentTaskService', () => {
     })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
 
+  it.each([10, 1])('selects the last retained binding by durable order when the later clock reads %s', async (laterTime) => {
+    const { tasks } = await setup()
+    const first = await tasks.create(rootRequest('First retained responsibility'))
+    const second = await tasks.create(rootRequest('Latest retained responsibility'))
+    const agent = participant('agent')
+    expect(tasks.latestAssignment(agent)).toBeUndefined()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(10)
+    let older: Awaited<ReturnType<typeof tasks.checkout>>
+    let newer: Awaited<ReturnType<typeof tasks.checkout>>
+    try {
+      older = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('z-older') })
+      clock.mockReturnValue(laterTime)
+      newer = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('a-newer') })
+    } finally { clock.mockRestore() }
+    await tasks.acknowledge({ bindingId: older.assignment.bindingId, participantId: agent,
+      taskId: first.id, revision: first.revision })
+    expect(tasks.latestAssignment(agent)).toEqual(newer.assignment)
+    expect(tasks.latestAssignment(participant('owner'))).toBeUndefined()
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    expect(restored.tasks.latestAssignment(agent)).toEqual(newer.assignment)
+    await restored.tasks.clear({ bindingId: newer.assignment.bindingId, participantId: agent })
+    expect(restored.tasks.latestAssignment(agent)).toMatchObject({ bindingId: older.assignment.bindingId, acknowledgedRevision: 1 })
+    await restored.tasks.clear({ bindingId: older.assignment.bindingId, participantId: agent })
+    expect(restored.tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('selects only retained bindings still owned by the participant after a cleared binding id is reused', async () => {
+    const { tasks, rooms } = await setup()
+    const agent = participant('agent')
+    const other = participant('another-agent')
+    await rooms.announce({ id: other, kind: 'agent', displayName: 'Another Agent' })
+    const first = await tasks.create(rootRequest('Retained original responsibility'))
+    const second = await tasks.create(rootRequest('Another participant responsibility'))
+    const retained = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('retained') })
+    const reusedId = binding('reused')
+    await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: reusedId })
+    await expect(tasks.checkout({ taskId: second.id, participantId: other, bindingId: reusedId }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(tasks.clear({ bindingId: reusedId, participantId: other })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await tasks.clear({ bindingId: reusedId, participantId: agent })
+    const reused = await tasks.checkout({ taskId: second.id, participantId: other, bindingId: reusedId })
+    const restored = await setup()
+    await restored.rooms.announce({ id: other, kind: 'agent', displayName: 'Another Agent' })
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    for (const current of [tasks, restored.tasks]) {
+      expect(current.latestAssignment(agent)).toEqual(retained.assignment)
+      expect(current.latestAssignment(other)).toEqual(reused.assignment)
+      expect(Object.isFrozen(current.latestAssignment(agent))).toBe(true)
+      await current.clear({ bindingId: retained.assignment.bindingId, participantId: agent })
+      expect(current.latestAssignment(agent)).toBeUndefined()
+      expect(current.latestAssignment(other)).toEqual(reused.assignment)
+    }
+  })
+
+  it('treats rebinding an existing session as newer than other retained sessions without letting acknowledgements reorder it', async () => {
+    const { tasks } = await setup()
+    const first = await tasks.create(rootRequest('First responsibility'))
+    const second = await tasks.create(rootRequest('Other session responsibility'))
+    const agent = participant('agent')
+    const original = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('original') })
+    const other = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('other') })
+    const rebound = await tasks.checkout({ taskId: second.id, participantId: agent, bindingId: original.assignment.bindingId })
+    await tasks.acknowledge({ bindingId: other.assignment.bindingId, participantId: agent, taskId: second.id, revision: second.revision })
+    expect(tasks.latestAssignment(agent)).toEqual(rebound.assignment)
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog(tasks.assignmentLog())
+    expect(restored.tasks.latestAssignment(agent)).toEqual(rebound.assignment)
+  })
+
+  it('keeps the prior latest assignment when persistence rejects a new binding', async () => {
+    const { ctx, tasks } = await setup()
+    const first = await tasks.create(rootRequest('Confirmed responsibility'))
+    const second = await tasks.create(rootRequest('Unconfirmed responsibility'))
+    const agent = participant('agent')
+    const retained = await tasks.checkout({ taskId: first.id, participantId: agent, bindingId: binding('confirmed') })
+    const before = tasks.assignmentLog()
+    ctx.on('development-task/assignment-persist', () => { throw new Error('persistence unavailable') })
+    await expect(tasks.checkout({ taskId: second.id, participantId: agent, bindingId: binding('unconfirmed') }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(tasks.assignmentLog()).toEqual(before)
+    expect(tasks.latestAssignment(agent)).toEqual(retained.assignment)
+  })
+
+  it('keeps latest selection Host-only while assignment Remotes update the same retained state', async () => {
+    const { ctx, tasks } = await setup()
+    const remote = ctx.developmentTaskAssignments
+    expect(remoteMethods(tasks).some(method => method.method === 'latestAssignment')).toBe(false)
+    expect(remoteMethods(remote).map(method => method.method)).toEqual(['list', 'checkout', 'clear', 'acknowledge'])
+    const created = await tasks.createRemote(rootRequest('Remote responsibility'))
+    const agent = participant('agent')
+    const checked = await remote.checkout({ taskId: created.task.id, participantId: agent })
+    const acknowledged = await remote.acknowledge({
+      bindingId: checked.assignment.bindingId, participantId: agent, taskId: created.task.id, revision: created.task.revision,
+    })
+    expect(remote.list()).toEqual([acknowledged])
+    expect(tasks.latestAssignment(agent)).toEqual(acknowledged)
+    expect(tasks.context({ taskId: created.task.id }).task.id).toBe(created.task.id)
+    await remote.clear({ bindingId: checked.assignment.bindingId, participantId: agent })
+    expect(remote.list()).toEqual([])
+    expect(tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('restores reversed durable events and rejects logs missing their first dependency', async () => {
+    const { tasks } = await setup()
+    const task = await tasks.create(rootRequest('Restored dependency order'))
+    await tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Durable context' })
+    const agent = participant('agent')
+    const checked = await tasks.checkout({ taskId: task.id, participantId: agent })
+    await tasks.acknowledge({ bindingId: checked.assignment.bindingId, participantId: agent, taskId: task.id, revision: 2 })
+    const logs = tasks.log().map(entry => developmentTaskEventSchema.parse(JSON.parse(JSON.stringify(entry))))
+    const assignments = tasks.assignmentLog().map(entry => developmentTaskAssignmentEventSchema.parse(JSON.parse(JSON.stringify(entry))))
+    const restored = await setup()
+    restored.tasks.restoreLog([...logs].reverse())
+    restored.tasks.restoreAssignmentLog([...assignments].reverse())
+    expect(restored.tasks.log()).toEqual(logs)
+    expect(restored.tasks.assignmentLog()).toEqual(assignments)
+    expect(restored.tasks.latestAssignment(agent)).toEqual(tasks.latestAssignment(agent))
+    const missingTask = await setup()
+    expect(() => { missingTask.tasks.restoreLog(logs.slice(1)) }).toThrow('unresolved lineage or sequence dependencies')
+    expect(missingTask.tasks.log()).toEqual([])
+    const missingBinding = await setup()
+    missingBinding.tasks.restoreLog(logs)
+    expect(() => { missingBinding.tasks.restoreAssignmentLog(assignments.slice(1)) }).toThrow('sequence gap')
+    expect(missingBinding.tasks.assignmentLog()).toEqual([])
+    expect(missingBinding.tasks.latestAssignment(agent)).toBeUndefined()
+  })
+
+  it('rejects delayed acknowledgements before persistence and leaves the next durable assignment restorable', async () => {
+    const { ctx, tasks } = await setup()
+    const task = await tasks.create(rootRequest('Acknowledgement ordering'))
+    await tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Second revision' })
+    const checked = await tasks.checkout({ taskId: task.id, participantId: participant('agent') })
+    const request = { bindingId: checked.assignment.bindingId, participantId: checked.assignment.participantId, taskId: task.id }
+    await tasks.acknowledge({ ...request, revision: 2 })
+    const retained = tasks.assignmentLog()
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    ctx.on('development-task/assignment-persist', persisted)
+
+    await expect(tasks.acknowledge({ ...request, revision: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(tasks.assignmentLog()).toEqual(retained)
+    const latest = await tasks.acknowledge({ ...request, revision: 2 })
+    expect(persisted).toHaveBeenCalledOnce()
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log())
+    restored.tasks.restoreAssignmentLog([...retained, ...persisted.mock.calls.map(([entry]) => entry)])
+    expect(restored.tasks.assignmentList()).toEqual([latest])
+  })
+
+  it.each(['regression', 'gap', 'conflicting-duplicate'] as const)('rejects replicated assignment %s before persistence', async (failure) => {
+    const { owner, source, task, bound } = await remoteObservationScenario()
+    const sourceNodeId = 'node-b' as DevelopmentNodeId
+    await owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Revision two' })
+    await source.tasks.acceptLogReplica(owner.tasks.log().at(-1)!, 'node-a' as DevelopmentNodeId)
+    const request = { taskId: task.id, bindingId: bound.bindingId, participantId: bound.participantId, revision: 2 }
+    await source.tasks.acknowledge(request)
+    const acknowledged = source.tasks.assignmentLog().at(-1)!
+    await owner.tasks.acceptAssignmentReplica(acknowledged, sourceNodeId)
+    const persisted = vi.fn<(entry: DevelopmentTaskAssignmentLogEntry) => void>()
+    owner.ctx.on('development-task/assignment-persist', persisted)
+    const invalid = { ...acknowledged,
+      seq: acknowledged.seq + (failure === 'gap' ? 2 : failure === 'regression' ? 1 : 0),
+      change: { kind: 'context-acknowledged' as const, taskId: task.id, revision: 1 } }
+    await expect(owner.tasks.acceptAssignmentReplica(invalid, sourceNodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    const valid = await source.tasks.acknowledge(request)
+    await expect(owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)).resolves.toEqual(valid)
+    expect(persisted).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a conflicting duplicate Task replica before persistence and keeps later events restorable', async () => {
+    const owner = await setup({}, 'node-a')
+    const replica = await setup({}, 'node-b')
+    const task = await owner.tasks.create(rootRequest('Replica identity'))
+    const ownerNodeId = 'node-a' as DevelopmentNodeId
+    await replica.tasks.acceptLogReplica(owner.tasks.log()[0]!, ownerNodeId)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Original publication' })
+    const published = owner.tasks.log().at(-1)!
+    await replica.tasks.acceptLogReplica(published, ownerNodeId)
+    if (published.change.kind !== 'context-published') throw new Error('Expected a context publication')
+    const conflict: DevelopmentTaskLogEntry = { ...published, change: { ...published.change,
+      publication: { ...published.change.publication, text: 'Conflicting publication' } } }
+    const retained = replica.tasks.log()
+    const persisted = vi.fn<(entry: DevelopmentTaskLogEntry) => void>()
+    replica.ctx.on('development-task/persist', persisted)
+
+    await expect(replica.tasks.acceptLogReplica(conflict, ownerNodeId)).rejects.toMatchObject({ code: 'REPLICA_CONFLICT' })
+    expect(persisted).not.toHaveBeenCalled()
+    expect(replica.tasks.log()).toEqual(retained)
+    await owner.tasks.publishContext({ taskId: task.id, participantId: participant('owner'), text: 'Later publication' })
+    const latest = await replica.tasks.acceptLogReplica(owner.tasks.log().at(-1)!, ownerNodeId)
+    expect(persisted).toHaveBeenCalledOnce()
+    const restored = await setup({}, 'node-b')
+    restored.tasks.restoreLog([...retained, ...persisted.mock.calls.map(([entry]) => entry)])
+    expect(restored.tasks.get({ taskId: task.id })).toEqual(latest)
+  })
+
+  it('reuses committed assignment replicas without persisting or notifying again after acknowledgement and clear', async () => {
+    const { owner, source, task, bound } = await remoteObservationScenario()
+    const sourceNodeId = source.rooms.list().nodeId
+    await owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)
+    const acknowledged = await source.tasks.acknowledge({ taskId: task.id, participantId: bound.participantId,
+      bindingId: bound.bindingId, revision: task.revision })
+    await owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)
+    const changed = vi.fn()
+    owner.ctx.on('development-task/assignment-changed', changed)
+    const persisted = vi.fn(() => { throw new Error('No duplicate assignment write is allowed') })
+    const stop = owner.ctx.on('development-task/assignment-persist', persisted)
+    await expect(owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)).resolves.toEqual(acknowledged)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+    stop()
+
+    await source.tasks.clear({ participantId: bound.participantId, bindingId: bound.bindingId })
+    await owner.tasks.acceptAssignmentReplica(source.tasks.assignmentLog().at(-1)!, sourceNodeId)
+    changed.mockClear()
+    owner.ctx.on('development-task/assignment-persist', persisted)
+    const retained = owner.tasks.assignmentLog()
+    await expect(owner.tasks.acceptAssignmentReplica(bound, sourceNodeId)).resolves.toBeUndefined()
+    expect(persisted).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+    expect(owner.tasks.assignmentLog()).toEqual(retained)
+    expect(owner.tasks.assignmentList()).toEqual([])
+  })
+
   it('keeps different sessions of the same Agent independently bound', async () => {
     const { ctx, rooms, tasks } = await setup()
     const assignmentChanged = vi.fn()
@@ -593,6 +1018,58 @@ describe('DevelopmentTaskService', () => {
     expect(created.runtime).toBe('degraded')
     await vi.waitFor(() => { expect(tasks.get({ taskId: created.id }).runtime).toBe('ready') })
   })
+
+  it.each(['failed retry', 'disposal'] as const)('owns one blocked hidden Room repair across %s', async (mode) => {
+    const gate = Promise.withResolvers<undefined>()
+    const entered = Promise.withResolvers<undefined>()
+    vi.useFakeTimers()
+    try {
+      const { ctx, rooms, tasks } = await setup({ roomRetryIntervalMs: 10 })
+      const ensure = vi.spyOn(rooms, 'ensure')
+      let attempts = 0
+      ctx.on('development-room/persist', async (entry) => {
+        if (entry.change.kind !== 'room-created') return
+        attempts++
+        if (attempts === 1) throw new Error('initial Room write unavailable')
+        if (attempts === 2) {
+          entered.resolve(undefined)
+          await gate.promise
+          if (mode === 'failed retry') throw new Error('background Room write unavailable')
+        }
+      })
+      const task = await tasks.create(rootRequest('One background repair'))
+      expect(task.runtime).toBe('degraded')
+      await vi.advanceTimersByTimeAsync(10)
+      await entered.promise
+      await vi.advanceTimersByTimeAsync(50)
+      expect(attempts).toBe(2)
+      expect(ensure).toHaveBeenCalledTimes(2)
+      if (mode === 'failed retry') {
+        gate.resolve(undefined)
+        await vi.advanceTimersByTimeAsync(10)
+        expect(attempts).toBe(3)
+        expect(ensure).toHaveBeenCalledTimes(3)
+        expect(tasks.get({ taskId: task.id }).runtime).toBe('ready')
+      } else {
+        let disposed = false
+        const closing = ctx.fiber.dispose().then(() => { disposed = true })
+        await vi.advanceTimersByTimeAsync(50)
+        expect(disposed).toBe(false)
+        expect(attempts).toBe(2)
+        gate.resolve(undefined)
+        await closing
+        await vi.advanceTimersByTimeAsync(100)
+        expect(attempts).toBe(2)
+        expect(rooms.log().filter(entry => entry.change.kind === 'room-created')).toHaveLength(1)
+      }
+    } finally {
+      gate.resolve(undefined)
+      try {
+        await vi.advanceTimersByTimeAsync(0)
+        await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+      } finally { vi.restoreAllMocks(); vi.useRealTimers() }
+    }
+  })
 })
 
 describe('observed Task context admission', () => {
@@ -626,7 +1103,7 @@ describe('observed Task context admission', () => {
         text: results[1].publication.text,
         publishedBy: results[1].publication.publishedBy,
       },
-    }, null, 2) + '\n').toMatchFileSnapshot(new URL('./expected/observed-context.json', import.meta.url).pathname)
+    }, null, 2) + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/observed-context.json', import.meta.url)))
   })
 
   it('rejects conflicting source text and preserves distinct observations with equal text', async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
@@ -121,9 +121,13 @@ function panelProps(
     useClaudeScopes: <T,>(selector: (value: typeof claudeState) => T): T => selector(claudeState),
     useSourceContributions: selector => selector({}),
     useOwnerContributions: selector => selector({}),
+    useScopeAccess: selector => selector({ inventory: { status: 'ready', pending: false,
+      value: { identity: { peerId: 'test-peer' as import('@deepseek-ai/dsh-api-remotes/client').ScopePeerId, addresses: [] },
+        access: { grants: [], subscriptions: [] } } } }),
     readContribution: vi.fn(), requestContribution: vi.fn(), prepareContribution: vi.fn(),
     activateContribution: vi.fn(), stopContribution: vi.fn(),
-    createContributionEntry: vi.fn(), recoverContributionEntry: vi.fn(),
+    leaveJointContribution: vi.fn(), recoverJointContribution: vi.fn(), probeContributionEntry: vi.fn(),
+    createGroupEntry: vi.fn(), closeGroupEntry: vi.fn(), createContributionEntry: vi.fn(), recoverContributionEntry: vi.fn(),
     approveContributionApplication: vi.fn(), rejectContributionApplication: vi.fn(),
     previewContributionText: vi.fn(), readOwnedContributions: vi.fn(), moreOwnedContributions: vi.fn(),
     approveContribution: vi.fn(), recoverContribution: vi.fn(), revokeContribution: vi.fn(),
@@ -145,7 +149,7 @@ function panelProps(
     joinClaudeScope: vi.fn(),
     leaveClaudeScope: vi.fn(),
     refreshClaudeScopes: vi.fn(),
-    readScopeAccess: vi.fn(async () => ({ identity: { peerId: 'test-peer' as import('@deepseek-ai/dsh-api-remotes/client').ScopePeerId, addresses: [] }, access: { grants: [], subscriptions: [] } })),
+    readScopeAccess: vi.fn(),
     inviteScope: vi.fn(), revokeScope: vi.fn(), receiveClaudeScope: vi.fn(), stopClaudeReceive: vi.fn(),
     refresh: vi.fn(),
     t: makeTranslate(zh),
@@ -158,6 +162,71 @@ function openPanel(props: EmergenceCenterPanelProps): void {
 }
 
 describe('EmergenceCenterPanel', () => {
+  it('renders a bounded lineage without inventing an edge to an unavailable parent', () => {
+    const fork = task(FORK_ONE, 'Bounded fork', { kind: 'fork', parent: { taskId: ROOT, revision: 1 } })
+    const graph = taskGraph([fork], makeTranslate(zh))
+    expect(graph.nodes.map(node => node.id)).toEqual([FORK_ONE])
+    expect(graph.edges).toEqual([])
+    expect(fork.origin).toEqual({ kind: 'fork', parent: { taskId: ROOT, revision: 1 } })
+  })
+
+  it('cancels a Fork draft and reopens the center to create a Root without sending the cancelled operation', async () => {
+    const props = panelProps()
+    openPanel(props)
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.forkAction'] }))
+    fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Cancelled branch' } })
+    const form = screen.getByRole('button', { name: zh['create.submit'] }).closest('form')
+    if (form === null) throw new Error('Creation form missing')
+    fireEvent.click(within(form).getByRole('button', { name: '×' }))
+    expect(screen.queryByLabelText(zh['create.objective'])).toBeNull()
+    expect(props.createTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh['panel.close'] }))
+    expect(document.querySelector('[data-emergence-center]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+    fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Independent delivery' } })
+    fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'New shared decisions' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
+    await waitFor(() => { expect(props.createTask).toHaveBeenCalledExactlyOnceWith({ origin: { kind: 'root' },
+      createdBy: HUMAN, objective: 'Independent delivery', scope: 'New shared decisions' }) })
+  })
+
+  it('keeps a Fork unsent while its parent is unavailable and uses the restored current revision', async () => {
+    const parent = task(ROOT, 'Parent', { kind: 'root' })
+    const props = panelProps([parent])
+    const view = render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.forkAction'] }))
+    fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Independent branch' } })
+    fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Retained proposal' } })
+    view.rerender(<EmergenceCenterPanel {...props} useTasks={panelProps([]).useTasks} />)
+    expect(screen.getByRole('button', { name: zh['create.submit'] })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText<HTMLInputElement>(zh['create.objective']).value).toBe('Independent branch')
+    expect(props.createTask).not.toHaveBeenCalled()
+    view.rerender(<EmergenceCenterPanel {...props} useTasks={panelProps([{ ...parent, revision: 2 }]).useTasks} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
+    await waitFor(() => { expect(props.createTask).toHaveBeenCalledExactlyOnceWith({
+      origin: { kind: 'fork', parent: { taskId: ROOT, revision: 2 } }, createdBy: HUMAN,
+      objective: 'Independent branch', scope: 'Retained proposal',
+    }) })
+  })
+
+  it('keeps a newly bound unnamed Session unacknowledged until its own context read is reported', () => {
+    const props = panelProps(undefined, { assignments: [
+      { bindingId: binding('fresh-session'), participantId: AGENT, taskId: ROOT, assignedAt: 1 },
+    ] })
+    openPanel(props)
+    const hub = within(screen.getByRole('region', { name: zh['agents.connectTitle'] }))
+    expect(hub.getByText(`${zh['agents.unnamedSession']} · ${props.t('detail.revision', { revision: 0 })}`)).toBeTruthy()
+    expect(hub.getByText(props.t('agent.status.assigned', { client: 'Codex', sessions: 1, revision: 1 }))).toBeTruthy()
+    const steps = within(hub.getByRole('list', { name: zh['agents.progress'] })).getAllByRole('listitem')
+    expect(steps.at(-1)?.getAttribute('data-state')).toBe('pending')
+    expect(props.publishContext).not.toHaveBeenCalled()
+  })
+
   it('opens immediately for the AgentHarness launcher URL', () => {
     const previous = window.location.href
     window.history.replaceState(null, '', '/#agentharness=collaboration')
@@ -234,6 +303,11 @@ describe('EmergenceCenterPanel', () => {
     fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
     fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Merged context' } })
     fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Combined findings' } })
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
+    expect(screen.getByRole('button', { name: zh['create.submit'] })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText<HTMLInputElement>(zh['create.objective']).value).toBe('Merged context')
+    expect(props.createTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
     fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
 
     await waitFor(() => {
@@ -256,6 +330,10 @@ describe('EmergenceCenterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
     fireEvent.click(screen.getByRole('button', { name: zh['create.forkAction'] }))
     fireEvent.click(screen.getByLabelText('Root: Public decision'))
+    expect(screen.getByLabelText('Root: Public decision')).toHaveProperty('checked', false)
+    fireEvent.click(screen.getByLabelText('Root: Public decision'))
+    expect(screen.getByLabelText('Root: Public decision')).toHaveProperty('checked', true)
+    fireEvent.click(screen.getByLabelText('Root: Public decision'))
     fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Fork context' } })
     fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Independent exploration' } })
     fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
@@ -266,6 +344,45 @@ describe('EmergenceCenterPanel', () => {
         excludedContextIds: ['context-public'],
       }))
     })
+  })
+
+  it('confirms the name entered in the creation form before creating the first Task', async () => {
+    const props = { ...panelProps([]), initialProfile: { id: HUMAN, displayName: '' } }
+    openPanel(props)
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+    const form = screen.getByRole('button', { name: zh['create.submit'] }).closest('form')
+    if (form === null) throw new Error('Task creation form missing')
+    const controls = within(form)
+    fireEvent.change(controls.getByLabelText(zh['profile.name']), { target: { value: '  Frontend owner  ' } })
+    fireEvent.change(controls.getByLabelText(zh['create.objective']), { target: { value: 'Connect shared work' } })
+    fireEvent.change(controls.getByLabelText(zh['create.scope']), { target: { value: 'Approved API decisions' } })
+    fireEvent.click(controls.getByRole('button', { name: zh['create.submit'] }))
+    await waitFor(() => { expect(props.createTask).toHaveBeenCalledOnce() })
+    expect(props.setProfile).toHaveBeenCalledExactlyOnceWith({ id: HUMAN, displayName: 'Frontend owner' })
+    expect(props.createTask).toHaveBeenCalledExactlyOnceWith({ origin: { kind: 'root' },
+      objective: 'Connect shared work', scope: 'Approved API decisions', createdBy: HUMAN })
+    expect(vi.mocked(props.setProfile).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(props.createTask).mock.invocationCallOrder[0]!)
+    expect(screen.queryByLabelText(zh['create.objective'])).toBeNull()
+  })
+
+  it('filters the Task chooser by owner and search without changing the selected context', () => {
+    const root = task(ROOT, 'My frontend work', { kind: 'root' })
+    const foreign = { ...task(FORK_ONE, 'Backend contract', { kind: 'root' }), createdBy: AGENT }
+    openPanel(panelProps([root, foreign]))
+    const card = (name: string) => screen.queryByRole('button', { name: new RegExp(`^独立.*${name}`) })
+    expect(card(root.objective)).toBeTruthy()
+    expect(card(foreign.objective)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['filter.all'] }))
+    expect(card(foreign.objective)).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText(zh['filter.searchContext']), { target: { value: '  BACKEND  ' } })
+    expect(card(root.objective)).toBeNull()
+    expect(card(foreign.objective)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: root.objective })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['filter.mine'] }))
+    expect(card(foreign.objective)).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText(zh['filter.searchContext']), { target: { value: '' } })
+    expect(card(root.objective)).toBeTruthy()
   })
 
   it('shows Agent Session connection as a prominent section without a hidden tab or global join button', () => {
@@ -304,6 +421,27 @@ describe('EmergenceCenterPanel', () => {
     expect(within(hub).getByText(content => content.includes('已确认修订 r1'))).toBeTruthy()
   })
 
+  it.each([zh, en])('counts only stale connected Sessions and names the status tool needed to refresh their context', (dictionary) => {
+    const current = { ...task(ROOT, 'Root', { kind: 'root' }), revision: 3 }
+    const assignments: DevelopmentTaskAssignment[] = [
+      { bindingId: binding('current-session'), participantId: AGENT, taskId: ROOT, assignedAt: 1, acknowledgedRevision: 3 },
+      { bindingId: binding('stale-session'), participantId: AGENT, taskId: ROOT, assignedAt: 2, acknowledgedRevision: 2 },
+      { bindingId: binding('unrelated-session'), participantId: AGENT, taskId: FORK_ONE, assignedAt: 3, acknowledgedRevision: 1 },
+    ]
+    const props = { ...panelProps([current], { assignments }), t: makeTranslate(dictionary) }
+    render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: dictionary['trigger.aria'] }))
+    const hub = within(screen.getByRole('region', { name: dictionary['agents.connectTitle'] }))
+    expect(hub.getByText(props.t('agent.status.assigned', { client: 'Codex', sessions: 1, revision: 3 }))).toBeTruthy()
+    expect(hub.queryByText(props.t('agent.status.assigned', { client: 'Codex', sessions: 2, revision: 3 }))).toBeNull()
+    const steps = within(hub.getByRole('list', { name: dictionary['agents.progress'] })).getAllByRole('listitem')
+    expect(steps.at(-1)?.getAttribute('data-state')).toBe('pending')
+    const guide = dictionary === zh
+      ? '在已连接的 Codex Session 中调用 agentharness_task_status，并传入该 Session 自己的 bindingId；然后刷新本页。'
+      : 'In the connected Codex session, call agentharness_task_status with that session’s own bindingId, then refresh this page.'
+    expect(hub.getByText(guide)).toBeTruthy()
+  })
+
   it('publishes only explicit shared context from the detail panel', async () => {
     const props = panelProps()
     openPanel(props)
@@ -316,6 +454,92 @@ describe('EmergenceCenterPanel', () => {
         text: 'A reusable decision',
       })
     })
+  })
+
+  it('keeps unpublished context attached to the Task where it was entered', () => {
+    openPanel(panelProps())
+    const draft = screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder'])
+    fireEvent.change(draft, { target: { value: 'Private draft for Root' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${zh['detail.origin.fork']}.*r1.*Fork one`) }))
+    expect(screen.getByRole('heading', { name: 'Fork one', level: 1 })).toBeTruthy()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('')
+  })
+
+  it.each(['other-task', 'same-task'] as const)('does not clear a replacement %s draft when an earlier publication finishes', async (selection) => {
+    const props = panelProps()
+    const pending = Promise.withResolvers<DevelopmentTaskSnapshot>()
+    vi.mocked(props.publishContext).mockReturnValue(pending.promise)
+    openPanel(props)
+    try {
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Root decision' } })
+      fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+      expect(props.publishContext).toHaveBeenCalledOnce()
+      if (selection === 'other-task') fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${zh['detail.origin.fork']}.*r1.*Fork one`) }))
+      const replacement = selection === 'other-task' ? 'New Fork decision' : 'Root decision'
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Edited replacement decision' } })
+      fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: replacement } })
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+      expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe(replacement)
+    } finally {
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+    }
+  })
+
+  it.each([
+    { error: Object.assign(new Error('private storage diagnostics'), { code: 'PERSISTENCE_FAILED' }), key: 'error.persistenceFailed' },
+    { error: new Error('private transport diagnostics'), key: 'error.generic' },
+    { error: null, key: 'error.generic' },
+  ] as const)('retains a failed publication draft and permits an explicit retry: $key', async ({ error, key }) => {
+    const props = panelProps()
+    vi.mocked(props.publishContext).mockRejectedValueOnce(error)
+    openPanel(props)
+    fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Keep this decision' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe(makeTranslate(zh)('error.action', { message: zh[key] }))
+    expect(alert.textContent).not.toContain('private')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('Keep this decision')
+    fireEvent.click(screen.getByRole('button', { name: zh['context.publish'] }))
+    await waitFor(() => { expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('') })
+    expect(props.publishContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('admits one create submission before React renders its pending state', async () => {
+    const props = panelProps([])
+    const pending = Promise.withResolvers<DevelopmentTaskSnapshot>()
+    vi.mocked(props.createTask).mockReturnValue(pending.promise)
+    openPanel(props)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+      fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+      fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'One new Task' } })
+      fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Shared scope' } })
+      const form = screen.getByRole('button', { name: zh['create.submit'] }).closest('form')!
+      await act(async () => { fireEvent.submit(form); fireEvent.submit(form) })
+      expect(props.createTask).toHaveBeenCalledOnce()
+    } finally {
+      await act(async () => { pending.resolve(task(ROOT, 'Root', { kind: 'root' })); await pending.promise })
+    }
+  })
+
+  it('keeps a Merge draft visible and unsubmitted when a selected parent leaves the catalog', async () => {
+    const props = panelProps()
+    const view = render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+    fireEvent.click(screen.getByRole('button', { name: zh['create.merge'] }))
+    fireEvent.click(screen.getByLabelText('Fork one · 修订 r1'))
+    fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Combined work' } })
+    fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Selected parents only' } })
+    const missing = panelProps([task(ROOT, 'Root', { kind: 'root' })])
+    expect(() => { view.rerender(<EmergenceCenterPanel {...props} useTasks={missing.useTasks} />) }).not.toThrow()
+    const submit = screen.getByRole('button', { name: zh['create.submit'] })
+    expect(submit).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText<HTMLInputElement>(zh['create.objective']).value).toBe('Combined work')
+    await act(async () => { fireEvent.submit(submit.closest('form')!); fireEvent.submit(submit.closest('form')!) })
+    expect(props.createTask).not.toHaveBeenCalled()
+    view.rerender(<EmergenceCenterPanel {...props} />)
+    expect(screen.getByRole('button', { name: zh['create.submit'] })).toHaveProperty('disabled', false)
   })
 
   it('identifies independent peer samples and terminal notices without a participant publisher', () => {

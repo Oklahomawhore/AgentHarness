@@ -12,15 +12,15 @@ Status: implemented
 
 [Claude scope 适配器](../../../../packages/collaboration/claude-scope/README.zh.md) 只有在经认证的本地加入操作选择职责、Task、允许目录根和精确 Bash 命令后，才连接已观察到的主会话。稳定的本地会话身份由安装身份与 Claude session id 组合而成，不使用工作目录。Task 成员身份和采集授权共享一个耐久区间。SessionEnd 清除授权；恢复会话不会静默恢复采集权限。
 
-PreToolUse 保留摘要和起始 Task 区间，不持久化完整工具输入。完成时先独立重新授权规范路径与精确输入，再调用[观察式 Task 准入](2026-10-02-observed-task-context-admission.zh.md)。A-to-B-to-A 重新绑定、输入变化、符号链接目标变化和撤销策略都不能把迟到结果改投新任务。Subagent 和不支持的工具不在本适配器的采集策略内。
+PreToolUse 保留摘要和起始 Task 区间，不持久化完整工具输入。完成时先独立重新授权规范路径与精确输入，再调用[观察式 Task 准入](2026-10-02-observed-task-context-admission.zh.md)。适配器在追加不存在的路径分量前检查现存规范祖先路径的类型；仅凭后代不存在的错误不能授权该路径。A-to-B-to-A 重新绑定、输入变化、符号链接目标变化和撤销策略都不能把迟到结果改投新任务。Subagent 和不支持的工具不在本适配器的采集策略内。
 
 Write 和 Edit 发布有界的原始请求字段及 Claude 报告的结果。前台 Bash 只发布支持的原始输出字段。这些是来源观察，不是经独立验证的事实。整字段省略在完整 UTF-8 预算内保留原始内容与归属。终结结果和正文摘要拒绝矛盾重试；Task publication 仍是提交与去重权威，因此准入失败后可以重试。
 
-会话变化、采集和最终投影准入通过适配器变更队列串行处理。后端计算在队列外运行，最终检查拒绝过期授权及已替换的 provider。退出完成意味着 binding 已清除。更早被接受的 publication 保留在 Task 历史中，已返回的输出可能仍留在外部进程或会话里。
+会话变化、采集和最终投影准入通过适配器变更队列串行处理。后端计算在队列外运行，最终检查拒绝过期授权及已替换的 provider。会话控制变化只使受影响会话失效，因此另一会话退出同一 Task 不能取消仍获授权的采样或远端恢复。退出完成意味着 binding 已清除。更早被接受的 publication 保留在 Task 历史中，已返回的输出可能仍留在外部进程或会话里。
 
-共享[上下文后端](2026-10-02-recipient-task-context-backend.zh.md) 准备接收者文本和来源覆盖情况。本适配器先持久化确切输出，再通过 UserPromptSubmit 或 PostToolBatch 返回。Claude 的只追加 hook 交付接收前驱标记，断开后收到明确的撤回通知。外部准备输出记录不伪造原生 Session id、原生日志事件、Task 投影确认或模型采用证据。
+共享[上下文后端](2026-10-02-recipient-task-context-backend.zh.md) 准备接收者文本和来源覆盖情况。本适配器先持久化确切输出，再通过 UserPromptSubmit 或 PostToolBatch 返回。Claude 的只追加 hook 交付接收前驱标记，断开后收到明确的撤回通知。构造撤回通知时直接使用已保留的前驱投影；没有准备投影的会话没有需要取代的内容。独立接收的上下文以证据缓存键和前驱标识每次新出现的投影，因此 owner 恢复会取代实际的不可用通知。连续未变化的输出只复用最新的确切记录；恢复历史记录时保留其原始 ID 和正文。启动时拒绝表键与所存 ID 不同的任何投影，包括从未返回的准备输出。外部准备输出记录不伪造原生 Session id、原生日志事件、Task 投影确认或模型采用证据。
 
-命令只通过常规 `dsh --profile` 应用运行。它等待应用就绪、读取有界 stdin、通过 Connection 认证、检查 Host generation，并在退出前完整输出一份有界 Hook JSON。EOF 结束输入采集，不结束请求。私有描述符和生命周期 OS 锁防止 Host 同时拥有描述符；取消处理负责等待传输与输出结束。
+命令只通过常规 `dsh --profile` 应用运行。它等待应用就绪、读取有界 stdin、通过 Connection 认证、检查 Host generation，并在退出前完整输出一份有界 Hook JSON。EOF 结束输入采集，不结束请求。一次性命令拥有并结束 stdout，等待待完成写入结束后才报告成功或清除截止时间。私有描述符和生命周期 OS 锁防止 Host 同时拥有描述符；取消处理负责等待传输与输出结束。
 
 ## Alternatives considered
 

@@ -1,0 +1,431 @@
+/** Existing local responsibility receives live independent-owner updates without losing its Task, tools or permission. */
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
+import { setTimeout } from 'node:timers/promises'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { host } from '../scope-native-contribution/hosts-fixture.mjs'
+const require = createRequire(new URL('../../../packages/collaboration/scope-agent-context/package.json', import.meta.url))
+const load = async name => import(pathToFileURL(require.resolve(name)).href)
+const { Session } = await load('@deepseek-ai/dsh-session')
+const { createUserMessage } = await load('@deepseek-ai/dsh-llm')
+const { developmentAgentParticipantId } = await load('@deepseek-ai/dsh-development-room-agent-presence')
+/** Loader identity. */
+export const name = 'scope-local-joint-snapshot'
+/** Services supplied by the supported SDK profile and this scenario patch. */
+export const inject = ['agents', 'scopeAgentContext', 'scopeAgentContributions', 'scopeAccess', 'developmentTasks', 'developmentRooms', 'developmentTaskContextBackend', 'sessionProjections', 'llm']
+const localPolicy = { goal: 'Maintain my local client responsibility.', activationLimit: 4, maxStepsPerTurn: 2, minIntervalMs: 0 }
+const jointPolicy = { goal: 'Update my client when the shared API changes.', activationLimit: 3, maxStepsPerTurn: 2, minIntervalMs: 0 }
+const api = version => `export const API_VERSION = 'REMOTE_API_V${version}';\n`
+const client = version => `export const CLIENT_VERSION = 'CLIENT_V${version}';\n`
+const recoveredFact = 'LOCAL_AFTER_RECOVERY_CHANGE: finish my original client responsibility after leaving the shared scope.'
+const artifactCanary = 'LOCAL_ARTIFACT_WITHDRAWN_DURING_COMPUTE'
+const artifactIdentity = { kind: 'openapi-artifact', version: 1, artifactId: 'joint-client-artifact',
+  sourceName: 'Client API declaration', grantId: 'joint-client-artifact-grant', operation: { method: 'post', path: '/client' } }
+const digest = value => createHash('sha256').update(value).digest('hex')
+const body = message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+const contexts = messages => messages.filter(message => ['development-task-context', 'scope-agent-context'].includes(message.source.kind))
+const reply = text => [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
+  { type: 'block-end', index: 0, block: { type: 'text', text } }, { type: 'finish', reason: { kind: 'stop' } }]
+async function until(label, predicate, signal) {
+  const deadline = performance.now() + 10000
+  while (!(await predicate())) {
+    signal.throwIfAborted()
+    if (performance.now() >= deadline) throw new Error(`local joint fixture did not observe ${label}`)
+    await setTimeout(10, undefined, { signal })
+  }
+}
+/** Actual native Writes supply file observations; a separate authorized observer owns the artifact withdrawal. */
+export async function apply(ctx) {
+  const lifetime = new AbortController()
+  ctx.effect(() => () => lifetime.abort(new Error('local joint fixture disposed')))
+  const waitUntil = (label, predicate) => until(label, predicate, lifetime.signal)
+  const owner = await host(join(process.cwd(), '.dsh/local-joint-owner'), 'source')
+  ctx.effect(() => owner.close)
+  const author = (await owner.ctx.agents.create({ sessionId: 'local-joint-api-owner',
+    agentOptions: { provider: 'native-fixture', model: 'native-fixture' }, meta: { cwd: owner.workspace } })).agent
+  const ownerParticipant = developmentAgentParticipantId(author.id)
+  await owner.ctx.developmentRooms.announce({ id: 'joint-api-human', kind: 'human', displayName: 'API owner' })
+  await owner.ctx.developmentRooms.announce({ id: ownerParticipant, kind: 'agent', displayName: 'API Agent' })
+  const remoteTask = await owner.ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'joint-api-human',
+    objective: 'Maintain the shared API.', scope: 'Share authorized API changes with the client owner.' })
+  await owner.ctx.developmentTasks.checkout({ taskId: remoteTask.id, participantId: ownerParticipant, bindingId: 'joint-api-binding' })
+  const ownerEpoch = owner.ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
+  const limits = { expiresAt: Date.now() + 50000, maxSamples: 8, maxSampleBytes: 8192 }
+  await owner.ctx.scopeAgentContributions.requestLocal({ agentId: author.id, expectedCapture: null,
+    taskId: remoteTask.id, bindingId: 'joint-api-binding', expectedBindingEpoch: { nodeId: ownerEpoch.nodeId, seq: ownerEpoch.seq },
+    roots: [owner.workspace], tools: ['write'], limits })
+  await waitUntil('API local capture', async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: author.id })).capture?.collecting)
+  const writeApi = async version => {
+    const call = { type: 'tool-call', id: `joint-api-write-${version}`, name: 'write',
+      arguments: JSON.stringify({ file_path: 'api.ts', content: api(version) }) }
+    owner.adapter.script.push([{ type: 'block-start', index: 0, blockType: 'tool-call' },
+      { type: 'block-end', index: 0, block: call }, { type: 'finish', reason: { kind: 'tool-calls' } }], reply(`API V${version} saved.`))
+    author.followup(createUserMessage({ content: [{ type: 'text', text: `Implement API revision ${version}.` }], source: { kind: 'user' } }))
+    await author.whenIdle()
+    lifetime.signal.throwIfAborted()
+    assert.deepEqual(author.session.snapshotEvents().findLast(event => event.type === 'turn/end').data,
+      { turn: version, reason: { kind: 'completed' } })
+    assert.equal(await readFile(join(owner.workspace, 'api.ts'), 'utf8'), api(version))
+    await waitUntil(`API V${version} durable publication`, () => owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).context
+      .some(item => item.localToolObservation?.sequence === version && item.localToolObservation.fields.content === api(version)))
+  }
+  const root = join(process.cwd(), 'project')
+  await mkdir(root, { recursive: true })
+  let activeAgent
+  let task
+  let target
+  let localBinding
+  let localCapture
+  let remoteCapture
+  let originalAssignments
+  let originalAuthority
+  let ordinaryHistory
+  let jointBinding
+  let requests = 0
+  let currentTurn = 0
+  let currentStep = 0
+  let initialPermission
+  let paused
+  let initialApi
+  let correction
+  let remoteEndedRevision
+  let recovery
+  let artifactRequest
+  let artifactPublication
+  let artifactHistory
+  let artifactRevocation
+  const pending = new Set()
+  const own = promise => {
+    pending.add(promise)
+    void promise.then(() => pending.delete(promise), error => { pending.delete(promise); ctx.logger.error(error); ctx.appExit(1) })
+    return promise
+  }
+  ctx.effect(() => async () => {
+    lifetime.abort(new Error('local joint fixture owned work disposed'))
+    await Promise.allSettled([...pending])
+  })
+  const state = () => ctx.sessionProjections.stateOf(activeAgent.session, 'scopeAgentContext')
+  const localReports = () => ctx.developmentTasks.get({ taskId: task.id }).context.filter(item => item.localToolObservation !== undefined)
+  const remoteReports = () => owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).context.filter(item => item.peerToolObservation !== undefined)
+  const assertAssignment = () => assert.deepEqual(ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment), originalAssignments)
+  ctx.on('agent/status', ({ agent, status }) => {
+    if (agent !== activeAgent || status !== 'idle') return
+    const end = agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')
+    if (end?.data.turn === 1 && initialPermission === undefined) {
+      assert.equal(end.data.reason.kind, 'completed')
+      initialPermission = own(ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: localBinding, automatic: localPolicy }))
+    } else if (end?.data.turn === 2 && paused === undefined) {
+      assert.equal(end.data.reason.kind, 'completed')
+      paused = own(ctx.scopeAgentContext.pause({ agentId: agent.id, expectedBindingId: localBinding }))
+    } else if (end?.data.turn === 3 && initialApi === undefined) {
+      assert.equal(end.data.reason.kind, 'completed')
+      initialApi = own(writeApi(1))
+    }
+  })
+  ctx.on('agent/pre-step', async ({ agent, turn, step, messages }, next) => {
+    activeAgent = agent
+    currentTurn = turn
+    currentStep = step
+    if (turn === 1 && step === 1) {
+      const participantId = developmentAgentParticipantId(agent.id)
+      await ctx.developmentRooms.announce({ id: 'joint-client-human', kind: 'human', displayName: 'Client owner' })
+      await ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Existing client Agent' })
+      task = await ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'joint-client-human',
+        objective: 'Maintain my existing client.', scope: 'Preserve my local responsibility and permission.' })
+      const older = await ctx.developmentTasks.create({ origin: { kind: 'root' }, createdBy: 'joint-client-human',
+        objective: 'OLDER_RETAINED_TASK_DO_NOT_ADOPT', scope: 'A separate retained assignment without current consent.' })
+      await ctx.developmentTasks.checkout({ taskId: older.id, participantId, bindingId: 'aa-local-older-binding' })
+      await ctx.developmentTasks.checkout({ taskId: task.id, participantId, bindingId: 'joint-client-binding' })
+      const epoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
+      target = { taskId: task.id, taskBindingId: 'joint-client-binding', expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
+      await ctx.developmentRooms.announce({ id: 'joint-artifact-observer', kind: 'agent', displayName: 'Client artifact observer' })
+      await ctx.developmentTasks.checkout({ taskId: task.id, participantId: 'joint-artifact-observer', bindingId: 'joint-artifact-binding' })
+      const artifactEpoch = ctx.developmentTasks.assignmentLog().findLast(event => event.change.kind === 'task-bound')
+      artifactRequest = { taskId: task.id, participantId: 'joint-artifact-observer', bindingId: 'joint-artifact-binding',
+        expectedBindingEpoch: { nodeId: artifactEpoch.nodeId, seq: artifactEpoch.seq } }
+      artifactPublication = (await ctx.developmentTasks.admitObservedContext({ ...artifactRequest,
+        sourceId: digest('joint-artifact/valid'), text: artifactCanary,
+        observation: { ...artifactIdentity, sequence: 1, state: 'valid', sha256: digest(artifactCanary),
+          facts: { operationId: 'clientOperation', requestBodyRequired: true,
+            requiredRequestFields: ['client'], responseStatuses: ['200'], deprecated: false } },
+      })).publication
+      originalAssignments = ctx.developmentTasks.assignmentList().map(({ acknowledgedRevision, ...assignment }) => assignment)
+      assert.equal(originalAssignments.length, 3)
+      assert.deepEqual((await ctx.scopeAgentContext.status({ agentId: agent.id })).localTask, target)
+      assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).assignment.taskId, task.id)
+      await ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null, taskId: task.id,
+        bindingId: target.taskBindingId, expectedBindingEpoch: target.expectedBindingEpoch, roots: [root], tools: ['write'], limits })
+      await waitUntil('client local capture', async () => (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.collecting)
+      localCapture = (await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture
+      const bound = await ctx.scopeAgentContext.bindLocal({ agentId: agent.id, expectedBindingId: null, ...target, automatic: null })
+      localBinding = bound.binding.id
+    } else if (turn === 1 && step === 2) {
+      await waitUntil('baseline publication', () => localReports().length === 1)
+      assert.equal(await readFile(join(root, 'baseline.ts'), 'utf8'), 'export const BASELINE = true;\n')
+    } else if (turn === 3 && step === 1) {
+      await waitUntil('completed local response and pause', () => {
+        const ended = agent.session.snapshotEvents().find(event => event.type === 'turn/end' && event.data.turn === 2)
+        if (ended !== undefined) assert.equal(ended.data.reason.kind, 'completed', JSON.stringify(ended.data))
+        return paused !== undefined
+      })
+      await paused
+      assert.equal(state().usedBudget, 1)
+      assert.equal(state().mode, 'paused')
+      assert.deepEqual(state().automatic, localPolicy)
+      const events = agent.session.snapshotEvents()
+      const ordinaryEnd = events.find(event => event.type === 'turn/end' && event.data.turn === 1)
+      ordinaryHistory = events.filter(event => event.seq <= ordinaryEnd.seq)
+      originalAuthority = events.filter(event => ['permission/preset', 'sandbox/mode', 'approval/policy'].includes(event.type))
+      assert.equal(originalAuthority.length, 3)
+      const ownerAddress = (await owner.ctx.scopeAccess.identity()).addresses[0]
+      const entry = await owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind: 'tool-observations',
+        taskId: remoteTask.id, ownerAddress, expiresAt: limits.expiresAt })
+      const status = await ctx.scopeAgentContext.status({ agentId: agent.id })
+      const requested = await ctx.scopeAgentContributions.request({ agentId: agent.id, expectedCapture: null, entry: entry.entry,
+        roots: [root], tools: ['write'], limits, receive: { expectedReadStateSeq: status.readStateSeq, localTask: target, automatic: jointPolicy } })
+      await waitUntil('joint application', async () => (await owner.ctx.scopeAccess.contributionApplications({ taskId: remoteTask.id })).entries[0]?.result.status === 'pending')
+      await owner.ctx.scopeAccess.approveContributionApplication({ entryId: entry.entry.entryId, expectedProposal: requested.capture.proposal,
+        limits, ownerAddress, read: { responsibility: 'Maintain the client using shared API changes.' } })
+      await waitUntil('joint contribution and receiving', async () => {
+        const capture = (await ctx.scopeAgentContributions.status({ agentId: agent.id })).capture
+        return capture?.collecting && capture.receiving?.state === 'active'
+      })
+      remoteCapture = (await ctx.scopeAgentContributions.status({ agentId: agent.id })).capture
+      const combined = state()
+      assert.equal(combined.binding.kind, 'local-task-scope')
+      jointBinding = combined.binding
+      assert.deepEqual(jointBinding.retainedLocal.automatic, localPolicy)
+      assert.deepEqual(combined.automatic, jointPolicy)
+      assert.equal(combined.usedBudget, 1)
+      assert.notEqual(jointBinding.id, localBinding)
+      assert.notEqual(jointBinding.retainedLocal.bindingId, localBinding)
+      assert.notEqual(jointBinding.retainedLocal.bindingId, jointBinding.id)
+      assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.collecting, true)
+    } else if (turn === 2 && step === 1) {
+      const backend = ctx.developmentTaskContextBackend
+      const descriptor = Object.getOwnPropertyDescriptor(backend, 'compute')
+      const compute = backend.compute
+      let captured = false
+      const restore = () => {
+        if (descriptor === undefined) delete backend.compute
+        else Object.defineProperty(backend, 'compute', descriptor)
+      }
+      ctx.effect(() => restore)
+      backend.compute = async input => {
+        const output = await compute.call(backend, input)
+        if (!captured && input.view.task.id === task.id) {
+          captured = true
+          assert.ok(output.text.includes(artifactCanary))
+          assert.ok(input.view.task.context.some(item => item.id === artifactPublication.id))
+          artifactRevocation = (await ctx.developmentTasks.revokeObservedArtifact({ ...artifactRequest,
+            sourceId: digest('joint-artifact/revoked'), text: 'Client artifact collection ended.',
+            observation: { ...artifactIdentity, sequence: 2, state: 'revoked', reason: 'grant-ended' },
+          })).publication
+        }
+        return output
+      }
+      try {
+        return await next()
+      } finally {
+        restore()
+      }
+    } else if ((turn === 4 || turn === 5) && step === 2) {
+      const version = turn - 3
+      await waitUntil(`client V${version} dual publication`, () => localReports().length === version + 1 && remoteReports().length === version)
+      assert.equal(await readFile(join(root, 'client.ts'), 'utf8'), client(version))
+      assert.deepEqual(localReports().at(-1).localToolObservation.fields, remoteReports().at(-1).peerToolObservation.fields)
+    } else if (turn === 6 && step === 1) {
+      await correction
+      assert.equal(requests, 8)
+      assert.equal(state().usedBudget, 3)
+      assert.equal(state().pendingActivation, null)
+      const ordinary = messages.filter(message => message.source.kind === 'user')
+      assert.equal(ordinary.length, 1)
+      const entered = Promise.withResolvers()
+      const release = Promise.withResolvers()
+      const access = ctx.scopeAccess
+      const backend = ctx.developmentTaskContextBackend
+      const retrieve = access.retrieveWithinBudget
+      const compute = backend.compute
+      let unavailable = false
+      let recoverySignal
+      let restoredMethods = false
+      const restore = () => {
+        entered.resolve()
+        release.resolve()
+        if (restoredMethods) return
+        restoredMethods = true
+        access.retrieveWithinBudget = retrieve
+        backend.compute = compute
+      }
+      ctx.effect(() => restore)
+      access.retrieveWithinBudget = async (input, signal) => {
+        if (!unavailable && input.subscriptionId === jointBinding.subscriptionId) {
+          unavailable = true
+          return { status: 'unavailable' }
+        }
+        return retrieve.call(access, input, signal)
+      }
+      backend.compute = async input => {
+        if (unavailable && recoverySignal === undefined && input.view.task.id === task.id && input.maxContextBytes > 4000) {
+          recoverySignal = input.signal
+          recovery = { messageId: ordinary[0].id, capturedTaskRevision: input.view.task.revision }
+          entered.resolve()
+          await release.promise
+        }
+        return compute.call(backend, input)
+      }
+      const admission = next()
+      const settled = admission.then(value => ({ value }), error => ({ error }))
+      try {
+        await Promise.race([entered.promise, settled.then(result => {
+          if ('error' in result) throw result.error
+          throw new Error('local recovery admission completed before its compute barrier')
+        })])
+        lifetime.signal.throwIfAborted()
+        assert.equal(requests, 8)
+        await ctx.scopeAgentContributions.leaveJoin({ agentId: agent.id, expectedCapture: remoteCapture.selection })
+        await waitUntil('joint departure', async () => (await ctx.scopeAgentContributions.status({ agentId: agent.id })).capture === null
+          && state().binding?.kind === 'local-task')
+        assert.equal(recoverySignal.aborted, true)
+        recovery.abortedBeforeRelease = true
+        const restored = state()
+        assert.equal(restored.binding.id, jointBinding.retainedLocal.bindingId)
+        assert.deepEqual(restored.binding.target, jointBinding.target)
+        assert.deepEqual(restored.automatic, localPolicy)
+        assert.equal(restored.mode, 'paused')
+        assert.equal(restored.usedBudget, 3)
+        assert.equal(restored.pendingActivation, null)
+        assert.equal((await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture.selection.captureId, localCapture.selection.captureId)
+        const fresh = await ctx.developmentTasks.publishContext({ taskId: task.id, participantId: 'joint-client-human', text: recoveredFact })
+        recovery.publicationId = fresh.context.find(item => item.text === recoveredFact).id
+        recovery.freshTaskRevision = fresh.revision
+        assert.ok(recovery.freshTaskRevision > recovery.capturedTaskRevision)
+        await writeApi(3)
+        remoteEndedRevision = owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).revision
+        assert.equal(requests, 8)
+      } finally {
+        restore()
+        await settled
+      }
+      assertAssignment()
+      return admission
+    } else if (turn === 6 && step === 2) {
+      await waitUntil('final local publication', () => localReports().length === 4)
+      assert.equal(await readFile(join(root, 'final.ts'), 'utf8'), 'export const LOCAL_FINAL = true;\n')
+      assert.equal(remoteReports().length, 2)
+      assert.equal(owner.ctx.developmentTasks.get({ taskId: remoteTask.id }).revision, remoteEndedRevision)
+      const localStatus = await ctx.scopeAgentContributions.localStatus({ agentId: agent.id })
+      await writeFile(join(process.cwd(), '.dsh/local-joint-audit.json'), JSON.stringify({
+        state: state(), originalLocalCapture: localCapture.selection, localCapture: localStatus.capture.selection,
+        localCaptureCollecting: localStatus.capture.collecting, localAssignment: localStatus.assignment, recovery,
+      }))
+    }
+    assertAssignment()
+    return next()
+  }, { prepend: true })
+  ctx.on('llm/stream', (options, next) => {
+    requests++
+    assert.ok(requests <= 10)
+    const visible = contexts(options.messages)
+    const local = visible.find(message => message.source.kind === 'development-task-context')
+    const remote = visible.find(message => message.source.kind === 'scope-agent-context')
+    assert.equal(local.source.version, 3)
+    assert.equal(local.source.projection.taskId, task.id)
+    assert.equal(local.source.projection.taskBindingId, target.taskBindingId)
+    assert.deepEqual(local.source.projection.bindingEpoch, target.expectedBindingEpoch)
+    assert.ok(body(local).includes('Maintain my existing client.'))
+    assert.ok(!body(local).includes('OLDER_RETAINED_TASK_DO_NOT_ADOPT'))
+    if (currentTurn >= 3 && currentTurn <= 5) {
+      assert.equal(visible.length, 2)
+      assert.equal(remote.source.form, 'snapshot')
+      assert.ok(Buffer.byteLength(body(local)) + Buffer.byteLength(body(remote)) <= 8000)
+      if (currentTurn !== 3) assert.ok(body(remote).includes(`REMOTE_API_V${currentTurn === 5 ? 2 : 1}`))
+      if (currentTurn === 5) {
+        assert.ok(!body(remote).includes('REMOTE_API_V1'))
+        assert.ok(remote.source.projection.omittedSources.some(item => item.reason === 'superseded'))
+      }
+    } else if (currentTurn === 6) {
+      assert.equal(remote.source.form, 'withdrawn')
+      assert.ok(visible.every(message => !/REMOTE_API_V[123]/.test(body(message))))
+      assert.ok(body(local).includes(recoveredFact))
+      assert.ok(local.source.projection.taskRevision >= recovery.freshTaskRevision)
+      assert.ok(local.source.projection.selectedSources.some(source => source.kind === 'publication'
+        && source.taskId === task.id && source.revision === local.source.projection.taskRevision
+        && source.publicationId === recovery.publicationId))
+      assert.equal(options.messages.filter(message => message.id === recovery.messageId).length, 1)
+      assert.ok(![...activeAgent.inbox.nextTurn, ...activeAgent.inbox.nextStep].some(message => message.id === recovery.messageId))
+      assert.deepEqual(state().automatic, localPolicy)
+      assert.equal(state().mode, 'paused')
+    } else assert.equal(remote, undefined)
+    const events = activeAgent.session.snapshotEvents()
+    if (currentTurn === 1) {
+      assert.ok(body(local).includes(artifactCanary))
+      const persisted = events.find(event => event.type === 'user/message' && event.data.id === local.id)
+      assert.ok(persisted)
+      artifactHistory ??= structuredClone(persisted)
+    } else if (currentTurn >= 2) {
+      assert.ok(artifactRevocation)
+      assert.ok(!JSON.stringify(options.messages).includes(artifactCanary), 'revoked local artifact canary reached the actual model request')
+      assert.ok(body(local).includes('Client artifact collection ended.'))
+      assert.ok(local.source.projection.omittedSources.some(item => item.reason === 'superseded'
+        && item.source.publicationId === artifactPublication.id))
+      assert.ok(local.source.projection.selectedSources.some(item => item.kind === 'publication'
+        && item.publicationId === artifactRevocation.id))
+      assert.deepEqual(events.find(event => event.seq === artifactHistory.seq), artifactHistory)
+      assert.ok(body(artifactHistory.data).includes(artifactCanary))
+    }
+    if (currentTurn === 6) {
+      assert.equal(events.filter(event => event.type === 'user/message' && event.data.id === recovery.messageId).length, 1)
+      if (currentStep === 1) {
+        assert.equal(requests, 9)
+        recovery.request = { turn: currentTurn, step: currentStep, ordinal: requests,
+          localContextSeq: events.findLast(event => event.type === 'user/message' && event.data.id === local.id).seq,
+          localProjection: local.source.projection, messageOccurrences: 1, pendingOccurrences: 0 }
+      }
+    }
+    if (currentTurn === 2 || currentTurn === 4 || currentTurn === 5) {
+      const exact = events.findLast(event => event.type === 'scope-agent-context/request')
+      assert.equal(exact.data.turn, currentTurn)
+      assert.equal(exact.data.step, currentStep)
+      if (currentTurn !== 2) {
+        assert.equal(exact.data.version, 4)
+        assert.equal(exact.data.projection.kind, 'local-task-scope')
+        assert.notEqual(exact.data.contextSeq, exact.data.localContextSeq)
+        assert.deepEqual(activeAgent.session.eventAt(exact.data.contextSeq).data, remote)
+        assert.deepEqual(activeAgent.session.eventAt(exact.data.localContextSeq).data, local)
+        assert.deepEqual(exact.data.projection.local, local.source.projection)
+        assert.deepEqual(exact.data.projection.remote, remote.source.projection)
+        const tampered = JSON.parse(JSON.stringify(events))
+        tampered.find(event => event.seq === exact.seq).data.localContextSeq = exact.seq
+        const detached = Session.create(activeAgent.id, tampered, activeAgent.session.header)
+        assert.throws(() => ctx.sessionProjections.stateOf(detached, 'scopeAgentEvidence'), /dispatch lacks its matching automatic reservation/)
+      }
+    }
+    assert.deepEqual(contexts(Session.create(activeAgent.id, JSON.parse(JSON.stringify(events)), activeAgent.session.header).deriveMessages()), visible)
+    if (ordinaryHistory !== undefined) {
+      assert.deepEqual(events.slice(0, ordinaryHistory.length), ordinaryHistory)
+      assert.deepEqual(events.filter(event => ['permission/preset', 'sandbox/mode', 'approval/policy'].includes(event.type)), originalAuthority)
+    }
+    if (requests === 10) {
+      assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'user').length, 3)
+      assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-pulse').length, 3)
+      assert.equal(events.filter(event => event.type === 'scope-agent-context/join-read' && event.data.phase === 'adopted').length, 1)
+      assert.equal(events.filter(event => event.type === 'scope-agent-context/request').length, 5)
+      assert.equal(events.filter(event => event.type === 'tool/result' && event.data.message.content.every(block => block.type !== 'tool-result' || block.isError !== true)).length, 4)
+      assert.ok(events.filter(event => event.type === 'tool/call').every(event => event.data.name === 'write'))
+      assert.equal(owner.adapter.requests.length, 6)
+      assert.equal(requests, 10)
+    }
+    assertAssignment()
+    if (currentTurn === 4 && currentStep === 2) {
+      correction ??= own(writeApi(2))
+      return (async function* () { await correction; yield* next() })()
+    }
+    return next()
+  })
+}

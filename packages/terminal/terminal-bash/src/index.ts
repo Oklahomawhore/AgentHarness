@@ -8,6 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { TerminalBackendCleanupError } from '@deepseek-ai/dsh-terminal'
+import { SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type { TerminalBackend, TerminalBackendSpawnSpec, TerminalSendOperation } from '@deepseek-ai/dsh-terminal'
 import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -128,21 +129,20 @@ async function startupSession(
     // accept only backend stdin_read evidence; echoed setup source containing
     // the printable prompt is not readiness. Follow-up sends bridge silence
     // settlements during startup, while one absolute deadline bounds them.
-    let viewport = ''
+    let first = true
     for (;;) {
-      const first = viewport.length === 0
       startupOperation = session.startSend({
         text: first ? ENCODING_PREAMBLE + PWSH_PROMPT_SETUP : '',
         submit: first,
         ...signal !== undefined ? { signal } : {},
       })
+      first = false
       const result = await startupOperation.done
       if (result.waitReason === 'session_exit') throw new Error('PTY shell exited during startup')
       if (result.waitReason === 'timeout') throw new Error('PTY shell did not reach readiness before startup timeout')
-      viewport = result.viewport
       if (result.waitReason === 'stdin_read') break
     }
-    session.motd = viewport
+    session.motd = session.read({}).text
   }
   const races: Promise<void>[] = []
   let onAbort: (() => void) | undefined
@@ -194,15 +194,21 @@ export class BashTerminalBackend implements TerminalBackend {
     const policy = this.ctx.sandboxPolicy.resolve({ session: spec.owner.session })
     const argv = spawnArgv(this.ctx, this.config, policy)
     if (argv[0] === undefined) throw new Error('terminal-bash: sandbox returned empty argv')
-    const terminal = await this.spawnTerminal({
-      argv,
-      cwd: spec.cwd ?? policy.workspaceRoot,
-      env: childEnvironment(spec, this.config.shellDialect),
-      rows: this.config.rows,
-      cols: this.config.cols,
-      graceMs: this.config.disposeGraceMs,
-      signal: spec.signal,
-    })
+    let terminal: SubprocessTerminalHandle
+    try {
+      terminal = await this.spawnTerminal({
+        argv,
+        cwd: spec.cwd ?? policy.workspaceRoot,
+        env: childEnvironment(spec, this.config.shellDialect),
+        rows: this.config.rows,
+        cols: this.config.cols,
+        graceMs: this.config.disposeGraceMs,
+        signal: spec.signal,
+      })
+    } catch (error) {
+      if (error instanceof SubprocessTerminalCleanupError) throw new TerminalBackendCleanupError(error.spawnError, error.cleanupError)
+      throw error
+    }
     const session = this.createSession(terminal, this.config)
     try {
       await startupSession(session, this.config.shellDialect, this.config.timeoutMs, spec.signal)

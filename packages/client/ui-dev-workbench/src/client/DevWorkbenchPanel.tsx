@@ -41,7 +41,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
 }
 
-/** Render the sidebar entry and its opaque, lower-left-resizable panel. */
+/** Render the sidebar entry and its opaque panel; visible panels own polling and active resize listeners. */
 export function DevWorkbenchPanel({
   wide, useInventory, usePreferences, start, stop, refresh,
   setPanelSize, selectEntry, selectView, t,
@@ -58,6 +58,8 @@ export function DevWorkbenchPanel({
   )
   const [frameVersion, setFrameVersion] = useState(0)
   const panelRef = useRef<HTMLDivElement>(null)
+  const resizeCleanup = useRef<(() => void) | undefined>(undefined)
+  const visible = open && !(inventory.read && inventory.entries.length === 0)
 
   const selectedEntry = useMemo(() => {
     return inventory.entries.find(entry => entry.id === preferences.selectedEntryId) ?? inventory.entries[0]
@@ -67,14 +69,18 @@ export function DevWorkbenchPanel({
     : preferences.selectedViewByEntry[selectedEntry.id]
   const selectedView = selectedEntry?.views.find(view => view.id === selectedViewId)
     ?? selectedEntry?.views[0]
+  const active = selectedEntry?.phase === 'running' || selectedEntry?.phase === 'stopping'
+  const canStop = active || (selectedEntry?.startedAt !== undefined
+    && (selectedEntry.phase === 'exited' || selectedEntry.phase === 'failed'))
 
   useEffect(() => { refresh() }, [refresh])
   useEffect(() => {
-    if (!open) return
+    if (!visible) return
     refresh()
     const timer = window.setInterval(refresh, 1_000)
     return () => { window.clearInterval(timer) }
-  }, [open, refresh])
+  }, [visible, refresh])
+  useEffect(() => () => { resizeCleanup.current?.() }, [visible])
 
   if (inventory.read && inventory.entries.length === 0) return null
 
@@ -95,6 +101,7 @@ export function DevWorkbenchPanel({
   const resizeFromLeft = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const panel = panelRef.current
     if (panel === null) return
+    resizeCleanup.current?.()
     event.preventDefault()
     const rect = panel.getBoundingClientRect()
     const startX = event.clientX
@@ -109,12 +116,17 @@ export function DevWorkbenchPanel({
       }
       setSize(latest)
     }
-    const release = (): void => {
+    const cancel = (): void => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
+      resizeCleanup.current = undefined
+    }
+    const release = (): void => {
+      cancel()
       if (latest !== undefined) setPanelSize(latest.width, latest.height)
     }
+    resizeCleanup.current = cancel
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
@@ -198,13 +210,14 @@ export function DevWorkbenchPanel({
                 {selectedView !== undefined && (
                   <a href={selectedView.url} target="_blank" rel="noreferrer">{t('action.open')}</a>
                 )}
-                {selectedEntry.phase === 'running' || selectedEntry.phase === 'stopping' ? (
+                {canStop && (
                   <button
                     type="button"
                     disabled={pending !== undefined}
                     onClick={() => { void perform(selectedEntry.id, () => stop(selectedEntry.id)) }}
                   >{t('action.stop')}</button>
-                ) : (
+                )}
+                {!active && (
                   <button
                     type="button"
                     disabled={pending !== undefined}
@@ -221,7 +234,8 @@ export function DevWorkbenchPanel({
                     : selectedEntry.readiness !== undefined && selectedEntry.readiness.state !== 'ready'
                       ? <div className={css.readiness}>
                         <strong>{t(READINESS_LABELS[selectedEntry.readiness.state])}</strong>
-                        <span>{selectedEntry.readiness.error ?? t('readiness.waiting')}</span>
+                        <span>{selectedEntry.readiness.error
+                          ?? t(selectedEntry.phase === 'running' ? 'readiness.waiting' : 'readiness.stopped')}</span>
                       </div>
                       : <iframe
                         key={`${selectedView.url}:${frameVersion}`}

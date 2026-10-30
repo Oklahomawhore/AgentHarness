@@ -354,6 +354,7 @@ export class SessionTitleService extends Service {
     })
 
     ctx.on('session/event', (session, event) => {
+      if (ctx.sessions.get(session.id) !== session) return
       switch (event.type) {
         case 'user/message':
           this.onUserMessage(session, event)
@@ -540,11 +541,12 @@ export class SessionTitleService extends Service {
     const session = this.ctx.sessions.get(options.sessionId)
     const state = session === undefined ? undefined : this.work.get(session)
     const pending = state?.pending
-    if (session === undefined || state === undefined || pending === undefined) return
+    if (session === undefined || state === undefined || pending === undefined || !isAgentLoopRequest(options, session)) return
     const boundary = this.ctx.sessionProjections.stateOf(session, 'turnBoundary')?.lastStepBoundary
     const route = session.requestHeader()?.config
+    const prompt = session.eventAt(pending.throughSeq)?.data
     if (boundary?.kind !== 'start'
-      || boundary.seq <= pending.throughSeq
+      || !options.messages.some(message => message === prompt)
       || route?.provider !== options.provider
       || route.model !== options.model) return
     this.startPending(session, state, pending, { provider: options.provider, model: options.model })

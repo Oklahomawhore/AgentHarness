@@ -34,23 +34,31 @@ async function fixture(mode: 'client' | 'tests', source: string, configuration: 
     maxWireBytes: 262144, maxDiagnosticBytes: 16384, cleanupTimeoutMs: 10000, ...configuration }
 }
 
-it('rejects a floating image before contacting a daemon', async () => {
+// Windows is rejected before request validation; daemon execution requires POSIX mounts and a Unix endpoint.
+const posixRequest = it.skipIf(process.platform === 'win32')
+
+it.runIf(process.platform === 'win32')('rejects Docker execution on Windows before contacting a daemon', async () => {
+  const request = await fixture('client', 'export function submit(){}')
+  await expect(startDockerProgram(request)).rejects.toThrow('Docker evaluation currently requires a POSIX host')
+})
+
+posixRequest('rejects a floating image before contacting a daemon', async () => {
   const request = await fixture('client', 'export function submit(){}', { imageDigest: 'node:24-slim' })
   await expect(startDockerProgram(request)).rejects.toThrow('pinned official Node digest')
 })
 
-it('rejects a role target outside its sole mounted directory', async () => {
+posixRequest('rejects a role target outside its sole mounted directory', async () => {
   const request = await fixture('client', 'export function submit(){}')
   const sibling = await fixture('client', 'export function submit(){}')
   await expect(startDockerProgram({ ...request, target: sibling.target })).rejects.toThrow('inside its role directory')
 })
 
-it.each([0, -1, Number.POSITIVE_INFINITY, 1.5])('rejects invalid resource limit %s before contacting a daemon', async (memoryBytes) => {
+posixRequest.each([0, -1, Number.POSITIVE_INFINITY, 1.5])('rejects invalid resource limit %s before contacting a daemon', async (memoryBytes) => {
   const request = await fixture('client', 'export function submit(){}', { memoryBytes })
   await expect(startDockerProgram(request)).rejects.toThrow('positive safe integers')
 })
 
-it.each(['timeoutMs', 'cleanupTimeoutMs'] as const)('rejects overflowing %s instead of scheduling a one-millisecond deadline', async (field) => {
+posixRequest.each(['timeoutMs', 'cleanupTimeoutMs'] as const)('rejects overflowing %s instead of scheduling a one-millisecond deadline', async (field) => {
   const request = await fixture('client', 'export function submit(){}', { [field]: 2 ** 31 })
   await expect(startDockerProgram(request)).rejects.toThrow('Node timer range')
 })

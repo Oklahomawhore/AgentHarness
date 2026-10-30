@@ -1,13 +1,19 @@
 /** Hostile-input schemas shared by Task storage and Mesh adapters. */
 
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type {
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionRequest, DevelopmentTaskLocalContributionReceipt,
   DevelopmentTaskLocalContributionAdmissionReceipt, DevelopmentTaskLocalContributionResult, DevelopmentTaskLocalContribution,
-  DevelopmentTaskEndLocalContributionRequest,
+  DevelopmentTaskEndLocalContributionRequest, DevelopmentTaskCommandObservationResult,
   DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskPeerContributionReceipt,
   DevelopmentTaskPeerContributionResult, DevelopmentTaskPeerContribution, DevelopmentTaskEndPeerContributionRequest,
   DevelopmentTaskPeerContributionAdmissionReceipt, DevelopmentTaskToolObservationResult,
+  DevelopmentTaskRecordedToolObservationResult, DevelopmentTaskPeerToolObservationResult,
+  DevelopmentTaskCompletedFileToolObservationResult, DevelopmentTaskLocalToolObservationResult,
+  DevelopmentTaskCompletedTurnObservationResult, DevelopmentTaskLocalContributionObservationResult,
+  DevelopmentTaskPeerContributionObservationResult, DevelopmentTaskNativeWorkSource,
+  DevelopmentTaskClaudeWorkSource, DevelopmentTaskClaudeCommandObservationResult, DevelopmentTaskClaudeStopReportResult,
   DevelopmentTaskAssignmentLogEntry,
   DevelopmentTaskContextBlock,
   DevelopmentTaskLogEntry,
@@ -64,13 +70,50 @@ const legacyPublication = z.strictObject({
 })
 const opaque = z.string().min(1).max(256).refine(value => value.trim().length > 0)
 const natural = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+const toolSource = z.strictObject({ kind: z.literal('tool-observations'), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).min(1).max(2).refine(values => new Set(values).size === values.length) })
+const recordedToolSource = toolSource.extend({ version: z.literal(2), initialization: z.literal('recorded-local-tools') })
+const completedFileToolSource = toolSource.extend({ version: z.literal(3), fileContent: z.literal('completed-native-file') })
+/** Exact command text and the sender's explicitly selected working-directory root. */
+export const commandSelectorSchema = z.strictObject({
+  command: z.string().min(1).refine(value => value.trim().length > 0 && !value.includes('\0')),
+  rootIndex: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+})
+const commandToolSource = z.strictObject({ kind: z.literal('tool-observations'), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).max(2).refine(values => new Set(values).size === values.length), version: z.literal(4),
+  commands: z.array(commandSelectorSchema).min(1).refine(values =>
+    new Set(values.map(value => JSON.stringify([value.command, value.rootIndex]))).size === values.length),
+  fileContent: z.literal('completed-native-file').optional(),
+}).refine(value => value.fileContent === undefined || value.tools.length > 0)
+
+const completedTurnSource = z.strictObject({ kind: z.literal('completed-turn-outcomes'), version: z.literal(5), name: opaque })
+
+/** Explicit native categories; no local roots, implicit answer permission or historical initialization. */
+export const nativeWorkSourceSchema = z.strictObject({
+  kind: z.literal('native-work'), version: z.literal(6), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).max(2).refine(values => new Set(values).size === values.length),
+  commands: z.array(commandSelectorSchema).refine(values =>
+    new Set(values.map(value => JSON.stringify([value.command, value.rootIndex]))).size === values.length),
+  completedTurns: z.boolean(), fileContent: z.literal('completed-native-file').optional(),
+}).refine(value => (value.tools.length > 0 || value.commands.length > 0 || value.completedTurns)
+  && (value.fileContent === undefined || value.tools.length > 0)) as unknown as z.ZodType<DevelopmentTaskNativeWorkSource>
+
+/** Claude reports require explicit file, exact command, or Stop selection without native permissions. */
+export const claudeWorkSourceSchema = z.strictObject({
+  kind: z.literal('claude-work'), version: z.literal(7), name: opaque,
+  tools: z.array(z.enum(['Write', 'Edit'])).max(2).refine(values => new Set(values).size === values.length),
+  commands: z.array(commandSelectorSchema).refine(values =>
+    new Set(values.map(value => JSON.stringify([value.command, value.rootIndex]))).size === values.length),
+  stopReports: z.boolean(),
+}).refine(value => value.tools.length > 0 || value.commands.length > 0 || value.stopReports) as z.ZodType<DevelopmentTaskClaudeWorkSource>
+
 const peerGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, grantId: opaque, generation: opaque, ownerPeerId: opaque, contributorPeerId: opaque,
   captureId: opaque, captureGeneration: opaque,
   source: z.union([
     z.strictObject({ name: opaque, method: z.enum(['post', 'put', 'patch']), path: z.string().startsWith('/').max(2048) }),
-    z.strictObject({ kind: z.literal('tool-observations'), name: opaque, tools: z.array(z.enum(['Write', 'Edit'])).min(1).max(2)
-      .refine(values => new Set(values).size === values.length) }),
+    toolSource, recordedToolSource, completedFileToolSource, commandToolSource,
+    completedTurnSource, nativeWorkSourceSchema, claudeWorkSourceSchema,
   ]),
   expiresAt: natural, maxSamples: natural, maxSampleBytes: natural,
 })
@@ -89,7 +132,7 @@ const toolObjects = [
     oldString: z.string().optional(), newString: z.string().optional(), replaceAll: z.boolean() }) }),
 ] as const
 const toolResult = z.discriminatedUnion('tool', toolObjects)
-function toolResultValid(value: z.infer<typeof toolResult>): boolean {
+function toolResultValid(value: Pick<z.infer<typeof toolResult>, 'tool' | 'fields' | 'omissions' | 'reportedStatus'>): boolean {
   const body = value.tool === 'Write' ? ['content'] : ['oldString', 'newString']
   const present = new Set(Object.keys(value.fields))
   return new Set(value.omissions).size === value.omissions.length
@@ -101,6 +144,144 @@ function toolResultValid(value: z.infer<typeof toolResult>): boolean {
 }
 /** Strict Write/Edit report, with relative paths and explicit omitted input text. */
 export const toolObservationResultSchema = toolResult.refine(toolResultValid) as unknown as z.ZodType<DevelopmentTaskToolObservationResult>
+const recordedOrigin = z.strictObject({ kind: z.literal('recorded-local-tools'), planDigest: digest, executionDigest: digest })
+const recordedToolObjects = [
+  toolObjects[0].extend({ version: z.literal(2), origin: recordedOrigin }),
+  toolObjects[1].extend({ version: z.literal(2), origin: recordedOrigin }),
+] as const
+const recordedToolResult = z.discriminatedUnion('tool', recordedToolObjects).refine(toolResultValid)
+/** Prior recorded report accepted only with explicit historical-sharing authorization. */
+export const recordedToolObservationResultSchema = recordedToolResult as unknown as z.ZodType<DevelopmentTaskRecordedToolObservationResult>
+const completedFile = z.discriminatedUnion('state', [
+  z.strictObject({ state: z.literal('included'), content: z.string().refine(value => !value.includes('\r') && value.isWellFormed()), sha256: digest })
+    .refine(value => createHash('sha256').update(value.content).digest('hex') === value.sha256),
+  z.strictObject({ state: z.literal('omitted'), reason: z.enum(['tool-failed', 'budget', 'unavailable']) }),
+])
+const completedFileToolObjects = [
+  toolObjects[0].extend({ version: z.literal(3), completedFile }),
+  toolObjects[1].extend({ version: z.literal(3), completedFile }),
+] as const
+function completedFileToolValid(value: z.infer<typeof completedFileToolObjects[number]>): boolean {
+  return toolResultValid(value) && (value.reportedStatus === 'failure'
+    ? value.completedFile.state === 'omitted' && value.completedFile.reason === 'tool-failed'
+    : value.completedFile.state === 'included' || value.completedFile.reason !== 'tool-failed')
+}
+/** Strict native completion text, digest, and explicit omission under version-three permission. */
+export const completedFileToolObservationResultSchema = z.discriminatedUnion('tool', completedFileToolObjects)
+  .refine(completedFileToolValid) as unknown as z.ZodType<DevelopmentTaskCompletedFileToolObservationResult>
+const commandOutput = z.discriminatedUnion('state', [
+  z.strictObject({ state: z.literal('included'), text: z.string(), truncated: z.boolean() }),
+  z.strictObject({ state: z.literal('omitted'), reason: z.literal('budget'), truncated: z.boolean() }),
+])
+const commandCommon = { kind: z.literal('command-observation'), version: z.literal(4), tool: z.literal('Bash'),
+  fields: commandSelectorSchema }
+const commandObjects = [
+  z.strictObject({ ...commandCommon, state: z.literal('completed'),
+    exitCode: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable(),
+    signal: z.string().min(1).nullable(), timedOut: z.boolean(), aborted: z.boolean(), timeoutMs: natural,
+    stdout: commandOutput, stderr: commandOutput }),
+  z.strictObject({ ...commandCommon, state: z.literal('unavailable'), reason: z.enum(['tool-failed', 'completion-unavailable']) }),
+] as const
+/** Explicit foreground outcome or unavailable evidence, without inferred exit status or output truncation. */
+export const commandObservationResultSchema = z.discriminatedUnion('state', commandObjects) as
+  z.ZodType<DevelopmentTaskCommandObservationResult>
+const claudeCommandResult = z.strictObject({
+  kind: z.literal('claude-command-observation'), version: z.literal(7), tool: z.literal('Bash'),
+  hookEvent: z.enum(['PostToolUse', 'PostToolUseFailure']),
+  fields: commandSelectorSchema.extend({ stdout: z.string().optional(), stderr: z.string().optional(),
+    interrupted: z.boolean().optional(), error: z.string().optional() }),
+  omissions: z.array(z.enum(['stdout', 'stderr', 'error', 'unsupported-tool-response'])).max(4),
+})
+function claudeCommandValid(value: z.infer<typeof claudeCommandResult>): boolean {
+  const { fields, omissions } = value
+  if (new Set(omissions).size !== omissions.length) return false
+  if (value.hookEvent === 'PostToolUseFailure') return fields.stdout === undefined && fields.stderr === undefined
+    && fields.interrupted === undefined && omissions.every(field => field === 'error')
+    && (fields.error !== undefined) !== omissions.includes('error')
+  if (fields.error !== undefined || omissions.includes('error')) return false
+  if (omissions.includes('unsupported-tool-response')) return omissions.length === 1
+    && fields.stdout === undefined && fields.stderr === undefined && fields.interrupted === undefined
+  return fields.interrupted !== undefined && ['stdout', 'stderr'].every(field =>
+    (fields[field as 'stdout' | 'stderr'] !== undefined) !== omissions.includes(field as 'stdout' | 'stderr'))
+}
+/** Original Bash Hook output with explicit complete-field omission, never inferred native completion data. */
+export const claudeCommandObservationResultSchema = claudeCommandResult.refine(claudeCommandValid) as
+  z.ZodType<DevelopmentTaskClaudeCommandObservationResult>
+/** Local observations distinguish ordinary parameters from explicitly permitted completed-file text. */
+export const localToolObservationResultSchema = z.union([
+  toolObservationResultSchema, completedFileToolObservationResultSchema, commandObservationResultSchema,
+]) as z.ZodType<DevelopmentTaskLocalToolObservationResult>
+/** Peer variants preserve their original live, historical, or native completed-file representation. */
+export const peerToolObservationResultSchema = z.union([
+  toolObservationResultSchema, recordedToolObservationResultSchema,
+  completedFileToolObservationResultSchema, commandObservationResultSchema, claudeCommandObservationResultSchema,
+]) as z.ZodType<DevelopmentTaskPeerToolObservationResult>
+
+const completedTurnResult = z.strictObject({ kind: z.literal('completed-turn-outcome'), version: z.literal(5),
+  text: z.string().min(1).refine(value => value.trim().length > 0 && value.isWellFormed()), sha256: digest,
+})
+function completedTurnValid(value: { readonly text: string; readonly sha256: string }): boolean {
+  return createHash('sha256').update(value.text, 'utf8').digest('hex') === value.sha256
+}
+/** Complete nonempty reply whose digest matches its exact UTF-8 text. */
+export const completedTurnObservationResultSchema = completedTurnResult.refine(completedTurnValid) as
+  z.ZodType<DevelopmentTaskCompletedTurnObservationResult>
+const claudeStopReport = z.strictObject({ kind: z.literal('claude-stop-report'), version: z.literal(7),
+  text: z.string().min(1).refine(value => value.isWellFormed()), sha256: digest, stopHookActive: z.boolean(),
+})
+/** Exact complete Stop message text and digest, separate from native completed-turn evidence. */
+export const claudeStopReportResultSchema = claudeStopReport.refine(completedTurnValid) as z.ZodType<DevelopmentTaskClaudeStopReportResult>
+/** Local sample variants preserve independent completed-turn and tool permissions. */
+export const localContributionObservationResultSchema = z.union([localToolObservationResultSchema, completedTurnObservationResultSchema]) as
+  z.ZodType<DevelopmentTaskLocalContributionObservationResult>
+/** Peer sample variants preserve independent completed-turn and tool permissions. */
+export const peerContributionObservationResultSchema = z.union([
+  peerToolObservationResultSchema, completedTurnObservationResultSchema, claudeStopReportResultSchema,
+]) as z.ZodType<DevelopmentTaskPeerContributionObservationResult>
+
+function contributionPermissionMatches(
+  source: z.infer<typeof toolSource | typeof recordedToolSource | typeof completedFileToolSource
+    | typeof commandToolSource | typeof completedTurnSource | typeof nativeWorkSourceSchema | typeof claudeWorkSourceSchema>,
+  result: Parameters<typeof toolPermissionMatches>[1] | { readonly kind: 'completed-turn-outcome' } | { readonly kind: 'claude-stop-report' }
+    | { readonly kind: 'claude-command-observation'; readonly fields: { readonly rootIndex: number; readonly command: string } },
+): boolean {
+  if (source.kind === 'claude-work') {
+    if (result.kind === 'claude-stop-report') return source.stopReports
+    if (result.kind === 'claude-command-observation') return source.commands.some(selector =>
+      selector.command === result.fields.command && selector.rootIndex === result.fields.rootIndex)
+    return result.kind === 'tool-observation' && result.version === 1 && source.tools.includes(result.tool)
+  }
+  if (result.kind === 'claude-stop-report' || result.kind === 'claude-command-observation') return false
+  if (source.kind === 'completed-turn-outcomes') return result.kind === 'completed-turn-outcome'
+  if (result.kind === 'completed-turn-outcome') return source.kind === 'native-work' && source.completedTurns
+  return toolPermissionMatches(source, result)
+}
+
+function toolPermissionMatches(
+  source: z.infer<typeof toolSource | typeof recordedToolSource | typeof completedFileToolSource
+    | typeof commandToolSource | typeof nativeWorkSourceSchema>,
+  result: {
+    readonly kind: 'tool-observation'
+    readonly tool: 'Write' | 'Edit'
+    readonly version: number
+    readonly fields: { readonly rootIndex: number }
+  } | {
+    readonly kind: 'command-observation'
+    readonly tool: 'Bash'
+    readonly version: 4
+    readonly fields: { readonly rootIndex: number; readonly command: string }
+  },
+): boolean {
+  const version = 'version' in source ? source.version : 1
+  if (result.kind === 'command-observation') {
+    return 'version' in source && (source.version === 4 || source.version === 6) && source.commands.some(selector => selector.command === result.fields.command
+      && selector.rootIndex === result.fields.rootIndex)
+  }
+  if (!source.tools.includes(result.tool)) return false
+  if ('version' in source && (source.version === 4 || source.version === 6)) return result.version === (source.fileContent === undefined ? 1 : 3)
+  return version === 3 ? result.version === 3 : result.version === 1 || (version === 2 && result.version === 2)
+}
+
 
 const openApiPeerResult = z.discriminatedUnion('state', [
   observationVariants[0].pick({ state: true, sha256: true, facts: true }),
@@ -108,7 +289,8 @@ const openApiPeerResult = z.discriminatedUnion('state', [
   observationVariants[2].pick({ state: true, reason: true }),
 ])
 const peerRequest = z.strictObject({ grant: peerGrant, sourceId: digest,
-  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1), result: z.union([openApiPeerResult, toolObservationResultSchema]),
+  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1),
+  result: z.union([openApiPeerResult, peerContributionObservationResultSchema]),
 })
 const peerAdmission = { observerPeerId: opaque, sourceId: digest,
   capture: z.strictObject({ id: opaque, generation: opaque }),
@@ -118,32 +300,57 @@ const peerObservation = z.discriminatedUnion('state', [
   observationVariants[2].extend(peerAdmission), observationVariants[3].extend(peerAdmission),
 ])
 const peerToolAdmission = { sourceName: opaque, grantId: opaque, sequence: natural, ...peerAdmission }
-const peerToolObservation = z.discriminatedUnion('tool', [
-  toolObjects[0].extend(peerToolAdmission), toolObjects[1].extend(peerToolAdmission),
-]).refine(toolResultValid)
+const peerToolObservation = z.union([
+  claudeCommandResult.extend(peerToolAdmission).refine(claudeCommandValid),
+  z.discriminatedUnion('state', [commandObjects[0].extend(peerToolAdmission), commandObjects[1].extend(peerToolAdmission)]),
+  z.discriminatedUnion('tool', [toolObjects[0].extend(peerToolAdmission), toolObjects[1].extend(peerToolAdmission)]).refine(toolResultValid),
+  z.discriminatedUnion('tool', [recordedToolObjects[0].extend(peerToolAdmission), recordedToolObjects[1].extend(peerToolAdmission)]).refine(toolResultValid),
+  z.discriminatedUnion('tool', [completedFileToolObjects[0].extend(peerToolAdmission), completedFileToolObjects[1].extend(peerToolAdmission)])
+    .refine(completedFileToolValid),
+])
+const peerTurnOutcome = completedTurnResult.extend(peerToolAdmission).refine(completedTurnValid)
+const peerStopReport = claudeStopReport.extend(peerToolAdmission).refine(completedTurnValid)
 const peerEndReason = z.enum(['left', 'revoked', 'expired'])
 const peerPublication = z.strictObject({
   id: z.string(), text: z.string(), uri: z.string().optional(), publishedAt: z.number().int().nonnegative(),
   peerContribution: z.strictObject({ version: z.literal(1), grant: peerGrant, ended: peerEndReason.optional() }),
   peerObservation: peerObservation.optional(), peerToolObservation: peerToolObservation.optional(),
-}).refine(value => value.peerObservation === undefined || value.peerToolObservation === undefined)
+  peerTurnOutcome: peerTurnOutcome.optional(), peerStopReport: peerStopReport.optional(),
+}).refine(value => [value.peerObservation, value.peerToolObservation, value.peerTurnOutcome, value.peerStopReport]
+  .filter(item => item !== undefined).length <= 1
+  && (value.peerObservation === undefined || !('kind' in value.peerContribution.grant.source))
+  && (value.peerToolObservation === undefined || ('kind' in value.peerContribution.grant.source
+    && contributionPermissionMatches(value.peerContribution.grant.source, value.peerToolObservation)))
+  && (value.peerTurnOutcome === undefined || ('kind' in value.peerContribution.grant.source
+    && contributionPermissionMatches(value.peerContribution.grant.source, value.peerTurnOutcome)))
+  && (value.peerStopReport === undefined || ('kind' in value.peerContribution.grant.source
+    && contributionPermissionMatches(value.peerContribution.grant.source, value.peerStopReport))))
 const localGrant = z.strictObject({
   version: z.literal(1), taskId: opaque, participantId: opaque, bindingId: opaque,
   expectedBindingEpoch: z.strictObject({ nodeId: opaque, seq: natural }), captureId: opaque, captureGeneration: opaque,
-  source: z.strictObject({ kind: z.literal('tool-observations'), name: opaque,
-    tools: z.array(z.enum(['Write', 'Edit'])).min(1).max(2).refine(values => new Set(values).size === values.length) }),
+  source: z.union([toolSource, completedFileToolSource, commandToolSource, completedTurnSource, nativeWorkSourceSchema]),
   expiresAt: natural, maxSamples: natural, maxSampleBytes: natural,
 })
-const localSample = z.strictObject({ sourceId: digest, sequence: natural, result: toolObservationResultSchema })
-const localRequest = localSample.extend({ grant: localGrant }).refine(value => value.grant.source.tools.includes(value.result.tool))
-const localTool = z.discriminatedUnion('tool', [
-  toolObjects[0].extend({ sourceId: digest, sequence: natural }), toolObjects[1].extend({ sourceId: digest, sequence: natural }),
-]).refine(toolResultValid)
+const localSample = z.strictObject({ sourceId: digest, sequence: natural, result: localContributionObservationResultSchema })
+const localRequest = localSample.extend({ grant: localGrant })
+  .refine(value => contributionPermissionMatches(value.grant.source, value.result))
+const localTool = z.union([
+  z.discriminatedUnion('state', [commandObjects[0].extend({ sourceId: digest, sequence: natural }),
+    commandObjects[1].extend({ sourceId: digest, sequence: natural })]),
+  z.discriminatedUnion('tool', [toolObjects[0].extend({ sourceId: digest, sequence: natural }),
+    toolObjects[1].extend({ sourceId: digest, sequence: natural })]).refine(toolResultValid),
+  z.discriminatedUnion('tool', [completedFileToolObjects[0].extend({ sourceId: digest, sequence: natural }),
+    completedFileToolObjects[1].extend({ sourceId: digest, sequence: natural })]).refine(completedFileToolValid),
+])
 const localPublication = z.strictObject({
   id: z.string(), text: z.string(), uri: z.string().optional(), publishedBy: participant, publishedAt: z.number().int().nonnegative(),
   localContribution: z.strictObject({ version: z.literal(1), grant: localGrant, ended: peerEndReason.optional() }),
   localToolObservation: localTool.optional(),
-})
+  localTurnOutcome: completedTurnResult.extend({ sourceId: digest, sequence: natural }).refine(completedTurnValid).optional(),
+}).refine(value => (value.localToolObservation === undefined || value.localTurnOutcome === undefined)
+  && (value.localToolObservation === undefined
+    || contributionPermissionMatches(value.localContribution.grant.source, value.localToolObservation))
+  && (value.localTurnOutcome === undefined || contributionPermissionMatches(value.localContribution.grant.source, value.localTurnOutcome)))
 const localReceipt = z.strictObject({ taskId: opaque, ownerNodeId: opaque, intervalId: digest, participantId: opaque,
   bindingId: opaque, expectedBindingEpoch: z.strictObject({ nodeId: opaque, seq: natural }), captureId: opaque,
   captureGeneration: opaque, revision: natural, event: z.strictObject({ nodeId: opaque, seq: natural,
@@ -155,7 +362,7 @@ const localSampleReceipt = localReceipt.extend({ event: localReceipt.shape.event
 export const localContributionGrantSchema = localGrant as unknown as z.ZodType<DevelopmentTaskLocalContributionGrant>
 /** Original durable local outbox fields; its capture retains the grant separately. */
 export const localContributionSampleSchema = localSample as unknown as z.ZodType<Omit<DevelopmentTaskLocalContributionRequest, 'grant'>>
-/** Exact structured local report restricted to tools in its original permission. */
+/** Exact structured local report restricted to its original source permission. */
 export const localContributionRequestSchema = localRequest as unknown as z.ZodType<DevelopmentTaskLocalContributionRequest>
 /** Original local open, sample, or end event identity. */
 export const localContributionReceiptSchema = localReceipt as unknown as z.ZodType<DevelopmentTaskLocalContributionReceipt>
@@ -193,10 +400,44 @@ export const peerContributionProposalSchema = peerGrant.pick({
   'contributorPeerId' | 'captureId' | 'captureGeneration' | 'source'>>
 /** Exact durable sample and wire request; callers cannot choose owner attribution or text. */
 export const peerContributionRequestSchema = peerRequest.refine(value => 'kind' in value.grant.source
-  ? 'kind' in value.result && value.grant.source.tools.includes(value.result.tool)
+  ? 'kind' in value.result && contributionPermissionMatches(value.grant.source, value.result)
   : !('kind' in value.result)) as unknown as z.ZodType<DevelopmentTaskPeerContributionRequest>
 /** Exact sampler outbox fields, with its grant retained by the owning capture binding. */
 export const peerContributionSampleSchema = peerRequest.omit({ grant: true }) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+/** Version-1 transport samples exclude recorded-work origins. */
+export const legacyPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: z.union([openApiPeerResult, toolObservationResultSchema]),
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+/** Version-2 transport samples carry exactly one recorded-work observation. */
+export const recordedPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: recordedToolObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-3 transport samples carry exactly one explicitly authorized native completed-file observation. */
+export const completedFilePeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: completedFileToolObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-4 transport samples include command outcomes and the same grant's permitted live file reports. */
+export const commandPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: z.union([toolObservationResultSchema, completedFileToolObservationResultSchema, commandObservationResultSchema]),
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-five transport carries only independently authorized complete turn reports. */
+export const completedTurnPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: completedTurnObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-six samples preserve live file, command and completed-answer evidence without recorded initialization. */
+export const nativeWorkPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: localContributionObservationResultSchema,
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
+/** Version-seven samples retain original Claude file, Bash and Stop reports under one permission. */
+export const claudeWorkPeerContributionSampleSchema = peerRequest.omit({ grant: true }).extend({
+  result: z.union([toolObservationResultSchema, claudeCommandObservationResultSchema, claudeStopReportResultSchema]),
+}) as unknown as z.ZodType<Omit<DevelopmentTaskPeerContributionRequest, 'grant'>>
+
 /** Original open or terminal owner commit. */
 export const peerContributionReceiptSchema = peerReceipt as unknown as z.ZodType<DevelopmentTaskPeerContributionReceipt>
 /** Original sample commit checked against the sender's durable outbox. */

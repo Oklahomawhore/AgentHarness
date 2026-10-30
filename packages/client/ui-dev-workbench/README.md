@@ -20,9 +20,9 @@ Human-facing browser panel for the configured [`dev-workbench` Host service](../
 
 ## Behavior
 
-Opening the action shows one opaque panel with task selection, lifecycle controls, retained stdout/stderr, and the selected HTTP(S) view in a sandboxed iframe. Views attached to the same task share one process, so switching between chat and local-debug routes does not launch duplicate servers. When Host readiness is configured, the preview waits through `checking` or `delayed` and mounts the iframe only after `ready`; the external-window link remains available. The refresh action reloads both Host state and a mounted iframe.
+Opening the action shows one opaque panel with task selection, lifecycle controls, retained stdout/stderr, and the selected HTTP(S) view in a sandboxed iframe. Views attached to the same task share one process, so switching between chat and local-debug routes does not launch duplicate servers. When Host readiness is configured, the preview waits through `checking` or `delayed` and mounts the iframe only after `ready`; the external-window link remains available. Settled tasks retain the last readiness result and report stopped checks when no error explains unresolved readiness. Started tasks that exit or fail expose Stop alongside Restart so remaining managed children can be stopped. The refresh action reloads both Host state and a mounted iframe.
 
-The panel defaults to at most 1100 × 760 pixels, clamps to the viewport, and remains anchored to the right edge while its lower-left handle changes width and height. Panel dimensions, the selected task, and each task's selected view persist in browser-local storage after validation; configured entries remain Host-owned. Narrow or short viewports switch to an inset near-fullscreen layout, stack the preview and logs, and hide the resize handle. While open, the inventory polls once per second; start and stop results publish immediately through the package-owned observable.
+The panel defaults to at most 1100 × 760 pixels, clamps to the viewport, and remains anchored to the right edge while its lower-left handle changes width and height. Panel dimensions, the selected task, and each task's selected view persist in browser-local storage after validation; configured entries remain Host-owned. Narrow or short viewports switch to an inset near-fullscreen layout, stack the preview and logs, and hide the resize handle. Polling and active resize listeners stop when the panel closes, loses all entries, or unmounts. While visible, the inventory polls once per second; start and stop results publish immediately through the package-owned observable only while their issuing Host connection remains current. Earlier list replies cannot replace a completed action; a superseded read admits one fresh baseline. Unloading this Client plugin invalidates its outstanding inventory reads and errors.
 
 ## Model Experience
 
@@ -40,5 +40,7 @@ None; browser inventory and iframe state do not affect provider requests.
 - **No terminal input** — logs are read-only; interactive commands belong in terminal sessions rather than this panel.
 
 ### Dev Note
+
+Inventory snapshots use the synchronous [Client snapshot store](../store/README.md). The renderer owns each subscription's cleanup, and consumers keep nested snapshot values readonly. Refresh, task mutations, and reset remain inventory-owned; the [state ownership decision](../../../.agents/notes/implemented/simplification/2026-10-25-client-inventory-snapshot-store.md) records notification and development-freezing semantics.
 
 No runtime invariant companion is published because process lifecycle belongs to the Host workbench service; this package owns only browser presentation and view preferences.

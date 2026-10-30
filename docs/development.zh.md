@@ -70,7 +70,7 @@ git tag -a v1.2.3 <verified-main-commit-sha> -m "AgentHarness v1.2.3"
 git push origin v1.2.3
 ```
 
-祖先关系检查命令成功后才能打 tag。推送 tag 会在 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)中启动新版本发布；分支推送和 Pull Request 不会。不要移动或复用已发布 tag。工作流保留现有 Release 附件的手动修复入口。产物和 npm 发布细节见[发行指南](public-release.zh.md)。上游 CI 工作流保留各自配置的触发条件；本分支策略不为分支推送或 Pull Request 增加发布矩阵 CI。
+祖先关系检查命令成功后才能打 tag。推送 tag 会在 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)中启动新版本发布；分支推送和 Pull Request 不会。不要移动或复用已发布 tag。工作流保留现有 Release 附件的手动修复入口。产物和 npm 发布细节见[发行指南](public-release.zh.md)。无密钥 CI 验证 Pull Request 和 main 推送；发布仍由 tag 或手动发布工作流负责。
 
 AgentHarness 当前维护一条开发主线。若要独立维护旧版本，需要另行制定维护策略并修改发布校验：当前校验会拒绝不在 `main` 上的提交。[单 main 决策](../.agents/notes/implemented/process/2026-09-26-agentharness-single-main-development.zh.md)记录了这一范围及取舍。
 
@@ -157,7 +157,7 @@ vendor manifest 守卫检查 `vendor/*/src` 下的改动是否连同对应的 `v
 
 keyless [CI 工作流](../.github/workflows/ci.yml) 将独立门禁分组到若干宽粒度 lane，并在受支持的 Node 版本上运行一组较小的兼容性检查。产物消费方在各自 lane 内等待一次 build。必需 benchmark 在标准 GitHub 托管 Linux 上独立运行；[benchmark 运行器决策](../.agents/notes/implemented/testing/2026-09-06-standard-hosted-benchmark-runner.zh.md)拥有路由及 job 超时。单独的真实 API 工作流按其配置的 worker 上限运行 `pnpm run test:e2e`。当前门禁和 job 清单以 [scripts/run-gates.ts](../scripts/run-gates.ts) 和工作流文件为准。
 
-不带凭据的 dsh 依赖布局检查与 dsh/vendor 打包演练仅在 `DSH_CI_FAILOVER_LINUX=selfhosted`，且事件为受信任的 master 推送或同仓库、非 fork、非 Dependabot 拉取请求时使用现有 Linux 自托管池。其余情况（包括手动触发）均使用 `ubuntu-24.04`；手动发布仍使用托管运行器。持久化存储隔离与回退限制见[发布演练运行器决策](../.agents/notes/implemented/process/2026-09-06-release-rehearsal-selfhosted.zh.md)。
+AgentHarness 使用标准 GitHub 托管运行器进行自动验收。原生 Windows 和五个独立运行时目标参与必需汇总判定；模型账户调用和发布不进入 CI。[托管 CI 决策](../.agents/notes/implemented/process/2026-10-25-agentharness-hosted-ci.zh.md)负责这一部署选择。独立发布工作流保留各自的产物和 wheel 校验要求。
 
 ### 日常命令
 

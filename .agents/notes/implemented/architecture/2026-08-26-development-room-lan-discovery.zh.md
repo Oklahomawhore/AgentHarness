@@ -24,6 +24,10 @@ Web bundle 为启动器创建的节点启用发现，并使用空的已配置拓
 
 发现 datagram 具有可配置的字节上限，并拒绝未知字段、协议版本、无效 id、无效端口以及 cluster 或 path 不匹配。运行时忽略本进程 instance，报告另一个 instance 复用稳定 node id，只通过有效公告刷新 peer 租约，并在 dispose（资源释放）期间关闭公告 timer、UDP socket、重连 timer、WebSocket 与待处理 command。
 
+配置解析将重连延迟、命令超时与发现公告间隔限制在 Node 的 2,147,483,647 毫秒计时上限内。更大的值会被压成一毫秒。Peer TTL 比较已流逝时间，保留正安全整数范围。
+
+发现开始前必须成功绑定 socket、加入组播并满足公告字节上限。UDP 发送错误（包括首次公告时网络不可达）通过已有诊断回调报告，监听与已配置的公告周期继续运行。单次报文成功并不能证明 peer 可达；只让首次发送失败中止启动，会让本地启动依赖瞬时路由状态，却不能保证后续发现可靠。
+
 自动范围是一个 IPv4 multicast domain。跨 VLAN 路由或禁止 multicast 的网络需要显式 peer，或后续的公司内部 rendezvous 提供方。
 
 ## 已考虑的替代方案
@@ -50,6 +54,6 @@ Web bundle 为启动器创建的节点启用发现，并使用空的已配置拓
 ## 验证
 
 - 启动器测试覆盖全新与重复身份、显式及持久 owner 优先级、带备份的旧房间／上下文迁移、异常状态、dry-run 行为和默认 `0.0.0.0` 监听。
-- Mesh 包测试为三个空静态 peer 列表的 Web 节点打开真实 UDP multicast socket，断言确定性全互联拨号归属与 Room、Task 复制，覆盖重放与错误密钥拒绝，释放一个节点，再以同一稳定 node id 重启并验证增量重新获取。
+- Mesh 测试使用三个具有显式 peer 的 Web 节点验证全互联拨号归属、Room 与 Task 复制、重放及错误密钥拒绝、离开与增量重新获取。可控 UDP 传输测试验证首次发送失败后继续发现、接收认证 peer、租约过期、恢复公告与关闭 timer；绑定、加入组播和公告大小错误仍使启动失败。当前版本在受支持平台上的真实组播收敛及重启仍未验证。
 - Portable release 测试覆盖 owner-only cluster credential 的 provision、保留、查看、拒绝意外替换和显式替换。
 - 聚焦 typecheck、Oxlint、Web 组合测试、文档 gate 与 Docker 镜像构建覆盖变更的包和启动器表面。

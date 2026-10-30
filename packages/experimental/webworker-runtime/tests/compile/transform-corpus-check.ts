@@ -10,12 +10,10 @@
  * must not hide inside a total. A listed file that becomes importable also
  * fails, so the list cannot rot.
  *
- * Cost: this walks the whole build output and imports every bundle serially in
- * one process, so it takes minutes on loaded runners and needs
- * `pnpm run build:lib:host` to have run. It is a heavyweight suite, not part
- * of a default aggregator run.
+ * The sweep imports the whole build output serially in one process and needs
+ * `pnpm run build:lib:host` to have run.
  *
- * Run: tsx tests/compile/transform-corpus-check.ts [files...]
+ * Run: node tests/compile/transform-corpus-check.ts [files...]
  * With no arguments it discovers the corpus itself.
  */
 import { readdirSync, statSync } from 'node:fs'
@@ -24,22 +22,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url))
 const DOCKKIT_BUNDLE = 'packages/client/ui-dockkit/lib/index.js'
-const DOCKKIT_CSS = join(repositoryRoot, 'packages/client/ui-dockkit/lib/components/dockkit.module.css')
+const CSS_ERROR_PREFIX = 'Unknown file extension ".css" for '
 
 /**
  * Files Node's ESM loader cannot import in this repository. None is a finding:
  * each is listed with the reason the import fails, and the run refuses a
  * listed file that imports cleanly so the list stays current in both
- * directions. The koffi entry depends on corpus order: sandbox-windows-acl
- * imports the win32-process package earlier in the serial sweep (a distinct
- * module instance under its node_modules URL), so win32-process's own file-URL
- * import re-registers koffi's type names and fails as the second load.
+ * directions. The runner uses Node's native TypeScript stripping so transitive
+ * package imports resolve through built exports rather than source aliases.
  */
 const BASELINE_EXEMPT: ReadonlyMap<string, string> = new Map([
   [DOCKKIT_BUNDLE, 'imports .css, which bare Node cannot load'],
   ['packages/client/ui-primitives/lib/index.js', 'imports .css, which bare Node cannot load'],
   ['packages/client/web/lib/index.js', 'imports .css, which bare Node cannot load'],
-  ['packages/subprocess/win32-process/lib/index.js', 'koffi type-name collision on a second load'],
   ['packages/test-support/client-runtime/lib/index.js', "needs vitest's internal state"],
 ])
 
@@ -111,10 +106,13 @@ if (files.length === 0) {
     try {
       await import(pathToFileURL(file).href)
     } catch (reason) {
-      const expectedDockkitCss = reason instanceof Error
+      const stylesheet = reason instanceof Error
         && 'code' in reason && reason.code === 'ERR_UNKNOWN_FILE_EXTENSION'
-        && reason.message === `Unknown file extension ".css" for ${DOCKKIT_CSS}`
-      if (exemption === undefined || (key === DOCKKIT_BUNDLE && !expectedDockkitCss)) {
+        && reason.message.startsWith(CSS_ERROR_PREFIX) ? reason.message.slice(CSS_ERROR_PREFIX.length) : undefined
+      const expectedClientCss = stylesheet !== undefined && stylesheet.startsWith(repositoryRoot)
+        && /^packages\/client\/[^/]+\/lib\/.+\.css$/u.test(relative(stylesheet))
+        && statSync(stylesheet, { throwIfNoEntry: false })?.isFile() === true
+      if (exemption === undefined || (key.startsWith('packages/client/') && !expectedClientCss)) {
         // A bundle that stopped being importable is a real finding, so it
         // fails rather than joining a tolerated total.
         fail(`- UNEXPECTED BASELINE FAILURE ${key}: ${(reason as Error).message.split('\n')[0]}`)

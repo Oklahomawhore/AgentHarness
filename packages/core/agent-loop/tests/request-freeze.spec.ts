@@ -3,11 +3,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import InvariantRegistry from '@deepseek-ai/dsh-invariants'
+import * as AgentLoopInvariant from '../src/invariant.ts'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage, createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, ToolSchema } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import * as values from '@deepseek-ai/dsh-util-values'
 import { ReactLoopAgent } from '../src/agent.ts'
 import { MockAdapter, textResponse } from './mock-adapter.ts'
@@ -43,6 +47,43 @@ function expectFrozen(value: unknown): void {
 }
 
 describe('loop-owned request freezing', () => {
+  it.each(['same', 'different'] as const)('checks independent native request logs when isolated Session IDs are %s', async (identity) => {
+    const adapter = new MockAdapter([textResponse('root one'), textResponse('foreign'), textResponse('root two')])
+    const { ctx } = await harness(adapter)
+    await ctx.plugin(InvariantRegistry)
+    await ctx.plugin(AgentLoopInvariant)
+    const errors: unknown[] = []
+    ctx.on('agent/error', ({ error }) => { errors.push(error) }, { global: true })
+    const root = await ctx.agents.create({ sessionId: SessionId('invariant-root'), agentOptions: { provider: 'mock', model: 'mock' } })
+    const other = ctx.isolate('agents').isolate('sessions').isolate('agentLoop').isolate('systemPrompt')
+      .isolate('sessionProjections').isolate('invariants')
+    await other.plugin(SessionStore)
+    await other.plugin(AgentRegistry)
+    await other.plugin(SystemPrompt, {})
+    await other.plugin(SessionProjectionRegistry)
+    await other.plugin(AgentLoop, { agents: [] })
+    await other.plugin(InvariantRegistry)
+    await other.plugin(AgentLoopInvariant)
+    let foreign: Awaited<ReturnType<typeof other.agents.create>> | undefined
+    await other.plugin({ name: 'independent-invariant-agent',
+      inject: ['agents', 'agentLoop', 'sessions', 'systemPrompt', 'sessionProjections'],
+      async apply(consumer) {
+        foreign = await consumer.agents.create({ sessionId: identity === 'same' ? root.agent.id : SessionId('invariant-foreign'),
+          agentOptions: { provider: 'mock', model: 'mock' } })
+      } })
+    if (foreign === undefined) throw new Error('independent native Agent creation must complete')
+    try {
+      await send(root.agent, 'First request from the root registry')
+      await send(foreign.agent, 'Independent input from the foreign registry')
+      await send(root.agent, 'Second request from the root registry')
+      expect(errors).toEqual([])
+      expect(adapter.requests).toHaveLength(3)
+      expect(isAgentLoopRequest(adapter.requests[0]!, root.agent.session)).toBe(true)
+      expect(isAgentLoopRequest(adapter.requests[1]!, foreign.agent.session)).toBe(true)
+      expect(isAgentLoopRequest(adapter.requests[2]!, root.agent.session)).toBe(true)
+    } finally { await foreign.dispose() }
+  })
+
   it('adopts restored identities, freezes nested messages at dispatch, and leaves event wrappers mutable', async () => {
     const { ctx, loopCtx } = await harness(new MockAdapter([textResponse('one'), textResponse('two'), textResponse('three'), textResponse('four')]))
     const id = SessionId('restored-freeze')
@@ -83,7 +124,7 @@ describe('loop-owned request freezing', () => {
     const errors: unknown[] = []
     ctx.on('agent/error', ({ error }) => { errors.push(error) })
     ctx.on('llm/stream', (request, next) => {
-      expect(isAgentLoopRequest(request)).toBe(true)
+      expect(isAgentLoopRequest(request, agent.session)).toBe(true)
       expectFrozen(request)
       requests.push(request)
       return next()
@@ -182,7 +223,7 @@ describe('loop-owned request freezing', () => {
     const errors: unknown[] = []
     ctx.on('agent/error', ({ error }) => { errors.push(error) })
     ctx.on('llm/stream', (request, next) => {
-      expect(isAgentLoopRequest(request)).toBe(true)
+      expect(isAgentLoopRequest(request, agent.session)).toBe(true)
       expectFrozen(request)
       requests.push(request)
       return registered ? next() : (async function* () { yield* textResponse('virtual') })()

@@ -409,8 +409,8 @@ function bootPatches(
     const config = configOf(domain)
     const routes = config.routes
     if (typeof routes === 'object' && routes !== null && !Array.isArray(routes)
-      && 'development_tasks' in routes && routes.development_tasks === 'sqlite') {
-      patches.push({ id: 'storage-domain', config: { ...config, routes: { ...routes, development_tasks: 'json' } } })
+      && 'development_context_tasks' in routes && routes.development_context_tasks === 'sqlite') {
+      patches.push({ id: 'storage-domain', config: { ...config, routes: { ...routes, development_context_tasks: 'json' } } })
     }
   }
   // Native client setup, peer networking, SQLite and their collaboration UI require a local Node process.

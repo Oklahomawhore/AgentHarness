@@ -36,6 +36,7 @@ interface View {
   readonly tripwire: ReturnType<typeof watchConsole>
   readonly errors: string[]
   readonly injectedFailures: Set<string>
+  readonly rpcTrace: string[]
 }
 
 function replay(): ReplayOverrideDoc {
@@ -66,6 +67,18 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   const tripwire = watchConsole(page)
   const errors: string[] = []
   const injectedFailures = new Set<string>()
+  const rpcTrace: string[] = []
+  const openedAt = Date.now()
+  const trace = (phase: string, url: string): void => {
+    const path = new URL(url).pathname
+    if (!path.startsWith('/api/claudeScope/') && !path.startsWith('/api/scopeAccess/')) return
+    rpcTrace.push(`${String(Date.now() - openedAt)}ms ${phase} ${path}`)
+    if (rpcTrace.length > 64) rpcTrace.shift()
+  }
+  page.on('request', (request) => { trace('request', request.url()) })
+  page.on('response', (response) => { trace(`headers:${String(response.status())}`, response.url()) })
+  page.on('requestfinished', (request) => { trace('finished', request.url()) })
+  page.on('requestfailed', (request) => { trace('failed', request.url()) })
   page.on('console', (message) => {
     if (message.type() !== 'error') return
     if (message.text().includes('net::ERR_FAILED') && injectedFailures.has(new URL(message.location().url, scaffold.baseUrl).pathname)) return
@@ -75,7 +88,7 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   if (collaboration) url.hash = 'agentharness=collaboration'
   await page.goto(url.href, { waitUntil: 'load' })
   await page.locator(collaboration ? '[data-emergence-center]' : '[class*="frame"]').first().waitFor({ timeout: 30_000 })
-  return { scaffold, page, tripwire, errors, injectedFailures }
+  return { scaffold, page, tripwire, errors, injectedFailures, rpcTrace }
 }
 
 async function hook(scaffold: WebScaffold, generation: string, input: ClaudeScopeHookRequest['input']): Promise<ClaudeScopeHookResult> {
@@ -187,7 +200,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     const overlay = join(directory, 'facts.patch.yml')
     await writeFile(replayOverride, JSON.stringify(replay()))
     await writeFile(overlay, JSON.stringify([
-      { id: 'development-task-context-text', disabled: true },
+      { id: 'development-task-context-backend', disabled: true },
       { insert: [{ id: 'contribution-facts', name: '@deepseek-ai/dsh-development-task-context/facts', config: {
         routes: [{ responsibility: 'frontend', fields: ['requiredRequestFields'] }], unmatchedFields: ['requiredRequestFields'],
       } }] },
@@ -225,6 +238,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
         await saveFailureShot(view.page, `web-e2e-contribution-${role}`)
         console.error('contribution acceptance diagnostics', { role, errors: view.errors,
           warnings: view.tripwire.warnings, pageErrors: view.tripwire.pageErrors,
+          rpcTrace: view.rpcTrace,
           aria: await view.page.locator('body').ariaSnapshot() })
       }
     })
@@ -303,10 +317,14 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     expect(invitation.grant).toEqual(originalGrant)
     expect(owner.scaffold.ctx.developmentTasks.peerContributions({ taskId })).toHaveLength(1)
     const expiryLabel = await owner.page.evaluate(timestamp => new Date(timestamp).toLocaleString(), originalGrant.expiresAt)
+    const portMatch = invitation.ownerAddress.match(/^\/ip4\/127\.0\.0\.1\/tcp\/([1-9]\d*)\/p2p\//u)
+    if (portMatch?.[1] === undefined) throw new Error('Contribution owner did not provide an allocated loopback address')
+    const ownerEndpoint = `127.0.0.1:${portMatch[1]}`
     const replacements = [[expiryLabel, '{{expiresLocal}}'], [originalGrant.grantId, '{{grantId}}'],
       [originalGrant.generation, '{{generation}}'], [originalGrant.captureId, '{{captureId}}'],
       [originalGrant.captureGeneration, '{{captureGeneration}}'], [taskId, '{{taskId}}'],
-      [invitation.ownerAddress, '{{ownerAddress}}'], [invitation.grant.ownerPeerId, '{{ownerPeerId}}'],
+      [invitation.ownerAddress, '{{ownerAddress}}'], [ownerEndpoint, '{{ownerEndpoint}}'],
+      [invitation.grant.ownerPeerId, '{{ownerPeerId}}'],
       [invitation.grant.contributorPeerId, '{{contributorPeerId}}'], [String(invitation.grant.expiresAt), '{{expiresAt}}']] as const
     await capture(owner, OWNER, 'owner-approved', replacements)
     await contribution.getByRole('textbox', { name: '粘贴贡献邀请', exact: true }).fill(invitationText)
@@ -338,7 +356,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent source contr
     const readText = await access.getByRole('textbox', { name: '将此邀请交给接收人', exact: true }).inputValue()
     const readInvitation = JSON.parse(readText) as ScopeInvitation
     expect(readInvitation.taskId).toBe(taskId)
-    await native.getByLabel('粘贴只读邀请', { exact: true }).fill(readText)
+    await native.getByLabel('粘贴协作入口', { exact: true }).fill(readText)
     await native.getByRole('button', { name: '连接此会话', exact: true }).click()
     await expect.poll(async () => (await state()).mode).toBe('passive')
     await write(declaration('sku'))

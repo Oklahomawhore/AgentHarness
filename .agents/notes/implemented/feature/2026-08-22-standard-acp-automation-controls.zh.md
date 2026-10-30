@@ -36,19 +36,19 @@ bridge 经由普通的持久性屏障实体化：`ctx.sessions.flush(session)` �
 
 ## 标准配置选项
 
-建议性 LLM catalog 现在服务于另一个自动化 consumer，但不会成为请求校验。ACP 公开按提供方分组的 `model` select，其不透明值保留提供方／模型对；还会公开来自已解析确切模型的依赖 `reasoning_effort` select。具有 efforts 但没有 adapter 配置默认值的模型会包含 `Provider default`，以保留省略状态并让提供方自行选择。新建、恢复和设置响应都返回完整状态。Adapter 拓扑事件发出 `config_option_update`；每个会话按接收顺序串行处理变更。配置的 ACP 提供方／模型仍是初始选择；未列出的配置路由会合成到返回选项中，而不会被拒绝。
+建议性 LLM catalog 现在服务于另一个自动化 consumer，但不会成为请求校验。ACP 公开按提供方分组的 `model` select，其不透明值保留提供方／模型对；还会公开来自已解析确切模型的依赖 `reasoning_effort` select。具有 efforts 但没有 adapter 配置默认值的模型会包含 `Provider default`，以保留省略状态并让提供方自行选择。新建、恢复和设置响应都返回完整状态。Adapter 拓扑事件在更新链之外重新读取完整选项。既有的会话输出队列仅在这些选项与最近一次成功配置响应或通知不同时发出 `config_option_update`；在投递时比较可合并并发的相同发现结果。每个会话按接收顺序串行处理变更。配置的 ACP 提供方／模型仍是初始选择；未列出的配置路由会合成到返回选项中，而不会被拒绝。
 
 ## 标准 MCP 映射
 
 `session/new` 和 `session/resume` 接受标准 stdio 和 Streamable HTTP MCP 声明。Stdio 使用会话 `cwd`；HTTP 使用已声明 URL 和 header；两者都保留 `dsh-mcp-client` 的超时和重连默认值。名称、命令、URL、环境项、header 和重复的规范化 namespace 都会在 Agent 公布前校验。初始连接或发现失败会回滚尚未公布的 Agent。
 
-MCP namespace reservation 跟随最近的 DSH registration scope，而不是进程 root。独立 Agent scope 可以使用同一服务器名，同一 Agent 内的重复名称仍会失败。Scoped disposal 会释放工具、传输和 reservation。
+每个非空 MCP 声明清单在尚未发布的 Agent 作用域下拥有经 Cordis 隔离的 `mcp` 服务。注册表容量等于已验证的清单长度，无需 Host 级注册表或额外用户配置。会话服务器不会进入 Host 注册表，独立 Agent 可以使用同一服务器名。同一 Agent 内规范化后的重复名称仍在挂载前失败。作用域释放会清理注册表、工具、传输与命名空间预留。
 
 ACP 客户端是受信任的控制器：stdio 声明授权执行进程，HTTP 声明授权携带其 header 发起请求。DSH 不增加每服务器私有 cwd 或超时字段。工具挂载后，普通 DSH 工具策略仍然约束调用。
 
 ## 语义更新投影
 
-只有已提交的持久事实会进入 `session/update`。Assistant 文本／图片变成 `agent_message_chunk`；reasoning 变成 `agent_thought_chunk`；工具调用／结果变成通用 `tool_call` 和 `tool_call_update`；已知的测量上下文压力与容量变成 `usage_update`；adapter 拓扑变化变成 `config_option_update`。持久消息 id 和工具调用 id 保留关联。规范 DSH 工具名作为标准工具调用 title。
+只有已提交的持久事实会进入 `session/update`。Assistant 文本／图片变成 `agent_message_chunk`；reasoning 变成 `agent_thought_chunk`；工具调用／结果变成通用 `tool_call` 和 `tool_call_update`；已知的测量上下文压力与容量变成 `usage_update`；发生变化的配置选项成为 `config_option_update`。持久消息 id 和工具调用 id 保留关联。规范 DSH 工具名作为标准工具调用 title。
 
 Per-session 链会串行处理所有更新，并在提示词完成前 drain。引用工具调用的权限请求只会在该工具调用通知 drain 后发送。原始模型 delta、重试尝试、卡片、终端状态、diff、位置、计划、标题、todo 和不受支持内容不会进入 wire。
 
@@ -63,6 +63,8 @@ Per-session 链会串行处理所有更新，并在提示词完成前 drain。�
 **实现所有 ACP 会话方法。** 已拒绝。列出、恢复和关闭已经完成持久自动化生命周期。加载／重放、删除和 fork 会引入本用例不需要的独立 transcript、破坏性存储和 lineage 语义。
 
 **使用不稳定 provider 方法发现模型。** 已拒绝，因为标准会话配置选项可以表达该选择，并保持会话 scope。
+
+**延迟发布会话，直到拓扑读取完成。** 已拒绝，因为拓扑可能在异步发现或持久化 flush 期间变化。保留监听器并比较完整的已报告选项，可以保留真实变化，而无需另一套待发布会话注册表。
 
 **把每个 DSH runtime 字段复制到 ACP 元数据。** 已拒绝，因为精确 token 明细、私有结果状态、程序化展示名称和每 MCP tunable 没有稳定 ACP v1 对应项。
 

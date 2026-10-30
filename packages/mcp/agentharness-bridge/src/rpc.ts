@@ -99,6 +99,7 @@ export class AgentHarnessRpcClient {
     if (Buffer.byteLength(body) > this.options.maxRequestBytes) throw new AgentHarnessRpcError('request-too-large')
     const signals = [this.lifetime.signal, this.options.signal, signal].filter(item => item !== undefined)
     using timer = deadline(AbortSignal.any(signals), this.options.requestTimeoutMs, 'bridge-request-timeout')
+    let timeoutCode = 'authentication-timeout'
     try {
       timer.signal.throwIfAborted()
       const access = await authenticateLocalConnection({
@@ -108,6 +109,7 @@ export class AgentHarnessRpcClient {
       if (this.expectedOrigin !== undefined && access.origin !== this.expectedOrigin) {
         throw new AgentHarnessRpcError('origin-mismatch')
       }
+      timeoutCode = 'request-timeout'
       const response = await (this.options.fetch ?? globalThis.fetch)(new URL(`/api/${endpoint}`, access.origin), {
         method: 'POST', redirect: 'manual', signal: timer.signal,
         headers: { 'content-type': 'application/json', cookie: access.cookie }, body,
@@ -116,6 +118,7 @@ export class AgentHarnessRpcClient {
         await response.body?.cancel()
         throw new AgentHarnessRpcError(`http-${String(response.status)}`)
       }
+      timeoutCode = 'response-timeout'
       const value = await readResponse(response, this.options.maxResponseBytes, timer.signal)
       timer.signal.throwIfAborted()
       if (!isRecord(value) || value.type !== 'server-response' || value.rpcId !== rpcId || !isRecord(value.result)
@@ -124,7 +127,7 @@ export class AgentHarnessRpcClient {
       return value.result.value as Result
     } catch (error) {
       if (timer.signal.aborted) {
-        throw new AgentHarnessRpcError(timeoutOf(timer.signal, 'bridge-request-timeout') === undefined ? 'cancelled' : 'request-timeout')
+        throw new AgentHarnessRpcError(timeoutOf(timer.signal, 'bridge-request-timeout') === undefined ? 'cancelled' : timeoutCode)
       }
       if (error instanceof AgentHarnessRpcError) throw error
       if (error instanceof LocalConnectionAccessError) throw new AgentHarnessRpcError(error.code)

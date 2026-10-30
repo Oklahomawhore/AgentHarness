@@ -93,10 +93,14 @@ describe('agent-loop request identity', () => {
       messages: [],
     }
     const copy = { ...request }
+    const session = {}
 
     expect(isAgentLoopRequest(request)).toBe(false)
-    expect(markAgentLoopRequest(request)).toBe(request)
+    expect(markAgentLoopRequest(request, session)).toBe(request)
     expect(isAgentLoopRequest(request)).toBe(true)
     expect(isAgentLoopRequest(copy)).toBe(false)
+    expect(isAgentLoopRequest(request, session)).toBe(true)
+    expect(isAgentLoopRequest(request, {})).toBe(false)
+    expect(isAgentLoopRequest(copy, session)).toBe(false)
   })
 })

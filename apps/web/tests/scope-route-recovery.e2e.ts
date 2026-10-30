@@ -1,4 +1,5 @@
 /** A live native Session recovers both original permissions after its independent owner changes listener. */
+import { verifyNativeContributionEntry } from './native-entry-support.ts'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -17,11 +18,13 @@ import type {} from '@deepseek-ai/dsh-scope-agent-context'
 import type {} from '@deepseek-ai/dsh-scope-agent-contribution'
 import type {} from '@deepseek-ai/dsh-scope-access'
 import type {} from '@deepseek-ai/dsh-development-task'
-import { launchWebScaffold, readPersistedEvents, webSnapshotMode, type WebScaffold } from './scaffold.ts'
+import { assertFixtureInventory, captureStableAria, compareOrRefreshGolden, launchWebScaffold,
+  readPersistedEvents, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { openContributionView, type ContributionView } from './contribution-scope-support.ts'
 import { connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
 
 const MODE = webSnapshotMode()
+const PASSIVE_SNAPSHOTS = join(import.meta.dirname, 'expected/native-passive-read-issues')
 const OBJECTIVE = '保留原权限恢复同一所有者的连接'
 const SHARING = '[data-native-contribution]'
 const PANEL = '[data-native-scope-panel]'
@@ -234,8 +237,7 @@ async function scenario(responses: readonly StreamChunk[][]) {
   const entryText = await entryField.inputValue()
   const entry = contributionEntrySchema.parse(JSON.parse(entryText))
   const share = await sharing(sourceView)
-  await share.getByRole('textbox', { name: '粘贴协作申请入口', exact: true }).fill(entryText)
-  await share.getByRole('button', { name: '验证连接', exact: true }).click()
+  await verifyNativeContributionEntry(sourceView.page, entryText)
   await share.getByText(task.id, { exact: true }).waitFor()
   await share.getByRole('textbox', { name: '允许采集的目录', exact: true }).fill(sourceRoot)
   for (const name of ['写入文件（write）', '编辑文件（edit）']) await share.getByRole('checkbox', { name, exact: true }).check()
@@ -243,7 +245,7 @@ async function scenario(responses: readonly StreamChunk[][]) {
   await share.getByLabel('最多样本数', { exact: true }).fill('8')
   await share.getByLabel('每份样本字节上限', { exact: true }).fill('8192')
   await share.getByRole('checkbox', { name: '我允许分享上述目录中的所选文件操作。任务所有者批准后可自动启用，直到到期或我停止分享。', exact: true }).check()
-  await share.getByRole('checkbox', { name: '我允许此会话在工作时接收整个目标的共享上下文；不允许因此自动开始新工作。', exact: true }).check()
+  await share.getByRole('checkbox', { name: '我允许此会话在工作时接收整个目标的共享上下文；本项本身不允许自动开始新工作。', exact: true }).check()
   await share.getByRole('button', { name: '申请加入并在批准后连接', exact: true }).click()
   await share.getByText('等待所有者批准；批准后自动启用', { exact: true }).waitFor()
   const status = () => source.ctx.scopeAgentContributions.status({ agentId: id })
@@ -334,6 +336,45 @@ async function scenario(responses: readonly StreamChunk[][]) {
     expect(source.ctx.developmentTasks.list({ limit: 200 })).toEqual([])
     expect(ownerRequests).toBe(0)
   }
+  async function passiveReading(stage: 'offline' | 'restored'): Promise<void> {
+    const before = requests.length
+    const observed = await source.ctx.scopeAgentContext.status({ agentId: id })
+    if (observed.eligibility !== 'eligible') throw new Error('Original passive reading is no longer eligible')
+    expect(observed.state).toMatchObject({ automatic: null, mode: 'paused', pauseReason: 'unavailable', usedBudget: 0 })
+    const form = await sharing(sourceView)
+    await form.locator(':scope > summary').click()
+    const page = sourceView.page
+    const panel = page.locator(PANEL)
+    const trigger = page.getByRole('button', { name: '协作', exact: true })
+    await expect.poll(() => trigger.textContent()).toContain('工作时更新')
+    await expect.poll(() => panel.locator(':scope > [role="status"]').textContent()).toBe('工作时更新')
+    await panel.getByText('已记录共享上下文不可用；正常工作时仍会重新核验。', { exact: true }).waitFor()
+    expect(await panel.getByText('自动协作已暂停', { exact: true }).count()).toBe(0)
+    expect(await panel.getByText('当前无法取得共享上下文，自动启动已暂停。', { exact: true }).count()).toBe(0)
+    const shots = process.env.DSH_CONTRIBUTION_SCOPE_SHOTS
+    if (shots !== undefined) await mkdir(shots, { recursive: true })
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport)
+      await expect.poll(async () => {
+        const bounds = await panel.boundingBox()
+        return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width
+      }).toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await panel.getByRole('button').last().scrollIntoViewIfNeeded()
+      await panel.getByRole('heading', { name: '当前会话协作', exact: true }).scrollIntoViewIfNeeded()
+      if (shots !== undefined) {
+        await page.screenshot({ path: join(shots, `passive-${stage}-${String(viewport.width)}.png`), fullPage: true })
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    if (MODE === 'refresh') await mkdir(PASSIVE_SNAPSHOTS, { recursive: true })
+    const aria = await captureStableAria(page, PANEL, source.workspaceCwd,
+      { replacements: [[entry.ownerAddress, '{{ownerAddress}}'], [String(entry.expiresAt), '{{entryExpiresAt}}'],
+        [task.id, '{{taskId}}'], [identity.peerId, '{{ownerPeerId}}']] })
+    await compareOrRefreshGolden(join(PASSIVE_SNAPSHOTS, `${stage}.expected.md`), aria, MODE)
+    expect(requests).toHaveLength(before)
+  }
   function clean(): void {
     for (const view of views) {
       expect(view.errors).toEqual([])
@@ -342,7 +383,7 @@ async function scenario(responses: readonly StreamChunk[][]) {
     }
   }
   return { source, sourceView, sourceRoot, id, agent, requests, task, entry, original, capture, status, prompt, approve,
-    restartOwner, closeOwner, recover, publish, samples, proof, clean, owner: currentOwner }
+    restartOwner, closeOwner, recover, publish, samples, proof, passiveReading, clean, owner: currentOwner }
 }
 
 describe.skipIf(process.platform === 'win32')('web e2e: original joint scope route recovery', () => {
@@ -372,6 +413,11 @@ describe.skipIf(process.platform === 'win32')('web e2e: original joint scope rou
     await f.closeOwner()
     await f.prompt('OFFLINE_DONE')
     await f.proof(BEFORE, true)
+    const offlineRequest = f.requests.at(-1)
+    if (offlineRequest === undefined) throw new Error('Offline ordinary request is missing')
+    const offlineInput = scopeMessages(offlineRequest.messages)[0]
+    expect(offlineInput?.source.kind === 'scope-agent-context' && offlineInput.source.form).toBe('withdrawn')
+    await f.passiveReading('offline')
     await expect.poll(async () => (await f.capture()).pendingSamples, { timeout: 15_000 }).toBe(1)
     const pending = (await f.samples()).find(item => item.receipt === undefined)
     if (pending === undefined) throw new Error('Offline source did not retain its original sample')
@@ -402,6 +448,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: original joint scope rou
     await f.publish(AFTER)
     await f.prompt('READ_RESTORED')
     await f.proof(AFTER)
+    await f.passiveReading('restored')
     const after = await f.source.ctx.scopeAgentContext.status({ agentId: f.id })
     if (after.eligibility !== 'eligible' || after.state.binding === null || after.state.binding.kind === 'local-task') {
       throw new Error('Read binding was lost')
@@ -463,6 +510,7 @@ describe.skipIf(process.platform === 'win32')('web e2e: original joint scope rou
     await f.prompt('READ_LEFT')
     await f.proof(STOPPED, true)
     expect(f.requests).toHaveLength(11)
+    await assertFixtureInventory(PASSIVE_SNAPSHOTS, ['offline.expected.md', 'restored.expected.md'])
     f.clean()
   })
 

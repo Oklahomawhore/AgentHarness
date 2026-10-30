@@ -55,7 +55,7 @@ git diff -- packages pnpm-lock.yaml docs/module-graph.md docs/module-graph.zh.md
 
 ```sh
 pnpm run benchmark:npm-resolution -- --runs=5 --timeout-ms=300000
-pnpm run benchmark:npm-resolution -- --ref=origin/master --runs=5 --timeout-ms=300000
+pnpm run benchmark:npm-resolution -- --ref=origin/main --runs=5 --timeout-ms=300000
 ```
 
 通过两个互不兼容的 DSH 合成版本验证包落位。验证器把每份当前 DSH manifest 分别复制为 `0.1.0` 和 `0.2.0`，只要求 npm 生成 package lock，并拒绝跨版本 DSH 解析、非预期 DSH 路径、两套版本清单不一致、多个 Cordis 实例以及包归档请求。本地索引只包含当前平台已安装的 metadata，因此只报告而不拒绝 npm 已接受的不可用可选包探测。
@@ -72,7 +72,7 @@ pnpm run benchmark:npm-resolution:next -- --runs=1 --finalist-runs=5 --finalists
 
 ### 性能验证
 
-[`verify-npm-install-layout`](../../../../scripts/verify-npm-install-layout.ts) 是 `Release (dsh)` workflow 在每个 pull request 和 master push 上运行的确定性包路径与版本检查；它不限制 resolver 耗时。[`benchmark-npm-resolution`](../../../../scripts/benchmark-npm-resolution.ts) 与 [`benchmark-next-package-dependency`](../../../../scripts/benchmark-next-package-dependency.ts) 保持为手动工具，因为 resolver 耗时会随机器负载和 metadata 完成顺序变化。它们通过全新 consumer 和仅 metadata 的运行，把 npm 依赖树计算与 registry 延迟、包归档下载分离，因此相对结果可以定位 peer 中继，但不构成发布时性能承诺。
+[`verify-npm-install-layout`](../../../../scripts/verify-npm-install-layout.ts) 是 [CI](../../../../.github/workflows/ci.yml) 的静态 lane 在每个 pull request 和 main push 上运行的确定性包路径与版本检查；它不限制 resolver 耗时。[`benchmark-npm-resolution`](../../../../scripts/benchmark-npm-resolution.ts) 与 [`benchmark-next-package-dependency`](../../../../scripts/benchmark-next-package-dependency.ts) 保持为手动工具，因为 resolver 耗时会随机器负载和 metadata 完成顺序变化。它们通过全新 consumer 和仅 metadata 的运行，把 npm 依赖树计算与 registry 延迟、包归档下载分离，因此相对结果可以定位 peer 中继，但不构成发布时性能承诺。
 
 生成后的策略目前在 13 个包中留下 27 条位于 `dependencies` 的受管 Host 运行时边。两条边仍位于 `peerDependencies`：`dsh-api-remotes → dsh-scope` 使用 `carrierKeyOf`，`dsh-session → dsh-scope` 使用 `scopeOf` 与 `scopeTarget`。
 

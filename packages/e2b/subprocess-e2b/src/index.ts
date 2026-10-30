@@ -9,7 +9,7 @@ import { posix } from 'node:path'
 import { inspect } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessRuntime, SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {
   SubprocessHandle,
@@ -209,9 +209,10 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
       this.terminals.add(terminal)
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- Remote allocation yields to disposal.
       if (this.disposing) {
-        await terminal.terminate()
+        const error = new Error('subprocess-e2b: service disposed during terminal setup')
+        try { await terminal.terminate() } catch (cleanupError) { throw new SubprocessTerminalCleanupError(error, cleanupError) }
         this.terminals.delete(terminal)
-        throw new Error('subprocess-e2b: service disposed during terminal setup')
+        throw error
       }
       const release = async (): Promise<void> => {
         await terminal.terminate()

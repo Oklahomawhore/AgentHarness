@@ -153,7 +153,7 @@ artifactBaseline(id: string): ClientArtifactBaseline | undefined
  * Re-hash one bundle (the HMR watch's registration hook — the only entry
  * point through which bundle content changes reach the graph).
  * @param id - entry id (package name).
- * @returns the new rev, or undefined for an unknown id.
+ * @returns advertised revision, retained for identical bytes, or undefined for an unknown id.
  */
 rebuilt(id: string): string | undefined
 

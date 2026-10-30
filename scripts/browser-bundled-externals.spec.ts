@@ -78,37 +78,44 @@ describe('browser dependency discovery', () => {
     await expect(browserBundledExternals(root)).rejects.toThrow('has no browser build config')
   })
 
-  it('follows shell workspace aliases, CSS assets and lazy imports without writing output', async () => {
-    const root = fixture()
-    library(root, 'shell-lib')
-    library(root, 'lazy-lib')
-    library(root, 'asset-lib')
-    write(root, 'node_modules/asset-lib/package.json', JSON.stringify({
-      name: 'asset-lib', exports: { './theme.css': './theme.css' },
-    }))
-    write(root, 'node_modules/asset-lib/theme.css', '.fixture { color: red }')
-    write(root, 'packages/client/static/package.json', '{"name":"@fixture/static"}')
-    write(root, 'packages/client/static/src/index.ts', [
-      'import { value } from "shell-lib"',
-      'import "asset-lib/theme.css"',
-      'export const output = value',
-      'export const lazy = () => import("lazy-lib")',
-    ].join('\n'))
-    const app = join(root, 'apps/web')
-    write(root, 'apps/web/package.json', '{"name":"@fixture/web","type":"module","exports":{"./dist/*":"./dist/*"}}')
-    symlinkSync(resolve(repositoryRoot, 'apps/web/node_modules'), join(app, 'node_modules'), 'junction')
-    write(root, 'apps/web/index.html', '<script type="module" src="./main.ts"></script>')
-    write(root, 'apps/web/main.ts', 'import { output, lazy } from "@fixture/static"; console.log(output); void lazy()')
-    write(root, 'apps/web/vite.config.ts', `export default {
-      build: { rollupOptions: { input: { index: ${JSON.stringify(join(app, 'index.html'))}, preview: "missing-preview.ts" } } }
-    }`)
-    write(root, 'apps/web/dist/sentinel.txt', 'untouched')
+  it.each(['directory', 'filesystem-alias'] as const)(
+    'follows shell workspace aliases, CSS assets and lazy imports through a %s without writing output', async (location) => {
+      const directory = fixture()
+      const aliases = mkdtempSync(join(tmpdir(), 'dsh-browser-notices-alias-'))
+      roots.push(aliases)
+      const alias = join(aliases, 'repository')
+      symlinkSync(directory, alias, 'junction')
+      const root = location === 'directory' ? directory : alias
+      library(root, 'shell-lib')
+      library(root, 'lazy-lib')
+      library(root, 'asset-lib')
+      write(root, 'node_modules/asset-lib/package.json', JSON.stringify({
+        name: 'asset-lib', exports: { './theme.css': './theme.css' },
+      }))
+      write(root, 'node_modules/asset-lib/theme.css', '.fixture { color: red }')
+      write(root, 'packages/client/static/package.json', '{"name":"@fixture/static"}')
+      write(root, 'packages/client/static/src/index.ts', [
+        'import { value } from "shell-lib"',
+        'import "asset-lib/theme.css"',
+        'export const output = value',
+        'export const lazy = () => import("lazy-lib")',
+      ].join('\n'))
+      const app = join(root, 'apps/web')
+      write(root, 'apps/web/package.json', '{"name":"@fixture/web","type":"module","exports":{"./dist/*":"./dist/*"}}')
+      symlinkSync(resolve(repositoryRoot, 'apps/web/node_modules'), join(app, 'node_modules'), 'junction')
+      write(root, 'apps/web/index.html', '<script type="module" src="./main.ts"></script>')
+      write(root, 'apps/web/main.ts', 'import { output, lazy } from "@fixture/static"; console.log(output); void lazy()')
+      write(root, 'apps/web/vite.config.ts', `export default {
+        build: { rollupOptions: { input: { index: ${JSON.stringify(join(app, 'index.html'))}, preview: "missing-preview.ts" } } }
+      }`)
+      write(root, 'apps/web/dist/sentinel.txt', 'untouched')
 
-    expect(await browserBundledExternals(root)).toEqual(new Set(['shell-lib', 'lazy-lib', 'asset-lib']))
-    expect(readFileSync(join(app, 'dist/sentinel.txt'), 'utf8')).toBe('untouched')
-    expect(existsSync(join(app, 'dist/index.html'))).toBe(false)
-    expect(existsSync(join(root, 'packages/client/static/lib'))).toBe(false)
-  })
+      expect(await browserBundledExternals(root)).toEqual(new Set(['shell-lib', 'lazy-lib', 'asset-lib']))
+      expect(readFileSync(join(app, 'dist/sentinel.txt'), 'utf8')).toBe('untouched')
+      expect(existsSync(join(app, 'dist/index.html'))).toBe(false)
+      expect(existsSync(join(root, 'packages/client/static/lib'))).toBe(false)
+    },
+  )
 
   it('normalizes installed module ids and excludes virtual/workspace modules', () => {
     expect(browserPackageOfFile('/repo/node_modules/.pnpm/pkg@1/node_modules/pkg/a.js')).toBe('pkg')

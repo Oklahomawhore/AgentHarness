@@ -71,7 +71,7 @@ describe('native contribution management', () => {
   })
 
   it('rejects stale capture actions and permits exact stop when the Agent is no longer eligible', async () => {
-    const { source, port } = fixture(vi.fn(async () => ({ ...capturedStatus, eligibility: 'task-conflict' as const })))
+    const { source, port } = fixture(vi.fn(async () => ({ ...capturedStatus, eligibility: 'fork' as const })))
     try {
       await source.directory.refresh(agentId)
       await source.stop({ agentId, expectedCapture: { ...capture.selection,
@@ -129,8 +129,8 @@ describe('joint leave ownership', () => {
 describe('receiving continuation ownership', () => {
   it('blocks new requests and stale stops while preserving exact continuation cancellation through reset and lost replies', async () => {
     const continuation: NonNullable<ScopeAgentContributionStatus['receivingContinuation']> = {
-      routeRevision: 0, selection: capture.selection, entry: capture.entry, intent: 'cancel-pending', receiving: {
-        adoptionId: 'join-a' as NonNullable<ScopeAgentContributionStatus['receivingContinuation']>['receiving']['adoptionId'],
+      routeRevision: 0, selection: capture.selection, entry: { ...capture.entry, kind: 'scope-join-entry' }, intent: 'cancel-pending', receiving: {
+        adoptionId: '5cc36292-58ce-4a69-91e5-cdf7779e878c' as NonNullable<ScopeAgentContributionStatus['receivingContinuation']>['receiving']['adoptionId'],
         state: 'failed', invitation: null,
       },
     }
@@ -148,13 +148,23 @@ describe('receiving continuation ownership', () => {
         captureGeneration: 'older' as typeof capture.selection.captureGeneration } })
       expect(port.stop).not.toHaveBeenCalled()
       await source.directory.refresh(agentId)
+      const recovery = { agentId, expectedCapture: capture.selection, expectedRouteRevision: 0,
+        expectedOwnerAddress: continuation.entry.ownerAddress,
+        entry: { ...continuation.entry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' } }
+      vi.mocked(port.recoverRoute).mockImplementationOnce(async () => {
+        authority = { ...authority, revision: 3, receivingContinuation: { ...continuation, routeRevision: 1, entry: recovery.entry } }
+        return authority
+      })
+      await source.recoverRoute(recovery)
+      expect(port.recoverRoute).toHaveBeenCalledExactlyOnceWith(recovery)
+      expect(source.directory.getSnapshot()[agentId]?.value?.receivingContinuation?.entry).toEqual(recovery.entry)
       const operation = { agentId, expectedCapture: capture.selection }
       const sent = source.stop(operation)
       source.reset(); await source.directory.refresh(agentId)
       await source.stop(operation); await source.leaveJoin(operation)
       expect(port.stop).toHaveBeenCalledExactlyOnceWith(operation)
       expect(port.leaveJoin).not.toHaveBeenCalled()
-      authority = { ...emptyStatus, revision: 3 }
+      authority = { ...emptyStatus, revision: 4 }
       pending.reject(new Error('committed cancellation reply lost')); await sent
       expect(source.directory.getSnapshot()[agentId]).toMatchObject({ status: 'ready', pending: false, value: authority })
       await source.leaveJoin(operation)
@@ -164,6 +174,21 @@ describe('receiving continuation ownership', () => {
 })
 
 describe('native route mutation ownership', () => {
+  it('rejects a displayed route after the original capture has ended', async () => {
+    const { source, port } = fixture(vi.fn(async () => capturedStatus))
+    try {
+      await source.directory.refresh(agentId)
+      const entry = { ...capture.entry, ownerAddress: '/ip4/127.0.0.1/tcp/2/p2p/owner-peer' }
+      vi.mocked(port.status).mockResolvedValue({ ...emptyStatus, revision: 2 })
+      source.changed(agentId, 2)
+      await source.directory.refresh(agentId)
+      await source.recoverRoute({ agentId, expectedCapture: capture.selection, expectedRouteRevision: 0,
+        expectedOwnerAddress: capture.entry.ownerAddress, entry })
+      expect(port.recoverRoute).not.toHaveBeenCalled()
+      expect(source.directory.getSnapshot()[agentId]?.value?.capture).toBeNull()
+    } finally { source.dispose() }
+  })
+
   it('retains a sent recovery through reset and lost reply, then rejects stale displayed addresses', async () => {
     let authority: ScopeAgentContributionStatus = { ...capturedStatus, eligibility: 'not-live', capture: { ...capture, state: 'ending' } }
     const pending = Promise.withResolvers<ScopeAgentContributionStatus>()

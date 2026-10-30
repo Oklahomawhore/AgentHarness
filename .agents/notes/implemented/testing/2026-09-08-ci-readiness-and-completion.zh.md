@@ -24,6 +24,14 @@ Status: implemented
 
 [ACP 断连测试](../../../../packages/acp/acp/tests/dispose.spec.ts)在 EOF 和传输失败两种情况下等待真实 Session handle 的 disposer。屏障阻塞处置，供测试检查所有权，然后释放屏障，等待完成并检查两个注册表。两个用例都不调用插件处置来触发待验证行为。独立的 teardown hook 在处置捕获的 Context 前释放屏障，包括测试体超时的情况。
 
+[连接恢复夹具](../../../../apps/web/tests/lifecycle-chrome.e2e.ts)在中断传输前，等待实际 `$events` 连接代次的 `ready`、由它触发的 Workbench RPC 响应，以及空清单渲染完成。这样才能建立断网断言所保留的缓存状态。[Claude 联合加入夹具](../../../../apps/web/tests/claude-joint-scope.e2e.ts)在截取等待状态前，等待所有者收到申请、来源端接纳送达回执；本地加入意图已被保留时，网络投递仍可能尚未完成。
+
+[加入前初始化夹具](../../../../snapshots/sdk/scope-prejoin-initialization/native-fixture.mjs)在断言离开已完成前，等待实际读取订阅变为 `left`。采集已清除且本地绑定已恢复时，排队中的订阅清理仍可能尚未完成。
+
+[本地联合](../../../../snapshots/sdk/scope-local-joint/native-fixture.mjs)和[群组联合](../../../../snapshots/sdk/scope-group-join/native-fixture.mjs)夹具在接收 Agent 的最后一个请求仍已冻结且正在运行时，完成独立贡献者的纠正发布。单凭空闲通知不能确定纠正已经送达；合并后的评估可能正常观察到此前已完成的投影。
+
+[SDK 回放拥有者](../../../../snapshots/sdk/sdk.snapshot.ts)为初始化和普通 RPC 请求提供相同的 110 秒额度。每个测试的完成 hook 会先关闭所属运行时，再删除工作区，包括运行器超时的情况；正常 `finally` 路径也会立即清理。[输入重建](../../../../scripts/fixtures/sdk-snapshot-turn-actions.ts)对记录中的每个用户消息 ID 只提交一次，保留的输入不会成为额外的 SDK 调用。
+
 [子 Agent 拆卸决策](2026-09-07-subagent-teardown-test-budgets.zh.md)负责生命周期清理预算。[持久 PowerShell 决策](2026-09-07-pwsh-ci-observable-completion.zh.md)负责精确与推断的终端就绪状态；一次性进程的完成 Promise 具有不同语义。
 
 [Worker runtime binding 测试](../../../../packages/code-runtime/code-runtime-worker-thread/tests/runtime.spec.ts)为源码 worker 初始化保留五秒计算额度，并将 binding 延迟设为 6.5 秒。若将该空闲延迟计费，仍会超过整个计算额度。用例保留 15 秒测试期限与 30 秒墙钟上限，登记 Context 和回复定时器的清理，并保持热循环、诱饵 dispatch、墙钟上限及取消控制用例的原有限制。生产预算不变。

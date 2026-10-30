@@ -1,0 +1,33 @@
+{
+  "first": {
+    "text": "One joint automatic response is authorized; file permission remains read-only.",
+    "finishReason": "completed"
+  },
+  "last": {
+    "text": "Original automatic permission remained paused until this read connection was left.",
+    "finishReason": "completed"
+  },
+  "joinPhases": [
+    "planned",
+    "adopted",
+    "ended"
+  ],
+  "joinVersion": 2,
+  "goal": "Inspect the frontend interface within my existing file permission.",
+  "activationLimit": 1,
+  "automaticUserInputs": 0,
+  "automaticPulses": 1,
+  "automaticRequests": 3,
+  "allowedRead": true,
+  "deniedWrite": "FS_SANDBOX_DENIED",
+  "filePreset": "read-only",
+  "modeBeforeDeparture": "paused",
+  "finalContext": {
+    "kind": "scope-agent-context",
+    "version": 1,
+    "form": "withdrawn",
+    "reason": "left"
+  },
+  "usedBudget": 1,
+  "wirePreservesJoinConsentAndRequestEvidence": true
+}

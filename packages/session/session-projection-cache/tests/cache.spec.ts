@@ -234,18 +234,21 @@ describe('SessionProjectionCache write policy', () => {
   })
 
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
-    const { ctx, root } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
+    const { ctx, root, cache } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
+    const write = vi.spyOn(cache, 'write')
     const session = ctx.sessions.create(SessionId('count'))
     mark(session, ['1'])
     mark(session, ['2'])
-    await vi.waitFor(async () => {
-      expect((await storedRows(root, session.id))?.['cache-test/marks'])
-        .toEqual({ ver: 1, seq: -1, val: null }) // still the creation cut
-    }, { timeout: 5_000 })
+    expect(write).toHaveBeenCalledExactlyOnceWith(session)
+    // Await durability itself so a rejected background write reports its original error.
+    await write.mock.results[0]!.value
+    expect((await storedRows(root, session.id))?.['cache-test/marks'])
+      .toEqual({ ver: 1, seq: -1, val: null })
     mark(session, ['3'])
-    await vi.waitFor(async () => {
-      expect((await storedRows(root, session.id))?.['cache-test/marks']?.val).toEqual({ marks: ['3'] })
-    }, { timeout: 5_000 })
+    expect(write).toHaveBeenCalledTimes(2)
+    expect(write).toHaveBeenLastCalledWith(session)
+    await write.mock.results[1]!.value
+    expect((await storedRows(root, session.id))?.['cache-test/marks']?.val).toEqual({ marks: ['3'] })
   })
 
   it('flushes on the configured interval when the count threshold is not reached', async () => {

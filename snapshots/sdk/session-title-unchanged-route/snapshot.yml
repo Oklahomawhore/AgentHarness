@@ -1,0 +1,13 @@
+version: 1
+scenario: session-title-unchanged-route
+profile: sdk
+composition: session-title-unchanged-route
+recording: authored
+writer: separate
+header:
+  class: session-title-unchanged-route
+  pin: true
+  systemPromptSource: session/text-turn
+  toolSchemasSource: session/text-turn
+replay:
+  override: true

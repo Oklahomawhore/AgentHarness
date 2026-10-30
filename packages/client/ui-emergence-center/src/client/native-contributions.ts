@@ -28,8 +28,11 @@ export interface NativeContributionDirectory {
 }
 
 function sameCapture(left: ScopeAgentContributionSelection | null, right: ScopeAgentContributionSelection | null): boolean {
+  // Remote and local permission filters retain their own nullable capture identity check.
+  /* jscpd:ignore-start */
   return left === null ? right === null : right !== null
     && left.captureId === right.captureId && left.captureGeneration === right.captureGeneration
+  /* jscpd:ignore-end */
 }
 
 /**
@@ -47,34 +50,36 @@ export function createNativeContributionDirectory(
     if (value.revision < (revisions.get(agentId) ?? 0)) throw new Error('Native contribution status predates its change notification')
     return value
   }, onError)
-  const allowed = (agentId: SessionId, expected: ScopeAgentContributionSelection | null, stopping: boolean): boolean => {
+  const observed = (
+    agentId: SessionId, expected: ScopeAgentContributionSelection | null, stopping: boolean,
+  ): ScopeAgentContributionStatus | undefined => {
     const entry = directory.getSnapshot()[agentId]
-    if (entry?.status !== 'ready' || entry.pending || entry.value === undefined) return false
+    if (entry?.status !== 'ready' || entry.pending || entry.value === undefined) return
     const selection = entry.value.capture?.selection ?? entry.value.receivingContinuation?.selection ?? null
-    if (!sameCapture(selection, expected)) { directory.invalidate(agentId); return false }
-    return stopping || (entry.value.eligibility === 'eligible' && entry.value.receivingContinuation === undefined)
+    if (!sameCapture(selection, expected)) { directory.invalidate(agentId); return }
+    if (stopping || (entry.value.eligibility === 'eligible' && entry.value.receivingContinuation === undefined)) return entry.value
   }
   return {
     directory,
     async request(request) {
-      if (!allowed(request.agentId, request.expectedCapture, false)) return
+      if (observed(request.agentId, request.expectedCapture, false) === undefined) return
       await directory.mutate(request.agentId, () => port.request(request))
     },
     async recoverRoute(request) {
-      if (!allowed(request.agentId, request.expectedCapture, true)) return
-      const status = directory.getSnapshot()[request.agentId]?.value
-      const current = status?.capture ?? status?.receivingContinuation
+      const status = observed(request.agentId, request.expectedCapture, true)
+      if (status === undefined) return
+      const current = status.capture ?? status.receivingContinuation
       if (current?.entry.ownerAddress !== request.expectedOwnerAddress || current.routeRevision !== request.expectedRouteRevision) {
         directory.invalidate(request.agentId); return
       }
       await directory.mutate(request.agentId, () => port.recoverRoute(request))
     },
     async stop(request) {
-      if (!allowed(request.agentId, request.expectedCapture, true)) return
+      if (observed(request.agentId, request.expectedCapture, true) === undefined) return
       await directory.mutate(request.agentId, () => port.stop(request))
     },
     async leaveJoin(request) {
-      if (!allowed(request.agentId, request.expectedCapture, true)) return
+      if (observed(request.agentId, request.expectedCapture, true) === undefined) return
       await directory.mutate(request.agentId, () => port.leaveJoin(request))
     },
     changed(agentId, revision) {

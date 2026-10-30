@@ -9,7 +9,10 @@ import type { ScopeAgentReadProjection } from './types.ts'
  * @returns whether coverage requires withdrawal instead of using the projection for this request.
  */
 export function blocksCurrentCoverage(projection: ScopeAgentReadProjection, automatic: boolean): boolean {
-  if (('kind' in projection || projection.version === 2) && projection.activation.kind === 'recipient-evidence'
+  if ('kind' in projection && projection.kind === 'local-task-scope') {
+    return blocksCurrentCoverage(projection.local, automatic) || blocksCurrentCoverage(projection.remote, automatic)
+  }
+  if (('kind' in projection || projection.version === 2 || projection.version === 3) && projection.activation.kind === 'recipient-evidence'
     && projection.activation.coverage === 'blocked-current') return true
   return automatic && projection.omittedSources.some(({ source, reason }) => reason === 'budget'
     && source.kind === 'publication' && source.taskId === projection.taskId && source.revision === projection.taskRevision)

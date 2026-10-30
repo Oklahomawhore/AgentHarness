@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { bindSnapshotSelector, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
@@ -13,7 +13,7 @@ afterEach(cleanup)
 const local = ['/ip4/127.0.0.1/tcp/0']
 const lan = ['/ip4/0.0.0.0/tcp/41901']
 
-function bench(addresses = local) {
+function bench(addresses: readonly string[] = local) {
   const stub = stubSettingsScope<ScopeNetworkSettings>()
   const mutate = vi.fn<SettingsScope<ScopeNetworkSettings>['mutate']>()
   const host = { ...stub, scope: { ...stub.scope, mutate }, mutate }
@@ -47,6 +47,57 @@ function mount(subject: ReturnType<typeof bench>, locale = en) {
 }
 
 describe('collaboration network preferences', () => {
+  it('waits for the Host namespace before allowing a network draft', () => {
+    const host = stubSettingsScope<ScopeNetworkSettings>()
+    const controller = new ScopeNetworkCardController(host.scope)
+    onTestFinished(() => { controller.dispose() })
+    const face = controller.inject()
+    expect(face.hooks.scopeNetworkCard.getSnapshot()).toMatchObject({
+      available: false, writable: false, dirty: false, customAddresses: [],
+    })
+    face.editPort('41901')
+    face.save()
+    expect(host.mutate).not.toHaveBeenCalled()
+    host.publish({ status: 'ready', mode: 'host', writable: true, revision: 3,
+      value: { listenAddresses: [...local] } })
+    expect(face.hooks.scopeNetworkCard.getSnapshot()).toMatchObject({
+      available: true, writable: true, mode: 'local', dirty: false,
+    })
+  })
+
+  it('ignores a notification already captured when an earlier subscriber disposes the card', () => {
+    const host = stubSettingsScope<ScopeNetworkSettings>()
+    host.publish({ status: 'ready', mode: 'host', writable: true, revision: 3,
+      value: { listenAddresses: [...local] } })
+    const unsubscribe = host.scope.subscribe(() => { controller.dispose() })
+    onTestFinished(unsubscribe)
+    const controller = new ScopeNetworkCardController(host.scope)
+    onTestFinished(() => { controller.dispose() })
+    const store = controller.inject().hooks.scopeNetworkCard
+    const previous = store.getSnapshot()
+    const notify = vi.fn()
+    const unobserve = store.subscribe(notify)
+    onTestFinished(unobserve)
+    host.publish({ revision: 4, value: { listenAddresses: [...lan] } })
+    expect(store.getSnapshot()).toBe(previous)
+    expect(notify).not.toHaveBeenCalled()
+    expect(host.listenerCount()).toBe(1)
+    unsubscribe()
+    expect(host.listenerCount()).toBe(0)
+  })
+
+  it.each(['1', '65535'])('recognizes saved LAN port %s without rewriting the preference', (port) => {
+    const addresses = Object.freeze([`/ip4/0.0.0.0/tcp/${port}`])
+    const subject = bench(addresses)
+    onTestFinished(() => { subject.controller.dispose() })
+    mount(subject)
+    expect(subject.state()).toMatchObject({ mode: 'lan', port, dirty: false, saved: false })
+    expect(screen.getByRole('spinbutton', { name: en.scopeNetworkPort })).toHaveProperty('value', port)
+    subject.face.save()
+    expect(subject.host.mutate).not.toHaveBeenCalled()
+    expect(subject.host.scope.getSnapshot().value?.listenAddresses).toEqual(addresses)
+  })
+
   it('starts with the saved local choice and requires an explicit LAN port', () => {
     const subject = bench()
     expect(subject.state()).toMatchObject({ mode: 'local', dirty: false, saved: false })
@@ -93,6 +144,7 @@ describe('collaboration network preferences', () => {
 
   it.each([
     ['/ip6/::1/tcp/42100'],
+    ['/ip4/127.0.0.2/tcp/0'],
     ['/ip4/127.0.0.1/tcp/0', '/ip4/192.168.1.10/tcp/42100'],
   ])('preserves custom listener %j until explicit replacement', async (...addresses) => {
     const subject = bench(addresses)
@@ -200,6 +252,34 @@ describe('collaboration network preferences', () => {
     subject.face.chooseMode('local')
     expect(subject.state()).toBe(pending)
   })
+
+  it('keeps a disposed card unchanged after a stale reset and rejected pending save', async () => {
+    const subject = bench()
+    const held = Promise.withResolvers<undefined>()
+    subject.host.mutate.mockImplementation(() => held.promise)
+    chooseLan(subject)
+    subject.face.save()
+    const pending = subject.state()
+    const notify = vi.fn()
+    const unsubscribe = subject.face.hooks.scopeNetworkCard.subscribe(notify)
+    try {
+      subject.controller.dispose()
+      subject.controller.resetConnection()
+      subject.host.publish({ revision: 4, value: { listenAddresses: [...local] } })
+      held.reject(new Error('connection closed after card disposal'))
+      await expect(held.promise).rejects.toThrow('connection closed after card disposal')
+      expect(subject.state()).toBe(pending)
+      expect(notify).not.toHaveBeenCalled()
+      expect(subject.host.listenerCount()).toBe(0)
+      subject.face.save()
+      expect(subject.host.mutate).toHaveBeenCalledTimes(1)
+    } finally {
+      held.resolve(undefined)
+      await held.promise.catch(() => undefined)
+      unsubscribe()
+      subject.controller.dispose()
+    }
+  })
 })
 
 describe('collaboration network card', () => {
@@ -217,7 +297,48 @@ describe('collaboration network card', () => {
     expect(screen.getByRole('status').textContent).toBe(zh.scopeNetworkSaved)
     expect(screen.getByRole('button', { name: `${zh.expand}: ${zh.scopeNetworkTitle}` })).toBeTruthy()
     expect(screen.queryByRole('spinbutton')).toBeNull()
+    act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [...lan] } }) })
+    expect(screen.getByRole('status').textContent).toBe(zh.scopeNetworkSaved)
+    expect(subject.host.mutate).toHaveBeenCalledTimes(1)
+    act(() => { subject.host.publish({ revision: 5, value: { listenAddresses: [...lan] } }) })
+    expect(screen.queryByText(zh.scopeNetworkSaved)).toBeNull()
     subject.controller.dispose()
+  })
+
+  it('clears confirmation when a namespace replacement changes listeners at the same revision', async () => {
+    const subject = bench()
+    chooseLan(subject)
+    subject.face.save()
+    await vi.waitFor(() => { expect(subject.state().saved).toBe(true) })
+    subject.host.publish({ revision: 4, value: { listenAddresses: [...local] } })
+    expect(subject.state()).toMatchObject({ mode: 'local', saved: false })
+    subject.controller.dispose()
+  })
+
+  it('keeps Host preferences clean when a queued selection notification arrives after replacement', async () => {
+    const subject = bench()
+    onTestFinished(() => { subject.controller.dispose() })
+    mount(subject)
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: en.scopeNetworkMode })
+    expect(screen.getByRole('option', { name: en.scopeNetworkLan })).toHaveProperty('disabled', false)
+    select.value = 'lan'
+    const queued = Promise.withResolvers<undefined>()
+    const notification = queued.promise.then(() => { fireEvent.change(select) })
+    try {
+      const replacement = '/ip6/::1/tcp/42100'
+      act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [replacement] } }) })
+      expect(select).toHaveProperty('value', 'custom')
+      expect(screen.getByRole('option', { name: en.scopeNetworkCustom })).toHaveProperty('disabled', true)
+      await act(async () => { queued.resolve(undefined); await notification })
+
+      const latest = '/ip6/::1/tcp/42101'
+      act(() => { subject.host.publish({ revision: 5, value: { listenAddresses: [latest] } }) })
+      expect(subject.state()).toMatchObject({ mode: 'custom', customAddresses: [latest], dirty: false, conflicted: false })
+      expect(screen.getByRole('textbox', { name: en.scopeNetworkCustom })).toHaveProperty('value', latest)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByRole('button', { name: en.save })).toHaveProperty('disabled', true)
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+    } finally { queued.resolve(undefined); await act(async () => { await notification }) }
   })
 
   it('shows custom addresses without a save or normalization', () => {
@@ -239,6 +360,39 @@ describe('collaboration network card', () => {
     expect(screen.queryByText(en.scopeNetworkSaved)).toBeNull()
     subject.controller.dispose()
   })
+
+  it.each([['English', en], ['Chinese', zh]] as const)(
+    'retains a conflicted draft until discard and shows the current Host value in %s', (_name, locale) => {
+      const subject = bench()
+      onTestFinished(() => { subject.controller.dispose() })
+      mount(subject, locale)
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'lan' } })
+      fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '41901' } })
+      expect(screen.getByRole('button', { name: locale.save })).toHaveProperty('disabled', false)
+
+      const replacement = '/ip6/::1/tcp/42100'
+      act(() => { subject.host.publish({ revision: 4, value: { listenAddresses: [replacement] } }) })
+      expect(screen.getByRole('alert').textContent).toBe(locale.scopeNetworkConflict)
+      expect(screen.queryByText(locale.scopeNetworkInvalidPort)).toBeNull()
+      expect(screen.getByRole('spinbutton')).toHaveProperty('value', '41901')
+      expect(screen.getByRole('spinbutton').getAttribute('aria-invalid')).toBe('false')
+      const save = screen.getByRole('button', { name: locale.save })
+      expect(save).toHaveProperty('disabled', true)
+      fireEvent.click(save)
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: `${locale.collapse}: ${locale.scopeNetworkTitle}` })).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: locale.discard }))
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('spinbutton')).toBeNull()
+      expect(screen.getByRole('combobox')).toHaveProperty('value', 'custom')
+      expect(screen.getByRole('textbox', { name: locale.scopeNetworkCustom })).toHaveProperty('value', replacement)
+      expect(screen.getByRole('textbox')).toHaveProperty('readOnly', true)
+      expect(screen.queryByText(locale.unsaved)).toBeNull()
+      expect(screen.queryByText(locale.scopeNetworkSaved)).toBeNull()
+      expect(subject.host.mutate).not.toHaveBeenCalled()
+    },
+  )
 
   it('keeps a rejected save open with its draft and error', async () => {
     const subject = bench()

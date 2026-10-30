@@ -53,6 +53,8 @@ interface Behavior {
   echoEnv?: boolean
   /** Echo the sorted cwd listing as a chunk (spec-side workspace-seeding assertions). */
   echoWorkspace?: boolean
+  /** Echo the standard MCP declarations received by session/new. */
+  echoMcpServers?: boolean
   /** Write a line to stderr on boot (spec-side stderr-capture assertions). */
   stderrNote?: string
   /** Let a short-lived descendant retain stdio and emit one final ACP update plus stderr line after this parent exits. */
@@ -212,6 +214,7 @@ function handleFrame(frame: Record<string, unknown>): void {
       }
       sessionId = randomUUID()
       sessionCwd = typeof params.cwd === 'string' ? params.cwd : process.cwd()
+      if (behavior.echoMcpServers === true) chunk(`mcp:${JSON.stringify(params.mcpServers)}`)
       respond(id as number | string, { sessionId })
       return
     }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import runpy
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -531,3 +532,100 @@ def test_profile_plugin_failure_reports_native_exit_status(monkeypatch: pytest.M
     assert f"returncode={returncode}" in message
     assert f"0x{returncode & 0xffffffff:08x}" in message
     assert "stdout='' stderr=''" in message
+
+
+def reported_grant_payload() -> dict[str, object]:
+    return {
+        "publications": [{"kind": "reported-file", "version": 1, "authority": {"kind": "local", "version": 1},
+                          "content": "actual file text"}],
+        "grantReferences": {
+            "version": 1,
+            "legend": ("grantReferences.entries uses zero-based indices. Restore publications[publicationIndex]"
+                       "[grantReferences.grants[grantIndex].kind].grant from that grant row's value. All other fields are literal."),
+            "grants": [{"kind": "authority", "value": {"taskId": "original-task", "extra": ["literal"]}}],
+            "entries": [{"publicationIndex": 0, "grantIndex": 0}],
+        },
+    }
+
+
+def test_reported_grant_expands_complete_authority_without_changing_input() -> None:
+    body = reported_grant_payload()
+    before = json.dumps(body)
+    expanded = SMOKE["expand_reported_grants"](body, "4")
+    assert expanded == {"publications": [{"kind": "reported-file", "version": 1,
+                                         "authority": {"kind": "local", "version": 1,
+                                                       "grant": {"taskId": "original-task", "extra": ["literal"]}},
+                                         "content": "actual file text"}]}
+    assert json.dumps(body) == before
+
+
+@pytest.mark.parametrize("location", ["table", "publication", "parent"])
+def test_reported_grant_refuses_boolean_versions(location: str) -> None:
+    body = reported_grant_payload()
+    target = body["grantReferences"] if location == "table" else body["publications"][0]
+    if location == "parent":
+        target = target["authority"]
+    target["version"] = True
+    with pytest.raises(AssertionError, match="version|derived publication"):
+        SMOKE["expand_reported_grants"](body, "4")
+
+
+@pytest.mark.parametrize("selector", [*SMOKE["SCOPE_SCENARIOS"], "sdk-scope-all"])
+@pytest.mark.parametrize("update", [False, True])
+def test_collaboration_cli_dispatches_every_explicit_and_collective_route(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], selector: str, update: bool,
+) -> None:
+    calls: list[tuple[Path, bool, str]] = []
+
+    def run_scope(executable: Path, update_snapshots: bool, *, scenario: str) -> None:
+        calls.append((executable, update_snapshots, scenario))
+
+    monkeypatch.setitem(SMOKE["main"].__globals__, "smoke_sdk_scope_context", run_scope)
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", selector])
+    with pytest.raises(SystemExit) as missing:
+        SMOKE["main"]()
+    assert missing.value.code == 2
+    assert "--exe is required" in capsys.readouterr().err
+    assert calls == []
+
+    executable = Path(sys.executable).resolve()
+    arguments = ["smoke-python-runtime.py", "--scenario", selector, "--exe", str(executable)]
+    if update:
+        arguments.append("--update-snapshots")
+    monkeypatch.setattr(sys, "argv", arguments)
+    SMOKE["main"]()
+    selectors = list(SMOKE["SCOPE_SCENARIOS"]) if selector == "sdk-scope-all" else [selector]
+    expected = ["scope-context-live" if item == "sdk-scope-context" else item.removeprefix("sdk-")
+                for item in selectors]
+    assert calls == [(executable, update, scenario) for scenario in expected]
+    assert capsys.readouterr().out == f"smoke-python-runtime: {selector} passed\n"
+
+
+def test_collaboration_group_preserves_a_failed_smoke_without_continuing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original = RuntimeError("actual collaboration smoke failed")
+
+    def run_scope(_executable: Path, _update: bool, *, scenario: str) -> None:
+        calls.append(scenario)
+        if len(calls) == 3:
+            raise original
+
+    monkeypatch.setitem(SMOKE["main"].__globals__, "smoke_sdk_scope_context", run_scope)
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", "sdk-scope-all",
+                                     "--exe", sys.executable])
+    with pytest.raises(RuntimeError) as failure:
+        SMOKE["main"]()
+    assert failure.value is original
+    assert calls == list(SMOKE["SCOPE_SCENARIOS"].values())[:3]
+
+
+def test_collaboration_group_does_not_allow_snapshot_updates_for_plain_sdk_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["smoke-python-runtime.py", "--scenario", "sdk-default",
+                                     "--exe", sys.executable, "--update-snapshots"])
+    with pytest.raises(SystemExit) as failure:
+        SMOKE["main"]()
+    assert failure.value.code == 2

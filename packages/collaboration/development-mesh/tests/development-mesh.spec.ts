@@ -41,5 +41,11 @@ describe('development Mesh channel registry', () => {
 
     dispose()
     expect(mesh.channel('development-task/v1')).toBeUndefined()
+    const replacement = { ...channel }
+    const removeReplacement = mesh.register('development-task/v1', replacement)
+    dispose()
+    expect(mesh.channel('development-task/v1')).toBe(replacement)
+    removeReplacement()
+    expect(mesh.channelNames()).toEqual([])
   })
 })

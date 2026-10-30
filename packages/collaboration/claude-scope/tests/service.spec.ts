@@ -2,7 +2,7 @@ import ScopeTransport, { ScopeTransportError } from '@deepseek-ai/dsh-scope-tran
 import type { ScopePeerId, ScopeTransportHandler, ScopeTransportTarget } from '@deepseek-ai/dsh-scope-transport/types'
 import ScopeAccessService from '@deepseek-ai/dsh-scope-access'
 import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -12,7 +12,8 @@ import DevelopmentTaskMeshService from '@deepseek-ai/dsh-development-task-mesh'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
 import * as RoomStorage from '@deepseek-ai/dsh-development-room-storage-domain'
 import DevelopmentTaskService, { DevelopmentTaskError, type DevelopmentParticipantId, type DevelopmentTaskId, type DevelopmentTaskObservedIntervalIdentity } from '@deepseek-ai/dsh-development-task'
-import { developmentTaskObservedReceiptSchema } from '@deepseek-ai/dsh-development-task/schema'
+import { developmentTaskObservedReceiptSchema, localContributionGrantSchema,
+  localContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
 import * as TaskStorage from '@deepseek-ai/dsh-development-task-storage-domain'
 import TextBackend from '@deepseek-ai/dsh-development-task-context/text'
 import FactsBackend from '@deepseek-ai/dsh-development-task-context/facts'
@@ -24,8 +25,11 @@ import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-
 import ClaudeScopeService, { type Config } from '../src/index.ts'
 import type { ClaudeScopeOpenApiSource, ClaudeScopeSessionKey } from '../src/types.ts'
 import type { ScopeContributionLease } from '../src/contribution-state.ts'
+import { contributionSchema, contributionLeaseSchema } from '../src/contribution-state.ts'
 import type { DevelopmentTaskPeerContributionGrant } from '@deepseek-ai/dsh-development-task/types'
-import type { ScopeSession, ScopeToolLease } from '../src/state.ts'
+import { claudeScopeDomainSpec, type ScopeProjection, type ScopeSession, type ScopeToolLease } from '../src/state.ts'
+import type { ScopeWorkLease } from '../src/work-state.ts'
+import { scopeDigest } from '../src/projection.ts'
 import * as OpenApi from '../src/openapi.ts'
 import * as Setup from '../src/setup.ts'
 
@@ -74,7 +78,7 @@ async function apiScenario(host: Awaited<ReturnType<typeof boot>>) {
 }
 
 // The descriptor/Connection/launcher chain has its own real-process integration suite.
-vi.mock('../src/transport.ts', () => ({ createClaudeScopeDescriptor: () => ({ generation: 'test-generation' }) }))
+vi.mock('../src/transport.ts', () => ({ createClaudeScopeDescriptor: () => ({ generation: 'test-generation', ready: Promise.resolve() }) }))
 
 // Promise timers keep Node's internal clock; use the controlled global clock only in timer-specific cases.
 vi.mock('node:timers/promises', async (importOriginal) => {
@@ -751,6 +755,39 @@ describe('Claude scope service', () => {
     expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation?.state === 'valid')).toHaveLength(1)
   })
 
+  it('publishes an authorized in-flight sample while another session leaves the same Task', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    const input = scenario.tool('other-session-leaves', apiDocument(['independent_author_fact'], ['299']))
+    await host.hook('api-author', 'PreToolUse', input)
+    await writeFile(scenario.source.filePath, apiDocument(['independent_author_fact'], ['299']))
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const actual = OpenApi.sampleOpenApiSource
+    vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
+      const sample = await actual(...args)
+      entered.resolve(undefined)
+      await release.promise
+      return sample
+    })
+    const completion = host.hook('api-author', 'PostToolUse', input)
+    let leaving: Promise<unknown> | undefined
+    try {
+      await entered.promise
+      leaving = host.scope.leave({ sessionKey: scenario.b })
+      release.resolve(undefined)
+      expect((await completion).receipt.status).toBe('published')
+      await leaving
+      const evidence = (await host.hook('api-qa', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+      expect(evidence).toContain('"responseStatuses":["299"]')
+      expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation?.state === 'valid')).toHaveLength(1)
+      expect((await host.scope.sessions()).find(session => session.sessionKey === scenario.b)?.taskId).toBeUndefined()
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
+  })
+
   it('captures ordinary authorized tools and resends exact recipient context without automatic join or self echo', async () => {
     const host = await boot()
     const task = await host.createTask('Two existing Claude sessions')
@@ -1074,6 +1111,31 @@ describe('Claude scope service', () => {
     expect(contexts.at(-1)!.appExit).toHaveBeenCalledWith(1)
   })
 
+  it.each(['current', 'prepared'] as const)('rejects a stored %s projection whose record identity differs from its table key', async (stage) => {
+    const first = await boot()
+    const task = await first.createTask('Persisted projection identity')
+    await first.connect(await first.observe('projection-identity'), task.id)
+    const records = first.facility.get('claude_scope')!.table('projections')
+    const cancellation = new AbortController()
+    if (stage === 'prepared') {
+      const put = records.put.bind(records)
+      vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+        await put(key, value)
+        cancellation.abort(new Error('Cancelled after exact output was stored'))
+      })
+      await expect(first.hook('projection-identity', 'UserPromptSubmit', {}, cancellation.signal))
+        .rejects.toThrow('Cancelled after exact output was stored')
+    } else await first.hook('projection-identity', 'UserPromptSubmit')
+    const [entry] = [...records.entries()]
+    if (entry === undefined) throw new Error('Hook did not persist its exact output')
+    const [key, record] = entry
+    const projection = claudeScopeDomainSpec.tables.projections.valueSchema.parse(record)
+    await records.put(key, { ...projection, projectionId: 'different-persisted-identity' })
+    await first.ctx.fiber.dispose()
+    await expect(boot(first.pool, first.directory).then(() => undefined)).rejects.toThrow('stored projection key does not match its identity')
+    expect(contexts.at(-1)!.appExit).toHaveBeenCalledWith(1)
+  })
+
   it('rejects join when an external Task clear races the durable grant write', async () => {
     const host = await boot()
     const task = await host.createTask('Join commit race')
@@ -1149,18 +1211,18 @@ class ReadScopeTransport extends ScopeTransport {
     const remote = this.network.get(target.peerId)
     if (remote === undefined || remote.offline) throw new ScopeTransportError('scope-transport/unavailable')
     const result = await remote.handlers.get(protocol)!({ peerId: this.peerId, payload: structuredClone(payload), signal })
-    if (this.dropContributionReply && protocol === '/agentharness/scope-contribute/1') throw new ScopeTransportError('scope-transport/unavailable')
+    if (this.dropContributionReply && protocol.startsWith('/agentharness/scope-contribute/')) throw new ScopeTransportError('scope-transport/unavailable')
     return result
   }
 }
 
 async function independentScopes() {
   const network = new Map<ScopePeerId, ReadScopeTransport>()
-  const host = async (id: string) => {
-    const result = await boot(new MemoryMediaPool(), undefined, {}, id, async (ctx) => {
+  const host = async (id: string, pool = new MemoryMediaPool(), directory?: string) => {
+    const result = await boot(pool, directory, {}, id, async (ctx) => {
       new ReadScopeTransport(ctx, id as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
-        maxContextBytes: 6000, maxResponseBytes: 16000, requestTimeoutMs: 1000,
+        maxContextBytes: 6000, maxResponseBytes: 16000, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 1000,
         maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8, waitTimeoutMs: 500, maxConcurrentWaits: 2,
         maxConcurrentContributions: 4, maxContributionRequestBytes: 16384, maxContributionApplications: 16,
         maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 })
@@ -1177,30 +1239,31 @@ async function independentScopes() {
     expiresAt: Date.now() + 60000, responsibility: 'frontend' })
   const key = await receiver.observe('read-only-session')
   await receiver.scope.receive({ sessionKey: key, invitation })
-  return { owner, receiver, task, secret, invitation, key }
+  return { owner, receiver, task, secret, invitation, key, host }
 }
 
-async function contributionPair() {
+async function contributionPair(ownerPeerId = 'contribution-owner', overrides: Partial<Config> = {}) {
   const network = new Map<ScopePeerId, ReadScopeTransport>()
   const host = async (id: string, pool = new MemoryMediaPool(), directory?: string) => {
-    const result = await boot(pool, directory, { contributionPollIntervalMs: 25 }, id, async (ctx) => {
-      new ReadScopeTransport(ctx, id as ScopePeerId, network)
+    const peerId = id === 'contribution-owner' ? ownerPeerId : id
+    const result = await boot(pool, directory, { contributionPollIntervalMs: 25, ...overrides }, id, async (ctx) => {
+      new ReadScopeTransport(ctx, peerId as ScopePeerId, network)
       new ScopeAccessService(ctx, { maxGrants: 16, maxSubscriptions: 16, maxProjections: 64,
-        maxContextBytes: 6000, maxResponseBytes: 16000, requestTimeoutMs: 1000,
+        maxContextBytes: 6000, maxResponseBytes: 16000, maxDecodedResponseBytes: 2097152, requestTimeoutMs: 1000,
         maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8, waitTimeoutMs: 500, maxConcurrentWaits: 2,
         maxConcurrentContributions: 4, maxContributionRequestBytes: 16384, maxContributionApplications: 16,
         maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000 })
       await ctx.scopeAccess.list()
     })
-    return { ...result, transport: network.get(id as ScopePeerId)! }
+    return { ...result, transport: network.get(peerId as ScopePeerId)! }
   }
   const owner = await host('contribution-owner')
   const source = await host('contribution-source')
   return { owner, source, host }
 }
 
-async function contributionHosts() {
-  const { owner, source, host } = await contributionPair()
+async function contributionHosts(overrides: Partial<Config> = {}) {
+  const { owner, source, host } = await contributionPair('contribution-owner', overrides)
   const task = await owner.createTask('Independent API contributions')
   const key = await source.observe('contribution-session')
   const file = { name: 'orders-api', filePath: join(source.directory, 'openapi.json'), method: 'post' as const, path: '/orders' }
@@ -1424,7 +1487,7 @@ describe('independent Claude contribution permits', () => {
 
   it('returns typed local selection errors without changing retained permissions', async () => {
     const f = await contributionHosts()
-    if (f.invitation.grant.source.kind === 'tool-observations') throw new Error('API fixture requires an OpenAPI grant')
+    if (f.invitation.grant.source.kind !== undefined) throw new Error('API fixture requires an OpenAPI grant')
     await expect(f.source.scope.contributionDetail({ sessionKey: 'missing' as ClaudeScopeSessionKey }))
       .rejects.toMatchObject({ code: 'claude-scope/session-unavailable' })
     await expect(f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection,
@@ -1440,7 +1503,7 @@ describe('independent Claude contribution permits', () => {
 
   it('retains an inert path-free proposal and samples only an exact granted leased Write', async () => {
     const f = await contributionHosts()
-    if (f.invitation.grant.source.kind === 'tool-observations') throw new Error('API fixture requires an OpenAPI grant')
+    if (f.invitation.grant.source.kind !== undefined) throw new Error('API fixture requires an OpenAPI grant')
     expect(JSON.stringify(f.preparation.proposal)).not.toContain(f.source.directory)
     expect(await f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection,
       roots: [f.source.directory], source: f.file }))
@@ -1689,6 +1752,141 @@ describe('independent Claude contribution permits', () => {
     expect(slow).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['computation', 'projection write'] as const)(
+    'recomputes local Task evidence withdrawn during %s before returning Hook context', async (phase) => {
+      const host = await boot()
+      const task = await host.createTask('Native and Claude owners retain separate responsibilities')
+      const participantId = 'native-responsibility-agent' as DevelopmentParticipantId
+      await host.ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Native source Agent' })
+      const checked = await host.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+      const epoch = host.ctx.developmentTasks.assignmentLog().at(-1)
+      if (epoch === undefined) throw new Error('Native checkout did not retain its epoch')
+      const grant = localContributionGrantSchema.parse({ version: 1, taskId: task.id, participantId,
+        bindingId: checked.assignment.bindingId, expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq },
+        captureId: 'native-local-capture', captureGeneration: 'native-local-generation',
+        source: { kind: 'completed-turn-outcomes', version: 5, name: 'Native source responsibility' },
+        expiresAt: Date.now() + 60_000, maxSamples: 3, maxSampleBytes: 4096,
+      })
+      await host.ctx.developmentTasks.openLocalContribution(grant)
+      const text = 'PRIVATE_RETIRED_LOCAL_REPORT_CANARY'
+      await host.ctx.developmentTasks.admitLocalContribution(localContributionRequestSchema.parse({ grant, sequence: 1,
+        sourceId: scopeDigest(['native-local-report']), result: {
+          kind: 'completed-turn-outcome', version: 5, text, sha256: createHash('sha256').update(text).digest('hex'),
+        } }))
+      await host.connect(await host.observe('local-withdrawal-reader'), task.id)
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      host.ctx.effect(() => () => { release.resolve(undefined) }, 'release test projection barrier')
+      const compute = host.backend.compute.bind(host.backend)
+      const computed = vi.spyOn(host.backend, 'compute')
+      if (phase === 'computation') computed.mockImplementationOnce(async (input) => {
+        entered.resolve(undefined)
+        await release.promise
+        return compute(input)
+      })
+      else {
+        const records = host.facility.get('claude_scope')!.table('projections')
+        const put = records.put.bind(records)
+        vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+          await put(key, value)
+          entered.resolve(undefined)
+          await release.promise
+        })
+      }
+      const cancellation = new AbortController()
+      const pending = host.hook('local-withdrawal-reader', 'UserPromptSubmit', {}, cancellation.signal)
+      const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its projection barrier') })
+      try {
+        await Promise.race([entered.promise, unexpectedlySettled])
+        await host.ctx.developmentTasks.endLocalContribution({ grant, reason: 'revoked' })
+        release.resolve(undefined)
+        const result = await pending
+        expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(text)
+        expect(result.output.hookSpecificOutput?.additionalContext).toContain('ended')
+        expect(computed).toHaveBeenCalledTimes(2)
+      } finally {
+        release.resolve(undefined)
+        cancellation.abort(new Error('test projection settled'))
+        await Promise.allSettled([pending, unexpectedlySettled])
+      }
+    },
+  )
+
+  it('recomputes a slow Task projection after its sampled API artifact is revoked', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    const retired = 'PRIVATE_RETIRED_ARTIFACT_FIELD_CANARY'
+    await scenario.change('retiring-contract', apiDocument([retired]))
+    const backend = host.ctx.developmentTaskContextBackend
+    const compute = backend.compute.bind(backend)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    host.ctx.effect(() => () => { release.resolve(undefined) }, 'release test artifact projection barrier')
+    const computed = vi.spyOn(backend, 'compute').mockImplementationOnce(async (input) => {
+      entered.resolve(undefined)
+      await release.promise
+      return compute(input)
+    })
+    const cancellation = new AbortController()
+    const pending = host.hook('api-frontend', 'UserPromptSubmit', {}, cancellation.signal)
+    const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its artifact projection barrier') })
+    try {
+      await Promise.race([entered.promise, unexpectedlySettled])
+      await host.scope.leave({ sessionKey: scenario.a })
+      expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.at(-1)?.observation?.state).toBe('revoked')
+      release.resolve(undefined)
+      const result = await pending
+      expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(retired)
+      expect(result.output.hookSpecificOutput?.additionalContext).toContain('"evidence":"revoked"')
+      expect(computed).toHaveBeenCalledTimes(2)
+    } finally {
+      release.resolve(undefined)
+      cancellation.abort(new Error('test artifact projection settled'))
+      await Promise.allSettled([pending, unexpectedlySettled])
+    }
+  })
+
+  it('recomputes a slow Task projection after its Mesh source interval ends', async () => {
+    const owner = await boot()
+    const task = await owner.createTask('Remote source and local recipient responsibilities')
+    const source = await bootRemote({ owner, offline: false, dropAdmission: false, dropEnd: false })
+    const key = await source.observe('retiring-mesh-source')
+    await source.connect(key, task.id)
+    const identity = await remoteIdentity(owner, source, key)
+    await owner.ctx.developmentTasks.approveObservedInterval(identity)
+    const retired = 'PRIVATE_RETIRED_MESH_REPORT_CANARY'
+    const input = source.tool('retiring-remote-write', retired)
+    await source.hook('retiring-mesh-source', 'PreToolUse', input)
+    await source.hook('retiring-mesh-source', 'PostToolUse', input)
+    await owner.connect(await owner.observe('mesh-withdrawal-reader'), task.id)
+    const compute = owner.backend.compute.bind(owner.backend)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    owner.ctx.effect(() => () => { release.resolve(undefined) }, 'release test Mesh projection barrier')
+    const computed = vi.spyOn(owner.backend, 'compute').mockImplementationOnce(async (request) => {
+      entered.resolve(undefined)
+      await release.promise
+      return compute(request)
+    })
+    const cancellation = new AbortController()
+    const pending = owner.hook('mesh-withdrawal-reader', 'UserPromptSubmit', {}, cancellation.signal)
+    const unexpectedlySettled = pending.then(() => { throw new Error('Hook completed without entering its Mesh projection barrier') })
+    try {
+      await Promise.race([entered.promise, unexpectedlySettled])
+      await source.scope.leave({ sessionKey: key })
+      expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.at(-1)?.observedIntervalEnded).toBe(true)
+      release.resolve(undefined)
+      const result = await pending
+      expect(result.output.hookSpecificOutput?.additionalContext).not.toContain(retired)
+      expect(result.output.hookSpecificOutput?.additionalContext).toContain('ended')
+      expect(computed).toHaveBeenCalledTimes(2)
+    } finally {
+      release.resolve(undefined)
+      cancellation.abort(new Error('test Mesh projection settled'))
+      await Promise.allSettled([pending, unexpectedlySettled])
+    }
+  })
+
   it('does not turn a Hook queued before activation into a lease under the newly active permit', async () => {
     const f = await contributionHosts()
     const sessions = f.source.facility.get('claude_scope')!.table('sessions')
@@ -1726,6 +1924,76 @@ describe('independent Claude contribution permits', () => {
 })
 
 describe('independent Claude receiving intervals', () => {
+  it('uses a fixed owner allowance from its first active Hook and reuses the next unchanged output', async () => {
+    const { owner, source } = await contributionPair('bounded-read-owner', { maxContextBytes: 2500 })
+    const task = await owner.createTask('Stable receiving budget')
+    const key = await source.observe('bounded-read-session')
+    const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id,
+      recipientPeerId: source.transport.peerId, ownerAddress: (await owner.transport.identity()).addresses[0]!,
+      expiresAt: Date.now() + 60000, responsibility: 'frontend' })
+    await source.scope.receive({ sessionKey: key, invitation })
+    const retrieval = vi.spyOn(source.ctx.scopeAccess, 'retrieveWithinBudget')
+    const first = await source.hook('bounded-read-session', 'PostToolBatch')
+    const second = await source.hook('bounded-read-session', 'PostToolBatch')
+    expect(first.receipt.status).toBe('projected')
+    expect(second.receipt.status).toBe('projected')
+    const allowances = retrieval.mock.calls.map(([request]) => request.maxContextBytes)
+    expect(allowances).toHaveLength(2)
+    expect(allowances[1]).toBe(allowances[0])
+    expect(second).toEqual(first)
+    const text = first.output.hookSpecificOutput?.additionalContext
+    if (text === undefined) throw new Error('Active receiving returned no context')
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2500)
+    expect(text).toContain('"supersedes":null')
+    expect(source.facility.get('claude_scope')!.table('projections').size).toBe(1)
+  })
+
+  it('supersedes the suspension notice after owner recovery and reuses only the current prepared output', async () => {
+    const { owner, receiver } = await independentScopes()
+    const active = await receiver.hook('read-only-session', 'PostToolBatch')
+    owner.transport.offline = true
+    const unavailable = await receiver.hook('read-only-session', 'UserPromptSubmit')
+    expect(unavailable.receipt.reason).toBe('unavailable')
+    const noticeId = unavailable.receipt.projectionId
+    if (noticeId === undefined) throw new Error('Suspension notice has no persisted projection identity')
+    expect(await receiver.hook('read-only-session', 'UserPromptSubmit')).toEqual(unavailable)
+    owner.transport.offline = false
+    const recovered = await receiver.hook('read-only-session', 'PostToolBatch')
+    expect(recovered.receipt.status).toBe('projected')
+    expect(recovered.output.hookSpecificOutput?.additionalContext).toContain('PUBLIC_SCOPE')
+    expect(recovered.output.hookSpecificOutput?.additionalContext).toContain(`"supersedes":${JSON.stringify(noticeId)}`)
+    expect(recovered.receipt.projectionId).not.toBe(active.receipt.projectionId)
+    const recoveredId = recovered.receipt.projectionId
+    if (recoveredId === undefined) throw new Error('Recovered context has no persisted projection identity')
+    const records = receiver.facility.get('claude_scope')!.table('projections')
+    expect(records.get(recoveredId)).toMatchObject({ previousProjectionId: noticeId,
+      text: recovered.output.hookSpecificOutput?.additionalContext })
+    expect(await receiver.hook('read-only-session', 'PostToolBatch')).toEqual(recovered)
+    expect(records.size).toBe(3)
+    expect(receiver.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
+  })
+
+  it('restores an existing content-keyed receiving record without changing its prepared text or identity', async () => {
+    const { receiver, key, host } = await independentScopes()
+    const active = await receiver.hook('read-only-session', 'PostToolBatch')
+    const activeId = active.receipt.projectionId
+    if (activeId === undefined) throw new Error('Active context has no persisted projection identity')
+    const domain = receiver.facility.get('claude_scope')!
+    const projection = domain.table('projections').get(activeId) as ScopeProjection
+    const legacyId = `claude-projection-${scopeDigest([projection.cacheKey])}`
+    const legacy = { ...projection, projectionId: legacyId,
+      text: projection.text.replace(JSON.stringify(activeId), JSON.stringify(legacyId)) }
+    const session = domain.table('sessions').get(key) as ScopeSession
+    await domain.table('projections').put(legacyId, legacy)
+    await domain.table('sessions').put(key, { ...session, lastProjectionId: legacyId })
+    await receiver.ctx.fiber.dispose()
+    const restored = await host('read-recipient', receiver.pool, receiver.directory)
+    const output = await restored.hook('read-only-session', 'PostToolBatch')
+    expect(output.receipt).toMatchObject({ status: 'projected', projectionId: legacyId })
+    expect(output.output.hookSpecificOutput?.additionalContext).toBe(legacy.text)
+    expect(restored.facility.get('claude_scope')!.table('projections').get(legacyId)).toEqual(legacy)
+  })
+
   it('injects fresh owner context without capture or Task replication and suspends it while offline', async () => {
     const { owner, receiver, task, key, invitation } = await independentScopes()
     expect(receiver.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
@@ -1794,8 +2062,8 @@ describe('independent Claude receiving intervals', () => {
 })
 
 
-async function onlineApplication() {
-  const pair = await contributionPair()
+async function onlineApplication(overrides: Partial<Config> = {}) {
+  const pair = await contributionPair('contribution-owner', overrides)
   const task = await pair.owner.createTask('Online independent contribution')
   const key = await pair.source.observe('online-source')
   const file: ClaudeScopeOpenApiSource = { name: 'orders-online', filePath: join(pair.source.directory, 'online.json'), method: 'post', path: '/orders' }
@@ -1819,6 +2087,18 @@ async function onlineApplication() {
 }
 
 describe('online Claude contribution applications', () => {
+  it('rejects a reusable group entry without separate receiving consent before saving or applying', async () => {
+    const f = await onlineApplication()
+    const issued = await f.owner.ctx.scopeAccess.createGroupEntry({ taskId: f.task.id,
+      ownerAddress: f.entry.ownerAddress, expiresAt: f.entry.expiresAt, maxMembers: 2 })
+    const apply = vi.spyOn(f.source.ctx.scopeAccess, 'applyContribution')
+    await expect(f.source.scope.requestContribution({ ...f.request, entry: issued.entry,
+      source: { kind: 'tool-observations', tools: ['Write'] } })).rejects.toThrow('receiving consent')
+    expect((await f.detail()).capture).toBeNull()
+    expect(apply).not.toHaveBeenCalled()
+    expect((await f.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })).entries).toEqual([])
+  })
+
   it('persists consent before sending and activates after approval without an inventory or hook trigger', async () => {
     const f = await onlineApplication()
     const observed: string[] = []
@@ -2036,8 +2316,8 @@ describe('online Claude contribution applications', () => {
 })
 
 
-async function toolContributionHosts(tools: readonly ('Write' | 'Edit')[] = ['Write', 'Edit']) {
-  const pair = await contributionPair()
+async function toolContributionHosts(tools: readonly ('Write' | 'Edit')[] = ['Write', 'Edit'], overrides: Partial<Config> = {}) {
+  const pair = await contributionPair('contribution-owner', overrides)
   const { owner, source } = pair
   const task = await owner.createTask('Share ordinary authorized project work')
   const key = await source.observe('tool-contributor')
@@ -2077,21 +2357,29 @@ describe('independent ordinary work contribution', () => {
       .toEqual({ kind: 'tool-observations', tools: ['Edit', 'Write'] })
   })
 
-  it.skipIf(process.platform === 'win32')('enforces tool consent, original arguments, and live root resolution at completion', async () => {
+  it('enforces tool consent and original arguments before publishing a completion', async () => {
     const f = await toolContributionHosts(['Write'])
     const input = { tool_use_id: 'lease', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'new.txt'), content: 'approved' } }
     await f.source.hook('tool-contributor', 'PreToolUse', input)
     expect((await f.source.hook('tool-contributor', 'PostToolUse', { ...input, tool_input: { ...input.tool_input, content: 'different' } })).receipt.reason)
       .toBe('tool-lease-changed')
-    const outside = join(f.owner.directory, 'outside.txt')
-    await writeFile(outside, 'private')
-    await symlink(outside, input.tool_input.file_path)
-    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('path-outside-grant')
     expect((await f.source.hook('tool-contributor', 'PreToolUse', { tool_use_id: 'edit', tool_name: 'Edit',
       tool_input: { file_path: join(f.source.directory, 'another.txt'), old_string: 'a', new_string: 'b' } })).receipt.reason)
       .toBe('tool-outside-contribution')
     expect((await f.source.hook('tool-contributor', 'PreToolUse', { tool_use_id: 'bash', tool_name: 'Bash',
       tool_input: { command: 'cat private' } })).receipt.reason).toBe('unsupported-contribution-tool')
+    expect(f.reports()).toEqual([])
+  })
+
+  // Windows symbolic-link creation can require privileges unavailable to the test process.
+  it.skipIf(process.platform === 'win32')('rechecks the live contribution root when a permitted path becomes an outside symlink', async () => {
+    const f = await toolContributionHosts(['Write'])
+    const input = { tool_use_id: 'lease', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'new.txt'), content: 'approved' } }
+    await f.source.hook('tool-contributor', 'PreToolUse', input)
+    const outside = join(f.owner.directory, 'outside.txt')
+    await writeFile(outside, 'private')
+    await symlink(outside, input.tool_input.file_path)
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('path-outside-grant')
     expect(f.reports()).toEqual([])
   })
 
@@ -2143,6 +2431,283 @@ describe('independent ordinary work contribution', () => {
     expect(projected.text).not.toContain('WITHDRAWN_TOOL_REPORT')
     expect(projected.text).not.toContain('MUST_NOT_ADMIT')
     expect(projected.omittedSources).toContainEqual(expect.objectContaining({ reason: 'withdrawn' }))
+  })
+})
+
+async function claudeWorkHosts(stopOnly = false, activate = true, options: { tools?: ('Write' | 'Edit')[]; stopReports?: boolean; maxSamples?: number; config?: Partial<Config> } = {}) {
+  const pair = await contributionPair('contribution-owner', options.config)
+  const { owner, source } = pair
+  const task = await owner.createTask('Share original Claude command and Stop reports')
+  const key = await source.observe('claude-work')
+  const prepared = await source.scope.prepareContribution({ sessionKey: key, expectedCapture: null,
+    roots: stopOnly ? [] : [source.directory], source: { kind: 'claude-work', tools: options.tools ?? [],
+      commands: stopOnly ? [] : [{ command: 'printf work-result', rootIndex: 0 }], stopReports: options.stopReports ?? true } })
+  const { invitation } = await owner.ctx.scopeAccess.approveContribution({ taskId: task.id,
+    ownerAddress: (await owner.transport.identity()).addresses[0]!, proposal: prepared.proposal,
+    expiresAt: Date.now() + 60000, maxSamples: options.maxSamples ?? 12, maxSampleBytes: 4096 })
+  const selection = { captureId: prepared.proposal.captureId, captureGeneration: prepared.proposal.captureGeneration }
+  const enable = () => source.scope.activateContribution({ sessionKey: key, expectedCapture: selection, invitation })
+  if (activate) await enable()
+  const rows = () => [...source.facility.get('claude_scope')!.table('work_leases').entries()].map(([, value]) => value as ScopeWorkLease)
+  const reports = () => owner.ctx.developmentTasks.get({ taskId: task.id }).context
+    .filter(item => item.peerToolObservation !== undefined || item.peerStopReport !== undefined)
+  const prompt = (id: string) => source.hook('claude-work', 'UserPromptSubmit', { prompt_id: id })
+  const stop = (id: string, text: string, active = false) => source.hook('claude-work', 'Stop',
+    { prompt_id: id, last_assistant_message: text, stop_hook_active: active })
+  return { ...pair, task, key, prepared, invitation, selection, enable, rows, reports, prompt, stop }
+}
+
+describe('explicit Claude command and Stop contribution', () => {
+  it('rejects duplicate canonical roots instead of moving a command to another directory index', async () => {
+    const { owner, source } = await contributionPair()
+    const sessionKey = await source.observe('duplicate-roots')
+    await expect(source.scope.prepareContribution({ sessionKey, expectedCapture: null,
+      roots: [source.directory, source.directory, owner.directory], source: { kind: 'claude-work', tools: [],
+        commands: [{ command: 'printf work-result', rootIndex: 1 }], stopReports: false } }))
+      .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    expect((await source.scope.contributionDetail({ sessionKey })).capture).toBeNull()
+  })
+
+  it('requires a prompt observed under active consent and preserves reports without claiming turn finality', async () => {
+    const f = await claudeWorkHosts(true, false)
+    await f.prompt('before-activation')
+    await f.enable()
+    expect((await f.stop('before-activation', 'not authorized')).receipt.reason).toBe('missing-current-prompt-lease')
+    await f.source.hook('claude-work', 'UserPromptSubmit')
+    expect((await f.stop('missing', 'not authorized')).receipt.status).toBe('omitted')
+    await f.prompt('native-prompt')
+    const text = '  完整回答🙂\n'
+    expect((await f.stop('native-prompt', text)).receipt.status).toBe('published')
+    expect((await f.stop('native-prompt', text)).receipt.status).toBe('reused')
+    expect((await f.stop('native-prompt', 'continued report', true)).receipt.status).toBe('published')
+    expect(f.reports()).toHaveLength(2)
+    expect(f.reports()[0]?.peerStopReport).toMatchObject({ text, sha256: createHash('sha256').update(text).digest('hex'), stopHookActive: false })
+    expect(f.reports()[1]?.peerStopReport).toMatchObject({ text: 'continued report', stopHookActive: true })
+    expect(JSON.stringify(f.reports())).not.toContain('native-prompt')
+    expect(f.rows().filter(row => row.kind === 'prompt')).toHaveLength(1)
+  })
+
+  it('replaces the current prompt and clears only the matching StopFailure lease', async () => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('first')
+    await f.prompt('second')
+    expect((await f.stop('first', 'stale')).receipt.status).toBe('omitted')
+    await f.source.hook('claude-work', 'StopFailure', { prompt_id: 'first', last_assistant_message: 'API error' })
+    expect((await f.stop('second', 'current')).receipt.status).toBe('published')
+    await f.source.hook('claude-work', 'StopFailure', { prompt_id: 'second' })
+    expect((await f.stop('second', 'late')).receipt.status).toBe('omitted')
+    await f.prompt('third')
+    expect((await f.stop('third', 'current')).receipt.status).toBe('published')
+    expect(f.reports()).toHaveLength(2)
+    expect(f.reports()[0]?.peerStopReport?.sourceId).not.toBe(f.reports()[1]?.peerStopReport?.sourceId)
+  })
+
+  it.each(['UserPromptSubmit', 'StopFailure'] as const)('invalidates the previous prompt while the owner is unavailable at %s', async (event) => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('original')
+    f.owner.transport.offline = true
+    await f.stop('original', 'RETAINED_REPORT')
+    await f.source.hook('claude-work', event, { prompt_id: event === 'UserPromptSubmit' ? 'replacement' : 'original' })
+    f.owner.transport.offline = false
+    expect((await f.stop('original', 'STALE_PROMPT_REPORT')).receipt.status).toBe('omitted')
+    expect(f.rows().filter(row => row.kind === 'prompt')).toHaveLength(0)
+    expect(f.reports().map(report => report.peerStopReport?.text)).toEqual(['RETAINED_REPORT'])
+  })
+
+  it('retains original Bash fields and rejects changed completions and unpermitted command starts', async () => {
+    const f = await claudeWorkHosts()
+    const input = { tool_use_id: 'command', tool_name: 'Bash', tool_input: { command: 'printf work-result' } }
+    expect((await f.source.hook('claude-work', 'PreToolUse', input)).receipt.status).toBe('leased')
+    const response = { stdout: 'work-result', stderr: '', interrupted: false }
+    expect((await f.source.hook('claude-work', 'PostToolUse', { ...input, tool_response: response })).receipt.status).toBe('published')
+    expect(f.reports()[0]?.peerToolObservation).toMatchObject({ kind: 'claude-command-observation', hookEvent: 'PostToolUse',
+      fields: { rootIndex: 0, command: 'printf work-result', ...response }, omissions: [] })
+    expect((await f.source.hook('claude-work', 'PostToolUse', { ...input, tool_response: { ...response, stdout: 'changed' } })).receipt.reason)
+      .toBe('tool-completion-conflict')
+    const failure = { ...input, tool_use_id: 'exit7' }
+    await f.source.hook('claude-work', 'PreToolUse', failure)
+    await f.source.hook('claude-work', 'PostToolUseFailure', { ...failure, error: 'Exit code 7\noriginal error', is_interrupt: false })
+    expect(f.reports()[1]?.peerToolObservation).toMatchObject({ hookEvent: 'PostToolUseFailure',
+      fields: { rootIndex: 0, command: 'printf work-result', error: 'Exit code 7\noriginal error' } })
+    expect(f.reports()[1]?.peerToolObservation).not.toHaveProperty('fields.interrupted')
+    expect((await f.source.hook('claude-work', 'PreToolUse', { ...input, tool_use_id: 'bypass',
+      tool_input: { command: 'printf work-result', dangerouslyDisableSandbox: true } })).receipt.reason).toBe('sandbox-bypass-tool')
+    expect((await f.source.hook('claude-work', 'PreToolUse', { ...input, tool_use_id: 'background',
+      tool_input: { command: 'printf work-result', run_in_background: true } })).receipt.reason).toBe('background-tool')
+    expect(f.reports()).toHaveLength(2)
+  })
+
+  it('publishes interrupted and unknown foreground completions without carrying unsupported output', async () => {
+    const f = await claudeWorkHosts()
+    const tool = (id: string) => ({ tool_use_id: id, tool_name: 'Bash', tool_input: { command: 'printf work-result' } })
+    await f.source.hook('claude-work', 'PreToolUse', tool('interrupted'))
+    await f.source.hook('claude-work', 'PostToolUse', { ...tool('interrupted'),
+      tool_response: { stdout: 'partial', stderr: '', interrupted: true } })
+    expect(f.reports()[0]?.peerToolObservation).toMatchObject({ fields: { stdout: 'partial', stderr: '', interrupted: true }, omissions: [] })
+    for (const [id, flags] of [['timeout', { timedOutAfterMs: 1000 }], ['background', { backgroundTaskId: 'job' }],
+      ['bypass', { dangerouslyDisableSandbox: true }]] as const) {
+      await f.source.hook('claude-work', 'PreToolUse', tool(id))
+      expect((await f.source.hook('claude-work', 'PostToolUse', { ...tool(id),
+        tool_response: { stdout: 'UNSUPPORTED_PRIVATE_OUTPUT', stderr: '', interrupted: false, ...flags } })).receipt.status).toBe('published')
+      expect(f.reports().at(-1)?.peerToolObservation).toMatchObject({ fields: { rootIndex: 0, command: 'printf work-result' },
+        omissions: ['unsupported-tool-response'] })
+    }
+    await f.source.hook('claude-work', 'PreToolUse', tool('failed-interrupt'))
+    await f.source.hook('claude-work', 'PostToolUseFailure', { ...tool('failed-interrupt'), error: 'Cancelled by caller', is_interrupt: true })
+    expect(f.reports().at(-1)?.peerToolObservation).toMatchObject({ hookEvent: 'PostToolUseFailure', fields: { error: 'Cancelled by caller' } })
+    expect(JSON.stringify(f.reports())).not.toContain('UNSUPPORTED_PRIVATE_OUTPUT')
+  })
+
+  it('collects only approved Write and Edit reports and reuses an unchanged native completion', async () => {
+    const f = await claudeWorkHosts(false, true, { tools: ['Write', 'Edit'], stopReports: false })
+    const write = { tool_use_id: 'write', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'written.txt'), content: 'original' } }
+    expect((await f.prompt('no-stop-permission')).receipt.reason).toBe('prompt-not-authorized')
+    expect((await f.source.hook('claude-work', 'PostToolUse', write)).receipt.reason).toBe('missing-pre-tool-lease')
+    expect((await f.source.hook('claude-work', 'PreToolUse', { ...write, tool_use_id: 'outside',
+      tool_input: { ...write.tool_input, file_path: join(f.owner.directory, 'private.txt') } })).receipt.reason).toBe('path-outside-grant')
+    expect((await f.source.hook('claude-work', 'PreToolUse', write)).receipt.status).toBe('leased')
+    expect((await f.source.hook('claude-work', 'PreToolUse', write)).receipt.status).toBe('leased')
+    expect((await f.source.hook('claude-work', 'PostToolUse', { ...write, tool_input: { ...write.tool_input, content: 'changed' } })).receipt.reason).toBe('tool-lease-changed')
+    expect((await f.source.hook('claude-work', 'PostToolUse', write)).receipt.status).toBe('published')
+    expect((await f.source.hook('claude-work', 'PostToolUse', write)).receipt.status).toBe('reused')
+    const edit = { tool_use_id: 'edit', tool_name: 'Edit', tool_input: { file_path: write.tool_input.file_path, old_string: 'original', new_string: 'edited' } }
+    await f.source.hook('claude-work', 'PreToolUse', edit)
+    await f.source.hook('claude-work', 'PostToolUseFailure', { ...edit, error: 'missing original text' })
+    expect(f.reports().map(row => row.peerToolObservation)).toMatchObject([
+      { tool: 'Write', reportedStatus: 'success', fields: { content: 'original' } },
+      { tool: 'Edit', reportedStatus: 'failure', fields: { error: 'missing original text' } },
+    ])
+    await f.source.ctx.fiber.dispose()
+    await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect(f.reports()).toHaveLength(2)
+  })
+
+  it('omits unselected tools, malformed arguments and completed commands with no original lease', async () => {
+    const f = await claudeWorkHosts()
+    for (const [tool_name, reason] of [['Write', 'tool-outside-contribution'], ['Read', 'unsupported-tool-input']] as const) {
+      expect((await f.source.hook('claude-work', 'PreToolUse', { tool_use_id: tool_name, tool_name,
+        tool_input: { file_path: join(f.source.directory, 'private.txt'), content: 'private' } })).receipt.reason).toBe(reason)
+    }
+    expect((await f.source.hook('claude-work', 'PreToolUse', { tool_use_id: 'non-object', tool_name: 'Bash', tool_input: 'wrong' })).receipt.reason)
+      .toBe('unsupported-tool-input')
+    const input = { tool_use_id: 'missing', tool_name: 'Bash', tool_input: { command: 'printf work-result' } }
+    expect((await f.source.hook('claude-work', 'PostToolUse', input)).receipt.reason).toBe('missing-pre-tool-lease')
+    expect((await f.source.scope.hook({ generation: 'test-generation', input: { session_id: 'claude-work',
+      hook_event_name: 'PreToolUse', ...input } }, new AbortController().signal)).receipt.reason).toBe('cwd-outside-grant')
+    expect(f.reports()).toHaveLength(0)
+  })
+
+  it('reports missing failures and contradictory interrupt flags as explicit omissions', async () => {
+    const f = await claudeWorkHosts()
+    const tool = (id: string) => ({ tool_use_id: id, tool_name: 'Bash', tool_input: { command: 'printf work-result' } })
+    await f.source.hook('claude-work', 'PreToolUse', tool('missing-error'))
+    await f.source.hook('claude-work', 'PostToolUseFailure', tool('missing-error'))
+    expect(f.reports().at(-1)?.peerToolObservation).toMatchObject({ omissions: ['error'] })
+    for (const flags of [{ is_interrupt: true }, { tool_response: { stdout: 'PRIVATE', stderr: '', interrupted: false, backgroundedByUser: true } }]) {
+      const input = tool(randomUUID())
+      await f.source.hook('claude-work', 'PreToolUse', input)
+      await f.source.hook('claude-work', 'PostToolUse', { ...input,
+        tool_response: { stdout: 'PRIVATE', stderr: '', interrupted: false }, ...flags })
+      expect(f.reports().at(-1)?.peerToolObservation).toMatchObject({ omissions: ['unsupported-tool-response'] })
+    }
+    expect(JSON.stringify(f.reports())).not.toContain('PRIVATE')
+  })
+
+  it('bounds retained prompts and tool leases together without preventing an already leased completion', async () => {
+    const f = await claudeWorkHosts(false, true, { config: { maxLeases: 1 } })
+    const input = { tool_use_id: 'one', tool_name: 'Bash', tool_input: { command: 'printf work-result' } }
+    await f.source.hook('claude-work', 'PreToolUse', input)
+    expect((await f.prompt('over-capacity')).receipt.reason).toBe('tool-lease-limit')
+    expect((await f.source.hook('claude-work', 'PreToolUse', { ...input, tool_use_id: 'two' })).receipt.reason).toBe('tool-lease-limit')
+    expect((await f.source.hook('claude-work', 'PostToolUseFailure', { ...input, error: 'bounded failure' })).receipt.status).toBe('published')
+    expect(f.reports()).toHaveLength(1)
+  })
+
+  it('omits a command report when even its authenticated attribution exceeds the byte budget', async () => {
+    const f = await claudeWorkHosts(false, true, { config: { maxObservationBytes: 768 } })
+    const input = { tool_use_id: 'attribution', tool_name: 'Bash', tool_input: { command: 'printf work-result' } }
+    await f.source.hook('claude-work', 'PreToolUse', input)
+    expect((await f.source.hook('claude-work', 'PostToolUse', { ...input,
+      tool_response: { stdout: 'output', stderr: '', interrupted: false } })).receipt.reason).toBe('observation-attribution-exceeds-budget')
+    expect(f.reports()).toHaveLength(0)
+    expect(f.rows().find(row => row.kind === 'tool')).not.toHaveProperty('sample')
+  })
+
+  it('stops sampling after the owner rejects a retained report over its sample quota', async () => {
+    const f = await claudeWorkHosts(true, true, { maxSamples: 1 })
+    await f.prompt('bounded')
+    expect((await f.stop('bounded', 'first')).receipt.status).toBe('published')
+    expect((await f.stop('bounded', 'second')).receipt.reason).toBe('contribution-awaiting-owner')
+    expect((await f.stop('bounded', 'third')).receipt.reason).toBe('contribution-awaiting-owner')
+    expect(f.reports().map(report => report.peerStopReport?.text)).toEqual(['first'])
+    expect(f.rows().filter(row => row.kind === 'stop-report')).toHaveLength(2)
+  })
+
+  it('refuses to advance a persisted sequence beyond safe integers', async () => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('exhausted')
+    const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+    const session = sessions.get(f.key) as ScopeSession
+    if (session.contribution === undefined) throw new Error('Expected an active contribution fixture')
+    await sessions.put(f.key, { ...session, contribution: { ...session.contribution, sequence: Number.MAX_SAFE_INTEGER } })
+    await expect(f.stop('exhausted', 'unrepresentable sequence')).rejects.toThrow('contribution sequence exhausted')
+    expect(f.reports()).toHaveLength(0)
+  })
+
+  it('does not retain a Stop report when its prompt already consumes the lease budget', async () => {
+    const f = await claudeWorkHosts(true, true, { config: { maxLeases: 1 } })
+    await f.prompt('one')
+    expect((await f.stop('one', 'over-capacity')).receipt.reason).toBe('tool-lease-limit')
+    expect(f.reports()).toHaveLength(0)
+    expect(f.rows()).toHaveLength(1)
+  })
+
+  it('requires the exact selected canonical cwd and omits oversized complete fields', async () => {
+    const f = await claudeWorkHosts()
+    const nested = join(f.source.directory, 'nested')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(nested)
+    const input = { tool_use_id: 'bounded', tool_name: 'Bash', tool_input: { command: 'printf work-result' } }
+    expect((await f.source.hook('claude-work', 'PreToolUse', { ...input, cwd: nested })).receipt.reason).toBe('cwd-outside-command-grant')
+    await f.source.hook('claude-work', 'PreToolUse', input)
+    await f.source.hook('claude-work', 'PostToolUse', { ...input, tool_response: { stdout: '🙂'.repeat(4096), stderr: 'kept', interrupted: false } })
+    expect(f.reports()[0]?.peerToolObservation).toMatchObject({ omissions: ['stdout'], fields: { stderr: 'kept', interrupted: false } })
+    expect(f.reports()[0]?.peerToolObservation).not.toHaveProperty('fields.stdout')
+    await f.prompt('large')
+    expect((await f.stop('large', '🙂'.repeat(4096))).receipt.reason).toBe('stop-report-exceeds-budget')
+    expect(f.rows().filter(row => row.kind === 'stop-report')).toHaveLength(0)
+    expect((await f.source.scope.sessions()).find(row => row.sessionKey === f.key)?.contributionIssue).toBe('capacity')
+  })
+
+  it('restores an exact outbox report but drops in-flight prompt permission and preserves session generation', async () => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('restart-prompt')
+    f.source.transport.dropContributionReply = true
+    await f.stop('restart-prompt', 'original report')
+    const original = f.reports()[0]
+    expect(original).toBeDefined()
+    expect(f.rows().find(row => row.kind === 'stop-report')).not.toHaveProperty('receipt')
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    const rows = [...restored.facility.get('claude_scope')!.table('work_leases').entries()].map(([, row]) => row as ScopeWorkLease)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'stop-report', receipt: { publicationId: original!.id } })
+    expect((await restored.hook('claude-work', 'Stop', { prompt_id: 'restart-prompt', last_assistant_message: 'late', stop_hook_active: false })).receipt.status).toBe('omitted')
+    const session = restored.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession
+    expect(session.version).toBe(3)
+    expect(claudeScopeDomainSpec.tables.sessions.valueSchema.safeParse({ ...session, version: 2 }).success).toBe(false)
+    expect(f.reports()).toEqual([original])
+  })
+
+  it.each(['leave', 'SessionEnd', 'revoke'] as const)('clears prompt authorization and refuses Stop after %s', async (ending) => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('leased')
+    if (ending === 'leave') await f.source.scope.contributionLeave({ sessionKey: f.key, expectedCapture: f.selection })
+    else if (ending === 'SessionEnd') await f.source.hook('claude-work', 'SessionEnd')
+    else await f.owner.ctx.scopeAccess.revokeContribution({ grant: f.invitation.grant })
+    expect((await f.stop('leased', 'late')).receipt.status).toBe('omitted')
+    expect(f.rows().filter(row => row.kind === 'prompt')).toHaveLength(0)
+    expect(f.reports()).toEqual([])
   })
 })
 
@@ -2447,4 +3012,817 @@ it('refuses a restored tool sample that disagrees with its durable completion', 
   await f.source.ctx.fiber.dispose()
   await expect(f.host('contribution-source', f.source.pool, f.source.directory))
     .rejects.toThrow('stored contribution sample has a different source identity')
+})
+
+// Valid public peer syntax permits real route validation; the controlled transport owns no sockets or private keys.
+const jointOwnerPeer = '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy'
+async function jointApplication(kind: 'single' | 'group' = 'group', sourceKind: 'tool-observations' | 'claude-work' = 'tool-observations') {
+  const pair = await contributionPair(jointOwnerPeer)
+  const task = await pair.owner.createTask('Joint external session collaboration')
+  const key = await pair.source.observe('joint-source')
+  const ownerAddress = (await pair.owner.transport.identity()).addresses[0]!
+  const expiresAt = Date.now() + 60000
+  const issued = kind === 'group'
+    ? await pair.owner.ctx.scopeAccess.createGroupEntry({ taskId: task.id, ownerAddress, expiresAt, maxMembers: 4,
+      ...(sourceKind === 'claude-work' ? { sourceKind } : {}) })
+    : await pair.owner.ctx.scopeAccess.createContributionEntry({ participation: 'join', sourceKind,
+      taskId: task.id, ownerAddress, expiresAt })
+  const limits = { expiresAt, maxSamples: 8, maxSampleBytes: 4096 }
+  const source = sourceKind === 'claude-work'
+    ? { kind: 'claude-work' as const, tools: ['Write' as const], commands: [], stopReports: true }
+    : { kind: 'tool-observations' as const, tools: ['Write' as const] }
+  const request = { sessionKey: key, expectedCapture: null, roots: [pair.source.directory],
+    source, entry: issued.entry, limits,
+    receive: { expectedReadRevision: 0 } }
+  const detail = (source = pair.source) => source.scope.contributionDetail({ sessionKey: key })
+  const waiting = async (source = pair.source) => {
+    await expect.poll(async () => (await detail(source)).capture?.application?.state).toBe('waiting')
+    return (await detail(source)).capture!
+  }
+  const approve = async (source = pair.source, sessionKey = key) => {
+    const capture = (await source.scope.contributionDetail({ sessionKey })).capture!
+    const row = issued.entry.kind === 'scope-group-entry'
+      ? (await pair.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })).entries
+        .find(item => item.proposal.captureId === capture.proposal.captureId) : undefined
+    await pair.owner.ctx.scopeAccess.approveContributionApplication({ entryId: issued.entry.entryId,
+      ...(row === undefined ? {} : { applicationId: row.applicationId }), expectedProposal: capture.proposal,
+      limits, ownerAddress, read: { responsibility: 'Implement the source owner’s portion' } })
+    const inventory = issued.entry.kind === 'scope-group-entry'
+      ? await pair.owner.ctx.scopeAccess.groupApplications({ entryId: issued.entry.entryId })
+      : await pair.owner.ctx.scopeAccess.contributionApplications({ taskId: task.id })
+    const approved = inventory.entries.find(item => item.entry.entryId === issued.entry.entryId
+      && item.proposal?.captureId === capture.proposal.captureId
+      && item.proposal.captureGeneration === capture.proposal.captureGeneration)
+    if (approved === undefined) throw new Error('Owner application disappeared after approval')
+    return approved.result
+  }
+  const active = async (source = pair.source) => {
+    await expect.poll(async () => (await detail(source)).session.joint?.state).toBe('active')
+    return (await detail(source)).session
+  }
+  return { ...pair, key, task, request, detail, waiting, approve, active, ownerAddress }
+}
+
+async function jointWrite(source: Awaited<ReturnType<typeof contributionPair>>['source'], sessionId: string, marker: string) {
+  const input = { tool_use_id: randomUUID(), tool_name: 'Write', tool_input: {
+    file_path: join(source.directory, `${marker}.ts`), content: `export const value = '${marker}'` } }
+  expect((await source.hook(sessionId, 'PreToolUse', input)).receipt.status).toBe('leased')
+  await writeFile(input.tool_input.file_path, input.tool_input.content)
+  expect((await source.hook(sessionId, 'PostToolUse', input)).receipt.status).toBe('published')
+}
+
+describe('Claude joint receiving consent', () => {
+  it.each([
+    ['single', 'tool-observations'], ['group', 'tool-observations'],
+    ['single', 'claude-work'], ['group', 'claude-work'],
+  ] as const)('adopts a %s %s entry without a second read action and omits only its original capture', async (kind, sourceKind) => {
+    const f = await jointApplication(kind, sourceKind)
+    await f.source.scope.requestContribution(f.request)
+    await f.waiting()
+    const approved = await f.approve()
+    const active = await f.active()
+    expect(active.contributionState).toBe('active')
+    expect(active.readRevision).toBe(1)
+    expect((f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession).version)
+      .toBe(sourceKind === 'claude-work' ? 3 : 2)
+    expect(f.source.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
+    await jointWrite(f.source, 'joint-source', 'ORIGINAL_JOINT_WRITE')
+    const result = await f.source.hook('joint-source', 'UserPromptSubmit', { prompt_id: 'joint-work-turn' })
+    expect(result.receipt.status).toBe('projected')
+    expect(result.output.hookSpecificOutput?.additionalContext).toContain('Joint external session collaboration')
+    expect(result.output.hookSpecificOutput?.additionalContext).not.toContain('ORIGINAL_JOINT_WRITE')
+    if (sourceKind === 'claude-work') {
+      expect((await f.source.hook('joint-source', 'Stop', { prompt_id: 'joint-work-turn',
+        last_assistant_message: 'ORIGINAL_JOINT_REPLY', stop_hook_active: false })).receipt.status).toBe('published')
+      const own = await f.source.hook('joint-source', 'UserPromptSubmit', { prompt_id: 'next-work-turn' })
+      expect(own.output.hookSpecificOutput?.additionalContext).not.toContain('ORIGINAL_JOINT_REPLY')
+    }
+    if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing joint read approval')
+    const manual = await f.source.observe('same-peer-manual-reader')
+    await f.source.scope.receive({ sessionKey: manual, invitation: approved.readInvitation })
+    const other = await f.source.hook('same-peer-manual-reader', 'UserPromptSubmit')
+    expect(other.output.hookSpecificOutput?.additionalContext).toContain('ORIGINAL_JOINT_WRITE')
+    if (sourceKind === 'claude-work') expect(other.output.hookSpecificOutput?.additionalContext).toContain('ORIGINAL_JOINT_REPLY')
+    const subscriptions = (await f.source.ctx.scopeAccess.list()).subscriptions
+    expect(subscriptions.find(item => item.id === active.receiveSubscriptionId)).toMatchObject({ version: 2,
+      originalCapture: active.joint?.capture })
+    expect(subscriptions.find(item => item.id !== active.receiveSubscriptionId)?.version).toBeUndefined()
+  })
+
+  it.each(['tool-observations', 'claude-work'] as const)('retains approved %s receiving after source stop, then leaves it without revoking the owner-issued read grant', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    const before = await f.active()
+    await f.source.scope.contributionLeave({ sessionKey: f.key, expectedCapture: before.joint!.capture })
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.detail()).session.receiveSubscriptionId).toBe(before.receiveSubscriptionId)
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: before.joint!.id })
+    await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions[0]?.state).toBe('left')
+    expect((await f.owner.ctx.scopeAccess.list()).grants[0]?.state).toBe('active')
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).output.hookSpecificOutput?.additionalContext)
+      .not.toContain('Joint external session collaboration')
+  })
+
+  it('restores a waiting joint application without interpreting its absent Task binding as withdrawal', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request)
+    const capture = await f.waiting()
+    const original = (await f.detail()).session.joint
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.detail(restored)).session.joint).toEqual(original)
+    expect((await f.detail(restored)).capture?.selection).toEqual(capture.selection)
+    await f.approve(restored)
+    expect((await f.active(restored)).joint?.id).toBe(original?.id)
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  })
+
+  it.each(['tool-observations', 'claude-work'] as const)('restores the exact allocated %s subscription after ensure committed but its reply was lost', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
+    const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
+    vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementation(async (plan) => {
+      await ensure(plan)
+      throw new Error('fixture ensure reply lost')
+    })
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    await expect.poll(async () => (await f.detail()).session.joint?.state).toBe('failed')
+    const original = (await f.source.ctx.scopeAccess.list()).subscriptions
+    expect(original).toHaveLength(1)
+    expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.active(restored)).receiveSubscriptionId).toBe(original[0]?.id)
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  })
+
+  it('does not resurrect a pending read after leave and a later manual receive across a delayed ensure', async () => {
+    const f = await jointApplication()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
+    const held = vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementationOnce(async (plan) => {
+      const subscription = await ensure(plan)
+      entered.resolve(undefined)
+      await release.promise
+      return subscription
+    })
+    try {
+      await f.source.scope.requestContribution(f.request); await f.waiting()
+      const approved = await f.approve()
+      await entered.promise
+      const oldJoint = (await f.detail()).session.joint!
+      await f.source.scope.receiveLeave({ sessionKey: f.key })
+      if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing reading permission')
+      const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approved.readInvitation })
+      release.resolve(undefined)
+      await expect.poll(async () => (await f.source.ctx.scopeAccess.list()).subscriptions
+        .find(item => item.id === oldJoint.subscriptionId)?.state).toBe('left')
+      await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: oldJoint.id })
+      expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+      expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+  })
+
+  it('keeps SessionEnd locally terminal when receiving cleanup fails and never resumes consent on SessionStart', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve(); await f.active()
+    const leave = vi.spyOn(f.source.ctx.scopeAccess, 'leave').mockRejectedValue(new Error('fixture receive storage failure'))
+    try {
+      await f.source.hook('joint-source', 'SessionEnd')
+      const session = (await f.detail()).session
+      expect(session.ended).toBe(true)
+      expect(session.receiveState).toBe('left')
+      expect(session.joint?.intent).toBe('leave')
+      expect((await f.detail()).session.contributionState).not.toBe('active')
+      await f.source.hook('joint-source', 'SessionStart')
+      const resumed = await f.source.hook('joint-source', 'UserPromptSubmit')
+      expect(resumed.receipt.status).not.toBe('projected')
+      expect(JSON.stringify(resumed.output)).not.toContain('Joint external session collaboration')
+    } finally { leave.mockRestore() }
+  })
+
+  it.each(['tool-observations', 'claude-work'] as const)('recovers both active %s routes with one durable intent and rejects stale management after manual replacement', async (sourceKind) => {
+    const f = await jointApplication('group', sourceKind)
+    await f.source.scope.requestContribution(f.request); await f.waiting()
+    const approval = await f.approve()
+    const before = await f.active()
+    const request = { sessionKey: f.key, jointId: before.joint!.id, expectedReadRevision: before.readRevision,
+      ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/2/') }
+    const changed = await f.source.scope.recoverJoint(request)
+    expect((f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession).version)
+      .toBe(sourceKind === 'claude-work' ? 3 : 2)
+    expect(changed.readRevision).toBe(before.readRevision + 1)
+    expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(request.ownerAddress)
+    await expect.poll(async () => (await f.source.ctx.scopeAccess.list()).subscriptions[0]?.invitation.ownerAddress)
+      .toBe(request.ownerAddress)
+    expect((await f.source.scope.recoverJoint(request)).readRevision).toBe(changed.readRevision)
+    await f.source.scope.receiveLeave({ sessionKey: f.key })
+    if (approval.status !== 'approved' || approval.readInvitation === undefined) throw new Error('Missing read approval')
+    const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approval.readInvitation })
+    await expect(f.source.scope.recoverJoint(request)).rejects.toThrow('stale')
+    expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+  })
+
+  it('keeps an address retry consistent after approval selection but before contribution verification finishes', async () => {
+    const f = await jointApplication()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const status = f.source.ctx.scopeAccess.contributionStatus.bind(f.source.ctx.scopeAccess)
+    const held = vi.spyOn(f.source.ctx.scopeAccess, 'contributionStatus').mockImplementationOnce(async (request, signal) => {
+      entered.resolve(undefined); await release.promise; return status(request, signal)
+    })
+    try {
+      await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+      await entered.promise
+      const capture = (await f.detail()).capture!
+      const address = f.ownerAddress.replace('/tcp/1/', '/tcp/3/')
+      await f.source.scope.requestContribution({ ...f.request, expectedCapture: capture.selection,
+        entry: { ...f.request.entry, ownerAddress: address } })
+      const saved = f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession
+      expect(saved.joint?.subscription?.invitation.ownerAddress).toBe(address)
+      expect(saved.joint?.contributionInvitation?.ownerAddress).toBe(address)
+      expect(saved.contribution?.invitation?.ownerAddress).toBe(address)
+      release.resolve(undefined)
+      await f.active()
+      await f.source.ctx.fiber.dispose()
+      const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+      expect((await f.active(restored)).joint?.id).toBe(saved.joint?.id)
+    } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+  })
+
+  it('recovers a stopped contribution at a new address without reopening its read subscription', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await f.approve()
+    const before = await f.active()
+    f.owner.transport.offline = true
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: before.joint!.id })
+    await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    const stopped = (await f.detail()).session
+    expect(stopped.joint?.cleanupPending).toBe(true)
+    const address = f.ownerAddress.replace('/tcp/1/', '/tcp/4/')
+    await f.source.scope.recoverJoint({ sessionKey: f.key, jointId: before.joint!.id,
+      expectedReadRevision: stopped.readRevision, ownerAddress: address })
+    expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(address)
+    f.owner.transport.offline = false
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions[0]?.state).toBe('left')
+  })
+
+  it('refuses to reinterpret an unversioned group row or a different capture as original joint consent', async () => {
+    const f = await jointApplication()
+    await f.source.scope.requestContribution(f.request); await f.waiting()
+    await f.source.ctx.fiber.dispose()
+    const records = f.source.pool.media.get('claude_scope')!.tables.get('sessions')!
+    const saved = structuredClone(records.get(f.key)) as ScopeSession
+    const { version: _version, readRevision: _revision, joint: _joint, ...legacy } = saved
+    records.set(f.key, legacy)
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow()
+    records.set(f.key, { ...saved, joint: { ...saved.joint!, proposal: { ...saved.joint!.proposal, captureGeneration: 'another-generation' } } })
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow()
+  })
+})
+
+it('rejects an older stopped-route retry after a newer route while retaining unrelated manual receiving', async () => {
+  const f = await jointApplication()
+  await f.source.scope.requestContribution(f.request); await f.waiting()
+  const approved = await f.approve()
+  const active = await f.active()
+  f.owner.transport.offline = true
+  await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: active.joint!.id })
+  await expect.poll(async () => (await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+  if (approved.status !== 'approved' || approved.readInvitation === undefined) throw new Error('Missing read permission')
+  const manual = await f.source.scope.receive({ sessionKey: f.key, invitation: approved.readInvitation })
+  const requestA = { sessionKey: f.key, jointId: active.joint!.id, expectedReadRevision: manual.readRevision,
+    ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/5/') }
+  const routeA = await f.source.scope.recoverJoint(requestA)
+  const requestB = { ...requestA, expectedReadRevision: routeA.readRevision,
+    ownerAddress: f.ownerAddress.replace('/tcp/1/', '/tcp/6/') }
+  const routeB = await f.source.scope.recoverJoint(requestB)
+  await expect(f.source.scope.recoverJoint(requestA)).rejects.toThrow('stale')
+  expect((await f.source.scope.recoverJoint(requestB)).readRevision).toBe(routeB.readRevision)
+  expect((await f.detail()).capture?.invitation?.ownerAddress).toBe(requestB.ownerAddress)
+  expect((await f.detail()).session.receiveSubscriptionId).toBe(manual.receiveSubscriptionId)
+})
+
+it('adopts the independently active read grant when the owner ends contribution before first approval delivery', async () => {
+  const f = await jointApplication()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const status = f.source.ctx.scopeAccess.contributionApplicationStatus.bind(f.source.ctx.scopeAccess)
+  const held = vi.spyOn(f.source.ctx.scopeAccess, 'contributionApplicationStatus').mockImplementationOnce(async (request, signal) => {
+    entered.resolve(undefined); await release.promise; return status(request, signal)
+  })
+  try {
+    await f.source.scope.requestContribution(f.request); await f.waiting(); await entered.promise
+    const approved = await f.approve()
+    if (approved.status !== 'approved') throw new Error('Missing contribution grant')
+    await f.owner.ctx.developmentTasks.endPeerContribution({ grant: approved.invitation.grant, reason: 'revoked' }, f.owner.transport.peerId)
+    release.resolve(undefined)
+    const active = await f.active()
+    expect(active.contributionState).toBeUndefined()
+    expect(active.receiveSubscriptionId).toBeDefined()
+    expect((await f.source.hook('joint-source', 'UserPromptSubmit')).receipt.status).toBe('projected')
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
+  } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+})
+
+it('restores contribution-only activation after pending joint reading was explicitly cancelled', async () => {
+  const f = await jointApplication()
+  await f.source.scope.requestContribution(f.request); await f.waiting()
+  await f.source.scope.receiveLeave({ sessionKey: f.key })
+  await f.approve()
+  await expect.poll(async () => (await f.detail()).session.contributionState).toBe('active')
+  expect((await f.detail()).session.receiveSubscriptionId).toBeUndefined()
+  await f.source.ctx.fiber.dispose()
+  const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+  expect((await f.detail(restored)).session.contributionState).toBe('active')
+  expect((await restored.ctx.scopeAccess.list()).subscriptions).toEqual([])
+  expect((await f.detail(restored)).session.joint?.intent).toBe('leave')
+})
+
+it('restores cancellation after an owner approval was committed but never selected locally', async () => {
+  const f = await jointApplication()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const apply = f.source.ctx.scopeAccess.applyContribution.bind(f.source.ctx.scopeAccess)
+  const held = vi.spyOn(f.source.ctx.scopeAccess, 'applyContribution').mockImplementationOnce(async (request, signal) => {
+    const result = await apply(request, signal)
+    entered.resolve(undefined); await release.promise; return result
+  })
+  try {
+    const requested = await f.source.scope.requestContribution(f.request)
+    await entered.promise
+    await f.approve()
+    await f.source.scope.leaveJoint({ sessionKey: f.key, jointId: requested.joint!.id })
+    release.resolve(undefined)
+    await expect.poll(async () => (await f.detail()).capture).toBeNull()
+    expect((await f.source.ctx.scopeAccess.list()).subscriptions).toEqual([])
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await f.detail(restored)).session.joint?.intent).toBe('leave')
+    expect((await f.detail(restored)).session.receiveSubscriptionId).toBeUndefined()
+    expect((await restored.ctx.scopeAccess.list()).subscriptions).toEqual([])
+  } finally { release.resolve(undefined); await f.source.ctx.fiber.dispose(); held.mockRestore() }
+})
+
+
+it('refuses native completed-file grants before Claude Hook activation and in durable source records', async () => {
+  const f = await toolContributionHosts()
+  const completeSource = { kind: 'tool-observations' as const, version: 3 as const, name: 'session-work',
+    tools: ['Write', 'Edit'] as const, fileContent: 'completed-native-file' as const }
+  const invitation = { ...f.invitation, grant: { ...f.invitation.grant, source: completeSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  expect(detail.capture.invitation).toEqual(f.invitation)
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: completeSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-native', toolName: 'Edit',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'tool-observation', version: 3, tool: 'Edit', reportedStatus: 'success', omissions: ['oldString', 'newString'],
+      fields: { rootIndex: 0, path: 'old.ts', replaceAll: false }, completedFile: { state: 'omitted', reason: 'unavailable' },
+    } } }).success).toBe(false)
+})
+
+
+it('refuses command permissions and outcomes in the file-only Claude contribution adapter', async () => {
+  const f = await toolContributionHosts()
+  const commandSource = { kind: 'tool-observations' as const, version: 4 as const, name: 'session-work',
+    tools: ['Write', 'Edit'] as const, commands: [{ command: 'pnpm test --run', rootIndex: 0 }] }
+  const invitation = { ...f.invitation, grant: { ...f.invitation.grant, source: commandSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: commandSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-command', toolName: 'Bash',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'command-observation', version: 4, tool: 'Bash', fields: commandSource.commands[0],
+      state: 'unavailable', reason: 'completion-unavailable',
+    } } }).success).toBe(false)
+})
+
+it.each([
+  { label: 'completed-turn', source: { kind: 'completed-turn-outcomes', version: 5, name: 'answers' }, kind: 'turn-contribution' },
+  { label: 'combined native work', source: { kind: 'native-work', version: 6, name: 'work', tools: ['Write'],
+    commands: [{ command: 'node check.js', rootIndex: 0 }], completedTurns: true }, kind: 'native-work-contribution' },
+] as const)('refuses $label permissions, entries and durable samples without changing Claude file capture', async ({ source: turnSource, kind }) => {
+  const f = await toolContributionHosts()
+  const invitation = { ...f.invitation, kind, grant: { ...f.invitation.grant, source: turnSource } }
+  const network = vi.spyOn(f.source.transport, 'request')
+  await expect(f.source.scope.activateContribution({ sessionKey: f.key, expectedCapture: f.selection, invitation }))
+    .rejects.toThrow('not supported by Claude Hooks')
+  expect(network).not.toHaveBeenCalled()
+  const detail = await f.source.scope.contributionDetail({ sessionKey: f.key })
+  if (detail.capture === null) throw new Error('Missing original Claude capture')
+  const original = { proposal: detail.capture.proposal, source: detail.capture.source,
+    policy: { roots: detail.capture.roots, bashCommands: [], revision: 'local-permit' },
+    state: 'active', sequence: 0, invitation: f.invitation }
+  expect(contributionSchema.safeParse(original).success).toBe(true)
+  expect(contributionSchema.safeParse({ ...original, proposal: { ...original.proposal, source: turnSource } }).success).toBe(false)
+  expect(contributionSchema.safeParse({ ...original, invitation }).success).toBe(false)
+  const text = 'A complete native turn report.'
+  expect(contributionLeaseSchema.safeParse({ sessionKey: f.key, ...f.selection, toolUseId: 'unsupported-turn', toolName: 'Write',
+    argumentDigest: 'a'.repeat(64), sample: { sourceId: 'b'.repeat(64), sequence: 1, result: {
+      kind: 'completed-turn-outcome', version: 5, text, sha256: createHash('sha256').update(text).digest('hex'),
+    } } }).success).toBe(false)
+  for (const kind of ['single', 'group'] as const) {
+    const joint = await jointApplication(kind)
+    if (joint.request.entry.kind !== 'scope-join-entry' && joint.request.entry.kind !== 'scope-group-entry') {
+      throw new Error('Native contribution fixture requires a joint entry')
+    }
+    const entry = { ...joint.request.entry, sourceKind: turnSource.kind }
+    const calls = vi.spyOn(joint.source.transport, 'request')
+    await expect(joint.source.scope.requestContribution({ ...joint.request, entry }))
+      .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    expect(calls).not.toHaveBeenCalled()
+    expect((await joint.detail()).capture).toBeNull()
+  }
+  expect((await f.source.scope.contributionDetail({ sessionKey: f.key })).capture).toEqual(detail.capture)
+})
+
+
+describe('independent Claude durable contribution validation', () => {
+  it.each(['capture', 'generation', 'key', 'authorization', 'completion', 'tool', 'result-kind', 'result-tool', 'result-status', 'receipt-without-sample'] as const)
+  ('rejects a restored tool outbox with changed %s before retrying it', async (changed) => {
+    const f = await toolContributionHosts(['Write'], { contributionPollIntervalMs: 60000 })
+    const input = { tool_use_id: 'durable-tool', tool_name: 'Write', tool_input: {
+      file_path: join(f.source.directory, 'work.txt'), content: 'ORIGINAL_DURABLE_REPORT' } }
+    await f.source.hook('tool-contributor', 'PreToolUse', input)
+    await f.source.hook('tool-contributor', 'PostToolUse', input)
+    const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+    const [key, value] = [...leases.entries()][0]!
+    const lease = value as ScopeContributionLease
+    if (lease.sample === undefined || !('kind' in lease.sample.result)) throw new Error('Expected the original tool sample')
+    const tampered = { ...lease,
+      ...(changed === 'capture' ? { captureId: 'different-capture' } : {}),
+      ...(changed === 'generation' ? { captureGeneration: 'different-generation' } : {}),
+      ...(changed === 'authorization' ? { authorizedInputDigest: undefined } : {}),
+      ...(changed === 'completion' ? { completionDigest: undefined } : {}),
+      ...(changed === 'tool' ? { toolName: 'Edit' } : {}),
+      ...(changed === 'result-kind' ? { sample: { ...lease.sample, result: { state: 'unavailable', reason: 'missing-file' } } } : {}),
+      ...(changed === 'result-tool' ? { sample: { ...lease.sample, result: { kind: 'tool-observation', version: 1, tool: 'Edit', reportedStatus: 'success',
+        fields: { rootIndex: 0, path: 'work.txt', oldString: 'old', newString: 'new', replaceAll: false }, omissions: [] } } } : {}),
+      ...(changed === 'result-status' ? { sample: { ...lease.sample, result: { kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure',
+        fields: { rootIndex: 0, path: 'work.txt', error: 'failed' }, omissions: ['content'] } } } : {}),
+      ...(changed === 'receipt-without-sample' ? { sample: undefined } : {}),
+    }
+    await leases.delete(key)
+    await leases.put(changed === 'key' ? 'different-key' : key, JSON.parse(JSON.stringify(tampered)) as JsonValue)
+    await f.source.ctx.fiber.dispose()
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow(
+      changed === 'capture' || changed === 'generation' || changed === 'key' ? 'different capture identity'
+        : changed === 'authorization' || changed === 'completion' || changed === 'tool' ? 'lacks its local authorization'
+          : changed === 'receipt-without-sample' ? 'receipt has no original sample' : 'does not match its source and tool completion')
+    expect(f.reports()).toHaveLength(1)
+  })
+
+  it.each(['terminal', 'invitation', 'sequence', 'source-id'] as const)('rejects a restored sample with changed %s', async (changed) => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    const input = f.tool('original-sample')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    await f.source.hook('contribution-session', 'PostToolUse', input)
+    const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+    const [key, value] = [...leases.entries()][0]!
+    const lease = value as ScopeContributionLease
+    if (lease.sample === undefined) throw new Error('Expected an admitted API sample')
+    if (changed === 'invitation') {
+      const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+      const session = sessions.get(f.key) as ScopeSession
+      const { invitation: _invitation, ...capture } = session.contribution!
+      await sessions.put(f.key, { ...session, contribution: { ...capture, state: 'prepared' } })
+    } else await leases.put(key, JSON.parse(JSON.stringify({ ...lease,
+      ...(changed === 'terminal' ? { terminal: undefined } : {}),
+      ...(changed === 'sequence' ? { sample: { ...lease.sample, sequence: lease.sample.sequence + 1 } } : {}),
+      ...(changed === 'source-id' ? { sample: { ...lease.sample, sourceId: 'a'.repeat(64) } } : {}),
+    })) as JsonValue)
+    await f.source.ctx.fiber.dispose()
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('different source identity')
+  })
+
+  it.each(['peer', 'invitation'] as const)('rejects a restored contribution with a changed %s identity', async (changed) => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    const input = f.tool('retained-identity')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    await f.source.hook('contribution-session', 'PostToolUse', input)
+    const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+    const [leaseId, value] = [...leases.entries()][0]!
+    const { receipt: _receipt, ...pending } = value as ScopeContributionLease
+    await leases.put(leaseId, pending)
+    const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+    const session = sessions.get(f.key) as ScopeSession
+    const capture = session.contribution!
+    await sessions.put(f.key, { ...session, contribution: { ...capture,
+      ...(changed === 'peer' ? { proposal: { ...capture.proposal, contributorPeerId: 'other-peer' } }
+        : { invitation: { ...f.invitation, grant: { ...f.invitation.grant, captureGeneration: 'other-generation' } } }),
+    } })
+    await f.source.ctx.fiber.dispose()
+    const requests = vi.spyOn(ReadScopeTransport.prototype, 'request')
+    try {
+      await expect.soft(f.host('contribution-source', f.source.pool, f.source.directory).then(() => undefined)).rejects.toThrow(changed === 'peer'
+        ? 'does not match its local identity' : 'The invitation changes the local capture selection')
+      expect(requests).not.toHaveBeenCalled()
+    } finally { requests.mockRestore() }
+  })
+
+  it('rejects duplicate persisted API sample sequences even when each source id matches its own lease', async () => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    for (const id of ['first', 'second']) {
+      const input = f.tool(id)
+      await f.source.hook('contribution-session', 'PreToolUse', input)
+      await f.source.hook('contribution-session', 'PostToolUse', input)
+    }
+    const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+    const [key, value] = [...leases.entries()][1]!
+    const { receipt: _receipt, ...lease } = value as ScopeContributionLease
+    await leases.put(key, { ...lease, sample: { ...lease.sample!, sequence: 1, sourceId: scopeDigest([key, lease.terminal, 1]) } })
+    await f.source.ctx.fiber.dispose()
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('sample sequence is duplicated')
+  })
+
+  it('requires a terminal receipt to retain both the ending state and its original invitation', async () => {
+    const f = await contributionHosts(); await f.activate()
+    const session = f.source.facility.get('claude_scope')!.table('sessions').get(f.key) as ScopeSession
+    const ended = await f.source.ctx.scopeAccess.endContribution({ invitation: f.invitation }, new AbortController().signal)
+    if (ended.status !== 'ended') throw new Error('Expected owner withdrawal confirmation')
+    const record = { ...session.contribution!, state: 'ending', endReceipt: ended.receipt }
+    expect(contributionSchema.safeParse(record).success).toBe(true)
+    expect(contributionSchema.safeParse({ ...record, state: 'active' }).success).toBe(false)
+    const { invitation: _invitation, ...withoutInvitation } = record
+    expect(contributionSchema.safeParse(withoutInvitation).success).toBe(false)
+  })
+})
+
+describe('independent Claude collection limits', () => {
+  it('requires an observed live session and directory roots without changing an existing selection', async () => {
+    const f = await contributionHosts()
+    await expect(f.source.scope.prepareContribution({ sessionKey: 'unobserved' as ClaudeScopeSessionKey,
+      expectedCapture: null, roots: [f.source.directory], source: f.file })).rejects.toMatchObject({ code: 'claude-scope/session-unavailable' })
+    for (const roots of [[], [f.file.filePath]]) {
+      await expect(f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection, roots, source: f.file }))
+        .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    }
+    expect(await f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: f.selection,
+      roots: [f.source.directory, f.source.directory], source: f.file })).toEqual(f.preparation)
+    await f.source.hook('contribution-session', 'SessionEnd')
+    await expect(f.source.scope.prepareContribution({ sessionKey: f.key, expectedCapture: null,
+      roots: [f.source.directory], source: f.file })).rejects.toMatchObject({ code: 'claude-scope/session-unavailable' })
+  })
+
+  it('refuses malformed, unleased, or conflicting tool inputs and bounds retained original leases', async () => {
+    const f = await toolContributionHosts(['Write'], { maxLeases: 1 })
+    const input = { tool_use_id: 'original', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'work.txt'), content: 'original' } }
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('missing-pre-tool-lease')
+    expect((await f.source.hook('tool-contributor', 'PreToolUse', { ...input, tool_input: 'malformed' })).receipt.reason).toBe('unsupported-tool-input')
+    expect((await f.source.hook('tool-contributor', 'PreToolUse', input)).receipt.status).toBe('leased')
+    expect((await f.source.hook('tool-contributor', 'PreToolUse', input)).receipt.status).toBe('leased')
+    expect((await f.source.hook('tool-contributor', 'PreToolUse', { ...input,
+      tool_input: { ...input.tool_input, content: 'different' } })).receipt.reason).toBe('tool-lease-conflict')
+    expect((await f.source.hook('tool-contributor', 'PreToolUse', { ...input, tool_use_id: 'over-capacity' })).receipt.reason).toBe('tool-lease-limit')
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.status).toBe('published')
+    expect(f.reports()).toHaveLength(1)
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects an in-root symlink retargeted after its original tool authorization', async () => {
+    const f = await toolContributionHosts(['Write'])
+    const first = join(f.source.directory, 'first.txt'); const second = join(f.source.directory, 'second.txt')
+    await writeFile(first, 'first'); await writeFile(second, 'second')
+    const path = join(f.source.directory, 'linked.txt')
+    await symlink(first, path)
+    const input = { tool_use_id: 'retargeted', tool_name: 'Write', tool_input: { file_path: path, content: 'original' } }
+    await f.source.hook('tool-contributor', 'PreToolUse', input)
+    await rm(path); await symlink(second, path)
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('tool-lease-changed')
+    expect(f.reports()).toHaveLength(0)
+  })
+
+  it('omits a tool completion when its attribution alone exceeds the configured observation budget', async () => {
+    const f = await toolContributionHosts(['Write'], { maxObservationBytes: 768 })
+    const input = { tool_use_id: 'bounded', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'work.txt'), content: 'original' } }
+    await f.source.hook('tool-contributor', 'PreToolUse', input)
+    expect((await f.source.hook('tool-contributor', 'PostToolUse', input)).receipt.reason).toBe('observation-attribution-exceeds-budget')
+    expect(f.reports()).toHaveLength(0)
+  })
+
+  it('refuses an exhausted durable legacy sequence before publishing another sample', async () => {
+    const f = await contributionHosts(); await f.activate()
+    const input = f.tool('exhausted')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+    const session = sessions.get(f.key) as ScopeSession
+    await sessions.put(f.key, { ...session, contribution: { ...session.contribution!, sequence: Number.MAX_SAFE_INTEGER } })
+    await expect(f.source.hook('contribution-session', 'PostToolUse', input)).rejects.toThrow('contribution sequence exhausted')
+    expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context).toHaveLength(0)
+  })
+})
+
+
+describe('independent Claude application admission', () => {
+  it.each(['entry', 'limits', 'expired-entry', 'expired-limits', 'ended'] as const)('rejects %s before creating an online application', async (changed) => {
+    const f = await onlineApplication()
+    if (changed === 'ended') await f.source.hook('online-source', 'SessionEnd')
+    await expect(f.source.scope.requestContribution({ ...f.request,
+      ...(changed === 'entry' ? { entry: { ...f.entry, ownerAddress: '' } } : {}),
+      ...(changed === 'limits' ? { limits: { ...f.limits, maxSamples: 0 } } : {}),
+      ...(changed === 'expired-entry' ? { entry: { ...f.entry, expiresAt: 1 } } : {}),
+      ...(changed === 'expired-limits' ? { limits: { ...f.limits, expiresAt: 1 } } : {}),
+    })).rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    expect((await f.detail()).capture).toBeNull()
+    expect((await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries).toHaveLength(1)
+  })
+
+  it('rejects online application for an already selected manual approval', async () => {
+    const f = await contributionHosts(); await f.activate()
+    const { entry } = await f.owner.ctx.scopeAccess.createContributionEntry({ sourceKind: 'openapi', taskId: f.task.id,
+      ownerAddress: f.invitation.ownerAddress, expiresAt: f.invitation.grant.expiresAt })
+    await expect(f.source.scope.requestContribution({ sessionKey: f.key, expectedCapture: f.selection,
+      roots: [f.source.directory], source: f.file, entry, limits: { expiresAt: entry.expiresAt, maxSamples: 8, maxSampleBytes: 4096 } }))
+      .rejects.toMatchObject({ code: 'claude-scope/source-conflict' })
+    expect((await f.source.scope.contributionDetail({ sessionKey: f.key })).capture?.invitation).toEqual(f.invitation)
+  })
+
+  it('rejects a full online application exceeding the local declaration byte budget', async () => {
+    const f = await onlineApplication({ maxObservationBytes: 600 })
+    await expect(f.source.scope.requestContribution(f.request)).rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+    expect((await f.detail()).capture?.application).toBeNull()
+    expect((await f.detail()).session.contributionState).toBe('prepared')
+  })
+
+  it('requires contribution and a separately selected reading interval to use the same Task', async () => {
+    const f = await onlineApplication()
+    const other = await f.owner.createTask('A separate reading responsibility')
+    const invitation = await f.owner.ctx.scopeAccess.invite({ taskId: other.id, recipientPeerId: f.source.transport.peerId,
+      ownerAddress: f.entry.ownerAddress, expiresAt: f.limits.expiresAt, responsibility: 'Read the other task' })
+    await f.source.scope.receive({ sessionKey: f.key, invitation })
+    await expect(f.source.scope.requestContribution(f.request)).rejects.toMatchObject({ code: 'claude-scope/source-conflict' })
+    expect((await f.detail()).capture?.application).toBeNull()
+    expect((await f.detail()).session.receiveSubscriptionId).toBeDefined()
+  })
+
+  it('rejects independent preparation and restored overlap with a Task capture grant', async () => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 })
+    const key = await f.source.observe('task-bound')
+    const task = await f.source.createTask('Local Task responsibility')
+    await f.source.connect(key, task.id)
+    await expect(f.source.scope.prepareContribution({ sessionKey: key, expectedCapture: null,
+      roots: [f.source.directory], source: f.file })).rejects.toMatchObject({ code: 'claude-scope/source-conflict' })
+    const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+    const grant = (sessions.get(key) as ScopeSession).grant!
+    const session = sessions.get(f.key) as ScopeSession
+    await sessions.put(f.key, { ...session, grant })
+    await f.source.ctx.fiber.dispose()
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('independent and Task capture grants overlap')
+  })
+})
+
+describe('independent Claude recovery isolation', () => {
+  it.each(['work', 'legacy'] as const)('restores unrelated outboxes and clears only the stopped %s session', async (first) => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('first'); await f.stop('first', 'FIRST_SESSION_REPORT')
+    const second = await f.source.observe('second-source')
+    const prepared = await f.source.scope.prepareContribution({ sessionKey: second, expectedCapture: null,
+      roots: [f.source.directory], source: { kind: 'tool-observations', tools: ['Write'] } })
+    const { invitation } = await f.owner.ctx.scopeAccess.approveContribution({ taskId: f.task.id, proposal: prepared.proposal,
+      ownerAddress: f.invitation.ownerAddress, expiresAt: f.invitation.grant.expiresAt, maxSamples: 4, maxSampleBytes: 4096 })
+    const selection = { captureId: prepared.proposal.captureId, captureGeneration: prepared.proposal.captureGeneration }
+    await f.source.scope.activateContribution({ sessionKey: second, expectedCapture: selection, invitation })
+    const input = { tool_use_id: 'other-session', tool_name: 'Write', tool_input: { file_path: join(f.source.directory, 'other.txt'), content: 'SECOND_SESSION_REPORT' } }
+    await f.source.hook('second-source', 'PreToolUse', input)
+    await f.source.hook('second-source', 'PostToolUse', input)
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    const work = { sessionKey: f.key, expectedCapture: f.selection }
+    const legacy = { sessionKey: second, expectedCapture: selection }
+    await restored.scope.contributionLeave(first === 'work' ? work : legacy)
+    expect([...restored.facility.get('claude_scope')!.table('work_leases').entries()]).toHaveLength(first === 'work' ? 0 : 1)
+    expect([...restored.facility.get('claude_scope')!.table('contribution_leases').entries()]).toHaveLength(first === 'work' ? 1 : 0)
+    const other = first === 'work' ? legacy : work
+    expect((await restored.scope.contributionDetail(other)).session.contributionState).toBe('active')
+    await restored.scope.contributionLeave(other)
+    expect([...restored.facility.get('claude_scope')!.table('work_leases').entries()]).toHaveLength(0)
+    expect([...restored.facility.get('claude_scope')!.table('contribution_leases').entries()]).toHaveLength(0)
+  })
+
+  it('rejects a duplicate persisted Stop sequence without treating it as a new report', async () => {
+    const f = await claudeWorkHosts(true)
+    await f.prompt('original'); await f.stop('original', 'first'); await f.stop('original', 'second')
+    const leases = f.source.facility.get('claude_scope')!.table('work_leases')
+    const [key, value] = [...leases.entries()].filter(([, row]) => (row as ScopeWorkLease).kind === 'stop-report')[1]!
+    const lease = value as ScopeWorkLease
+    if (lease.kind !== 'stop-report') throw new Error('Expected a persisted Stop report')
+    const { receipt: _receipt, ...retained } = lease
+    await leases.put(key, { ...retained, sample: { ...lease.sample, sequence: 1 } })
+    await f.source.ctx.fiber.dispose()
+    await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('sample sequence is duplicated')
+    expect(f.reports()).toHaveLength(2)
+  })
+
+  it('withdraws a restored ended session before accepting another completion', async () => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    const sessions = f.source.facility.get('claude_scope')!.table('sessions')
+    await sessions.put(f.key, { ...(sessions.get(f.key) as ScopeSession), ended: true })
+    await f.source.ctx.fiber.dispose()
+    const restored = await f.host('contribution-source', f.source.pool, f.source.directory)
+    expect((await restored.scope.contributionDetail({ sessionKey: f.key })).capture).toBeNull()
+    expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })[0]?.state).toBe('ended')
+  })
+
+  it('stops collection when recovery confirms that a pending sample belongs to an ended grant', async () => {
+    const f = await contributionHosts({ contributionPollIntervalMs: 60000 }); await f.activate()
+    const input = f.tool('pending')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    useContributionClock()
+    try {
+      f.owner.transport.offline = true
+      await f.source.hook('contribution-session', 'PostToolUse', input)
+      await vi.advanceTimersByTimeAsync(0)
+      f.owner.transport.offline = false
+      await f.owner.ctx.scopeAccess.revokeContribution({ grant: f.invitation.grant })
+      expect((await f.source.hook('contribution-session', 'PreToolUse', f.tool('after-end'))).receipt.reason).toBe('contribution-awaiting-owner')
+      expect(f.leases()).toHaveLength(0)
+    } finally { restoreContributionClock() }
+  })
+
+  it.each([512, 1024])('bounds API attribution and complete sampled facts to %i bytes', async (maxObservationBytes) => {
+    const f = await contributionHosts({ maxObservationBytes }); await f.activate()
+    const input = f.tool('bounded')
+    await f.source.hook('contribution-session', 'PreToolUse', input)
+    await writeFile(f.file.filePath, apiDocument(Array.from({ length: 32 }, (_, index) => `field-${index}-${'x'.repeat(100)}`)))
+    if (maxObservationBytes === 512) {
+      await expect(f.source.hook('contribution-session', 'PostToolUse', input)).rejects.toThrow('contribution attribution exceeds byte limit')
+      expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context).toHaveLength(0)
+    } else {
+      expect((await f.source.hook('contribution-session', 'PostToolUse', input)).receipt.status).toBe('published')
+      expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.at(-1)?.peerObservation).toMatchObject({ state: 'unavailable', reason: 'too-large' })
+    }
+  })
+})
+
+
+it('rejects oversized prepared proposals without retaining collection permission', async () => {
+  const f = await contributionPair('contribution-owner', { maxObservationBytes: 1 })
+  const key = await f.source.observe('small-declaration')
+  await expect(f.source.scope.prepareContribution({ sessionKey: key, expectedCapture: null,
+    roots: [f.source.directory], source: { kind: 'tool-observations', tools: ['Write'] } }))
+    .rejects.toThrow('approval request exceeds the configured declaration limits')
+  expect((await f.source.scope.contributionDetail({ sessionKey: key })).capture).toBeNull()
+})
+
+it('refuses a legacy tool start outside its selected local roots', async () => {
+  const f = await toolContributionHosts(['Write'])
+  expect((await f.source.hook('tool-contributor', 'PreToolUse', { tool_use_id: 'outside', tool_name: 'Write',
+    tool_input: { file_path: join(f.owner.directory, 'outside.txt'), content: 'PRIVATE' } })).receipt.reason).toBe('path-outside-grant')
+  expect([...f.source.facility.get('claude_scope')!.table('contribution_leases').entries()]).toHaveLength(0)
+})
+
+it('rejects a durable legacy lease placed under a Claude-work permit', async () => {
+  const f = await claudeWorkHosts(true)
+  const leases = f.source.facility.get('claude_scope')!.table('contribution_leases')
+  await leases.put('legacy', { sessionKey: f.key, captureId: f.selection.captureId,
+    captureGeneration: f.selection.captureGeneration, toolUseId: 'old-consent', toolName: 'Write', argumentDigest: 'a'.repeat(64) })
+  await f.source.ctx.fiber.dispose()
+  await expect(f.host('contribution-source', f.source.pool, f.source.directory)).rejects.toThrow('legacy tool lease cannot acquire Claude-work consent')
+})
+
+it.each(['waiting', 'adopting'] as const)('stops pending joint reading when contribution is withdrawn while %s', async (stage) => {
+  const f = await jointApplication()
+  const entered = Promise.withResolvers<undefined>(); const release = Promise.withResolvers<undefined>()
+  afterEach(() => { release.resolve(undefined) })
+  if (stage === 'adopting') {
+    const ensure = f.source.ctx.scopeAccess.ensureSubscription.bind(f.source.ctx.scopeAccess)
+    vi.spyOn(f.source.ctx.scopeAccess, 'ensureSubscription').mockImplementationOnce(async (plan) => {
+      entered.resolve(undefined); await release.promise; return ensure(plan)
+    })
+  }
+  await f.source.scope.requestContribution(f.request)
+  const capture = await f.waiting()
+  if (stage === 'adopting') { await f.approve(); await entered.promise }
+  try {
+    await f.source.scope.contributionLeave({ sessionKey: f.key, expectedCapture: capture.selection })
+    const stopped = (await f.detail()).session
+    expect(stopped.joint?.intent).toBe('cancel-pending')
+    expect(stopped.receiveSubscriptionId).toBeUndefined()
+    if (stage === 'waiting') expect(stopped.joint?.state).toBe('ended')
+  } finally { release.resolve(undefined) }
+  await expect.poll(async () => (await f.detail()).capture).toBeNull()
+  await expect.poll(async () => (await f.detail()).session.joint?.cleanupPending).toBe(false)
+  expect(JSON.stringify((await f.source.hook('joint-source', 'UserPromptSubmit')).output))
+    .not.toContain('Joint external session collaboration')
 })

@@ -31,9 +31,9 @@ export interface DevWorkbenchReadinessConfig {
   readonly url: string
   /** Status codes that establish service readiness. */
   readonly acceptedStatusCodes: number[]
-  /** Delay between attempts. */
+  /** Delay between attempts, at most 2,147,483,647 milliseconds. */
   readonly intervalMs: number
-  /** Per-request timeout. */
+  /** Per-request timeout, at most 2,147,483,647 milliseconds. */
   readonly requestTimeoutMs: number
   /** Elapsed time after which an unresolved probe is reported as delayed. */
   readonly warnAfterMs: number
@@ -65,7 +65,7 @@ export interface Config {
   readonly entries: Record<string, DevWorkbenchEntryConfig>
   /** Per-stream in-memory output cap. */
   readonly maxOutputBytes: number
-  /** TERM-to-KILL grace for each task's complete process tree. */
+  /** TERM-to-KILL grace for each task's complete process tree, at most 2,147,483,647 milliseconds. */
   readonly graceMs: number
 }
 
@@ -137,9 +137,9 @@ function resolveView(owner: string, config: DevWorkbenchViewConfig): DevWorkbenc
   })
 }
 
-function positiveInteger(value: number, field: string): number {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new TypeError(`dev-workbench: ${field} must be a positive safe integer`)
+function positiveInteger(value: number, field: string, maximum = Number.MAX_SAFE_INTEGER): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new TypeError(`dev-workbench: ${field} must be a positive safe integer at most ${String(maximum)}`)
   }
   return value
 }
@@ -166,19 +166,15 @@ function resolveReadiness(
   return Object.freeze({
     url: url.href,
     acceptedStatusCodes: Object.freeze([...config.acceptedStatusCodes]),
-    intervalMs: positiveInteger(config.intervalMs, `readiness "${owner}" intervalMs`),
-    requestTimeoutMs: positiveInteger(config.requestTimeoutMs, `readiness "${owner}" requestTimeoutMs`),
+    intervalMs: positiveInteger(config.intervalMs, `readiness "${owner}" intervalMs`, 2_147_483_647),
+    requestTimeoutMs: positiveInteger(config.requestTimeoutMs, `readiness "${owner}" requestTimeoutMs`, 2_147_483_647),
     warnAfterMs: positiveInteger(config.warnAfterMs, `readiness "${owner}" warnAfterMs`),
   })
 }
 
 function resolveEntries(config: Config): readonly ResolvedEntry[] {
-  if (!Number.isSafeInteger(config.maxOutputBytes) || config.maxOutputBytes < 1) {
-    throw new TypeError('dev-workbench: maxOutputBytes must be a positive safe integer')
-  }
-  if (!Number.isSafeInteger(config.graceMs) || config.graceMs < 1) {
-    throw new TypeError('dev-workbench: graceMs must be a positive safe integer')
-  }
+  positiveInteger(config.maxOutputBytes, 'maxOutputBytes')
+  positiveInteger(config.graceMs, 'graceMs', 2_147_483_647)
   return Object.entries(config.entries).map(([rawId, entry]) => {
     const id = entryId(rawId)
     if (!isAbsolute(entry.cwd)) {
@@ -228,13 +224,13 @@ export class DevWorkbenchService extends TypertRemoteService {
       readiness: s.object({
         url: s.string().required(),
         acceptedStatusCodes: s.array(s.number().step(1).min(100).max(599)).required(),
-        intervalMs: s.number().step(1).min(1).required(),
-        requestTimeoutMs: s.number().step(1).min(1).required(),
+        intervalMs: s.number().step(1).min(1).max(2_147_483_647).required(),
+        requestTimeoutMs: s.number().step(1).min(1).max(2_147_483_647).required(),
         warnAfterMs: s.number().step(1).min(1).required(),
       }).default(undefined as never),
     })).required(),
     maxOutputBytes: s.number().step(1).min(1).required(),
-    graceMs: s.number().step(1).min(1).required(),
+    graceMs: s.number().step(1).min(1).max(2_147_483_647).required(),
   })
 
   private readonly entries = new Map<DevWorkbenchEntryId, EntryRuntime>()
@@ -271,15 +267,9 @@ export class DevWorkbenchService extends TypertRemoteService {
         entry.readinessTask === undefined ? [] : [entry.readinessTask],
       ))
       const live = [...this.entries.values()].flatMap(entry =>
-        entry.handle !== undefined && (entry.phase === 'running' || entry.phase === 'stopping')
-          ? [entry.handle]
-          : [],
+        entry.handle === undefined ? [] : [entry.handle],
       )
-      for (const handle of live) handle.terminate()
-      const settled = await Promise.allSettled(live.map(async (handle) => {
-        await handle.done.catch(() => undefined)
-        await handle.waitForExit()
-      }))
+      const settled = await Promise.allSettled(live.map(handle => this.terminate(handle)))
       const failures: unknown[] = []
       for (const result of settled) {
         if (result.status === 'rejected') failures.push(result.reason as unknown)
@@ -309,6 +299,7 @@ export class DevWorkbenchService extends TypertRemoteService {
         return this.snapshot(entry)
       }
       await this.stopReadiness(entry)
+      if (entry.handle !== undefined) await this.terminate(entry.handle)
       const executable = await this.ctx.subprocess.resolveExecutable(entry.spec.command)
       const handle = this.ctx.subprocess.spawn({
         argv: [executable, ...entry.spec.args],
@@ -344,20 +335,25 @@ export class DevWorkbenchService extends TypertRemoteService {
   stop(id: DevWorkbenchEntryId): Promise<DevWorkbenchEntrySnapshot> {
     return this.enqueue(id, async (entry) => {
       const handle = entry.handle
-      if (handle === undefined || (entry.phase !== 'running' && entry.phase !== 'stopping')) {
+      if (handle === undefined) {
         return this.snapshot(entry)
       }
       entry.phase = 'stopping'
       await this.stopReadiness(entry)
-      handle.terminate()
-      await handle.done.catch(() => undefined)
-      await handle.waitForExit()
+      await this.terminate(handle)
       if (entry.handle === handle) {
         entry.phase = 'stopped'
         entry.finishedAt ??= Date.now()
       }
       return this.snapshot(entry)
     })
+  }
+
+  private async terminate(handle: SubprocessHandle): Promise<void> {
+    handle.terminate()
+    // A failed direct command can still leave a managed child alive.
+    await handle.done.catch(() => undefined)
+    await handle.waitForExit()
   }
 
   private enqueue(

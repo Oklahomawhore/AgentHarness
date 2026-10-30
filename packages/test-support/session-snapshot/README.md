@@ -76,6 +76,10 @@ Typed identity discovery recognizes the local subscription generation in version
 
 Spill scenarios save through the real local provider under a private temporary root. Their fixture adapter exposes fixed-length logical locators and maps only this run’s saved locators back to real files for retrieval, preserving preview budgets without writing into a shared logical path. Known snapshot spill paths normalize to stable locator tokens, including paths quoted inside JSON omission notices with JSON-escaped Windows separators. Refresh extraction preserves the matched serialized path spelling for literal replacement. Normalization changes only the locator: saved byte lengths and omission counts remain comparison evidence.
 
+An owning current-format SDK scenario can declare `writer: separate` when its immutable replay input and current native output differ in behavior without a Session-format migration. It cannot combine this declaration with `sessionFormat` or a borrowed Session reference. The manifest parser rejects unsupported profiles and modes. This choice uses the same separate output oracles as historical scenarios and preserves the selected input during record and refresh; it does not classify current-format input as historical migration coverage. The [decision record](../../../.agents/notes/implemented/testing/2026-10-06-separate-current-writer-oracles.md) explains the distinction.
+
+A current SDK scenario with `writer: separate` can select `writerRevision: 2` or a greater safe integer to retain an earlier output oracle unchanged. Revision 2 selects `writer.r2.expected.jsonl` and `writer.<ordinal>.r2.expected.jsonl`; omitting it selects the unnumbered writer filenames. Selection is explicit, never a scan for the highest revision. Writer revisions identify output expectations, not Session-format generations.
+
 Retained historical scenarios keep their canonical Session files unchanged and selected for replay, with no newer canonical sibling in the pinned directory. Their exact normalized native current-format output is recorded separately in `writer.expected.jsonl` for the parent and `writer.<ordinal>.expected.jsonl` for children; these are output oracles, not replay generations. Retained SDK scenarios use `notifications.current.expected.jsonl` for current protocol output. Comparisons neither project current events back into a historical format nor strip structural differences. Independent migration tests verify the official transform rather than treating native writer layout as its expected event sequence.
 
 ### Record, replay, and refresh
@@ -129,6 +133,8 @@ The shared core owns manifests, generation-qualified role selection, workspace s
 | — | No runtime invariant companion is published; this test-support package owns no production event stream or mutable data; consuming test suites exercise its behavior. |
 
 ### Data flow
+
+An ACP `newSession` step can attach Node MCP fixture scripts through `nodeMcpServers: [{ name, script }]`. Each script path is relative to the scenario workspace; the harness supplies its Node executable and sends ordinary stdio MCP declarations, whose transports belong to that Session.
 
 A scenario runs the agent under the launcher, feeds it the input script through the harness, and captures stdout plus the persisted logs. The normalizers canonicalize those captures — ids to first-seen sequence, generated cwd to `{{cwd}}`, `system/message` text to `{{system}}` and header tool schemas to `{{tools}}` — so recorded and fresh runs compare structurally. The factory then compares normalized stdout and re-persisted logs against committed fixtures, or writes them back in record/refresh mode, and its guards reject malformed or drifting fixtures before any comparison result is trusted.
 

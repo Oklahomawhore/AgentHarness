@@ -4,7 +4,7 @@
  * cap, the stability-window budget reset, and disposal stopping reconnection.
  * Isolated file so vi.mock of the MCP SDK doesn't pollute other test suites.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, onTestFinished } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -59,7 +59,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 
 // vi.mock is hoisted above static imports, so the modules under test see the
 // mocked SDK even through a static import.
-import { apply } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
+import { apply, inject } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
 import { RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from '@deepseek-ai/dsh-mcp-client/src/connection.ts'
 
 // ---- Helpers ----
@@ -225,21 +225,36 @@ describe('reconnect supervisor', () => {
   })
 
   it('does not start a replacement until a failed generation reports that it closed', async () => {
+    vi.useFakeTimers()
     const { warns } = captureLogs(ctx)
     mockConnect.mockRejectedValueOnce(new Error('initialize failed'))
     // Model the SDK's fire-and-forget close after initialize fails: the
     // harness's second close call returns, but the child has not exited yet.
-    mockClose.mockResolvedValue(undefined)
-
+    mockClose.mockImplementationOnce(() => Promise.resolve())
+    let ready = false
     const applying = apply(ctx, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
-    await vi.waitFor(() => { expect(mockClose).toHaveBeenCalled() })
-    await sleep(30)
-    expect(instances).toHaveLength(1)
-
-    instances[0]!.onclose?.()
-    await applying
-    await vi.waitFor(() => { expect(instances).toHaveLength(2) })
-    expect(warns.some(line => line.includes('connection failed; retrying in 2ms (attempt 1/2)'))).toBe(true)
+      .then(() => { ready = true })
+    const settled = Promise.allSettled([applying])
+    const cleanup = async () => {
+      instances[0]?.onclose?.()
+      try { await ctx.fiber.dispose(); await settled } finally { vi.useRealTimers() }
+    }
+    onTestFinished(cleanup)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockClose).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(1)
+      expect(instances).toHaveLength(1)
+      expect(ready).toBe(false)
+      expect(warns.some(line => line.includes('retrying'))).toBe(false)
+      instances[0]!.onclose?.()
+      await applying
+      expect(instances).toHaveLength(1)
+      expect(warns.some(line => line.includes('connection failed; retrying in 2ms (attempt 1/2)'))).toBe(true)
+      await vi.advanceTimersByTimeAsync(2)
+      expect(instances).toHaveLength(2)
+      expect(ctx.mcp.listServers()).toEqual([{ id: 'srv' }])
+    } finally { await cleanup() }
   })
 
   it('stops reconnecting when a failed generation never reports that it closed', async () => {
@@ -274,6 +289,40 @@ describe('reconnect supervisor', () => {
 
     expect(warns.some(line => line.includes('connection attempt failed'))).toBe(false)
     expect(instances).toHaveLength(1)
+  })
+
+  it('lets disposal own a failed initialize while transport cleanup is pending', async () => {
+    vi.useFakeTimers()
+    const { warns, errors } = captureLogs(ctx)
+    const failure = new Error('initialize failed before disposal')
+    mockConnect.mockRejectedValueOnce(failure)
+    mockClose.mockImplementationOnce(() => Promise.resolve())
+    const handle = startConnection(ctx, stdioConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    const cleanup = async () => {
+      instances[0]?.onclose?.()
+      try {
+        await handle.dispose()
+        await handle.ready
+        await ctx.fiber.dispose()
+      } finally { vi.useRealTimers() }
+    }
+    onTestFinished(cleanup)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockClose).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(1)
+      const disposing = handle.dispose()
+      expect(mockClose).toHaveBeenCalledTimes(2)
+      await disposing
+      expect(await handle.ready).toEqual({ error: failure })
+      expect(warns.filter(line => line.includes('connection attempt failed'))).toHaveLength(1)
+      expect(warns.some(line => line.includes('retrying'))).toBe(false)
+      expect(errors).toEqual([])
+      expect(instances).toHaveLength(1)
+      expect(mockListTools).not.toHaveBeenCalled()
+      expect(ctx.mcp.listServers()).toEqual([])
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+    } finally { await cleanup() }
   })
 
   it('bounds disposal while a resolving generation never reports that it closed', async () => {
@@ -311,7 +360,7 @@ describe('reconnect supervisor', () => {
   })
 
   it('a transport close after dispose schedules nothing', async () => {
-    const fiber = ctx.plugin({ name: 'mcp-client', inject: ['tools'], apply }, stdioConfig())
+    const fiber = ctx.plugin({ name: 'mcp-client', inject, apply }, stdioConfig())
     await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
 
     await fiber.dispose()
@@ -421,7 +470,7 @@ describe('reconnect supervisor', () => {
   })
 
   it('dispose during an in-flight initial sync quiesces without leaking tools', async () => {
-    const fiber = ctx.plugin({ name: 'mcp-client', inject: ['mcp', 'tools'], apply }, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 5 }))
+    const fiber = ctx.plugin({ name: 'mcp-client', inject, apply }, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 5 }))
     await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
 
     // Block the reconnect attempt's tool discovery until after dispose starts.
@@ -442,23 +491,42 @@ describe('reconnect supervisor', () => {
   })
 
   it('a re-sync failing because dispose closed the transport stays silent', async () => {
-    const { errors } = captureLogs(ctx)
-    const fiber = ctx.plugin({ name: 'mcp-client', inject: ['tools'], apply }, stdioConfig())
-    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
-
-    const gate: PromiseWithResolvers<unknown> = Promise.withResolvers()
-    mockListTools.mockImplementation(() => gate.promise)
-    const handler = mockSetNotificationHandler.mock.calls[0]![1] as () => Promise<void>
-    const resync = handler()
-    await vi.waitFor(() => { expect(mockListTools).toHaveBeenCalledTimes(2) })
-
-    const disposing = fiber.dispose()
-    await sleep(10)
-    gate.reject(new Error('Connection closed'))
-    await disposing
-    await resync
-
-    expect(errors.some(line => line.includes('tool re-sync failed'))).toBe(false)
+    const { warns, errors } = captureLogs(ctx)
+    const entered = Promise.withResolvers<undefined>(), closing = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<unknown>()
+    let resync: Promise<void> | undefined
+    const fiber = ctx.plugin({ name: 'mcp-client', inject, apply }, stdioConfig())
+    const cleanup = async () => {
+      gate.resolve(listing('cleanup'))
+      await fiber.dispose()
+      await resync
+      await ctx.fiber.dispose()
+    }
+    onTestFinished(cleanup)
+    try {
+      await fiber
+      expect(warns).toEqual([])
+      expect(ctx.mcp.listServers()).toEqual([{ id: 'srv' }])
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+      mockListTools.mockImplementation(async () => { entered.resolve(undefined); return await gate.promise })
+      const handler = mockSetNotificationHandler.mock.calls[0]![1] as () => Promise<void>
+      resync = handler()
+      await entered.promise
+      mockClose.mockImplementationOnce(function (this: { onclose?: () => void }) {
+        closing.resolve(undefined)
+        this.onclose?.()
+        return Promise.resolve()
+      })
+      const disposing = fiber.dispose()
+      await closing.promise
+      gate.reject(new Error('Connection closed'))
+      await disposing
+      await resync
+      expect(errors.some(line => line.includes('tool re-sync failed'))).toBe(false)
+      expect(ctx.mcp.listServers()).toEqual([])
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+      expect(mockConnect).toHaveBeenCalledOnce()
+    } finally { await cleanup() }
   })
 
   it('a stale notification handler from a replaced generation is ignored', async () => {

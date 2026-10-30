@@ -28,12 +28,13 @@ async function stored(source: TestHost, id: SessionId) {
   return nativeContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
 
-async function fixture(approve = true, joint = false) {
+async function fixture(approve = true, joint = false,
+  sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' = 'tool-observations', maxObservationBytes = 65536) {
   const network = new TestNetwork()
   const owner = await createHost(network, 'owner', 'native', { ownerLocal: true,
     peerId: '12D3KooWFQDNzFpGLdjsQex1jJXjuAgTsUMuzvc8ubn1PeJJhKBy' as ScopePeerId })
   hosts.push(owner)
-  const source = await createHost(network, 'source', 'native', { receive: joint })
+  const source = await createHost(network, 'source', 'native', { receive: joint, maxObservationBytes })
   hosts.push(source)
   const task = await rootTask(owner)
   const agent = await source.createAgent('route-source')
@@ -49,13 +50,16 @@ async function fixture(approve = true, joint = false) {
     return await request(target, ...args)
   }
   vi.spyOn(source.transport, 'request').mockImplementation(routedRequest)
-  const entry = (await owner.ctx.scopeAccess.createContributionEntry({ sourceKind: 'tool-observations', taskId: task.id,
+  const entry = (await owner.ctx.scopeAccess.createContributionEntry({ sourceKind, taskId: task.id,
     ownerAddress: address, expiresAt: Date.now() + 50_000, ...(joint ? { participation: 'join' as const } : {}) })).entry
   const limits = { expiresAt: Date.now() + 50_000, maxSamples: 16, maxSampleBytes: 8192 }
   const read = joint ? await source.ctx.scopeAgentContext.status({ agentId: agent.id }) : undefined
   if (read !== undefined && read.eligibility !== 'eligible') throw new Error('Source is not eligible for reading')
+  const permission = sourceKind === 'tool-observations' ? { roots: [allowed], tools: ['write', 'edit'] as ('write' | 'edit')[] }
+    : sourceKind === 'completed-turn-outcomes' ? { sourceKind }
+      : { sourceKind, roots: [], tools: [], commands: [], completedTurns: true }
   const requested = await source.ctx.scopeAgentContributions.request({ agentId: agent.id, expectedCapture: null,
-    entry, roots: [allowed], tools: ['write', 'edit'], limits,
+    entry, ...permission, limits,
     ...(read === undefined ? {} : { receive: { expectedReadStateSeq: read.readStateSeq } }) })
   if (requested.capture === null) throw new Error('Missing source capture')
   const selection = requested.capture.selection
@@ -69,9 +73,14 @@ async function fixture(approve = true, joint = false) {
     await expect.poll(async () => (await status()).capture?.collecting).toBe(true)
   }
   await run(source, agent)
+  if (approve && sourceKind !== 'tool-observations') {
+    await expect.poll(async () => (await stored(source, agent.id)).samples[0]?.receipt).toBeDefined()
+  }
   const changeRoute = async (port: number) => {
     address = originalAddress.replace('/tcp/1/', `/tcp/${port}/`)
-    return (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    const recovered = (await owner.ctx.scopeAccess.recoverContributionEntry({ entryId: entry.entryId, ownerAddress: address })).entry
+    if (recovered.version !== 1) throw new Error('The fixture must recover its original single-use entry')
+    return recovered
   }
   const recover = (replacement: ScopeContributionEntry, expectedOwnerAddress = originalAddress, expectedRouteRevision = 0) =>
     source.ctx.scopeAgentContributions.recoverRoute({ agentId: agent.id, expectedCapture: selection,
@@ -79,6 +88,64 @@ async function fixture(approve = true, joint = false) {
   return { network, owner, source, task, agent, allowed, entry, limits, selection, originalAddress, status,
     changeRoute, recover, routedRequest }
 }
+
+const receivingSources = ['tool-observations', 'completed-turn-outcomes', 'native-work'] as const
+it.each(receivingSources)('keeps %s collection unchanged when confirming the current owner route', async (sourceKind) => {
+  const f = await fixture(true, false, sourceKind)
+  const before = await stored(f.source, f.agent.id)
+  const ownerBefore = f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })
+  const reportsBefore = f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.length
+  await f.recover(f.entry)
+  expect(await stored(f.source, f.agent.id)).toEqual(before)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toEqual(ownerBefore)
+  expect((await f.status()).capture).toMatchObject({ selection: f.selection, state: 'active', collecting: true })
+  await run(f.source, f.agent, sourceKind === 'tool-observations'
+    ? [toolCallResponse('same-route-write', 'write', { file_path: 'project/route.txt', content: 'Same permission remains active.' })]
+    : [])
+  await expect.poll(() => f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context.length).toBe(reportsBefore + 1)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toHaveLength(1)
+  expect((await stored(f.source, f.agent.id)).capture?.proposal).toEqual(before.capture?.proposal)
+})
+
+it.each(receivingSources)('rejects an oversized %s route request before changing consent', async (sourceKind) => {
+  const maxObservationBytes = 4096
+  const f = await fixture(true, false, sourceKind, maxObservationBytes)
+  const before = await stored(f.source, f.agent.id)
+  const ownerBefore = f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })
+  const request = { agentId: f.agent.id, expectedCapture: f.selection, expectedOwnerAddress: '界'.repeat(1400),
+    expectedRouteRevision: 0, entry: f.entry }
+  expect(JSON.stringify(request).length).toBeLessThan(maxObservationBytes)
+  expect(Buffer.byteLength(JSON.stringify(request), 'utf8')).toBeGreaterThan(maxObservationBytes)
+  await expect(f.source.ctx.scopeAgentContributions.recoverRoute(request))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission',
+      message: 'The route recovery request exceeds the configured byte limit' })
+  expect(await stored(f.source, f.agent.id)).toEqual(before)
+  expect(f.owner.ctx.developmentTasks.peerContributions({ taskId: f.task.id })).toEqual(ownerBefore)
+  await f.recover(f.entry)
+  expect((await f.status()).capture).toMatchObject({ selection: f.selection, state: 'active', collecting: true })
+})
+
+it.each(receivingSources)('restores %s receiving continuations only with matching route and departure intent', async (sourceKind) => {
+  const f = await fixture(false, true, sourceKind)
+  const row = await stored(f.source, f.agent.id)
+  const capture = row.capture
+  if (capture?.receiving === undefined) throw new Error('Missing joint consent')
+  const receiving = { ...capture.receiving, intent: 'cancel-pending' as const, leaveAdopted: false }
+  const continuation = { proposal: capture.proposal, entry: capture.entry, limits: capture.limits, receiving }
+  const detached = { ...row, capture: null, samples: [], receivingContinuation: continuation }
+  const schema = nativeContributionDomain.tables.sessions.valueSchema
+  expect(schema.safeParse(detached).success).toBe(true)
+  expect(schema.safeParse({ ...row, receivingContinuation: continuation }).success).toBe(false)
+  expect(schema.safeParse({ ...row, capture: { ...capture, routeRevision: 1 } }).success).toBe(false)
+  const mismatchedRoute = { ownerAddress: capture.entry.ownerAddress + '/other', expectedReadStateSeq: receiving.expectedReadStateSeq }
+  expect(schema.safeParse({ ...row, capture: { ...capture,
+    receiving: { ...receiving, routeRecovery: mismatchedRoute } } }).success).toBe(false)
+  for (const changed of [
+    { ...continuation, entry: { ...continuation.entry, kind: 'contribution-entry' } },
+    { ...continuation, receiving: { ...receiving, intent: 'adopt' } },
+    { ...continuation, receiving: { ...receiving, routeRecovery: mismatchedRoute } },
+  ]) expect(schema.safeParse({ ...detached, receivingContinuation: changed }).success).toBe(false)
+})
 
 it('retries an already admitted report through the new route without a second publication or changed permission', async () => {
   const f = await fixture()
@@ -270,8 +337,13 @@ it('recovers the original joint read binding after a lost route reply and uses t
   expect(after.state.usedBudget).toBe(before.state.usedBudget)
   expect((await f.source.ctx.scopeAccess.list()).subscriptions).toHaveLength(1)
   expect((await stored(f.source, f.agent.id)).capture?.receiving?.routeRecovery).toBeUndefined()
+  await f.owner.ctx.developmentTasks.publishContext({ taskId: f.task.id, participantId: f.task.createdBy, text: 'OWNER_ROUTE_FACT' })
   await run(f.source, f.agent)
-  expect(requestText(f.source.adapter.requests.at(-1)!)).toContain('JOIN_ROUTE_RESTORED')
+  const request = f.source.adapter.requests.at(-1)!
+  expect(requestText(request)).toContain('OWNER_ROUTE_FACT')
+  const scope = request.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+  expect(JSON.stringify(scope)).not.toContain('JOIN_ROUTE_RESTORED')
+  expect(scope).toMatchObject([{ source: { version: 2, projection: { version: 3 } } }])
 })
 
 it('recovers detached receiving through its original entry without recreating contribution permission', async () => {

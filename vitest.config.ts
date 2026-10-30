@@ -5,7 +5,7 @@ import { resolvePwshPath } from './packages/shell/pwsh-local/src/resolve.ts'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 import { COVERAGE_EXEMPT_ENV, coverageExemptHeavySuites } from './scripts/coverage-exempt.ts'
-import { COVERAGE_PARTITION_MODE_ENV } from './scripts/coverage-partitions.ts'
+import { COVERAGE_PARTITION_MODE_ENV, COVERAGE_TEST_TIMEOUT_ENV, parseCoverageTestTimeout } from './scripts/coverage-partitions.ts'
 
 // Prints exact `path:line:col` records for every uncovered statement, branch
 // path, and function when a file misses the per-file 100% gate — the built-in
@@ -102,6 +102,9 @@ const windowsRunnerCoverageExclusions = process.platform === 'win32'
       // win32.spec's injected bindings and exercised natively by every
       // Windows suite through the real backend.
       'packages/session/session-persistence-jsonl/src/lease.ts',
+      // Private descriptors require POSIX ownership and locks. Windows keeps
+      // the refusal test; supported hosts retain this file's per-file 100%.
+      'packages/client/connection/src/local-access.ts',
     ]
   : []
 
@@ -156,9 +159,17 @@ const processBoundTests = [
   'packages/workflow/workflow-worker-thread/tests/session.spec.ts',
 ]
 
+const coverageTimeout = parseCoverageTestTimeout(process.env[COVERAGE_TEST_TIMEOUT_ENV])
+const coverageTimeouts = coverageTimeout === undefined ? {} : {
+  testTimeout: coverageTimeout,
+  hookTimeout: coverageTimeout,
+  expect: { poll: { timeout: coverageTimeout } },
+}
+
 export default defineConfig({
   plugins: [pathsPlugin(), standardDecoratorPlugin()],
   test: {
+    ...coverageTimeouts,
     setupFiles: ['./scripts/test-proxy-environment.ts', './scripts/test-invariants.ts'],
     // .tsx: client component specs (jsdom via per-file @vitest-environment pragma).
     include: testIncludes,
@@ -169,6 +180,7 @@ export default defineConfig({
       {
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
+          ...coverageTimeouts,
           name: 'thread-safe',
           execArgv: vitestExecArgv,
           // Node 24 has aborted in its CJS lexer (v8::ToLocalChecked Empty
@@ -187,6 +199,7 @@ export default defineConfig({
       {
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
+          ...coverageTimeouts,
           name: 'process-bound',
           execArgv: vitestExecArgv,
           pool: 'forks',

@@ -1,10 +1,13 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import LlmRuntime, { createUserMessage, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, markAgentLoopRequest, isAgentLoopRequest, LlmAdapter, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
+import AgentLoop, { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import SessionTitleService, {
   SessionTitleProviderId,
   type SessionTitleProvider,
@@ -51,6 +54,62 @@ function appendRoute(session: ReturnType<Context['sessions']['create']>, reason:
 }
 
 describe('SessionTitleService Provider lifecycle', () => {
+  it('waits for the owning native request while an isolated same-id Session finishes its request', async () => {
+    const ctx = new Context()
+    const gate = deferred<undefined>()
+    const entered = deferred<undefined>()
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => undefined)
+    class ReadyAdapter extends LlmAdapter {
+      override async * stream(): AsyncIterable<StreamChunk> { yield { type: 'finish', reason: { kind: 'stop' } } }
+    }
+    try {
+      await mountAgentLoopTestDependencies(ctx)
+      await ctx.plugin(AgentLoop, { agents: [] })
+      await ctx.plugin(SessionTitleService, CONFIG)
+      ctx.llm.registerAdapter(['main-route'], new ReadyAdapter())
+      const generate = vi.fn(async (request: SessionTitleProviderRequest) => ({
+        title: 'Owned title', messageSeqs: request.messages.map(message => message.seq),
+      }))
+      ctx.sessionTitle.register({ id: SessionTitleProviderId('isolated-native'), automatic: 'all-prompts', generate })
+      const owner = await ctx.agents.create({ sessionId: SessionId('isolated-native-title'),
+        agentOptions: { provider: 'main-route', model: 'chat-model' } })
+      owner.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'First owned request' }] }))
+      await owner.agent.whenIdle()
+      await expect.poll(() => ctx.sessionTitle.get(owner.agent.session)?.source.kind).toBe('provider')
+      expect(generate).toHaveBeenCalledTimes(1)
+      ctx.on('llm/stream', (options, next) => (async function* () {
+        if (isAgentLoopRequest(options, owner.agent.session)) { entered.resolve(undefined); await gate.promise }
+        yield* next()
+      })(), { prepend: true })
+      owner.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Second owned request' }] }))
+      await entered.promise
+      const other = ctx.isolate('agents').isolate('sessions').isolate('agentLoop').isolate('systemPrompt').isolate('sessionProjections')
+      await other.plugin(SessionStore)
+      await other.plugin(AgentRegistry)
+      await other.plugin(SystemPrompt, {})
+      await other.plugin(SessionProjectionRegistry)
+      await other.plugin(AgentLoop, { agents: [] })
+      let foreign: Awaited<ReturnType<typeof other.agents.create>> | undefined
+      await other.plugin({ name: 'independent-title-session',
+        inject: ['agents', 'agentLoop', 'sessions', 'systemPrompt', 'sessionProjections'],
+        async apply(consumer) {
+          foreign = await consumer.agents.create({ sessionId: owner.agent.id, agentOptions: { provider: 'main-route', model: 'chat-model' } })
+        } })
+      if (foreign === undefined) throw new Error('the isolated native Agent must finish creation')
+      try {
+        foreign.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Foreign request' }] }))
+        await foreign.agent.whenIdle()
+        expect.soft(generate).toHaveBeenCalledTimes(1)
+        expect.soft(warn).not.toHaveBeenCalled()
+        expect(foreign.agent.session.snapshotEvents().some(event => event.type === 'session/title')).toBe(false)
+      } finally { await foreign.dispose() }
+      gate.resolve(undefined)
+      await owner.agent.whenIdle()
+      await expect.poll(() => generate.mock.calls.length).toBe(2)
+      expect(generate.mock.calls.map(([request]) => request.session)).toEqual([owner.agent.session, owner.agent.session])
+    } finally { gate.resolve(undefined); await ctx.fiber.dispose(); warn.mockRestore() }
+  })
+
   it('inherits title events across forks, skips first-prompt retitling, and lets all-messages update later', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -374,7 +433,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       model: 'chat-model',
       messages: session.deriveMessages(),
       sessionId: session.id,
-    })))
+    }), session))
     await settle()
 
     expect(session.snapshotEvents().filter(event => event.type === 'request/header')).toHaveLength(1)
@@ -407,16 +466,16 @@ describe('SessionTitleService Provider lifecycle', () => {
     const options = { provider: 'main-route', model: 'chat-model', messages: [] }
 
     void ctx.llm.stream(deepFreeze(options))
-    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: SessionId('missing') })))
+    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: SessionId('missing') }), {}))
     const quiet = ctx.sessions.create(SessionId('quiet'))
-    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: quiet.id })))
+    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: quiet.id }), quiet))
     const pending = ctx.sessions.create(SessionId('unmatched-boundary'))
     pending.append('turn/start', {
       turn: 1,
     })
     appendHumanPrompt(pending, 'Wait for a matching request boundary')
     await settle()
-    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: pending.id })))
+    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({ ...options, sessionId: pending.id }), pending))
     await settle()
 
     expect(generate).not.toHaveBeenCalled()

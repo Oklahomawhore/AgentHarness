@@ -7,6 +7,7 @@ import type {
   DevelopmentRoomDirectorySnapshot,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { EmergenceProfile } from './profile.ts'
 
 /** Presence operations consumed by the collaboration-center browser state source. */
@@ -32,6 +33,9 @@ export interface ParticipantDirectory extends HostObservable<ParticipantDirector
   reset(): void
   applyPresence(participant: DevelopmentParticipantSnapshot): void
   setProfile(profile: EmergenceProfile): Promise<void>
+  /** Stop renewal, drain sent lease requests, and then attempt withdrawal.
+   * @returns the same completion on repeated calls; failed withdrawal relies on Host lease expiry.
+   */
   dispose(): Promise<void>
 }
 
@@ -47,85 +51,130 @@ export function createParticipantDirectory(
   initialProfile: EmergenceProfile,
   onError: (error: unknown) => void,
 ): ParticipantDirectory {
-  const listeners = new Set<() => void>()
-  let snapshot: ParticipantDirectoryState = { participants: [], presenceTtlMs: 1, read: false }
+  const store = createSnapshotStore<ParticipantDirectoryState>({ participants: [], presenceTtlMs: 1, read: false })
   let profile: EmergenceProfile | undefined = initialProfile.displayName.trim() === '' ? undefined : initialProfile
   let needsAnnounce = profile !== undefined
   let inFlight: Promise<void> | undefined
   let generation = 0
   let heartbeat: ReturnType<typeof setTimeout> | undefined
-
-  const publish = (next: ParticipantDirectoryState): void => {
-    snapshot = next
-    for (const listener of [...listeners]) listener()
+  let closing: Promise<void> | undefined
+  const leaseRequests = new Set<Promise<DevelopmentRoomDirectorySnapshot>>()
+  const current = (issued: number): boolean => closing === undefined && issued === generation
+  const lease = async (request: Promise<DevelopmentRoomDirectorySnapshot>): Promise<DevelopmentRoomDirectorySnapshot> => {
+    leaseRequests.add(request)
+    try { return await request }
+    finally { leaseRequests.delete(request) }
   }
-  const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): void => {
-    publish({ nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true })
+
+  const publishDirectory = (next: DevelopmentRoomDirectorySnapshot): ParticipantDirectoryState => {
+    const accepted = { nodeId: next.nodeId, participants: next.participants, presenceTtlMs: next.presenceTtlMs, read: true }
+    store.set(accepted)
+    return accepted
   }
   const scheduleHeartbeat = (ttl: number): void => {
-    if (heartbeat !== undefined) clearTimeout(heartbeat)
-    if (profile === undefined) return
+    clearTimeout(heartbeat)
+    const retained = profile
+    const issued = generation
+    if (!current(issued) || retained === undefined) return
     heartbeat = setTimeout(() => {
-      const active = profile
-      if (active === undefined) return
-      void port.heartbeat({ participantId: active.id }).then(
-        (next) => { publishDirectory(next); scheduleHeartbeat(next.presenceTtlMs) },
-        (error: unknown) => { onError(error); scheduleHeartbeat(ttl) },
-      )
+      const renew = async (): Promise<void> => {
+        const observed = store.getSnapshot()
+        try {
+          const next = await lease(port.heartbeat({ participantId: retained.id }))
+          if (!current(issued) || profile !== retained) return
+          scheduleHeartbeat(next.presenceTtlMs)
+          if (store.getSnapshot() === observed) publishDirectory(next)
+          else refresh()
+        } catch (error) {
+          if (!current(issued) || profile !== retained) return
+          scheduleHeartbeat(ttl)
+          onError(error)
+        }
+      }
+      void renew()
     }, ttl / 3)
   }
-  const announce = async (nextProfile: EmergenceProfile): Promise<void> => {
-    const next = await port.announce({ id: nextProfile.id, kind: 'human', displayName: nextProfile.displayName })
+  const announce = async (nextProfile: EmergenceProfile): Promise<ParticipantDirectoryState | undefined> => {
+    if (closing !== undefined) return
+    const issued = generation
+    const observed = store.getSnapshot()
+    clearTimeout(heartbeat)
     profile = nextProfile
+    needsAnnounce = true
+    const next = await lease(port.announce({ id: nextProfile.id, kind: 'human', displayName: nextProfile.displayName }))
+    if (!current(issued) || profile !== nextProfile) return
     needsAnnounce = false
-    publishDirectory(next)
     scheduleHeartbeat(next.presenceTtlMs)
+    if (store.getSnapshot() === observed) return publishDirectory(next)
+    refresh()
   }
   const refresh = (): void => {
-    if (inFlight !== undefined) return
+    if (closing !== undefined || inFlight !== undefined) return
     const issued = generation
-    inFlight = port.list().then(
-      async (next) => {
-        if (issued !== generation) return
-        if (profile !== undefined && needsAnnounce) await announce(profile)
-        else { publishDirectory(next); scheduleHeartbeat(next.presenceTtlMs) }
-      },
-      (error: unknown) => {
-        if (issued !== generation) return
+    let observed = store.getSnapshot()
+    const read = async (): Promise<void> => {
+      try {
+        const next = await port.list()
+        if (!current(issued) || store.getSnapshot() !== observed) return
+        if (profile !== undefined && needsAnnounce) {
+          const accepted = await announce(profile)
+          if (accepted !== undefined) observed = accepted
+        }
+        else { scheduleHeartbeat(next.presenceTtlMs); observed = publishDirectory(next) }
+      } catch (error) {
+        if (!current(issued) || store.getSnapshot() !== observed) return
         onError(error)
-        publish({ ...snapshot, read: true, error: error instanceof Error ? error.message : String(error) })
-      },
-    ).then(() => { if (issued === generation) inFlight = undefined })
+        // Presence leases and Task assignment reads retain their own refresh lifecycles.
+        /* jscpd:ignore-start */
+        observed = { ...store.getSnapshot(), read: true, error: error instanceof Error ? error.message : String(error) }
+        store.set(observed)
+        /* jscpd:ignore-end */
+      }
+    }
+    inFlight = read().finally(() => {
+      if (!current(issued)) return
+      inFlight = undefined
+      if (store.getSnapshot() !== observed) refresh()
+    })
   }
 
   refresh()
   return {
-    getSnapshot: () => snapshot,
-    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
+    getSnapshot: () => store.getSnapshot(),
+    // The shared store owns subscriptions; this directory owns refresh and presence-lease disposal.
+    /* jscpd:ignore-start */
+    subscribe: listener => store.subscribe(listener),
+    /* jscpd:ignore-end */
     refresh,
     reset() {
+      if (closing !== undefined) return
       generation += 1
+      clearTimeout(heartbeat)
       inFlight = undefined
-      publish({ participants: [], presenceTtlMs: 1, read: false })
+      store.set({ participants: [], presenceTtlMs: 1, read: false })
       needsAnnounce = profile !== undefined
       refresh()
     },
     applyPresence(participant) {
-      const participants = snapshot.participants.some(current => current.id === participant.id)
-        ? snapshot.participants.map(current => current.id === participant.id ? participant : current)
-        : [...snapshot.participants, participant]
-      publish({ ...snapshot, participants, read: true })
+      if (closing !== undefined) return
+      const participants = store.getSnapshot().participants.some(current => current.id === participant.id)
+        ? store.getSnapshot().participants.map(current => current.id === participant.id ? participant : current)
+        : [...store.getSnapshot().participants, participant]
+      store.set({ ...store.getSnapshot(), participants, read: true })
     },
-    setProfile: announce,
-    async dispose() {
-      generation += 1
-      if (heartbeat !== undefined) clearTimeout(heartbeat)
-      if (profile === undefined) return
-      try {
-        await port.withdraw({ participantId: profile.id })
-      } catch {
-        // Teardown cannot repair a lost connection; the Host lease expires independently.
-      }
+    async setProfile(nextProfile) { await announce(nextProfile) },
+    dispose() {
+      return closing ??= (async () => {
+        generation += 1
+        clearTimeout(heartbeat)
+        await Promise.allSettled(leaseRequests)
+        if (profile === undefined) return
+        try {
+          await port.withdraw({ participantId: profile.id })
+        } catch {
+          // Teardown cannot repair a lost connection; the Host lease expires independently.
+        }
+      })()
     },
   }
 }

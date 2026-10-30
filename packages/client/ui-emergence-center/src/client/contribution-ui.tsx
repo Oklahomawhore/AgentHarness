@@ -1,5 +1,5 @@
 /** Shared presentation for locally confirmed contribution permissions. */
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import type { ScopeContributionInvitation } from '@deepseek-ai/dsh-api-remotes/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -25,15 +25,21 @@ export function contributionErrorKey(code: string): EmergenceCenterKey {
   }
 }
 
+type TransferTextProps = PropsLocale<'emergenceCenter'> & { text: string; label: string }
+
 /** Copy a Host-produced transfer document without requiring JSON editing.
  * @param props - canonical text, localized label and dictionary.
  * @returns selectable transfer text and clipboard feedback.
  */
-export function ContributionTransferText({ text, label, t }: PropsLocale<'emergenceCenter'> & { text: string; label: string }) {
+export function ContributionTransferText(props: TransferTextProps) {
+  return <TransferText key={props.text} {...props} />
+}
+
+/** Keep clipboard feedback within the lifetime of one transfer document. */
+function TransferText({ text, label, t }: TransferTextProps) {
   const id = useId()
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
-  useEffect(() => { setCopied(false); setFailed(false) }, [text])
   return <div className={css.form}>
     <label className={css.field} htmlFor={id}>{label}
       <textarea id={id} readOnly rows={3} value={text} onFocus={(event) => { event.currentTarget.select() }} />
@@ -68,8 +74,37 @@ export function ContributionGrantSummary({ grant, t }: PropsLocale<'emergenceCen
 export function ContributionSourceSummary({ source, t }: PropsLocale<'emergenceCenter'> & { source: ScopeContributionInvitation['grant']['source'] }) {
   return <>
     <dt>{t('contribution.sourceName')}</dt><dd>{source.name}</dd>
-    {source.kind === 'tool-observations' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('contribution.toolObservations')}</dd>
-      <dt>{t('contribution.tools')}</dt><dd>{source.tools.join(', ')}</dd></>
-      : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
+    {source.kind === 'claude-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('claude.work.source')}</dd>
+      <dt>{t('contribution.tools')}</dt><dd>{source.tools.length === 0 ? t('claude.work.notSelected') : source.tools.join(', ')}</dd>
+      <dt>{t('claude.work.commands')}</dt><dd>{source.commands.length === 0 ? t('claude.work.notSelected') : <NativeCommandSummary commands={source.commands} t={t} />}</dd>
+      <dt>{t('claude.work.stopReports')}</dt><dd>{t(source.stopReports ? 'claude.work.selected' : 'claude.work.notSelected')}</dd>
+      {source.stopReports && <><dt>{t('claude.work.reportScope')}</dt><dd>{t('claude.work.stopHint')}</dd></>}
+    </> : source.kind === 'tool-observations' || source.kind === 'native-work' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t(source.kind === 'native-work' ? 'native.work.source' : 'contribution.toolObservations')}</dd>
+      <dt>{t('contribution.tools')}</dt><dd>{source.kind === 'native-work' && source.tools.length === 0
+        ? t('native.work.notSelected') : source.tools.join(', ')}</dd>
+      {(source.version === 4 || source.version === 6) && <><dt>{t('native.commands.scope')}</dt><dd>
+        {source.kind === 'native-work' && source.commands.length === 0
+          ? t('native.work.notSelected') : <NativeCommandSummary commands={source.commands} t={t} />}
+      </dd></>}
+      {source.kind === 'native-work' && <><dt>{t('native.work.completedTurns')}</dt>
+        <dd>{t(source.completedTurns ? 'native.work.selected' : 'native.work.notSelected')}</dd></>}
+      {source.version === 2 && <><dt>{t('contribution.initialization')}</dt><dd>{t('contribution.recordedTools')}</dd></>}
+      {source.fileContent === 'completed-native-file' && <><dt>{t('native.fileContent.scope')}</dt><dd>{t('native.fileContent.complete')}</dd></>}</>
+      : source.kind === 'completed-turn-outcomes' ? <><dt>{t('contribution.sourceKind')}</dt><dd>{t('native.outcomes.source')}</dd>
+        <dt>{t('native.outcomes.permission')}</dt><dd>{t('native.outcomes.scope')}</dd></>
+        : <><dt>{t('contribution.operation')}</dt><dd>{source.method.toUpperCase()} {source.path}</dd></>}
   </>
+}
+
+/**
+ * Display the approved command and public directory number without exposing local paths.
+ * @param props - exact command selectors from an observed permission and translations.
+ * @returns the selected commands and their separate working-directory identities.
+ */
+export function NativeCommandSummary({ commands, t }: PropsLocale<'emergenceCenter'> & {
+  commands: readonly { readonly command: string; readonly rootIndex: number }[]
+}) {
+  return <ul>{commands.map((item, index) => <li key={index}>
+    <code style={{ whiteSpace: 'pre-wrap' }}>{item.command}</code> — {t('native.commands.root', { index: item.rootIndex + 1 })}
+  </li>)}</ul>
 }

@@ -3,14 +3,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSyncExternalStore } from 'react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ClaudeScopeSessionKey, ClaudeScopeSessionSummary, DevelopmentTaskId } from '@deepseek-ai/dsh-api-remotes/client'
 import { ClaudeScopePanel } from '../src/client/ClaudeScopePanel.tsx'
 import { createClaudeScopeDirectory, type ClaudeScopeDirectory, type ClaudeScopePort } from '../src/client/claude-scopes.ts'
 import { zh } from '../src/client/locales.ts'
 
 const TASK = 'task-local' as DevelopmentTaskId
-const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false }
+const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const B: ClaudeScopeSessionSummary = { ...A, sessionKey: 'b' as ClaudeScopeSessionKey, sessionId: 'claude-b' }
 const PROJECT = { projectPath: '/project', settingsPath: '/project/.claude/settings.local.json', profileName: 'scope-hook' }
 const t = makeTranslate(zh)
@@ -25,6 +25,8 @@ function Harness({ directory, localTask }: { directory: ClaudeScopeDirectory; lo
     refresh={() => { directory.refresh() }} contributions={{}} readContribution={() => {}}
     requestContribution={async () => {}} prepareContribution={async () => {}}
     activateContribution={async () => {}} stopContribution={async () => {}}
+    leaveJointContribution={async () => {}} recoverJointContribution={async () => {}}
+    probeContributionEntry={async () => ({ status: 'ready' })}
     previewContributionText={async () => { throw new Error('unused') }} t={t} />
 }
 
@@ -51,6 +53,97 @@ function selectB() {
 }
 
 describe('Claude project and session controls', () => {
+  it('configures project hooks with no observed Session while leaving membership ungranted', async () => {
+    const { port } = await mount({ sessions: async () => [] })
+    expect(screen.getByText(zh['claude.empty'])).toBeTruthy()
+    fireEvent.change(screen.getByLabelText(zh['claude.projectPath']), { target: { value: '/project' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['claude.configure'] }))
+    await screen.findByText(zh['claude.configured'])
+    expect(port.setup).toHaveBeenCalledExactlyOnceWith({ projectPath: '/project' })
+    expect(screen.queryByRole('radio')).toBeNull()
+    expect(port.join).not.toHaveBeenCalled()
+  })
+
+  it('uses the explicitly entered project directory when the observed Session has no cwd', async () => {
+    const { cwd: _cwd, ...observed } = A
+    const { port } = await mount({ sessions: async () => [observed] })
+    fireEvent.change(screen.getByLabelText(zh['claude.projectPath']), { target: { value: '  /workspace/frontend  ' } })
+    fireEvent.click(screen.getByRole('radio', { name: /claude-a/u }))
+    expect(screen.getByText(zh['claude.cwdUnknown'])).toBeTruthy()
+    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['claude.roots']).value).toBe('/workspace/frontend')
+    expect(port.join).not.toHaveBeenCalled()
+    expect(port.setup).not.toHaveBeenCalled()
+  })
+
+  it('recovers a failed Session read before offering setup or membership actions', async () => {
+    const sessions = vi.fn<ClaudeScopePort['sessions']>()
+      .mockRejectedValueOnce(new RemoteError('gateway/internal', 'private Session read detail', {})).mockResolvedValue([A])
+    const { port } = await mount({ sessions })
+    expect(screen.getByRole('alert').textContent).toBe(zh['claude.readFailed'])
+    expect(screen.queryByText('private Session read detail')).toBeNull()
+    expect(screen.getByRole('button', { name: zh['claude.configure'] })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: zh['claude.refresh'] }))
+    await screen.findByRole('radio', { name: /claude-a/u })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(sessions).toHaveBeenCalledTimes(2)
+    expect(port.join).not.toHaveBeenCalled()
+    expect(port.setup).not.toHaveBeenCalled()
+  })
+
+  it.each(['awaiting-approval', 'active'] as const)('leaves the observed %s scope on another Task without joining the displayed Task', async (sharingState) => {
+    const other = 'task-other' as DevelopmentTaskId
+    const observed: ClaudeScopeSessionSummary = { ...A, taskId: other, sharingState, responsibility: 'Existing API work' }
+    const { port } = await mount({ sessions: async () => [observed] })
+    expect(screen.getByText(zh[sharingState === 'active' ? 'claude.active' : 'claude.awaitingApproval'])).toBeTruthy()
+    expect(screen.getByText(t('claude.otherTask', { taskId: other }))).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: /claude-a/u }))
+    fireEvent.click(screen.getByRole('button', { name: zh['claude.leave'] }))
+    await waitFor(() => { expect(port.leave).toHaveBeenCalledExactlyOnceWith({ sessionKey: A.sessionKey }) })
+    expect(port.join).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { state: 'ended', live: false }, { state: 'superseded', live: false },
+    { state: 'ended', live: true }, { state: 'superseded', live: true },
+  ] as const)('permits a new Task grant after a cleaned $state joint only while its original Session is live=$live', async ({ state, live }) => {
+    const observed: ClaudeScopeSessionSummary = { ...A, ended: !live, joint: {
+      id: 'previous-joint' as NonNullable<ClaudeScopeSessionSummary['joint']>['id'],
+      capture: { captureId: 'previous-capture' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureId'],
+        captureGeneration: 'previous-generation' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureGeneration'] },
+      expectedReadRevision: 0, state, intent: 'leave', cleanupPending: false,
+    } }
+    const join = vi.fn<ClaudeScopePort['join']>(async request => ({ ...observed,
+      taskId: request.taskId, responsibility: request.responsibility }))
+    await mount({ sessions: async () => [observed], join })
+    const choose = screen.getByRole<HTMLInputElement>('radio', { name: /claude-a/u })
+    expect(choose.disabled).toBe(!live)
+    fireEvent.click(choose)
+    if (live) {
+      fireEvent.change(screen.getByLabelText(zh['claude.responsibility']), { target: { value: 'Fresh frontend work' } })
+      fireEvent.click(screen.getByRole('button', { name: zh['claude.join'] }))
+      await waitFor(() => { expect(join).toHaveBeenCalledExactlyOnceWith({ sessionKey: A.sessionKey, taskId: TASK,
+        responsibility: 'Fresh frontend work', roots: ['/project'], bashCommands: [] }) })
+    } else {
+      expect(screen.queryByRole('button', { name: zh['claude.join'] })).toBeNull()
+      expect(join).not.toHaveBeenCalled()
+    }
+  })
+
+  it('keeps ended sessions selectable while their exact joint cleanup needs recovery', async () => {
+    const ended: ClaudeScopeSessionSummary = { ...A, ended: true, joint: {
+      id: 'ended-joint' as NonNullable<ClaudeScopeSessionSummary['joint']>['id'],
+      capture: { captureId: 'capture' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureId'],
+        captureGeneration: 'generation' as NonNullable<ClaudeScopeSessionSummary['joint']>['capture']['captureGeneration'] },
+      expectedReadRevision: 0, state: 'ended', intent: 'leave', cleanupPending: true,
+    } }
+    await mount({ sessions: async () => [ended] })
+    const choice = screen.getByRole<HTMLInputElement>('radio', { name: /claude-a/u })
+    expect(choice.disabled).toBe(false)
+    fireEvent.click(choice)
+    expect(screen.getByText(zh['claude.joint.ending'])).toBeTruthy()
+    expect(screen.getByRole('button', { name: zh['claude.joint.leave'] })).toBeTruthy()
+  })
+
   it('checks, configures, and removes only project hooks while retaining joined-session controls', async () => {
     const { port } = await mount({
       sessions: async () => [{ ...A, taskId: TASK }],
@@ -90,18 +183,22 @@ describe('Claude project and session controls', () => {
   })
 
   it('keeps the selected grant after join and leave failures and allows retry', async () => {
-    const join = vi.fn().mockRejectedValueOnce(new Error('private host diagnostic')).mockResolvedValue({ ...B, taskId: TASK })
-    const leave = vi.fn().mockRejectedValueOnce(new Error('private host diagnostic')).mockResolvedValue(B)
-    await mount({ join, leave })
+    const join = vi.fn<ClaudeScopePort['join']>().mockRejectedValueOnce(new Error('private host diagnostic'))
+      .mockResolvedValue({ ...B, taskId: TASK })
+    const leave = vi.fn<ClaudeScopePort['leave']>().mockRejectedValueOnce(new Error('private host diagnostic')).mockResolvedValue(B)
+    const sessions = vi.fn<ClaudeScopePort['sessions']>(async () => [A, B])
+    await mount({ join, leave, sessions })
     selectB()
     fireEvent.click(screen.getByRole('button', { name: zh['claude.join'] }))
     expect((await screen.findByRole('alert')).textContent).toBe(zh['claude.actionFailed'])
     expect(screen.queryByText('private host diagnostic')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: zh['claude.join'] }))
     await screen.findByRole('button', { name: zh['claude.leave'] })
+    sessions.mockResolvedValue([A, { ...B, taskId: TASK }])
     fireEvent.click(screen.getByRole('button', { name: zh['claude.leave'] }))
     await screen.findByRole('alert')
     expect(screen.getByRole('button', { name: zh['claude.updateGrant'] })).toBeTruthy()
+    sessions.mockResolvedValue([A, B])
     fireEvent.click(screen.getByRole('button', { name: zh['claude.leave'] }))
     await waitFor(() => { expect(screen.queryByRole('button', { name: zh['claude.leave'] })).toBeNull() })
     expect(leave).toHaveBeenNthCalledWith(1, { sessionKey: B.sessionKey })

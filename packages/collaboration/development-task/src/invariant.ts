@@ -17,7 +17,10 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
     const retained = ctx.developmentTasks.log().find(item => item.nodeId === entry.nodeId && item.seq === entry.seq)
     if (retained !== entry) fail(`change event entry ${String(entry.seq)} is not retained`)
     const current = ctx.developmentTasks.get({ taskId: snapshot.id })
-    if (current.updatedAt !== entry.at) fail(`change event does not match Task "${snapshot.id}"`)
+    if (entry.taskId !== snapshot.id || current.updatedAt !== entry.at
+      || snapshot.revision !== entry.revision || current.revision !== entry.revision) {
+      fail(`change event does not match Task "${snapshot.id}"`)
+    }
   })
 }, { inject: ['developmentTasks', 'developmentRooms'] })
 export const apply = (ctx: Context): Promise<() => void> => Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))

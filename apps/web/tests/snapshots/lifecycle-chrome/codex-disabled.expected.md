@@ -1,0 +1,12 @@
+- article:
+  - strong: Codex
+  - text: Manual setup
+  - list "Agent connection progress":
+    - listitem: Configured
+    - listitem: Online
+    - listitem: Session connected
+    - listitem: Context acknowledged
+  - paragraph: Codex was detected, but only manual setup is supported; private client configuration was not modified.
+  - paragraph:
+    - strong: "Next step:"
+    - text: Run agentharness mcp-guide, follow the Codex instructions, restart the client, then refresh.

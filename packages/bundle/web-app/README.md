@@ -74,7 +74,7 @@ When you launch `dsh --profile web` over SSH, the URL line still prints but the 
 
 Each browser session composes its own agent from the shipped presets (the `standard` preset by default), instead of sharing one process-wide tool set. You can change the default preset or add your own presets under `$DSH_HOME/.agent-presets`.
 
-On macOS and Linux, the bundle also mounts the [Claude scope adapter](../../collaboration/claude-scope/README.md). Hook installation and Task membership remain explicit; merely starting Web grants no access to a Claude session or its files. The shared context backend remains `/text` by default. The Claude adapter is disabled on Windows because its private connection descriptor requires an OS lock not yet supported there; the rest of Web still starts.
+On macOS and Linux, the bundle also mounts the [Claude scope adapter](../../collaboration/claude-scope/README.md). Hook installation and Task membership remain explicit; merely starting Web grants no access to a Claude session or its files. The shared context backend defaults to [`/reported`](../../collaboration/development-task-context/README.md#behavior), which can reconstruct file text from complete authorized live Write/Edit reports without a model call. The Claude adapter is disabled on Windows because its private connection descriptor requires an OS lock not yet supported there; the rest of Web still starts.
 
 -----
 
@@ -84,7 +84,7 @@ On macOS and Linux, the bundle also mounts the [Claude scope adapter](../../coll
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The bundle is one patch plus one runtime glue plugin. The storage stack and projection cache come from `dsh-base`; the web overlay's workspace and message-feedback rows consume that shared `storageDomain` service. The patch restates the surface-specific values the base deliberately omits, inserts the web-only host rows and browser roster, then moves the agent plane behind presets. The glue plugin owns dist serving, trust sampling, prompt sections, the bash variable, and the readiness announcements.
+The bundle is one patch plus one runtime glue plugin. The storage stack and projection cache come from `dsh-base`; the web overlay's workspace and message-feedback rows consume that shared `storageDomain` service. The patch restates the surface-specific values the base deliberately omits, inserts the web-only host rows and browser roster, then moves the agent plane behind presets. The glue plugin owns dist serving, trust sampling, prompt sections, the bash variable, and the readiness announcements. Task persistence and upgrades are documented by the [Task storage adapter](../../collaboration/development-task-storage-domain/README.md).
 
 ### Patch semantics
 
@@ -92,7 +92,7 @@ A patch replaces the targeted row's whole `config`, so each web row restates eve
 
 ### Readiness
 
-The URL line and browser handoff are readiness signals: supervisors RPC as soon as they observe the line, and a browser requests the page as soon as it opens, so both run only after the Loader tree settles and Connection authentication is available — or immediately in a hand-built tree without a Loader. A tree disposed mid-boot announces nothing.
+The URL line and browser handoff wait for the launcher's `appReady` signal, after the Loader tree and launcher setup succeed. An embedding host without `appReady` uses Loader settlement, or announces immediately when it also has no Loader. Disposal cancels a pending announcement. This signal confirms HTTP/RPC startup; it does not await asynchronous work started by other readiness listeners.
 
 ### LAN trust sampling
 

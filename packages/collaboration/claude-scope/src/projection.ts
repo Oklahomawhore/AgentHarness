@@ -64,21 +64,21 @@ export async function computeScopeProjection(input: ScopeProjectionInput): Promi
 
 /**
  * Withdraw the active shared-scope status without repeating any source facts.
- * @param session - recipient whose grant ended after an earlier projection.
+ * @param previous - retained projection whose shared-scope authorization ended.
  * @param maxContextBytes - complete UTF-8 output budget.
  * @returns exact durable withdrawal text; it cannot erase earlier Claude history.
  */
-export function withdrawnScopeProjection(session: ScopeSession, maxContextBytes: number): ScopeProjection {
-  const cacheKey = scopeDigest([session.sessionKey, 'withdrawal', session.lastProjectionId, maxContextBytes])
+export function withdrawnScopeProjection(previous: ScopeProjection, maxContextBytes: number): ScopeProjection {
+  const cacheKey = scopeDigest([previous.sessionKey, 'withdrawal', previous.projectionId, maxContextBytes])
   const projectionId = `claude-projection-${scopeDigest([cacheKey])}`
   const text = '## Shared scope disconnected\n'
     + 'The shared-scope connection is no longer active. Earlier shared-scope projections do not establish current authorization '
     + 'or current facts. This notice does not erase information already present in this conversation.\n'
-    + JSON.stringify({ projectionId, supersedes: session.lastProjectionId ?? null })
+    + JSON.stringify({ projectionId, supersedes: previous.projectionId })
   if (Buffer.byteLength(text, 'utf8') > maxContextBytes) throw new Error('claude-scope: withdrawal exceeds maxContextBytes')
   return {
-    projectionId, sessionKey: session.sessionKey, kind: 'withdrawal', cacheKey, maxContextBytes,
-    ...(session.lastProjectionId === undefined ? {} : { previousProjectionId: session.lastProjectionId }),
+    projectionId, sessionKey: previous.sessionKey, kind: 'withdrawal', cacheKey, maxContextBytes,
+    previousProjectionId: previous.projectionId,
     text, selectedSources: [], omittedSources: [],
   }
 }

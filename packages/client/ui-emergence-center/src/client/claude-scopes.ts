@@ -37,6 +37,7 @@ export interface ClaudeScopeDirectory extends HostObservable<ClaudeScopeState> {
 
 /**
  * Keep old reads and connection generations from replacing newer user actions.
+ * Failed membership requests reread Host authority without repeating the request.
  * @param port - generated Remote calls, unwrapped by the plugin assembly.
  * @param onError - diagnostic observer for background read failures.
  * @returns one stable observable source and its owned operations.
@@ -113,9 +114,12 @@ export function createClaudeScopeDirectory(port: ClaudeScopePort, onError: (erro
           : [...snapshot.sessions, session]
         publish({ ...snapshot, sessions, status: 'ready' })
       }
-      return session
-    } finally {
       if (active && issued === generation) invalidateReads()
+      return session
+    } catch (error) {
+      if (active && issued === generation) refresh()
+      throw error
+    } finally {
       if (mutations.get(request.sessionKey) === token) mutations.delete(request.sessionKey)
     }
   }

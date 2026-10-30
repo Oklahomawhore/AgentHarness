@@ -26,12 +26,17 @@ export function apply(ctx) {
   let rechecking = false
   let started = false
   let bindingId
+  const repeatedRead = Promise.withResolvers()
   const pending = new Set()
   const own = promise => {
     pending.add(promise)
     void promise.then(() => pending.delete(promise), error => { pending.delete(promise); ctx.logger.error(error); ctx.appExit(1) })
   }
-  ctx.effect(() => async () => { await Promise.allSettled([...pending]) })
+  ctx.effect(() => async () => {
+    repeatedRead.resolve()
+    delete ctx.scopeTransport.observeRead
+    await Promise.allSettled([...pending])
+  })
   ctx.effect(() => ctx.tools.register(defineContentToolFixture({
     name: 'scope_fixture_change', description: 'Advance the controlled remote API declaration for this snapshot.', parameters: {},
     async execute() {
@@ -62,10 +67,23 @@ export function apply(ctx) {
     }
     if (requests !== 1 || resumed) return
     resumed = true
-    ctx.scopeTransport.change(2)
-    own(ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: bindingId, automatic: {
-      goal: 'Update the client against the current orders API declaration.', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0,
-    } }))
+    const reads = ctx.scopeTransport.reads
+    ctx.scopeTransport.observeRead = () => {
+      if (ctx.scopeTransport.reads >= reads + 2) repeatedRead.resolve()
+    }
+    own(agent.runMaintenance(async (signal) => {
+      ctx.scopeTransport.change(2)
+      await ctx.scopeAgentContext.resume({ agentId: agent.id, expectedBindingId: bindingId, automatic: {
+        goal: 'Update the client against the current orders API declaration.', activationLimit: 2, maxStepsPerTurn: 2, minIntervalMs: 0,
+      } })
+      await repeatedRead.promise
+      signal.throwIfAborted()
+      delete ctx.scopeTransport.observeRead
+      const state = (await ctx.scopeAgentContext.status({ agentId: agent.id })).state
+      assert.equal(state.mode, 'enabled')
+      assert.equal(state.usedBudget, 0)
+      assert.equal(requests, 1)
+    }))
   })
   ctx.on('session/event', (session, event) => {
     if (session !== agent?.session || event.type !== 'scope-agent-context/evaluation'

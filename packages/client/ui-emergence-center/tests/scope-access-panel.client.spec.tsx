@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ScopeInvitation, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
-import { ScopeAccessPanel, type ScopeAccessPanelProps } from '../src/client/ScopeAccessPanel.tsx'
+import { ScopeAccessPanel, type ScopeAccessPanelProps, type ScopeAccessValue } from '../src/client/ScopeAccessPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 
 const invitation: ScopeInvitation = {
@@ -13,17 +13,59 @@ const invitation: ScopeInvitation = {
   expiresAt: 9999999999999, responsibility: 'frontend',
 }
 const session: ClaudeScopeSessionSummary = { sessionKey: 'session' as ClaudeScopeSessionSummary['sessionKey'],
-  sessionId: 'claude-recipient', observedAt: 1, ended: false }
-const inventory: Awaited<ReturnType<ScopeAccessPanelProps['readScopeAccess']>> = {
+  sessionId: 'claude-recipient', observedAt: 1, ended: false, readRevision: 0 }
+const inventory: ScopeAccessValue = {
   identity: { peerId: invitation.recipientPeerId, addresses: [invitation.ownerAddress] },
   access: { grants: [], subscriptions: [] },
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
+it.each([
+  { address: '/ip6/::1/tcp/43120/p2p/owner-peer', label: '[::1]:43120', local: true },
+  { address: '/ip6/2001:db8::20/tcp/43120/p2p/owner-peer', label: '[2001:db8::20]:43120', local: false },
+  { address: '/dns4/owner.example/tcp/43120/p2p/owner-peer', label: '/dns4/owner.example/tcp/43120/p2p/owner-peer', local: false },
+])('keeps the exact published $address while displaying its local or network destination', async ({ address, label, local }) => {
+  const { props } = await mount({ taskId: invitation.taskId, entry: { status: 'ready', pending: false,
+    value: { ...inventory, identity: { ...inventory.identity, addresses: [address] } } } })
+  const option = screen.getByRole<HTMLOptionElement>('option', {
+    name: zh[local ? 'access.addressLocal' : 'access.addressNetwork'].replace('{address}', label),
+  })
+  expect(option.value).toBe(address)
+  expect(screen.queryByText(zh['access.addressLocalHint']) !== null).toBe(local)
+  inviteSelectedTask()
+  await waitFor(() => { expect(props.inviteScope).toHaveBeenCalledOnce() })
+  expect(vi.mocked(props.inviteScope).mock.calls[0]?.[0].ownerAddress).toBe(address)
+})
+
+it('keeps the invitation available when receive has no confirmed result', async () => {
+  const receiveClaudeScope = vi.fn<ScopeAccessPanelProps['receiveClaudeScope']>(async () => undefined)
+  const { props, rerender } = await mount({ receiveClaudeScope })
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
+  await waitFor(() => { expect(receiveClaudeScope).toHaveBeenCalledOnce() })
+  expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
+  rerender(<ScopeAccessPanel {...props} entry={{ value: inventory, status: 'ready', pending: false,
+    error: 'contribution/unknown-outcome' }} />)
+  expect(screen.getByRole('alert').textContent).toBe(zh['access.failed'])
+  expect(receiveClaudeScope).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, invitation })
+})
+
+it('uses the explicitly selected invitation duration for the owner request', async () => {
+  const { props } = await mount({ taskId: invitation.taskId })
+  const before = Date.now()
+  fireEvent.change(screen.getByLabelText(zh['access.hours']), { target: { value: '2' } })
+  inviteSelectedTask()
+  await waitFor(() => { expect(props.inviteScope).toHaveBeenCalledOnce() })
+  const expiresAt = vi.mocked(props.inviteScope).mock.calls[0]?.[0].expiresAt
+  expect(expiresAt).toBeGreaterThanOrEqual(before + 7_200_000)
+  expect(expiresAt).toBeLessThanOrEqual(Date.now() + 7_200_000)
+})
+
 function renderPanel(overrides: Partial<ScopeAccessPanelProps> = {}) {
   const props: ScopeAccessPanelProps = {
-    sessions: { status: 'ready', sessions: [session] }, refreshSessions: vi.fn(),
-    readScopeAccess: vi.fn(async () => inventory),
+    sessions: { status: 'ready', sessions: [session] },
+    entry: { status: 'ready', pending: false, value: inventory }, readScopeAccess: vi.fn(),
     inviteScope: vi.fn(async () => invitation), revokeScope: vi.fn(async () => {}),
     receiveClaudeScope: vi.fn(async () => session), stopClaudeReceive: vi.fn(async () => session),
     t: makeTranslate(zh), ...overrides,
@@ -54,7 +96,6 @@ it('receives a device invitation without a local Task or capture-root permission
   fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
   await waitFor(() => { expect(props.receiveClaudeScope).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, invitation }) })
-  await waitFor(() => { expect(props.refreshSessions).toHaveBeenCalledOnce() })
   await expect(`${container.textContent}\n`).toMatchFileSnapshot('./expected/independent-receive.zh.txt')
 })
 
@@ -95,64 +136,54 @@ it('discards a delayed invitation across an A to B to A Task selection', async (
   await act(async () => { completed.resolve(invitation); await completed.promise })
   await waitFor(() => { expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.invite'] }).disabled).toBe(false) })
   expect(screen.queryByLabelText(zh['access.created'])).toBeNull()
-  expect(props.refreshSessions).toHaveBeenCalledOnce()
 })
 
-it('retries a failed initial inventory read and enables receipt without remounting', async () => {
-  const readScopeAccess = vi.fn<ScopeAccessPanelProps['readScopeAccess']>()
-    .mockRejectedValueOnce(new Error('temporarily unavailable')).mockResolvedValue(inventory)
-  const { container, props } = renderPanel({ readScopeAccess })
-  expect((await screen.findByRole('alert')).textContent).toContain(zh['access.loadFailed'])
+it('retries a failed initial inventory read and enables receipt from confirmed state without remounting', async () => {
+  const { container, props, rerender } = renderPanel({ entry: { status: 'error', pending: false, error: 'UNAVAILABLE' } })
+  expect(screen.getByRole('alert').textContent).toContain(zh['access.loadFailed'])
   await expect(`${container.textContent}\n`).toMatchFileSnapshot('./expected/independent-inventory-error.zh.txt')
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: zh['access.retry'] }))
-  await screen.findByDisplayValue(invitation.recipientPeerId)
+  expect(props.readScopeAccess).toHaveBeenCalledTimes(2)
+  rerender(<ScopeAccessPanel {...props} entry={{ status: 'ready', pending: false, value: inventory }} />)
   expect(screen.queryByRole('alert')).toBeNull()
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
   fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(false)
   expect(props.receiveClaudeScope).not.toHaveBeenCalled()
-  expect(readScopeAccess).toHaveBeenCalledTimes(2)
 })
 
-it.each(['receive', 'stop'] as const)('refreshes sessions after %s even while inventory fails and retries only the read', async (operation) => {
-  const delayed = Promise.withResolvers<Awaited<ReturnType<ScopeAccessPanelProps['readScopeAccess']>>>()
-  const readScopeAccess = vi.fn<ScopeAccessPanelProps['readScopeAccess']>()
-    .mockResolvedValueOnce(inventory).mockImplementationOnce(() => delayed.promise).mockResolvedValue(inventory)
+it.each(['receive', 'stop'] as const)('retries only the inventory after an unconfirmed %s outcome', async (operation) => {
   const joined: ClaudeScopeSessionSummary = { ...session, receiveSubscriptionId: 'read-subscription' as NonNullable<ClaudeScopeSessionSummary['receiveSubscriptionId']>,
     receiveTaskId: invitation.taskId, receiveState: 'pending' }
-  const { props } = await mount({ readScopeAccess,
+  const { props, rerender } = await mount({
     sessions: { status: 'ready', sessions: [operation === 'receive' ? session : joined] } })
   if (operation === 'receive') {
     fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
     fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
   }
   fireEvent.click(screen.getByRole('button', { name: zh[operation === 'receive' ? 'access.receive' : 'access.stop'] }))
-  await waitFor(() => { expect(readScopeAccess).toHaveBeenCalledTimes(2) })
-  expect(props.refreshSessions).toHaveBeenCalledOnce()
-  await act(async () => { delayed.reject(new Error('status read failed')); await expect(delayed.promise).rejects.toThrow('status read failed') })
-  expect((await screen.findByRole('alert')).textContent).toContain(zh['access.loadFailed'])
   const mutation = operation === 'receive' ? props.receiveClaudeScope : props.stopClaudeReceive
-  expect(mutation).toHaveBeenCalledOnce()
+  await waitFor(() => { expect(mutation).toHaveBeenCalledOnce() })
+  rerender(<ScopeAccessPanel {...props} entry={{ status: 'error', pending: false, value: inventory, error: 'UNAVAILABLE' }} />)
+  expect(screen.getByRole('alert').textContent).toContain(zh['access.loadFailed'])
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: zh[operation === 'receive' ? 'access.receive' : 'access.stop'] }).disabled).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: zh['access.retry'] }))
-  await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
-  expect(readScopeAccess).toHaveBeenCalledTimes(3)
+  expect(props.readScopeAccess).toHaveBeenCalledTimes(2)
   expect(mutation).toHaveBeenCalledOnce()
 })
 
 it('requires a current published route for read invitations and invalidates a route lost on refresh', async () => {
   const network = '/ip4/192.0.2.10/tcp/43120/p2p/owner-peer'
-  const readScopeAccess = vi.fn<ScopeAccessPanelProps['readScopeAccess']>()
-    .mockResolvedValueOnce({ ...inventory, identity: { ...inventory.identity, addresses: [invitation.ownerAddress, network] } })
-    .mockResolvedValue({ ...inventory, identity: { ...inventory.identity, addresses: [invitation.ownerAddress] } })
-  const { props } = await mount({ taskId: invitation.taskId, readScopeAccess })
+  const { props, rerender } = await mount({ taskId: invitation.taskId, entry: { status: 'ready', pending: false,
+    value: { ...inventory, identity: { ...inventory.identity, addresses: [invitation.ownerAddress, network] } } } })
   inviteSelectedTask()
   expect(props.inviteScope).not.toHaveBeenCalled()
   expect(screen.getByText(zh['access.responsibilityHint'])).toBeTruthy()
   fireEvent.change(screen.getByLabelText(zh['access.address']), { target: { value: network } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.invite'] }))
-  await waitFor(() => { expect(readScopeAccess).toHaveBeenCalledTimes(2) })
-  expect(vi.mocked(props.inviteScope).mock.calls[0]?.[0].ownerAddress).toBe(network)
+  await waitFor(() => { expect(vi.mocked(props.inviteScope).mock.calls[0]?.[0].ownerAddress).toBe(network) })
+  rerender(<ScopeAccessPanel {...props} entry={{ status: 'ready', pending: false, value: inventory }} />)
   await waitFor(() => { expect(screen.getByLabelText<HTMLSelectElement>(zh['access.address']).value).toBe('') })
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.invite'] }).disabled).toBe(true)
 })

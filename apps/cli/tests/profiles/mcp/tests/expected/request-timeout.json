@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "agentharness bridge: request-timeout"
+    }
+  ],
+  "isError": true
+}

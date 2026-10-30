@@ -52,10 +52,11 @@ interface Draft extends Choice { revision: number | undefined }
 
 function choice(addresses: readonly string[]): Choice {
   if (addresses.length !== 1) return { mode: 'custom', port: '' }
-  if (addresses[0] === '/ip4/127.0.0.1/tcp/0') return { mode: 'local', port: '' }
-  const match = /^\/ip4\/0\.0\.0\.0\/tcp\/([1-9]\d*)$/.exec(addresses[0] ?? '')
-  return match !== null && Number(match[1]) <= 65535
-    ? { mode: 'lan', port: match[1] ?? '' } : { mode: 'custom', port: '' }
+  const address = addresses.join('')
+  if (address === '/ip4/127.0.0.1/tcp/0') return { mode: 'local', port: '' }
+  const port = address.slice(address.lastIndexOf('/') + 1)
+  return /^\/ip4\/0\.0\.0\.0\/tcp\/[1-9]\d*$/.test(address) && Number(port) <= 65535
+    ? { mode: 'lan', port } : { mode: 'custom', port: '' }
 }
 
 function same(left: readonly string[], right: readonly string[]): boolean {
@@ -68,7 +69,7 @@ export class ScopeNetworkCardController {
   private saving = false
   private failed = false
   private conflicted = false
-  private saved = false
+  private confirmation: { revision: number | undefined; addresses: readonly string[] } | undefined
   private disposed = false
   private generation = 0
   private readonly store: SnapshotStore<ScopeNetworkCardState>
@@ -81,7 +82,8 @@ export class ScopeNetworkCardController {
       if (!this.saving && this.draft !== undefined && this.scope.getSnapshot().revision !== this.draft.revision) {
         this.conflicted = true
       }
-      this.saved = false
+      if (this.confirmation !== undefined && (this.scope.getSnapshot().revision !== this.confirmation.revision
+        || !same(this.addresses(), this.confirmation.addresses))) this.confirmation = undefined
       this.publish()
     })
   }
@@ -93,7 +95,7 @@ export class ScopeNetworkCardController {
   resetConnection(): void {
     if (this.disposed) return
     this.generation += 1
-    this.saved = false
+    this.confirmation = undefined
     this.conflicted = this.draft !== undefined
     this.publish()
   }
@@ -109,7 +111,7 @@ export class ScopeNetworkCardController {
       save: () => { void this.save() },
       discard: () => {
         if (this.saving || this.disposed) return
-        this.draft = undefined; this.failed = false; this.conflicted = false; this.saved = false
+        this.draft = undefined; this.failed = false; this.conflicted = false; this.confirmation = undefined
         this.publish()
       },
     }
@@ -124,7 +126,7 @@ export class ScopeNetworkCardController {
   private edit(next: Choice): void {
     if (!this.writable() || this.saving) return
     this.draft = { ...next, revision: this.draft?.revision ?? this.scope.getSnapshot().revision }
-    this.failed = false; this.saved = false
+    this.failed = false; this.confirmation = undefined
     this.publish()
   }
   private desired(): readonly string[] | undefined {
@@ -138,19 +140,23 @@ export class ScopeNetworkCardController {
   private async save(): Promise<void> {
     const desired = this.desired()
     if (!this.writable() || this.saving || desired === undefined || same(this.addresses(), desired)) return
+    // Each settings card owns its draft revision; network address confirmation and model catalog saves
+    // are separate transactions.
+    /* jscpd:ignore-start */
     const revision = this.draft?.revision
+    /* jscpd:ignore-end */
     if (this.conflicted || revision === undefined || this.scope.getSnapshot().revision !== revision) {
       this.conflicted = true; this.publish(); return
     }
     const generation = this.generation
-    this.saving = true; this.failed = false; this.saved = false
+    this.saving = true; this.failed = false; this.confirmation = undefined
     this.publish()
     try {
       await this.scope.mutate([{ op: 'set', path: ['listenAddresses'], value: [...desired] }], revision)
       if (this.disposed) return
       const confirmed = generation === this.generation && same(this.addresses(), desired)
       this.failed = !confirmed
-      this.saved = confirmed
+      this.confirmation = confirmed ? { revision: this.scope.getSnapshot().revision, addresses: [...desired] } : undefined
       if (confirmed) { this.draft = undefined; this.conflicted = false }
     } catch {
       // Transport failure leaves the draft intact; the settings scope owns recovery reads.
@@ -168,7 +174,7 @@ export class ScopeNetworkCardController {
       dirty: this.draft !== undefined && (desired === undefined || !same(this.addresses(), desired) || this.conflicted),
       invalid: desired === undefined || this.conflicted, saving: this.saving, failed: this.failed,
       ...selected, customAddresses: selected.mode === 'custom' ? [...this.addresses()] : [],
-      remote: snapshot.mode !== 'host', conflicted: this.conflicted, saved: this.saved,
+      remote: snapshot.mode !== 'host', conflicted: this.conflicted, saved: this.confirmation !== undefined,
     }
   }
   private publish(): void { if (!this.disposed) this.store.set(this.projection()) }

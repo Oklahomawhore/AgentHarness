@@ -1,0 +1,12 @@
+version: 1
+scenario: mcp-session
+profile: acp
+composition: acp-mcp-session
+recording: authored
+header:
+  class: acp-mcp-session
+  pin: true
+  systemPromptSource: escalation-approved
+replay:
+  override: true
+permission: danger-full-access

@@ -1,0 +1,36 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- insert:
+    - id: claude-work-clock
+      name: '../scope-turn-outcomes/identity-fixture.mjs'
+    - id: claude-work-room
+      name: '@deepseek-ai/dsh-development-room'
+      config:
+        nodeId: snapshot-claude-work-owner
+        presenceTtlMs: 60000
+        maxParticipants: 16
+        maxRooms: 32
+        maxTextBytes: 8192
+    - id: claude-work-task
+      name: '@deepseek-ai/dsh-development-task'
+      config:
+        maxTasks: 32
+        maxEventsPerTask: 64
+        maxMergeParents: 8
+        maxContextBlockBytes: 65536
+        maxLineageTasks: 64
+        maxTextBytes: 8192
+        roomRetryIntervalMs: 10000
+    - id: claude-work-reported
+      name: '@deepseek-ai/dsh-development-task-context/reported'
+    - id: claude-work-context
+      name: '@deepseek-ai/dsh-development-task-context'
+      config:
+        maxContextBytesPerStep: 12000
+    - id: claude-work-fixture
+      name: './claude-work-fixture.mjs'

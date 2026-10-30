@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
@@ -10,6 +11,7 @@ import type { Config } from '../src/command.ts'
 import type { ClaudeScopeSetupResult } from '../src/types.ts'
 import { readBoundedUtf8 } from '../src/transport.ts'
 import { commandHost, type CommandHost } from './fixtures/command-host.ts'
+import * as OpenApi from '../src/openapi.ts'
 
 const disposers: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -23,7 +25,7 @@ async function host(backend: 'text' | 'facts' = 'text'): Promise<CommandHost> {
   return fixture
 }
 
-async function launch(fixture: CommandHost, rawInput: string | undefined, overrides: Partial<Config> = {}) {
+async function launch(fixture: Pick<CommandHost, 'directory' | 'descriptorPath'>, rawInput: string | undefined, overrides: Partial<Config> = {}) {
   const profile = `claude-hook-${randomUUID()}`
   const home = join(fixture.directory, 'home')
   const directory = join(home, 'profiles', profile)
@@ -122,6 +124,23 @@ async function setupThroughRemote(fixture: CommandHost, projectPath: string): Pr
 }
 
 describe.skipIf(process.platform === 'win32')('Claude command through built dsh and a real Host Loader tree', () => {
+  it('keeps reported writes below a regular-file ancestor out of shared Task context', async () => {
+    const fixture = await host()
+    const { task } = await joinScope(fixture)
+    const ancestor = join(fixture.directory, 'regular-file')
+    await writeFile(ancestor, 'existing local file')
+    const before = fixture.ctx.developmentTasks.get({ taskId: task.id }).context
+    const tool = { session_id: 'external-main', cwd: fixture.directory, tool_use_id: 'invalid-descendant',
+      tool_name: 'Write', tool_input: { file_path: join(ancestor, 'child.txt'), content: 'PRIVATE_ATTEMPTED_INPUT' } }
+    for (const hook_event_name of ['PreToolUse', 'PostToolUse']) {
+      const result = await run(fixture, { ...tool, hook_event_name })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toBe(await readFile(new URL('./expected/empty.stdout.json', import.meta.url), 'utf8'))
+      expect(result.stderr).toBe('')
+    }
+    expect(fixture.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual(before)
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('installs project hooks and runs their ordinary dsh profile without PATH tools or per-change sharing', async () => {
     const fixture = await host()
     const projectPath = join(fixture.directory, "project 'with $ spaces")
@@ -184,7 +203,7 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
       } } },
     })
     await writeFile(filePath, document(['old_field'], '200'))
-    for (const sessionId of ['backend', 'frontend', 'qa']) {
+    for (const sessionId of ['backend', 'frontend', 'qa', 'leaving']) {
       expect((await run(fixture, { hook_event_name: 'SessionStart', session_id: sessionId, cwd: fixture.directory })).exitCode).toBe(0)
     }
     const owner = 'api-owner' as DevelopmentParticipantId
@@ -200,7 +219,29 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     const tool = { session_id: 'backend', cwd: fixture.directory, tool_use_id: 'ordinary-write', tool_name: 'Write', tool_input: { file_path: filePath, content } }
     expect((await run(fixture, { ...tool, hook_event_name: 'PreToolUse' })).exitCode).toBe(0)
     await writeFile(filePath, content)
-    expect((await run(fixture, { ...tool, hook_event_name: 'PostToolUse' })).exitCode).toBe(0)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const sample = OpenApi.sampleOpenApiSource
+    vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
+      const result = await sample(...args)
+      entered.resolve(undefined)
+      await release.promise
+      return result
+    })
+    const completion = run(fixture, { ...tool, hook_event_name: 'PostToolUse' })
+    let leaving: Promise<unknown> | undefined
+    try {
+      await entered.promise
+      const session = (await fixture.ctx.claudeScope.sessions()).find(item => item.sessionId === 'leaving')
+      if (session === undefined) throw new Error('Missing independently joined session')
+      leaving = fixture.ctx.claudeScope.leave({ sessionKey: session.sessionKey })
+      release.resolve(undefined)
+      expect((await completion).exitCode).toBe(0)
+      await leaving
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
     const received: string[] = []
     for (const sessionId of ['frontend', 'qa']) {
       const result = await run(fixture, { hook_event_name: 'UserPromptSubmit', session_id: sessionId, prompt: 'Continue normal work.' })
@@ -343,29 +384,12 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     expect(result.stdout).toBe('')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
-  it('rejects malformed input and complete byte budgets with classified stderr', async () => {
+  it('rejects the complete response byte budget with classified stderr', async () => {
     const fixture = await host()
-    const malformed = await (await launch(fixture, '{')).done
-    expect(malformed.exitCode).toBe(1)
-    expect(malformed.stdout).toBe('')
-    expect(malformed.stderr).toBe(await readFile(new URL('./expected/invalid.stderr.json', import.meta.url), 'utf8'))
-    const tooLarge = await (await launch(fixture, '"中文"', { maxRequestBytes: 7 })).done
-    expect(tooLarge.exitCode).toBe(1)
-    expect(tooLarge.stdout).toBe('')
-    expect(tooLarge.stderr).toBe('{"claudeScopeError":"input-too-large"}\n')
     const response = await run(fixture, { hook_event_name: 'SessionStart', session_id: 'bounded' }, { maxResponseBytes: 1 })
     expect(response.exitCode).toBe(1)
     expect(response.stdout).toBe('')
     expect(response.stderr).toBe('{"claudeScopeError":"response-too-large"}\n')
-  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
-
-  it('settles input collection when the command deadline expires before stdin EOF', async () => {
-    const fixture = await host()
-    const result = await (await launch(fixture, undefined, { timeoutMs: 20 })).done
-    expect(result.signal).toBeUndefined()
-    expect(result.exitCode).toBe(1)
-    expect(result.stdout).toBe('')
-    expect(result.stderr).toBe('{"claudeScopeError":"request-timeout"}\n')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('refuses a stale generation and invalid launch token without leaking the capability', async () => {
@@ -386,6 +410,39 @@ describe.skipIf(process.platform === 'win32')('Claude command through built dsh 
     expect(rejected.stdout).toBe('')
     expect(rejected.stderr).toBe('{"claudeScopeError":"authentication-failed"}\n')
     expect(await fixture.ctx.claudeScope.sessions()).toEqual([])
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+})
+
+describe('Claude command stdin before Host authentication', () => {
+  async function inputFixture(): Promise<Pick<CommandHost, 'directory' | 'descriptorPath'>> {
+    const directory = await mkdtemp(join(tmpdir(), 'claude-command-input-'))
+    disposers.push(() => rm(directory, { recursive: true, force: true }))
+    return { directory, descriptorPath: join(directory, 'connection.json') }
+  }
+
+  it('rejects malformed and oversized input before accessing a Host descriptor', async () => {
+    const fixture = await inputFixture()
+    const malformed = await (await launch(fixture, '{')).done
+    expect(malformed.signal).toBeUndefined()
+    expect(malformed.exitCode).toBe(1)
+    expect(malformed.stdout).toBe('')
+    expect(malformed.stderr).toBe(await readFile(new URL('./expected/invalid.stderr.json', import.meta.url), 'utf8'))
+    const tooLarge = await (await launch(fixture, '"中文"', { maxRequestBytes: 7 })).done
+    expect(tooLarge.signal).toBeUndefined()
+    expect(tooLarge.exitCode).toBe(1)
+    expect(tooLarge.stdout).toBe('')
+    expect(tooLarge.stderr).toBe('{"claudeScopeError":"input-too-large"}\n')
+    await expect(stat(fixture.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+  it('settles input collection when the command deadline expires before stdin EOF', async () => {
+    const fixture = await inputFixture()
+    const result = await (await launch(fixture, undefined, { timeoutMs: 20 })).done
+    expect(result.signal).toBeUndefined()
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe('{"claudeScopeError":"request-timeout"}\n')
+    await expect(stat(fixture.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 })
 

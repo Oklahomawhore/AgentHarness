@@ -7,7 +7,9 @@ import type {
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionGeneration,
   DevelopmentTaskPeerContributionReceipt, DevelopmentTaskPeerContributionResult, DevelopmentTaskContributionEndReason,
 } from '@deepseek-ai/dsh-development-task/types'
-import type { DevelopmentTaskContextActivation, DevelopmentTaskContextProjection } from '@deepseek-ai/dsh-development-task-context/types'
+import type {
+  DevelopmentTaskContextActivation, DevelopmentTaskContextProjection, DevelopmentTaskContextPeerCapture,
+} from '@deepseek-ai/dsh-development-task-context/types'
 import type { ScopePeerId, ScopeTransportIdentity } from '@deepseek-ai/dsh-scope-transport/types'
 
 /** Owner-issued read authorization identity, never reused after revocation. */
@@ -45,14 +47,38 @@ export interface ScopeReadGrant {
   readonly state: 'active' | 'revoked'
 }
 
-/** Explicit receiver intent; active means locally enabled, not remotely verified. */
-export interface ScopeSubscription {
+/** Immutable original source selected by a joint receiving operation, never inferred from its peer. */
+export type ScopeOriginalCapture = Pick<DevelopmentTaskPeerContributionGrant, 'captureId' | 'captureGeneration'>
+
+interface ScopeSubscriptionFields {
   /** Monotonic receiver route intent; omitted historical rows denote revision zero. */
   readonly routeRevision?: number
   readonly id: ScopeSubscriptionId
   readonly generation: ScopeGeneration
   readonly invitation: ScopeInvitation
   readonly state: 'active' | 'left' | 'revoked' | 'expired'
+}
+
+/** Historical or manual receiving intent without a source-association claim. */
+export interface ScopePlainSubscription extends ScopeSubscriptionFields {
+  readonly version?: never
+  readonly originalCapture?: never
+}
+
+/** Joint receiving intent whose original capture cannot change across retries or route recovery. */
+export interface ScopeCaptureSubscription extends ScopeSubscriptionFields {
+  readonly version: 2
+  readonly originalCapture: ScopeOriginalCapture
+}
+
+/** Active means locally enabled, not remotely verified; only version 2 identifies the original joint source. */
+export type ScopeSubscription = ScopePlainSubscription | ScopeCaptureSubscription
+
+/** Consumer-selected backend text allowance; callers reserve model framing and other context separately. */
+export interface ScopeRetrieveWithinBudgetRequest {
+  readonly subscriptionId: ScopeSubscriptionId
+  /** Positive safe-integer UTF-8 byte ceiling, further narrowed by both Hosts' configured limits. */
+  readonly maxContextBytes: number
 }
 
 /** Local owner inputs; responsibility routes context but does not narrow read permission. */
@@ -90,8 +116,15 @@ export interface ScopeAccessCurrentProjection extends ScopeAccessProjectionConte
   readonly activation: DevelopmentTaskContextActivation
 }
 
-/** Strict legacy replay and current owner-produced projections. */
-export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection
+/** Exact owner-verified original source included in both projection attribution and its digest. */
+export interface ScopeAccessCaptureProjection extends ScopeAccessProjectionContent {
+  readonly version: 3
+  readonly activation: DevelopmentTaskContextActivation
+  readonly peerCapture: DevelopmentTaskContextPeerCapture
+}
+
+/** Strict historical replay and current owner-produced projections, including explicit joint-source attribution. */
+export type ScopeAccessProjection = ScopeAccessLegacyProjection | ScopeAccessCurrentProjection | ScopeAccessCaptureProjection
 
 /** Online authorization outcome; unavailable never permits reuse of an earlier projection. */
 export type ScopeRetrieveResult =
@@ -110,7 +143,7 @@ export type ScopeAccessIdentity = ScopeTransportIdentity
 /** Separate write invitation; a read invitation cannot be promoted into contribution authority. */
 export interface ScopeContributionInvitation {
   readonly version: 1
-  readonly kind: 'openapi-contribution' | 'tool-contribution'
+  readonly kind: 'openapi-contribution' | 'tool-contribution' | 'turn-contribution' | 'native-work-contribution' | 'claude-work-contribution'
   readonly ownerAddress: string
   readonly grant: DevelopmentTaskPeerContributionGrant
 }
@@ -149,7 +182,7 @@ export type ScopeContributionProposal = Pick<DevelopmentTaskPeerContributionGran
 
 /** Versioned text representations that an authenticated local UI can preview before granting permission. */
 export type ScopeContributionTransfer =
-  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request'; readonly proposal: ScopeContributionProposal }
+  | { readonly version: 1; readonly kind: 'openapi-contribution-request' | 'tool-contribution-request' | 'turn-contribution-request' | 'native-work-contribution-request' | 'claude-work-contribution-request'; readonly proposal: ScopeContributionProposal }
   | ScopeContributionInvitation
   | ScopeContributionEntry
 
@@ -211,11 +244,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 }
 
-/** One owner-issued, single-capture application entry; possession grants no Task access. */
+/** Owner-issued application entrance identity; possession grants no Task access. */
 export type ScopeContributionEntryId = Branded<'ScopeContributionEntryId'>
 
 /** Addressed application entry, distinct from read and contribution grants. */
-export type ScopeContributionEntry = {
+export type ScopeSingleContributionEntry = {
   readonly version: 1
   readonly entryId: ScopeContributionEntryId
   readonly taskId: DevelopmentTaskId
@@ -224,9 +257,87 @@ export type ScopeContributionEntry = {
   readonly expiresAt: number
 } & (
   | { readonly kind: 'openapi-contribution-entry'; readonly sourceKind?: never }
-  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' }
-  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' }
+  | { readonly kind: 'contribution-entry'; readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work' }
+  | { readonly kind: 'scope-join-entry'; readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work' }
 )
+
+/** Reusable application entrance; each source receives independently approved grants. */
+export interface ScopeGroupEntry {
+  readonly version: 2
+  readonly kind: 'scope-group-entry'
+  readonly sourceKind: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
+  readonly entryId: ScopeContributionEntryId
+  readonly taskId: DevelopmentTaskId
+  readonly ownerPeerId: ScopePeerId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  /** Retained applicants, including cancelled, rejected, and expired members. */
+  readonly maxMembers: number
+}
+
+/** Single-capture entries retain version one; reusable groups require an explicit version-two entry. */
+export type ScopeContributionEntry = ScopeSingleContributionEntry | ScopeGroupEntry
+
+/** Owner-assigned durable identity of one exact group applicant. */
+export type ScopeGroupApplicationId = Branded<'ScopeGroupApplicationId'>
+
+/** Explicitly create a reusable entry for one owned Root Task. */
+export interface ScopeGroupEntryRequest {
+  /** Omission resolves to tool observations; completed-turn sharing must be selected explicitly. */
+  readonly sourceKind?: 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
+  readonly taskId: DevelopmentTaskId
+  readonly ownerAddress: string
+  readonly expiresAt: number
+  readonly maxMembers: number
+}
+
+/** Shared entry text without any member's permission. */
+export interface ScopeGroupEntryResult {
+  readonly entry: ScopeGroupEntry
+  readonly text: string
+}
+
+/** Closing an entry blocks new applicants while retained applicants keep their independent permissions. */
+export interface ScopeGroupEntryStatus extends ScopeGroupEntryResult {
+  readonly state: 'open' | 'closed' | 'expired'
+  readonly applicationCount: number
+}
+
+/** Select an owner-local reusable entry; closure is irreversible. */
+export interface ScopeGroupEntrySelection {
+  readonly entryId: ScopeContributionEntryId
+}
+
+/** Stable entry-identity pagination within one owned Task. */
+export interface ScopeGroupEntriesRequest {
+  readonly taskId: DevelopmentTaskId
+  readonly afterEntryId?: ScopeContributionEntryId
+}
+
+/** Complete UTF-8-bounded page of retained reusable entries. */
+export interface ScopeGroupEntries {
+  readonly entries: readonly ScopeGroupEntryStatus[]
+  readonly nextEntryId: ScopeContributionEntryId | null
+}
+
+/** One independently selected applicant; entry text remains common to the group. */
+export interface ScopeGroupApplication extends ScopeContributionApplication {
+  readonly entry: ScopeGroupEntry
+  readonly applicationId: ScopeGroupApplicationId
+  readonly proposal: ScopeContributionProposal
+  readonly result: ScopeContributionApplicationResult
+}
+
+/** Stable applicant-identity pagination within one reusable entry. */
+export interface ScopeGroupApplicationsRequest extends ScopeGroupEntrySelection {
+  readonly afterApplicationId?: ScopeGroupApplicationId
+}
+
+/** Complete UTF-8-bounded page; an applicant cursor never selects a different entry. */
+export interface ScopeGroupApplications {
+  readonly entries: readonly ScopeGroupApplication[]
+  readonly nextApplicationId: ScopeGroupApplicationId | null
+}
 
 /** Inspect one addressed entry before granting any local collection permission. */
 export interface ScopeContributionEntryProbeRequest {
@@ -235,7 +346,7 @@ export interface ScopeContributionEntryProbeRequest {
 
 /** A momentary owner observation, not an application, reservation, or authorization. */
 export interface ScopeContributionEntryProbeResult {
-  /** Open entries are ready; pending claims are claimed; owner decisions are closed. */
+  /** An available group stays ready until full or closed; single-capture claims are claimed and decisions are closed. */
   readonly status: 'ready' | 'claimed' | 'closed' | 'expired' | 'denied' | 'capacity' | 'unavailable'
 }
 
@@ -287,7 +398,7 @@ export interface ScopeContributionApplication {
 export interface ScopeContributionEntryRequest {
   /** Join offers separately approved passive Root Task reading; omission requests contribution only. */
   readonly participation?: 'join' | 'contribution'
-  readonly sourceKind: 'openapi' | 'tool-observations'
+  readonly sourceKind: 'openapi' | 'tool-observations' | 'completed-turn-outcomes' | 'native-work' | 'claude-work'
   readonly taskId: DevelopmentTaskId
   readonly ownerAddress: string
   readonly expiresAt: number
@@ -313,6 +424,8 @@ export interface ScopeContributionApplicationsRequest {
 
 /** Approval names the exact displayed claimant and an equal or narrower permission. */
 export interface ScopeContributionApplicationApprovalRequest {
+  /** Required for a group member and forbidden for a single-capture entry. */
+  readonly applicationId?: ScopeGroupApplicationId
   /** Required only for a joint entry; read expiry equals the approved contribution expiry. */
   readonly read?: { readonly responsibility: string }
   readonly entryId: ScopeContributionEntryId
@@ -323,6 +436,8 @@ export interface ScopeContributionApplicationApprovalRequest {
 
 /** Rejection cannot accidentally stop another capture; null selects an unclaimed entry. */
 export interface ScopeContributionApplicationRejectRequest {
+  /** Select only this group member; group entry closure uses closeGroupEntry instead. */
+  readonly applicationId?: ScopeGroupApplicationId
   readonly entryId: ScopeContributionEntryId
   readonly expectedProposal: ScopeContributionProposal | null
 }
@@ -331,7 +446,7 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
      * A durable application or associated Task authorization changed.
-     * @param selection - local Task whose application inventory must be reread.
+     * @param selection - local Task whose application and read-grant inventories must be reread.
      * @mode emit
      */
     'scope-access/contribution-application-changed'(selection: { readonly taskId: DevelopmentTaskId }): void

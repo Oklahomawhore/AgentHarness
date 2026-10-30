@@ -24,11 +24,17 @@ Cursor、WorkBuddy 和 CodeBuddy 使用公开说明的用户级 JSON 文件。�
 
 ## 配置
 
-五个部署字段均必填。`nodePath` 和 `dshPath` 分别是 Node 与实际 `dsh` CLI 的绝对路径；`nodeArgs` 保存显式 Node 参数（源码 CLI 使用仅 ESM 的 `tsx` hook）。`harnessHome` 是通过每个客户端条目的 `DSH_HOME` 传入的绝对目录。`descriptorPath` 是私有 Connection 描述文件的绝对路径，通常为 `<harnessHome>/mcp/connection.json`。源码启动还通过可选 `sourceTsconfigPath` 把工作区配置绝对路径保存为 `TSX_TSCONFIG_PATH`，避免客户端工作目录影响模块解析；构建产物启动不设置该字段。客户端条目以各自参与者身份运行 `dsh --profile mcp --connection <descriptorPath>`，不包含启动 token、cookie 或固定 Host 端口。
+六个部署字段均必填。`commandTimeoutMs` 限制每次官方客户端检查或注册命令的完整执行时间，必须是 1 至 2147483647 毫秒之间的整数；发布的 Web 与便携组合使用 10000。`nodePath` 和 `dshPath` 分别是 Node 与实际 `dsh` CLI 的绝对路径；`nodeArgs` 保存显式 Node 参数（源码 CLI 使用仅 ESM 的 `tsx` hook）。`harnessHome` 是通过每个客户端条目的 `DSH_HOME` 传入的绝对目录。`descriptorPath` 是私有 Connection 描述文件的绝对路径，通常为 `<harnessHome>/mcp/connection.json`。源码启动还通过可选 `sourceTsconfigPath` 把工作区配置绝对路径保存为 `TSX_TSCONFIG_PATH`，避免客户端工作目录影响模块解析；构建产物启动不设置该字段。客户端条目以各自参与者身份运行 `dsh --profile mcp --connection <descriptorPath>`，不包含启动 token、cookie 或固定 Host 端口。
 
-服务要求 `connection`、`webServer` 和 dsh 应用生命周期。macOS/Linux 在应用就绪后使用 Host 实际端口发布描述文件，卸载时删除自身发布的文件。[Connection local-access helper](../../client/connection/README.zh.md) 负责文件权限、独占发布和认证。该文件授予同一本机用户完整的 Connection 权限，不是 Task 级许可；所在目录必须保持私有。
+服务要求 `connection` 和 `webServer`。macOS/Linux 的插件激活会等待使用 Host 实际端口发布的描述文件；发布失败会拒绝启动。卸载时仅删除自身发布的文件。[Connection local-access helper](../../client/connection/README.zh.md) 负责文件权限、独占发布和认证。该文件授予同一本机用户完整的 Connection 权限，不是 Task 级许可；所在目录必须保持私有。
 
-Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普通 Web 应用仍可使用。客户端写入成功表示启动配置（包括 `DSH_HOME`）匹配；已有不同条目会被报告为冲突，绝不覆盖。
+Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普通 Web 应用仍可使用。参与者身份由主机名与用户名的稳定 128 位摘要及完整客户端 id 组成；相同主机名与账户名无法区分。客户端写入成功表示启动配置匹配，包括 `DSH_HOME` 和参与者身份。已有不同条目始终报告为冲突，包括更改主机名或账户后的条目；须显式移除该注册后再运行配置。
+
+匹配但设置了 `enabled=false` 的 Codex 注册仍为仅支持手动；配置操作保留该注册，须由用户在 Codex MCP 设置中启用。
+
+未知客户端 id 会在发现客户端或写入配置之前被拒绝；错误不复述传入的 id。
+
+发现或读取配置时发生的错误会保留为该客户端的 `failed` 状态。列表与批量配置继续处理其他客户端，不修改失败客户端的文件。
 
 
 <a id="model-experience"></a>
@@ -49,6 +55,7 @@ Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普�
 
 - 带注释的 JSON 文件会被报告为冲突而不是重写，因为当前还不能安全保留其注释。
 - 客户端重载或重启仍由客户端负责。写入成功只证明配置完成，不证明客户端已经启动 bridge。
+- 解析及 CLI 失败会标明失败阶段，不复制配置内容或命令输出；原始诊断须在客户端本地查看。
 - 服务不修改应用私有数据库或审批记录。
 
 <a id="dev-note"></a>

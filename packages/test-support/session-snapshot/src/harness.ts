@@ -78,7 +78,11 @@ const WAIT_POLL_INTERVAL_MS = 10
  */
 export type InputStep =
   | { op: 'initialize' }
-  | { op: 'newSession' }
+  | {
+    op: 'newSession'
+    /** Node MCP fixture scripts relative to the scenario workspace. */
+    nodeMcpServers?: readonly { name: string; script: string }[]
+  }
   | { op: 'newSessionExpectError'; additionalDirectories?: string[] }
   | { op: 'prompt'; text: string }
   | { op: 'promptContent'; content: AcpContentBlock[] }
@@ -424,7 +428,13 @@ async function runStep(
       })
       return
     case 'newSession': {
-      const { sessionId } = await client.newSession({ cwd, mcpServers: [] })
+      const mcpServers = (step.nodeMcpServers ?? []).map(server => ({
+        name: server.name,
+        command: process.execPath,
+        args: [join(cwd, server.script)],
+        env: [],
+      }))
+      const { sessionId } = await client.newSession({ cwd, mcpServers })
       setSessionId(sessionId)
       return
     }

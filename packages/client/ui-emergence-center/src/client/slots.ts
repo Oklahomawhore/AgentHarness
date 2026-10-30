@@ -22,7 +22,7 @@ import type { McpClientSetupDirectory } from './mcp-clients.ts'
 import type { ContributionDirectory } from './contribution-directory.ts'
 import type { SourceContributionActions } from './SourceContributionPanel.tsx'
 import type { OwnerContributionActions, OwnerContributionValue } from './OwnerContributionPanel.tsx'
-import type { ScopeAccessActions } from './ScopeAccessPanel.tsx'
+import type { ScopeAccessActions, ScopeAccessValue } from './ScopeAccessPanel.tsx'
 import type { ClaudeScopeDirectory } from './claude-scopes.ts'
 import type { ObservedScopeDirectory } from './observed-scopes.ts'
 import type { ParticipantDirectory } from './participant-directory.ts'
@@ -38,6 +38,7 @@ export interface EmergenceCenterPanelFace extends ScopeAccessActions, SourceCont
     claudeScopes: ClaudeScopeDirectory
     sourceContributions: ContributionDirectory<ClaudeScopeSessionKey, ClaudeScopeContributionDetail>
     ownerContributions: ContributionDirectory<DevelopmentTaskId, OwnerContributionValue>
+    scopeAccess: ContributionDirectory<'inventory', ScopeAccessValue>
     observedScopes: ObservedScopeDirectory
   }
   initialProfile: EmergenceProfile

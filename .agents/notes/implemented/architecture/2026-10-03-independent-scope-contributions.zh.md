@@ -12,7 +12,7 @@ Status: implemented
 
 [Claude scope](../../../../packages/collaboration/claude-scope/README.zh.md)为一个 Session 记录本地采集许可，支持的选择由[来源模式决策](2026-10-03-independent-tool-observations.zh.md)定义。不含路径的 proposal 标识贡献者 PeerId 与耐久 capture generation。Owner 独立批准该 proposal 对应的本地 Root Task、精确来源许可、到期时间、样本数和样本字节限制。独立的 [scope-access 贡献邀请](../../../../packages/collaboration/scope-access/README.zh.md)只有通过在线 owner 核验后才激活已准备的采集。读取订阅与贡献许可各自拥有生命周期。
 
-[Task 服务](../../../../packages/collaboration/development-task/README.zh.md)在耐久队列中串行处理授权、准入和终结事件。认证来自 transport；publication 保留贡献者 PeerId，不虚构 Mesh 节点或 participant。Owner 根据获批 selector 生成出处，并在 OpenAPI 模式下生成工件身份。精确重试恢复原 receipt；既有来源的正文变化会被拒绝。Receipt 区分批准、采样和终结提交。来源端保留 outbox 或待撤回记录，直到收到匹配的 owner receipt。
+[Task 服务](../../../../packages/collaboration/development-task/README.zh.md)在耐久队列中串行处理授权、准入和终结事件。认证来自 transport；publication 保留贡献者 PeerId，不虚构 Mesh 节点或 participant。Owner 根据获批 selector 生成出处，并在 OpenAPI 模式下生成工件身份。精确重试恢复原 receipt；既有来源的正文变化会被拒绝。Receipt 区分批准、采样和终结提交。来源端保留 outbox 或待撤回记录，直到收到匹配的 owner receipt。公开准入方法负责 grant 校验与终结幂等性；私有队列终结提交依赖这些已确定的结果。 恢复和贡献清单访问将保留的所有者与固定传输身份进行核对；路由恢复检查当前公告地址，不重复该身份比较。
 
 只有获授权的 Write 或 Edit lease 才采集许可的来源。Hook 在等待本地队列前保留其 capture generation。替换许可不能授权较早排队的 Hook。接收的上下文和生成的投影不是采集来源。OpenAPI 采样中的无效或缺失文件产生明确的不可用证据，而不是让旧的有效字段保持当前状态。
 
@@ -32,8 +32,12 @@ Grant 到期、owner 撤销和贡献者离开均产生终结 Task 事件并撤�
 
 ## 影响
 
-独立工作流在普通获授权工具工作后自动贡献有界来源观察，并可驱动既有原生接收和有限启动机制。配置仍需要明确的本地采集许可、owner 批准和独立接收邀请。[来源接入控件](2026-10-03-independent-contribution-controls.zh.md)管理准备、批准和恢复。通用语义提取、原生工具采集与跨机器发现仍需要各自的产品验证。
+独立工作流在普通获授权工具工作后自动贡献有界来源观察，并可驱动既有原生接收和有限启动机制。配置需要明确的本地采集许可与 owner 批准。[联合在线入口](2026-10-03-online-contribution-approval.zh.md)也接受独立的被动读取同意；手工路径使用单独的接收邀请。[来源接入控件](2026-10-03-independent-contribution-controls.zh.md)管理准备、批准和恢复。通用语义提取与跨机器发现仍需要各自的产品验证。
 
 已提交的 Task 代际和既有 SQLite 表保留身份。新 Peer publication 使用规范序列化，支持上下文 hash 与恢复。终结 grant 会移除当前注入的证据，但不能撤回已经发出的字节、抹除历史请求，或证明模型已经遗忘它们。
+
+[Publication 重建检查](../../../../packages/collaboration/development-task/tests/publication-projection.spec.ts)将复制后的 publication 与原始样本比较，保留缺省字段、失败证据与可选工件标识。分别解析的许可与报告必须匹配，才能推导 receipt；终结通知不能变成样本。即使旧 publication 较晚到达，观察选择仍保留最大的序号。
+
+[贡献生命周期检查](../../../../packages/collaboration/scope-access/tests/contribution-lifecycle.spec.ts)覆盖拒绝或过期审批、并发保留或终结 grant、完整 inventory 响应预算、请求与回复关联、调用方取消、入站容量，以及 dispose 期间到期状态的持久化失败。
 
 客户端安全的 Task DTO 入口在声明事件扩展前加载 Cordis 类型。仅类型的空 export 保留在声明产物中并从 JavaScript 擦除；空的 type import 无法为声明消费者保留该顺序。NodeNext 产物检查独立编译先导入 DTO 的消费者，防止更广的服务导入掩盖 Context 扩展缺失。

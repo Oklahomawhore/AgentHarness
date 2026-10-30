@@ -399,7 +399,7 @@ export interface ClaudeScopeSetupConfig {
 }
 ```
 
-Source: [`packages/collaboration/claude-scope/src/index.ts:64`](../packages/collaboration/claude-scope/src/index.ts)
+Source: [`packages/collaboration/claude-scope/src/index.ts:57`](../packages/collaboration/claude-scope/src/index.ts)
 
 <a id="deepseek-aidsh-claude-scopecommand"></a>
 
@@ -630,50 +630,6 @@ export interface Config {
 
 Source: [`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
 
-<a id="deepseek-aidsh-development-evidence"></a>
-
-## `@deepseek-ai/dsh-development-evidence`
-
-```ts config-catalog
-/** Resource and latency policy enforced across every evidence provider. */
-export interface Config {
-  /** Maximum UTF-8 bytes accepted in a lookup query. */
-  readonly maxQueryBytes: number
-  /** Maximum citations retained from one provider. */
-  readonly maxItemsPerProvider: number
-  /** Maximum UTF-8 bytes accepted in each citation text field. */
-  readonly maxItemTextBytes: number
-  /** Maximum tags retained on one citation. */
-  readonly maxTagsPerItem: number
-  /** Maximum time allotted to one provider lookup. */
-  readonly providerTimeoutMs: number
-}
-```
-
-Source: [`packages/collaboration/development-evidence/src/index.ts:22`](../packages/collaboration/development-evidence/src/index.ts)
-
-<a id="deepseek-aidsh-development-evidence-reviewed-file"></a>
-
-## `@deepseek-ai/dsh-development-evidence-reviewed-file`
-
-Requires: `developmentEvidence`
-
-```ts config-catalog
-/** Reviewed-file provider deployment configuration. */
-export interface Config {
-  /** Unique lower-kebab provider identity. */
-  readonly providerId: string
-  /** Operator-facing provider label. */
-  readonly label: string
-  /** Absolute or process-relative reviewed JSON file path. */
-  readonly path: string
-  /** Maximum bytes read before JSON parsing. */
-  readonly maxFileBytes: number
-}
-```
-
-Source: [`packages/collaboration/development-evidence-reviewed-file/src/index.ts:23`](../packages/collaboration/development-evidence-reviewed-file/src/index.ts)
-
 <a id="deepseek-aidsh-development-mesh-websocket"></a>
 
 ## `@deepseek-ai/dsh-development-mesh-websocket`
@@ -683,7 +639,7 @@ Requires: `webServer` · `developmentRooms` · `credentials`
 ```ts config-catalog
 /** Explicit authentication, topology, and resource bounds for one Mesh node. */
 export interface Config {
-  /** Absolute WebSocket upgrade path without a trailing slash. */
+  /** Canonical absolute URL pathname without a trailing slash. */
   readonly path: string
   /** Credential reference resolving the shared cluster secret. */
   readonly secretRef: string
@@ -697,7 +653,7 @@ export interface Config {
   readonly reconnectMaxDelayMs: number
   /** Deadline for one owner command response. */
   readonly commandTimeoutMs: number
-  /** Maximum signed WebSocket envelope bytes. */
+  /** Maximum signed WebSocket envelope bytes; each peer's initial hello must fit. */
   readonly maxMessageBytes: number
   /** Maximum channel events carried by one delta frame. */
   readonly maxEventsPerFrame: number
@@ -707,7 +663,7 @@ export interface Config {
 export interface PeerConfig {
   /** Stable remote node identity expected during authentication. */
   readonly nodeId: string
-  /** HTTP(S) origin used to derive the Mesh WebSocket endpoint. */
+  /** Fragment-free WS(S) URL used to derive the Mesh WebSocket endpoint. */
   readonly url: string
   /** Whether this node owns outbound reconnect attempts for the pair. */
   readonly connect: boolean
@@ -816,7 +772,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task/src/index.ts:141`](../packages/collaboration/development-task/src/index.ts)
+Source: [`packages/collaboration/development-task/src/index.ts:149`](../packages/collaboration/development-task/src/index.ts)
 
 <a id="deepseek-aidsh-development-task-context"></a>
 
@@ -832,7 +788,37 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task-context/src/index.ts:28`](../packages/collaboration/development-task-context/src/index.ts)
+Source: [`packages/collaboration/development-task-context/src/index.ts:26`](../packages/collaboration/development-task-context/src/index.ts)
+
+<a id="deepseek-aidsh-development-task-contextconfigured"></a>
+
+## `@deepseek-ai/dsh-development-task-context/configured`
+
+Requires: `settings` · `llm` · `sessions` · `sessionPersistence`
+
+```ts config-catalog
+/** Deployment-owned execution limits and initial settings; mount with separately isolated audit persistence. */
+export interface Config extends Omit<SemanticConfig, 'provider' | 'model' | 'maxCalls'> {
+  /** Composition values below the durable scope-context user settings. */
+  readonly selection: Selection
+}
+
+/** User-selected context computation, independent of ordinary Session model settings. */
+export interface Selection {
+  /** Deterministic reports or explicitly authorized semantic inference. */
+  readonly mode: 'reported' | 'semantic'
+  /** Existing LLM provider route; required and nonblank in semantic mode. */
+  readonly provider: string
+  /** Exact summary model; required and nonblank in semantic mode. */
+  readonly model: string
+  /** Cumulative reservations permitted in the deployment's retained audit Session. */
+  readonly maxCalls: number
+}
+```
+
+Depends on: [`SemanticConfig`](#deepseek-aidsh-development-task-contextsemantic)
+
+Source: [`packages/collaboration/development-task-context/src/configured.ts:23`](../packages/collaboration/development-task-context/src/configured.ts)
 
 <a id="deepseek-aidsh-development-task-contextfacts"></a>
 
@@ -880,7 +866,9 @@ export interface Config {
   readonly temperature?: number
   /** Optional exact reasoning effort; absent values use the resolved adapter default. */
   readonly reasoningEffort?: string
-  /** Maximum complete system plus user-message UTF-8 bytes. */
+  /** Maximum complete captured-evidence UTF-8 bytes, including history retained only for audit and replay. */
+  readonly maxCapturedInputBytes: number
+  /** Maximum complete system plus actual model user-message UTF-8 bytes. */
   readonly maxInputBytes: number
   /** Requested model output token ceiling. */
   readonly maxOutputTokens: number
@@ -895,7 +883,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/development-task-context/src/semantic.ts:28`](../packages/collaboration/development-task-context/src/semantic.ts)
+Source: [`packages/collaboration/development-task-context/src/semantic.ts:29`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="deepseek-aidsh-development-task-storage-domain"></a>
 
@@ -1277,7 +1265,7 @@ export interface Config {
   readonly entries: Record<string, DevWorkbenchEntryConfig>
   /** Per-stream in-memory output cap. */
   readonly maxOutputBytes: number
-  /** TERM-to-KILL grace for each task's complete process tree. */
+  /** TERM-to-KILL grace for each task's complete process tree, at most 2,147,483,647 milliseconds. */
   readonly graceMs: number
 }
 
@@ -1313,9 +1301,9 @@ export interface DevWorkbenchReadinessConfig {
   readonly url: string
   /** Status codes that establish service readiness. */
   readonly acceptedStatusCodes: number[]
-  /** Delay between attempts. */
+  /** Delay between attempts, at most 2,147,483,647 milliseconds. */
   readonly intervalMs: number
-  /** Per-request timeout. */
+  /** Per-request timeout, at most 2,147,483,647 milliseconds. */
   readonly requestTimeoutMs: number
   /** Elapsed time after which an unresolved probe is reported as delayed. */
   readonly warnAfterMs: number
@@ -1369,6 +1357,8 @@ export interface Config {
   readonly dshPath: string
   /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
   readonly nodeArgs: string[]
+  /** Complete official client inspection or registration command deadline, in milliseconds. */
+  readonly commandTimeoutMs: number
   /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
   readonly sourceTsconfigPath?: string
   /** Absolute private local Connection descriptor published by this Host. */
@@ -1378,7 +1368,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/mcp-client-setup/src/index.ts:44`](../packages/host/mcp-client-setup/src/index.ts)
+Source: [`packages/host/mcp-client-setup/src/index.ts:43`](../packages/host/mcp-client-setup/src/index.ts)
 
 <a id="deepseek-aidsh-host-open-in-app"></a>
 
@@ -1971,7 +1961,7 @@ Source: [`packages/lsp/lsp-stdio/src/index.ts:82`](../packages/lsp/lsp-stdio/src
 ```ts config-catalog
 /** Bound on live MCP transport registrations. */
 export interface Config {
-  /** Maximum MCP servers registered in this Host process. */
+  /** Maximum MCP servers registered in this service instance. */
   readonly maxServers: number
 }
 ```
@@ -2334,8 +2324,10 @@ export interface Config {
   readonly maxProjections: number
   /** Complete backend text budget in UTF-8 bytes; consumer framing is additional. */
   readonly maxContextBytes: number
-  /** Complete JSON response limit including attribution and coverage. */
+  /** Complete encoded JSON response limit, including envelope and coverage. */
   readonly maxResponseBytes: number
+  /** Complete decoded read-response JSON limit, enforced before allocation by the decompressor. */
+  readonly maxDecodedResponseBytes: number
   /** Deadline covering remote authorization and projection computation. */
   readonly requestTimeoutMs: number
   /** Maximum lifetime of an invitation from local issuance. */
@@ -2350,16 +2342,16 @@ export interface Config {
   readonly maxContributionRequestBytes: number
   /** Shared bound for pending owner and recipient waits; leaves ordinary transport capacity available. */
   readonly maxConcurrentWaits: number
-  /** Retained contribution application entries, including rejected and cancelled records. */
+  /** Total retained single entries, group entrances, and group members, including terminal records. */
   readonly maxContributionApplications: number
-  /** Complete application request and retained decision record limit in UTF-8 bytes. */
+  /** Complete application request and retained record limit in UTF-8 bytes, including a group and all its members. */
   readonly maxApplicationRequestBytes: number
   /** Maximum time from entry creation to its last new application or approval. */
   readonly maxApplicationLifetimeMs: number
 }
 ```
 
-Source: [`packages/collaboration/scope-access/src/index.ts:47`](../packages/collaboration/scope-access/src/index.ts)
+Source: [`packages/collaboration/scope-access/src/index.ts:53`](../packages/collaboration/scope-access/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-context"></a>
 
@@ -2370,8 +2362,10 @@ Requires: `agents` · `sessionProjections` · `scopeAccess`
 ```ts config-catalog
 /** Complete consumer text and background scheduling limits. */
 export interface Config {
-  /** Complete UTF-8 context message budget, including consumer framing; minimum 512 bytes. */
+  /** Total UTF-8 bytes of all managed context messages, including consumer framing; minimum 512 bytes. */
   readonly maxContextBytes: number
+  /** Local projection ceiling while both sources are active; local-only and remote-withdrawn reads use the remaining total. */
+  readonly maxLocalContextBytes: number
   /** Minimum delay before one idle activation attempt; changes during the delay are coalesced. */
   readonly coalesceMs: number
   /** Delay before rechecking an unavailable owner; automatic permission remains paused. */
@@ -2379,29 +2373,38 @@ export interface Config {
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-context/src/index.ts:43`](../packages/collaboration/scope-agent-context/src/index.ts)
+Source: [`packages/collaboration/scope-agent-context/src/index.ts:47`](../packages/collaboration/scope-agent-context/src/index.ts)
 
 <a id="deepseek-aidsh-scope-agent-contribution"></a>
 
 ## `@deepseek-ai/dsh-scope-agent-contribution`
 
-Requires: `agents` · `sessions` · `storageDomain` · `scopeAccess` · `fs`
+Requires: `agents` · `sessions` · `storageDomain` · `scopeAccess`
 
 ```ts config-catalog
 /** Bounded durable source inventory, complete report bytes, and peer retry cadence. */
 export interface Config {
-  /** Maximum retained source Session rows, including ended captures. */
+  /** Maximum retained source Sessions; completely cleared Sessions are reclaimed when capacity is needed. */
   readonly maxSessions: number
-  /** Maximum retained samples and simultaneous unfinished observations across source Sessions. */
+  /** Maximum retained samples, unfinished observations, and uncommitted initialization reservations across Sessions. */
   readonly maxLeases: number
-  /** Maximum complete owner-bound sample and application request bytes. */
+  /** Maximum complete owner-bound requests and each initial historical sample with its local proof, before receipts. */
   readonly maxObservationBytes: number
   /** Delay between unsuccessful peer reconciliation attempts. */
   readonly contributionPollIntervalMs: number
+  /** Optional editable management-form defaults; omission offers no suggested permission. */
+  readonly permissionDefaults?: {
+    /** Suggested permission lifetime in whole hours from explicit submission. */
+    readonly durationHours: number
+    /** Suggested maximum sample count for the new permission. */
+    readonly maxSamples: number
+    /** Suggested per-sample byte limit, still subject to owner approval and source request limits. */
+    readonly maxSampleBytes: number
+  }
 }
 ```
 
-Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:47`](../packages/collaboration/scope-agent-contribution/src/index.ts)
+Source: [`packages/collaboration/scope-agent-contribution/src/index.ts:58`](../packages/collaboration/scope-agent-contribution/src/index.ts)
 
 <a id="deepseek-aidsh-scope-transportlibp2p"></a>
 
@@ -2957,6 +2960,12 @@ export interface Config {
    * {@link JournalMode}.
    */
   journalMode?: JournalMode
+  /**
+   * Backend supplying each new unit's initial snapshot. Copied atomically once;
+   * existing destination units never consult the source. Stop other writers
+   * during migration. The source stays untouched; domain recovery validates records.
+   */
+  bootstrapFrom?: string
 }
 
 /**
@@ -3339,7 +3348,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-bash/src/index.ts:33`](../packages/shell/tool-bash/src/index.ts)
+Source: [`packages/shell/tool-bash/src/index.ts:88`](../packages/shell/tool-bash/src/index.ts)
 
 <a id="deepseek-aidsh-tool-bash-persistent"></a>
 
@@ -3383,7 +3392,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/fs/tool-fs/src/index.ts:50`](../packages/fs/tool-fs/src/index.ts)
+Source: [`packages/fs/tool-fs/src/index.ts:63`](../packages/fs/tool-fs/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs-search"></a>
 
@@ -3887,9 +3896,9 @@ Requires: `webServer`
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
 export interface Config {
-  /** Permit default-browser handoff after the Loader tree settles; an SSH launch suppresses it. */
+  /** Permit default-browser handoff after successful startup; an SSH launch suppresses it. */
   openBrowser: boolean
-  /** Print the URL line on activation; a non-interactive layer can turn it off. */
+  /** Print the URL line after successful startup; a non-interactive layer can turn it off. */
   printUrl: boolean
   /**
    * Register the model-visible surface context (the `app:web-surface` prompt
@@ -3903,7 +3912,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/bundle/web-app/src/index.ts:44`](../packages/bundle/web-app/src/index.ts)
+Source: [`packages/bundle/web-app/src/index.ts:45`](../packages/bundle/web-app/src/index.ts)
 
 <a id="deepseek-aidsh-web-fetch-http"></a>
 

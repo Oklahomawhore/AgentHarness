@@ -37,7 +37,7 @@ Profile manifest 负责 patch 重载：
 
 随附协议 profile 将 stdout 保留给协议帧，显示帮助时不启动 transport，并通过有界根节点 dispose（资源释放）处理 stdin EOF 与信号。ACP 继续仅用于自动化。SDK JSON-RPC 方法、通知字段与 `initialize.serverInfo.name` 保持稳定。完整 profile 的模型可见工具与持久化默认值来自 `dsh-base`，包括其[默认编辑器选择](../simplification/2026-09-05-base-default-file-editor.zh.md)；`sdk-minimal` 拥有自己的显式默认值。可运行快照负责固定已组装的应用输出。
 
-`mcp` profile 只包含 [AgentHarness bridge](../../../../packages/mcp/agentharness-bridge/README.zh.md) 组合包。其 stdio Consumer 读取显式解析的私有连接描述文件，在 RPC 前把当前 Host 启动 token 交换为 cookie。[Connection 本机访问库](../../../../packages/client/connection/README.zh.md)负责描述文件发布和认证；MCP 与 Claude scope transport 均不读取签名密钥。生成的外部客户端配置保留选定的 Harness home、真实 dsh CLI 路径和源码运行参数。认证、请求大小、响应大小、取消与在线租约续期都有可配置的限制。该 profile 不运行模型或 agent loop。
+`mcp` profile 只包含 [AgentHarness bridge](../../../../packages/mcp/agentharness-bridge/README.zh.md) 组合包。其 stdio Consumer 读取显式解析的私有连接描述文件，在 RPC 前把当前 Host 启动 token 交换为 cookie。[Connection 本机访问库](../../../../packages/client/connection/README.zh.md)负责描述文件发布和认证；MCP 与 Claude scope transport 均不读取签名密钥。生成的外部客户端配置保留选定的 Harness home、真实 dsh CLI 路径和源码运行参数。认证、请求大小、响应大小、取消与在线租约续期都有可配置的限制。该 profile 不运行模型或 agent loop。其私有 stdio transport 仅在生命周期取消后的 dispose 中关闭；SDK 保留协议回调，stdin EOF 使用共享的 launcher 注册。Readiness 回调同步执行；dispose 在取消 transport 生命周期前先取消待执行的 readiness 注册。
 
 私有描述文件依赖 POSIX 文件归属检查与内核文件锁。Windows 保持 Web 应用可用，但将本机 MCP 配置明确标为不支持，且不写入客户端配置；在缺少等效 Windows 保护时接受描述文件，会让未经检查的文件获得本机 Host 权限。
 

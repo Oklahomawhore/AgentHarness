@@ -1,4 +1,4 @@
-/** Local Claude session identity, authorized capture, and command-hook transport data. */
+/** Public Claude session, hook transport, and Remote failure types shared by Host and Client programs. */
 
 export type {} from '@deepseek-ai/cordis'
 
@@ -10,6 +10,9 @@ import type { DevelopmentTaskId, DevelopmentTaskObservedSourceId } from '@deepse
 
 /** Installation-scoped digest; the raw external session id is never a shared source identity. */
 export type ClaudeScopeSessionKey = Branded<'ClaudeScopeSessionKey'>
+
+/** One source user's joint receiving consent, independent of capture lifetime. */
+export type ClaudeScopeJointId = Branded<'ClaudeScopeJointId'>
 
 /** Explicit deployment inputs for project-local hook installation. */
 export interface ClaudeScopeSetupConfig {
@@ -104,6 +107,11 @@ export interface ClaudeScopeReceiveRequest {
 export type ClaudeScopeContributionSource = ClaudeScopeOpenApiSource | {
   readonly kind: 'tool-observations'
   readonly tools: readonly ('Write' | 'Edit')[]
+} | {
+  readonly kind: 'claude-work'
+  readonly tools: readonly ('Write' | 'Edit')[]
+  readonly commands: readonly { readonly command: string; readonly rootIndex: number }[]
+  readonly stopReports: boolean
 }
 
 /** Authorize local collection for a known session before requesting remote contribution permission. */
@@ -119,6 +127,8 @@ export interface ClaudeScopePrepareContributionRequest {
 export interface ClaudeScopeRequestContributionRequest extends ClaudeScopePrepareContributionRequest {
   readonly entry: ScopeContributionEntry
   readonly limits: ScopeContributionLimits
+  /** Required for joint entries; grants passive receiving only at the displayed local read revision. */
+  readonly receive?: { readonly expectedReadRevision: number }
 }
 
 /** Durable online application intent; active grants retain their invitation instead of this waiting state. */
@@ -157,6 +167,31 @@ export interface ClaudeScopeContributionLeaveRequest {
   readonly invitation?: ScopeContributionInvitation
 }
 
+/** Receiving retained by one joint application; active means local adoption, not model admission. */
+export interface ClaudeScopeJointSummary {
+  readonly id: ClaudeScopeJointId
+  readonly capture: ClaudeScopeContributionSelection
+  /** Original consent revision, reused unchanged when retrying a pending application. */
+  readonly expectedReadRevision: number
+  readonly state: 'waiting' | 'adopting' | 'active' | 'ended' | 'superseded' | 'failed'
+  readonly intent: 'adopt' | 'cancel-pending' | 'leave'
+  /** Either original permission still has locally retained termination work. */
+  readonly cleanupPending: boolean
+  readonly subscriptionId?: ScopeSubscriptionId
+}
+
+/** Withdraw only the receiving and contribution identities owned by this joint application. */
+export interface ClaudeScopeLeaveJointRequest {
+  readonly sessionKey: ClaudeScopeSessionKey
+  readonly jointId: ClaudeScopeJointId
+}
+
+/** Change only the address of this joint application's retained grants; never reopen stopped work. */
+export interface ClaudeScopeRecoverJointRequest extends ClaudeScopeLeaveJointRequest {
+  readonly expectedReadRevision: number
+  readonly ownerAddress: string
+}
+
 /** Inspect one observed session without sampling files or checking remote permission. */
 export interface ClaudeScopeContributionDetailRequest {
   readonly sessionKey: ClaudeScopeSessionKey
@@ -178,6 +213,11 @@ export interface ClaudeScopeContributionDetail {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
+    'claude-scope/project-invalid': {}
+    'claude-scope/configuration-conflict': {}
+    'claude-scope/configuration-invalid': {}
+    'claude-scope/configuration-too-large': {}
+    'claude-scope/write-failed': {}
     'claude-scope/stale-capture': {
       readonly sessionKey: ClaudeScopeSessionKey
       readonly expectedCapture: ClaudeScopeContributionSelection | null
@@ -208,6 +248,10 @@ export interface ClaudeScopeSessionSummary {
   readonly cwd?: string
   readonly observedAt: number
   readonly ended: boolean
+  /** Monotonic local receive-management revision; unrelated Hook observations do not advance it. */
+  readonly readRevision: number
+  /** Latest joint operation remains visible after its contribution stops. */
+  readonly joint?: ClaudeScopeJointSummary
   readonly taskId?: DevelopmentTaskId
   readonly responsibility?: string
   /** Omitted when sharing has stopped and no owner confirmation remains pending. */
@@ -234,7 +278,7 @@ export interface ClaudeScopeSessionSummary {
 /** Main-session events participating in capture or request-time delivery. */
 export type ClaudeScopeHookEvent =
   | 'SessionStart' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
-  | 'UserPromptSubmit' | 'PostToolBatch' | 'SessionEnd' | 'ignored'
+  | 'UserPromptSubmit' | 'PostToolBatch' | 'Stop' | 'StopFailure' | 'SessionEnd' | 'ignored'
 
 /** Tool input requiring authorization and supported-field parsing before collection. */
 export interface ClaudeScopeHookTool {
@@ -243,23 +287,27 @@ export interface ClaudeScopeHookTool {
   readonly input: unknown
   readonly response?: unknown
   readonly error?: string
+  readonly isInterrupt?: boolean
 }
 
-/** Hook identity with prompt, transcript, and batch payloads deliberately absent. */
-export interface ClaudeScopeHookInput {
+/** Parsed Hook identity and sampled Stop text; tool events require their parsed tool fields. */
+export type ClaudeScopeHookInput = {
   readonly sessionId: string
-  readonly event: ClaudeScopeHookEvent
   readonly cwd?: string
   readonly agentId?: string
-  readonly tool?: ClaudeScopeHookTool
-}
+  readonly promptId?: string
+  readonly stop?: { readonly text: string; readonly active: boolean }
+} & {
+  [Event in ClaudeScopeHookEvent]: { readonly event: Event } & (Event extends 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure'
+    ? { readonly tool: ClaudeScopeHookTool } : { readonly tool?: never })
+}[ClaudeScopeHookEvent]
 
 /** Supported fields retained without reading the underlying file or conversation. */
 export interface ClaudeScopePreparedInput {
   readonly kind: 'eligible'
   readonly inputDigest: string
   readonly toolName: 'Edit' | 'Write' | 'Bash'
-  readonly fields: Readonly<Record<string, string | number | boolean>>
+  readonly fields: Readonly<Record<string, string | number | boolean>> & { readonly rootIndex: number; readonly path: string }
 }
 
 /** Collection was skipped without changing the tool's own permission decision. */

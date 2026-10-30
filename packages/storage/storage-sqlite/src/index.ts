@@ -39,12 +39,19 @@ export interface Config {
    * {@link JournalMode}.
    */
   journalMode?: JournalMode
+  /**
+   * Backend supplying each new unit's initial snapshot. Copied atomically once;
+   * existing destination units never consult the source. Stop other writers
+   * during migration. The source stays untouched; domain recovery validates records.
+   */
+  bootstrapFrom?: string
 }
 
 /** Schemastery validator for {@link Config}. */
 export const Config: z<Config> = z.object({
   path: z.string().required(),
   journalMode: z.union(['wal', 'delete', 'truncate', 'persist'] as const).default('wal'),
+  bootstrapFrom: z.string(),
 })
 
 /**
@@ -63,8 +70,12 @@ export class SqliteStorageBackend implements StorageBackend {
 
   /**
    * @param config - Validated plugin configuration.
+   * @param bootstrapSource - Resolved KV source when `bootstrapFrom` is configured; its lifecycle belongs to its registering provider.
    */
-  constructor(config: Config) {
+  constructor(config: Config, private readonly bootstrapSource?: KvFacet) {
+    if (config.bootstrapFrom !== undefined && bootstrapSource === undefined) {
+      throw new Error(`sqlite bootstrap backend '${config.bootstrapFrom}' has no resolved kv facet`)
+    }
     this.ready = openDatabase(config.path, (config as Required<Config>).journalMode)
     // Mark the rejection handled: every primitive re-awaits `ready`, so an
     // open failure still surfaces to each caller; this guard only prevents an
@@ -97,25 +108,45 @@ export class SqliteStorageBackend implements StorageBackend {
 
   private async materializeUnit(descriptor: KvUnitDescriptor): Promise<SqliteKvUnit> {
     const db = await this.ready
-    const row = db.prepare('SELECT version FROM units WHERE name = ?').get(descriptor.name) as
-      | { version: number }
-      | undefined
-    if (row === undefined) {
-      db.prepare('INSERT INTO units (name, version) VALUES (?, ?)').run(descriptor.name, descriptor.version)
-    } else if (row.version !== descriptor.version) {
-      throw new StorageError(
-        'version-mismatch',
-        `kv unit '${descriptor.name}' is stamped version ${row.version} on the medium, incompatible with descriptor version ${descriptor.version}`,
-      )
+    const lookup = db.prepare('SELECT version FROM units WHERE name = ?')
+    let snapshot: Awaited<ReturnType<KvUnit['loadAll']>> | undefined
+    if (lookup.get(descriptor.name) === undefined && this.bootstrapSource !== undefined) {
+      const source = await this.bootstrapSource.open(descriptor)
+      try { snapshot = await source.loadAll() }
+      finally { await source.close() }
     }
-    for (const table of descriptor.tables) {
-      // Both segments passed UNIT_NAME_RE, so the identifier is safe in DDL.
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS "${recordTableName(descriptor.name, table)}" (
-          key   TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        ) STRICT
-      `)
+    // The unit row is also the completed-import marker. Recheck under the
+    // write lock: another connection may have imported during the source read.
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = lookup.get(descriptor.name) as { version: number } | undefined
+      if (row === undefined) {
+        db.prepare('INSERT INTO units (name, version) VALUES (?, ?)').run(descriptor.name, descriptor.version)
+      } else if (row.version !== descriptor.version) {
+        throw new StorageError(
+          'version-mismatch',
+          `kv unit '${descriptor.name}' is stamped version ${row.version} on the medium, incompatible with descriptor version ${descriptor.version}`,
+        )
+      }
+      for (const table of descriptor.tables) {
+        const physical = recordTableName(descriptor.name, table)
+        // Both segments passed UNIT_NAME_RE, so the identifier is safe in DDL.
+        db.exec(`CREATE TABLE IF NOT EXISTS "${physical}" (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`)
+      }
+      if (row === undefined && snapshot !== undefined) {
+        for (const [table, records] of Object.entries(snapshot.tables)) {
+          const physical = recordTableName(descriptor.name, table)
+          const insert = db.prepare(`INSERT INTO "${physical}" (key, value) VALUES (?, ?)`)
+          for (const [key, value] of Object.entries(records)) insert.run(key, JSON.stringify(value))
+        }
+      }
+      if (row === undefined && descriptor.hasGlobal && snapshot !== undefined && snapshot.global !== null) {
+        db.prepare('INSERT INTO unit_globals (unit, value) VALUES (?, ?)').run(descriptor.name, JSON.stringify(snapshot.global))
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
     return new SqliteKvUnit(db, descriptor, () => {
       this.units.delete(descriptor.name)
@@ -154,15 +185,22 @@ export class SqliteStorageBackend implements StorageBackend {
  * unregisters the name first, then closes the backend.
  * @param ctx - Plugin context (must inject `storage`).
  * @param config - Validated plugin configuration.
+ * @returns resolution after the configured source backend activates registration.
  */
-export function apply(ctx: Context, config: Config) {
-  const backend = new SqliteStorageBackend(config)
-  ctx.effect(() => {
-    const dispose = ctx.storage.backend.register('sqlite', backend)
-    return async () => {
-      dispose()
-      await backend.close()
-    }
-  }, 'storage-sqlite.registerBackend')
-  ctx.provide(storageBackendServiceKey('sqlite'), backend)
+export function apply(ctx: Context, config: Config): Promise<void> {
+  if (config.bootstrapFrom === 'sqlite') throw new Error('sqlite cannot bootstrap from itself')
+  const dependencies = config.bootstrapFrom === undefined ? [] : [storageBackendServiceKey(config.bootstrapFrom)]
+  const fiber = ctx.inject(dependencies, (backendCtx) => {
+    const source = config.bootstrapFrom === undefined ? undefined : backendCtx.storage.backend.get(config.bootstrapFrom).kv
+    const backend = new SqliteStorageBackend(config, source)
+    backendCtx.effect(() => {
+      const dispose = backendCtx.storage.backend.register('sqlite', backend)
+      return async () => {
+        dispose()
+        await backend.close()
+      }
+    }, 'storage-sqlite.registerBackend')
+    backendCtx.provide(storageBackendServiceKey('sqlite'), backend)
+  })
+  return Promise.resolve(fiber).then(() => {})
 }

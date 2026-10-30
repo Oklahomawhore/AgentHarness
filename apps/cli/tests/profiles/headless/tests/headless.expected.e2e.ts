@@ -81,7 +81,7 @@ async function expectHeadlessStream(normalized: string, expectedPath: string): P
 }
 
 /** Serve one deterministic DeepSeek-compatible response while retaining its request body. */
-async function deepseekDefaultsServer(options: { waitForTitleRequest?: boolean } = {}): Promise<DeepSeekDefaultsServer> {
+async function deepseekDefaultsServer(): Promise<DeepSeekDefaultsServer> {
   const requests: JsonObject[] = []
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     let body = ''
@@ -91,10 +91,11 @@ async function deepseekDefaultsServer(options: { waitForTitleRequest?: boolean }
       requests.push(JSON.parse(body) as JsonObject)
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       let keepAlives = 3
+      let timer: ReturnType<typeof setTimeout> | undefined
       const write = (): void => {
         // One-shot teardown may cancel background title work after the main response.
         if (keepAlives-- > 0
-          || (options.waitForTitleRequest === true && !requests.some(request => request.max_tokens === 64))) {
+          || !requests.some(request => request.max_tokens === 64)) {
           response.write(': keep-alive\n\n')
           timer = setTimeout(write, 60)
           return
@@ -106,8 +107,8 @@ async function deepseekDefaultsServer(options: { waitForTitleRequest?: boolean }
           '',
         ].join('\n\n'))
       }
-      let timer = setTimeout(write, 60)
       response.once('close', () => { clearTimeout(timer) })
+      write()
     })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -444,7 +445,7 @@ describe('headless stream-json snapshots', () => {
     `)
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
-  it('keeps provider comments alive and sends DeepSeek defaults through the one-shot app', async () => {
+  it('accepts SSE comments and sends DeepSeek defaults through the one-shot app', async () => {
     const server = await deepseekDefaultsServer()
     try {
       const result = await runLoaderSmoke({
@@ -468,20 +469,19 @@ describe('headless stream-json snapshots', () => {
       })
 
       expect(result.stderr).toBe('')
+      const records = parseJsonl(result.stdout)
+      const events = records.map(record => record.event).filter((event): event is JsonObject => (
+        event !== null && typeof event === 'object' && !Array.isArray(event)
+      ))
+      expect(events.filter(event => event.type === 'llm/retry')).toEqual([])
+      expect(records.at(-1)).toMatchObject({ type: 'result', output: 'DEFAULTS_OK' })
       expect(server.requests).toHaveLength(2)
       const agentRequest = server.requests.find(request => request.max_tokens === 256_000)
       const titleRequest = server.requests.find(request => request.max_tokens === 64)
       expect(agentRequest?.reasoning_effort).toBe('low')
       expect(titleRequest).toBeDefined()
-      const header = (parseJsonl(result.stdout)
-        .map(record => record.event)
-        .find((event): event is JsonObject => (
-          event !== null
-          && typeof event === 'object'
-          && !Array.isArray(event)
-          && 'type' in event
-          && event.type === 'request/header'
-        ))?.data as JsonObject | undefined)?.header as JsonObject | undefined
+      const headerData = events.find(event => event.type === 'request/header')?.data as JsonObject | undefined
+      const header = headerData?.header as JsonObject | undefined
       expect(header?.config).toMatchInlineSnapshot(`
         {
           "maxTokens": 256000,
@@ -500,7 +500,7 @@ describe('headless stream-json snapshots', () => {
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('keeps the compatibility stream open until the title request arrives', async () => {
-    const server = await deepseekDefaultsServer({ waitForTitleRequest: true })
+    const server = await deepseekDefaultsServer()
     try {
       const response = await fetch(server.url, {
         method: 'POST',
@@ -537,7 +537,7 @@ describe('headless stream-json snapshots', () => {
   })
 
   it('sends pi-ai DeepSeek compatibility through the one-shot app', async () => {
-    const server = await deepseekDefaultsServer({ waitForTitleRequest: true })
+    const server = await deepseekDefaultsServer()
     try {
       const result = await runLoaderSmoke({
         label: 'pi-ai DeepSeek compatibility headless stream-json snapshot',

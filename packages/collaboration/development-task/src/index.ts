@@ -72,6 +72,11 @@ import type {
 } from './types.ts'
 
 export type {
+  DevelopmentTaskCompletedTurnObservationSource, DevelopmentTaskCompletedTurnObservationResult,
+  DevelopmentTaskLocalContributionObservationResult, DevelopmentTaskPeerContributionObservationResult,
+  DevelopmentTaskLocalTurnOutcome, DevelopmentTaskPeerTurnOutcome,
+  DevelopmentTaskClaudeWorkSource, DevelopmentTaskClaudeCommandObservationResult, DevelopmentTaskClaudeStopReportResult,
+  DevelopmentTaskPeerStopReport,
   DevelopmentTaskLocalContributionGrant, DevelopmentTaskLocalContributionId, DevelopmentTaskLocalContribution,
   DevelopmentTaskLocalContributionReceipt, DevelopmentTaskLocalContributionRequest, DevelopmentTaskLocalContributionResult,
   DevelopmentTaskEndLocalContributionRequest, DevelopmentTaskLocalContributionAdmissionReceipt,
@@ -81,6 +86,9 @@ export type {
   DevelopmentTaskContributionGrantId, DevelopmentTaskContributionEndReason,
   DevelopmentTaskContributionGeneration, DevelopmentTaskCaptureId, DevelopmentTaskCaptureGeneration,
   DevelopmentTaskContributionSource, DevelopmentTaskOpenApiContributionSource, DevelopmentTaskToolObservationSource,
+  DevelopmentTaskCompletedFileToolObservationSource, DevelopmentTaskCompletedFileToolObservationResult,
+  DevelopmentTaskLocalToolObservationResult, DevelopmentTaskCommandSelector, DevelopmentTaskCommandToolObservationSource,
+  DevelopmentTaskCommandOutput, DevelopmentTaskCommandObservationResult,
   DevelopmentTaskToolObservationResult, DevelopmentTaskPeerToolObservation, DevelopmentTaskPeerOpenApiObservation,
   DevelopmentTaskPeerContributionMetadata,
   DevelopmentTaskPeerContributionAdmissionReceipt,
@@ -247,8 +255,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private readonly lastAssignmentSeqByNode = new Map<DevelopmentNodeId, number>()
   private readonly config: Config
   private operationTail: Promise<void> = Promise.resolve()
-  private roomReconcileTail: Promise<void> = Promise.resolve()
-  private roomReconcileRunning = false
+  private roomReconcileTail: Promise<void> | undefined
 
   /** Validate all deployment bounds before accepting Task state. */
   constructor(ctx: Context, config: Config) {
@@ -283,7 +290,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
    */
   @Remote('list')
   list(request: DevelopmentTaskListRequest): readonly DevelopmentTaskSnapshot[] {
-    const limit = this.limit(request.limit, 200)
+    const limit = this.limit(request.limit, Math.min(200, this.config.maxLineageTasks))
     return Object.freeze([...this.tasks.values()]
       .filter(task => request.participantId === undefined
         || task.createdBy === request.participantId
@@ -355,6 +362,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     if (this.tasks.size >= this.config.maxTasks) throw new DevelopmentTaskError('Task limit reached', 'LIMIT_EXCEEDED')
     this.requireKnownParticipant(request.createdBy)
     const origin = this.normalizeOrigin(request.origin)
+    const objective = this.text(request.objective, 'objective')
+    const scope = this.text(request.scope, 'scope')
     const block = this.createContextBlock(origin, request.excludedContextIds ?? [])
     if (block !== undefined) await this.persistContextBlock(block)
     const taskId = `task-${randomUUID()}` as DevelopmentTaskId
@@ -362,8 +371,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     const created = await this.publish(taskId, hiddenRoomId, {
       kind: 'task-created',
       origin,
-      objective: this.text(request.objective, 'objective'),
-      scope: this.text(request.scope, 'scope'),
+      objective,
+      scope,
       createdBy: request.createdBy,
       ...(block === undefined ? {} : { inheritedContextBlockId: block.id }),
     })
@@ -500,10 +509,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
         if (observation.sequence >= Number.MAX_SAFE_INTEGER) {
           throw new DevelopmentTaskError('remote artifact sequence must reserve its terminal successor', 'LIMIT_EXCEEDED')
         }
-        const withdrawal = this.withdrawal(publication, interval.id, publication.publishedAt)
-        if (Buffer.byteLength(JSON.stringify(withdrawal.observation), 'utf8') > this.config.maxTextBytes) {
-          throw new DevelopmentTaskError('remote artifact must fit its complete terminal observation', 'LIMIT_EXCEEDED')
-        }
       }
       await this.publish(task.id, task.hiddenRoomId, { kind: 'context-published', publication })
       return this.remoteAdmission(this.requireTask(task.id), interval.id, publication, 'published')
@@ -549,8 +554,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
-   * Open explicitly authorized tool collection for one current owner-local Agent assignment.
-   * @param grant - exact capture, binding epoch, tools, and finite limits retained by the source adapter.
+   * Open explicitly authorized contribution collection for one current owner-local Agent assignment.
+   * @param grant - exact capture, binding epoch, source permission, and finite limits retained by the source adapter.
    * @returns original durable local authority; ended captures cannot reopen.
    */
   openLocalContribution(grant: DevelopmentTaskLocalContributionGrant): Promise<DevelopmentTaskLocalContribution> {
@@ -605,7 +610,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   admitLocalContribution(request: DevelopmentTaskLocalContributionRequest): Promise<DevelopmentTaskLocalContributionResult> {
     return this.enqueue(async () => {
       const parsed = localContributionRequestSchema.safeParse(request)
-      if (!parsed.success) throw new DevelopmentTaskError('invalid local tool sample', 'INVALID_REQUEST')
+      if (!parsed.success) throw new DevelopmentTaskError('invalid local contribution sample', 'INVALID_REQUEST')
       const sample = parsed.data
       let task = this.requirePeerTask(sample.grant.taskId)
       const id = localContributionId(sample.grant)
@@ -887,11 +892,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private async endPeerNow(
     task: TaskRecord, grant: DevelopmentTaskPeerContributionGrant, reason: DevelopmentTaskContributionEndReason,
   ): Promise<DevelopmentTaskPeerContributionReceipt> {
-    const retained = task.contributions.get(grant.grantId)
-    if (retained !== undefined) {
-      this.requireSamePeerGrant(retained.grant, grant)
-      if (retained.state === 'ended') return retained.endReceipt
-    }
     await this.publish(task.id, task.hiddenRoomId, { kind: 'peer-contribution-ended', grant, reason })
     const ended = this.requireTask(task.id).contributions.get(grant.grantId)
     if (ended?.state !== 'ended') throw new Error('peer terminal event did not end its grant')
@@ -1134,6 +1134,17 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
+   * Read the most recently bound retained assignment, independently of timestamps and acknowledgements.
+   * @param participantId - participant whose retained bindings are considered.
+   * @returns frozen latest assignment still owned by the participant, or undefined when unbound.
+   */
+  latestAssignment(participantId: DevelopmentParticipantId): DevelopmentTaskAssignment | undefined {
+    const entry = this.assignmentEntries.findLast(item => item.participantId === participantId
+      && item.change.kind === 'task-bound' && this.assignments.get(item.bindingId)?.participantId === participantId)
+    return entry === undefined ? undefined : this.assignments.get(entry.bindingId)
+  }
+
+  /**
    * Bind one local online Agent session to a Task, then reconcile Rooms.
    * @param request - target Task, Agent participant, and optional existing session binding.
    * @returns committed session binding, Task context, and independent Room outcomes.
@@ -1151,10 +1162,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (previous !== undefined && previous.participantId !== request.participantId) {
         throw new DevelopmentTaskError('Task binding belongs to a different Agent participant', 'INVALID_REQUEST')
       }
+      const sessionLabel = request.sessionLabel === undefined ? undefined : this.text(request.sessionLabel, 'sessionLabel')
       await this.endLocalBindingNow(bindingId)
       const assignment = await this.publishAssignment(bindingId, request.participantId, {
         kind: 'task-bound', taskId: task.id,
-        ...(request.sessionLabel === undefined ? {} : { sessionLabel: this.text(request.sessionLabel, 'sessionLabel') }),
+        ...(sessionLabel === undefined ? {} : { sessionLabel }),
       })
       if (assignment === undefined) throw new DevelopmentTaskError('binding event did not create an assignment', 'INVALID_REQUEST')
       const warnings: string[] = []
@@ -1220,7 +1232,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       const assignment = this.assignments.get(request.bindingId)
       const task = this.requireTask(request.taskId)
       if (assignment?.participantId !== request.participantId || assignment.taskId !== task.id
-        || request.revision < 1 || request.revision > task.revision) {
+        || !Number.isSafeInteger(request.revision) || request.revision < 1 || request.revision > task.revision) {
         throw new DevelopmentTaskError('context acknowledgement does not match the Agent session binding', 'INVALID_REQUEST')
       }
       if (request.expectedBindingEpoch !== undefined) {
@@ -1320,12 +1332,12 @@ export class DevelopmentTaskService extends TypertRemoteService {
    * @param candidates - validated persisted events.
    */
   restoreLog(candidates: readonly DevelopmentTaskLogEntry[]): void {
-    const pending = candidates.map(entry => this.normalizeEntry(entry))
+    const pending = candidates.map(entry => this.freezeEntry(entry))
     while (pending.length > 0) {
       const index = pending.findIndex(entry => this.canRestore(entry))
       if (index < 0) throw new DevelopmentTaskError('durable Task events have unresolved lineage or sequence dependencies', 'REPLICA_CONFLICT')
-      const [entry] = pending.splice(index, 1)
-      if (entry === undefined) throw new DevelopmentTaskError('durable Task restore lost an event', 'REPLICA_CONFLICT')
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- findIndex located an element and pending has not changed
+      const entry = pending.splice(index, 1)[0]!
       this.append(entry, { kind: 'restored', nodeId: entry.nodeId }, 'REPLICA_CONFLICT')
     }
     for (const task of this.tasks.values()) {
@@ -1334,7 +1346,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
         this.peerGrantBounds(this.parsePeerGrant(item.grant))
         this.peerTerminalBounds(item.grant, task.context.filter(publication =>
           publication.peerContribution?.grant.grantId === item.grant.grantId
-          && (publication.peerObservation !== undefined || publication.peerToolObservation !== undefined)).at(-1))
+          && (publication.peerObservation !== undefined || publication.peerToolObservation !== undefined
+            || publication.peerTurnOutcome !== undefined || publication.peerStopReport !== undefined)).at(-1))
       }
       for (const item of task.localContributions.values()) if (item.state === 'active') this.localGrantBounds(this.parseLocalGrant(item.grant))
       const reserved = this.retirementReservations(task)
@@ -1353,8 +1366,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
     while (pending.length > 0) {
       const index = pending.findIndex(entry => entry.seq === (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0) + 1)
       if (index < 0) throw new DevelopmentTaskError('durable assignment events have a sequence gap', 'REPLICA_CONFLICT')
-      const [entry] = pending.splice(index, 1)
-      if (entry === undefined) throw new DevelopmentTaskError('durable assignment restore lost an event', 'REPLICA_CONFLICT')
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- findIndex located an element and pending has not changed
+      const entry = pending.splice(index, 1)[0]!
       this.appendAssignment(this.freezeAssignmentEntry(entry), { kind: 'restored', nodeId: entry.nodeId }, 'REPLICA_CONFLICT')
     }
   }
@@ -1371,25 +1384,26 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   /**
-   * Persist and append one authenticated peer Task event.
+   * Accept one authenticated peer Task event, persisting it only if unseen.
    * @param candidate - wire-validated event.
    * @param sourceNodeId - authenticated peer identity.
    * @returns current Task projection.
    */
   acceptLogReplica(candidate: DevelopmentTaskLogEntry, sourceNodeId: DevelopmentNodeId): Promise<DevelopmentTaskSnapshot> {
     return this.enqueue(async () => {
-      const entry = this.normalizeEntry(candidate)
+      const entry = this.freezeEntry(candidate)
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated Task event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
-      if (entry.seq > (this.lastSeqByNode.get(entry.nodeId) ?? 0)) this.prepare(entry, 'REPLICA_CONFLICT')
+      const task = this.prepare(entry, 'REPLICA_CONFLICT')
+      if (entry.seq <= (this.lastSeqByNode.get(entry.nodeId) ?? 0)) return this.snapshot(task)
       await this.persistEntry(entry)
       return this.append(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })
   }
 
   /**
-   * Persist and append one authenticated peer assignment event.
+   * Persist and append one unseen authenticated peer assignment event; exact committed retries return the current assignment.
    * @param candidate - wire-validated assignment event.
    * @param sourceNodeId - authenticated participant-home node.
    * @returns current assignment or undefined after clear.
@@ -1403,6 +1417,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
       if (entry.nodeId !== sourceNodeId || sourceNodeId === this.nodeId()) {
         throw new DevelopmentTaskError('replicated assignment event does not match its authenticated peer', 'REPLICA_CONFLICT')
       }
+      const assignment = this.prepareAssignment(entry, 'REPLICA_CONFLICT')
+      if (entry.seq <= (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0)) return assignment
       await this.persistAssignment(entry)
       return this.appendAssignment(entry, { kind: 'replica', nodeId: sourceNodeId }, 'REPLICA_CONFLICT')
     })
@@ -1421,14 +1437,10 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   private scheduleDegradedRoomRetry(): void {
-    if (this.roomReconcileRunning || ![...this.tasks.values()].some(task => task.ownerNodeId === this.nodeId()
+    if (this.roomReconcileTail !== undefined || ![...this.tasks.values()].some(task => task.ownerNodeId === this.nodeId()
       && this.ctx.developmentRooms.list().rooms.every(room => room.id !== task.hiddenRoomId))) return
-    this.roomReconcileRunning = true
     this.roomReconcileTail = this.reconcileAllRooms()
-      .catch((error: unknown) => {
-        this.ctx.logger.warn('development-task: hidden Room retry failed: %s', this.failureMessage(error))
-      })
-      .finally(() => { this.roomReconcileRunning = false })
+      .finally(() => { this.roomReconcileTail = undefined })
   }
 
   private async reconcileTaskRoom(taskId: DevelopmentTaskId): Promise<void> {
@@ -1479,15 +1491,9 @@ export class DevelopmentTaskService extends TypertRemoteService {
     origin: DevelopmentTaskEventOrigin,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): DevelopmentTaskSnapshot {
-    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
-    if (entry.seq <= lastSeq) {
-      const retained = this.entries.find(item => item.nodeId === entry.nodeId && item.seq === entry.seq)
-      if (retained === undefined || JSON.stringify(retained) !== JSON.stringify(entry)) {
-        throw new DevelopmentTaskError('same Task event identity carries different content', 'REPLICA_CONFLICT')
-      }
-      return this.snapshot(this.requireTask(entry.taskId))
-    }
     const task = this.prepare(entry, code)
+    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
+    if (entry.seq <= lastSeq) return this.snapshot(task)
     task.events.push(entry)
     task.revision = entry.revision
     task.updatedAt = entry.at
@@ -1507,15 +1513,35 @@ export class DevelopmentTaskService extends TypertRemoteService {
   }
 
   private prepare(entry: DevelopmentTaskLogEntry, code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT'): TaskRecord {
-    const expectedSeq = (this.lastSeqByNode.get(entry.nodeId) ?? 0) + 1
+    const lastSeq = this.lastSeqByNode.get(entry.nodeId) ?? 0
+    if (entry.seq <= lastSeq) {
+      const retained = this.entries.find(item => item.nodeId === entry.nodeId && item.seq === entry.seq)
+      if (retained === undefined || JSON.stringify(retained) !== JSON.stringify(entry)) {
+        throw new DevelopmentTaskError('same Task event identity carries different content', 'REPLICA_CONFLICT')
+      }
+      return this.requireTask(entry.taskId)
+    }
+    const expectedSeq = lastSeq + 1
     if (entry.seq !== expectedSeq) throw new DevelopmentTaskError(`Task event expected node sequence ${String(expectedSeq)}`, code)
     const current = this.tasks.get(entry.taskId)
     if (entry.revision !== (current?.revision ?? 0) + 1) {
       throw new DevelopmentTaskError('Task revision is not the exact next revision', code)
     }
-    return this.projectEntry(current, entry, code)
+    const projected = this.projectEntry(current, entry, code)
+    if (entry.change.kind === 'task-created') {
+      const block = projected.inheritedContextBlockId === undefined ? undefined : this.contextBlocks.get(projected.inheritedContextBlockId)
+      if (block !== undefined) for (const source of block.sources) {
+        const parent = this.inheritedSource(source.parent)
+        const selected = new Set(source.context.map(publication => publication.id))
+        if (!isDeepStrictEqual(source, { ...parent, context: parent.context.filter(publication => selected.has(publication.id)) })) {
+          throw new DevelopmentTaskError('Task inherited context changes its selected parent snapshot', code)
+        }
+      }
+    }
+    return projected
   }
 
+  /** Every projected creation ties its inherited sources to the immutable origin before persistence or recovery. */
   private projectEntry(
     current: TaskRecord | undefined,
     entry: DevelopmentTaskLogEntry,
@@ -1525,9 +1551,18 @@ export class DevelopmentTaskService extends TypertRemoteService {
       case 'task-created': {
         if (current !== undefined) throw new DevelopmentTaskError('Task already exists', code)
         this.validateOriginReferences(entry.change.origin, code)
-        if (entry.change.inheritedContextBlockId !== undefined
-          && !this.contextBlocks.has(entry.change.inheritedContextBlockId)) {
+        const parents = this.parentRefsFromOrigin(entry.change.origin)
+        const blockId = entry.change.inheritedContextBlockId
+        if ((parents.length === 0) !== (blockId === undefined)) {
+          throw new DevelopmentTaskError('Task inheritance block must match its creation relation', code)
+        }
+        const block = blockId === undefined ? undefined : this.contextBlocks.get(blockId)
+        if (blockId !== undefined && block === undefined) {
           throw new DevelopmentTaskError('Task references an unavailable inherited-context block', 'PARENT_REVISION_UNAVAILABLE')
+        }
+        if (block !== undefined && JSON.stringify(block.sources.map(source => [source.parent.taskId, source.parent.revision]))
+          !== JSON.stringify(parents.map(parent => [parent.taskId, parent.revision]))) {
+          throw new DevelopmentTaskError('Task inherited-context sources differ from its selected parent revisions', code)
         }
         return {
           id: entry.taskId,
@@ -1627,7 +1662,8 @@ export class DevelopmentTaskService extends TypertRemoteService {
           endReceipt: this.peerReceipt(entry, grant), ...(previous === undefined ? {} : { openReceipt: previous.openReceipt }),
         }))
         const latest = task.context.filter(item => item.peerContribution?.grant.grantId === grant.grantId
-          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined)).at(-1)
+          && (item.peerObservation !== undefined || item.peerToolObservation !== undefined
+            || item.peerTurnOutcome !== undefined || item.peerStopReport !== undefined)).at(-1)
         return { ...task, contributions, context: [...task.context,
           ...peerWithdrawals(grant, latest, entry.change.reason, entry.at).map(freezePublication)], events: [...task.events] }
       }
@@ -1670,12 +1706,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
 
   private validateLocalPublication(task: TaskRecord, publication: DevelopmentTaskContextPublication,
     entry: DevelopmentTaskLogEntry, code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT'): void {
-    if (publication.localContribution?.ended !== undefined || publication.localToolObservation === undefined) {
+    if (publication.localContribution?.ended !== undefined
+      || (publication.localToolObservation === undefined && publication.localTurnOutcome === undefined)) {
       throw new DevelopmentTaskError('local withdrawal requires its terminal owner event', code)
     }
-    const parsed = localContributionRequestSchema.safeParse(localPublicationRequest(publication))
-    if (!parsed.success) throw new DevelopmentTaskError('local report changes its permitted tools', code)
-    const sample = parsed.data
+    const sample = localPublicationRequest(publication)
     const id = localContributionId(sample.grant)
     const authority = task.localContributions.get(id)
     if (authority?.state !== 'active' || !isDeepStrictEqual(authority.grant, sample.grant) || sample.grant.expiresAt <= entry.at
@@ -1684,11 +1719,13 @@ export class DevelopmentTaskService extends TypertRemoteService {
       throw new DevelopmentTaskError('local report lacks its current canonical owner authorization', code)
     }
     const prior = task.context.filter(item => item.localContribution !== undefined
-      && localContributionId(item.localContribution.grant) === id && item.localToolObservation !== undefined)
+      && localContributionId(item.localContribution.grant) === id
+      && (item.localToolObservation !== undefined || item.localTurnOutcome !== undefined))
     if (prior.length >= sample.grant.maxSamples || sample.sequence > sample.grant.maxSamples) {
       throw new DevelopmentTaskError('local report exceeds its sample limit', code === 'INVALID_REQUEST' ? 'LIMIT_EXCEEDED' : code)
     }
-    if (prior.some(item => item.id === publication.id || (item.localToolObservation?.sequence ?? 0) >= sample.sequence)) {
+    if (prior.some(item => item.id === publication.id
+      || (item.localToolObservation?.sequence ?? item.localTurnOutcome?.sequence ?? 0) >= sample.sequence)) {
       throw new DevelopmentTaskError('local report sequence or source does not advance', code)
     }
     if (Buffer.byteLength(JSON.stringify(sample), 'utf8') > sample.grant.maxSampleBytes) {
@@ -1702,7 +1739,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   ): void {
     const metadata = publication.peerContribution
     if (metadata === undefined || metadata.ended !== undefined || publication.peerObservation?.state === 'revoked'
-      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
+      || (publication.peerObservation === undefined && publication.peerToolObservation === undefined && publication.peerTurnOutcome === undefined && publication.peerStopReport === undefined)) throw new DevelopmentTaskError('peer withdrawal requires its terminal owner event', code)
     const parsed = peerContributionRequestSchema.safeParse(peerPublicationRequest(publication))
     if (!parsed.success) throw new DevelopmentTaskError('peer sample does not match its permitted source and tools', code)
     const sample = parsed.data
@@ -1712,9 +1749,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
       throw new DevelopmentTaskError('peer publication does not match current owner authorization', code)
     }
     const samples = task.context.filter(item => item.peerContribution?.grant.grantId === sample.grant.grantId
-      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined))
+      && (item.peerObservation !== undefined || item.peerToolObservation !== undefined
+        || item.peerTurnOutcome !== undefined || item.peerStopReport !== undefined))
     if (samples.length >= sample.grant.maxSamples) throw new DevelopmentTaskError('peer contribution sample capacity reached', 'LIMIT_EXCEEDED')
     const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation
+      ?? samples.at(-1)?.peerTurnOutcome ?? samples.at(-1)?.peerStopReport
     if (!Number.isSafeInteger(sample.sequence) || sample.sequence < 1 || sample.sequence >= Number.MAX_SAFE_INTEGER
       || (previous !== undefined && sample.sequence <= previous.sequence)
       || task.context.some(item => item.id === publication.id)) {
@@ -1806,7 +1845,11 @@ export class DevelopmentTaskService extends TypertRemoteService {
     origin: DevelopmentTaskOrigin,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): void {
-    for (const parent of origin.kind === 'root' ? [] : origin.kind === 'fork' ? [origin.parent] : origin.parents) {
+    const parents = this.parentRefsFromOrigin(origin)
+    if (origin.kind === 'merge' && new Set(parents.map(parent => parent.taskId)).size !== parents.length) {
+      throw new DevelopmentTaskError('Merge parents must be unique', code)
+    }
+    for (const parent of parents) {
       const task = this.tasks.get(parent.taskId)
       if (task === undefined || parent.revision > task.revision) {
         throw new DevelopmentTaskError(
@@ -1926,6 +1969,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
       participantId,
       change,
     })
+    this.prepareAssignment(entry, 'INVALID_REQUEST')
     await this.persistAssignment(entry)
     return this.appendAssignment(entry, { kind: 'local', nodeId: entry.nodeId }, 'INVALID_REQUEST')
   }
@@ -1941,6 +1985,20 @@ export class DevelopmentTaskService extends TypertRemoteService {
   private appendAssignment(
     entry: DevelopmentTaskAssignmentLogEntry,
     origin: DevelopmentTaskEventOrigin,
+    code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
+  ): DevelopmentTaskAssignment | undefined {
+    const assignment = this.prepareAssignment(entry, code)
+    if (entry.seq <= (this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0)) return assignment
+    if (assignment === undefined) this.assignments.delete(entry.bindingId)
+    else this.assignments.set(entry.bindingId, assignment)
+    this.assignmentEntries.push(entry)
+    this.lastAssignmentSeqByNode.set(entry.nodeId, entry.seq)
+    this.ctx.emit('development-task/assignment-changed', assignment ?? null, entry, origin)
+    return assignment
+  }
+
+  private prepareAssignment(
+    entry: DevelopmentTaskAssignmentLogEntry,
     code: 'INVALID_REQUEST' | 'REPLICA_CONFLICT',
   ): DevelopmentTaskAssignment | undefined {
     const lastSeq = this.lastAssignmentSeqByNode.get(entry.nodeId) ?? 0
@@ -1971,24 +2029,19 @@ export class DevelopmentTaskService extends TypertRemoteService {
           ...(entry.change.sessionLabel === undefined ? {} : { sessionLabel: entry.change.sessionLabel }),
           assignedAt: entry.at,
         })
-        this.assignments.set(entry.bindingId, assignment)
         break
       case 'task-cleared':
         if (current?.taskId !== entry.change.previousTaskId) throw new DevelopmentTaskError('assignment clear does not match current Task', code)
-        this.assignments.delete(entry.bindingId)
         break
       case 'context-acknowledged':
-        if (current?.taskId !== entry.change.taskId || entry.change.revision < (current.acknowledgedRevision ?? 0)) {
+        if (current?.taskId !== entry.change.taskId || entry.change.revision < (current.acknowledgedRevision ?? 0)
+          || entry.change.revision > this.requireTask(entry.change.taskId).revision) {
           throw new DevelopmentTaskError('context acknowledgement does not match current assignment', code)
         }
         assignment = Object.freeze({ ...current, acknowledgedRevision: entry.change.revision })
-        this.assignments.set(entry.bindingId, assignment)
         break
       default: return this.assertNever(entry.change)
     }
-    this.assignmentEntries.push(entry)
-    this.lastAssignmentSeqByNode.set(entry.nodeId, entry.seq)
-    this.ctx.emit('development-task/assignment-changed', assignment ?? null, entry, origin)
     return assignment
   }
 
@@ -2075,14 +2128,6 @@ export class DevelopmentTaskService extends TypertRemoteService {
       const task = this.tasks.get(parent.taskId)
       return task !== undefined && task.revision >= parent.revision
     })
-  }
-
-  private normalizeEntry(entry: DevelopmentTaskLogEntry): DevelopmentTaskLogEntry {
-    if (!Number.isSafeInteger(entry.seq) || entry.seq < 1 || !Number.isSafeInteger(entry.revision) || entry.revision < 1
-      || !Number.isSafeInteger(entry.at) || entry.at < 0) {
-      throw new DevelopmentTaskError('Task event sequence, revision, or timestamp is invalid', 'REPLICA_CONFLICT')
-    }
-    return this.freezeEntry(entry)
   }
 
   private freezeEntry(entry: DevelopmentTaskLogEntry): DevelopmentTaskLogEntry {

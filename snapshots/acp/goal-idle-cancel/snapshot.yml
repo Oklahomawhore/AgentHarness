@@ -1,0 +1,12 @@
+version: 1
+scenario: goal-idle-cancel
+profile: acp
+composition: acp-goal-idle-cancel
+recording: authored
+header:
+  class: acp-goal-idle-cancel
+  pin: true
+  systemPromptSource: escalation-approved
+  toolSchemasSource: escalation-approved
+replay:
+  override: true

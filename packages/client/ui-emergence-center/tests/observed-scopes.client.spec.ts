@@ -26,6 +26,67 @@ function port(overrides: Partial<ObservedScopePort> = {}): ObservedScopePort {
 }
 
 describe('Owner observation directory', () => {
+  it('clears owner selection and ignores its failed read after selecting a remote Task', async () => {
+    const old = Promise.withResolvers<readonly DevelopmentTaskObservedInterval[]>()
+    const intervals = vi.fn(() => old.promise)
+    const report = vi.fn()
+    const directory = createObservedScopeDirectory(port({ intervals }), report)
+    try {
+      directory.focus(TASK)
+      directory.focus(undefined)
+      const idle = directory.getSnapshot()
+      expect(idle).toEqual({ candidates: [], intervals: [], status: 'idle' })
+      old.reject(new Error('old connection failed'))
+      await Promise.allSettled([old.promise])
+      expect(directory.getSnapshot()).toBe(idle)
+      expect(report).not.toHaveBeenCalled()
+      expect(intervals).toHaveBeenCalledOnce()
+    } finally { directory.dispose() }
+    const disposed = directory.getSnapshot()
+    directory.focus(TASK)
+    directory.refresh()
+    directory.reset()
+    expect(directory.getSnapshot()).toBe(disposed)
+    expect(intervals).toHaveBeenCalledOnce()
+  })
+
+  it('confirms approval after invalidating an owner read already in flight', async () => {
+    const old = Promise.withResolvers<readonly DevelopmentTaskObservedInterval[]>()
+    const intervals = vi.fn().mockImplementationOnce(() => old.promise).mockResolvedValue([ACTIVE])
+    const directory = createObservedScopeDirectory(port({ intervals }), vi.fn())
+    try {
+      directory.focus(TASK)
+      await directory.approve(CANDIDATE)
+      expect(directory.getSnapshot().intervals).toEqual([ACTIVE])
+      old.resolve([])
+      await vi.waitFor(() => { expect(intervals).toHaveBeenCalledTimes(2) })
+      expect(directory.getSnapshot().intervals).toEqual([ACTIVE])
+    } finally { old.resolve([]); directory.dispose(); await old.promise }
+  })
+
+  it('does not publish or refresh a previous connection approval after selecting another Task', async () => {
+    const approval = Promise.withResolvers<DevelopmentTaskObservedInterval>()
+    const intervals = vi.fn(async () => [])
+    const directory = createObservedScopeDirectory(port({
+      candidates: async request => request.taskId === TASK ? [CANDIDATE] : [],
+      intervals, approve: () => approval.promise,
+    }), vi.fn())
+    try {
+      directory.focus(TASK)
+      await vi.waitFor(() => { expect(directory.getSnapshot().status).toBe('ready') })
+      const approving = directory.approve(CANDIDATE)
+      directory.reset()
+      directory.focus(OTHER)
+      await vi.waitFor(() => { expect(directory.getSnapshot().status).toBe('ready') })
+      const current = directory.getSnapshot()
+      approval.resolve(ACTIVE)
+      await approving
+      expect(directory.getSnapshot()).toBe(current)
+      expect(current.taskId).toBe(OTHER)
+      expect(intervals).toHaveBeenCalledTimes(2)
+    } finally { approval.resolve(ACTIVE); directory.dispose(); await approval.promise }
+  })
+
   it('rejects a previous Task query after selection changes and does not carry old candidates', async () => {
     const old = Promise.withResolvers<readonly DevelopmentTaskObservedCandidate[]>()
     const directory = createObservedScopeDirectory(port({

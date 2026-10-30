@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This workspace owns `@deepseek-ai/node-addon-system`: the Linux `landlock-run` confinement executable and the POSIX `system.node` binding. It shares the root pnpm workspace and lockfile; native packages have one independent version and release workflow.
+This workspace owns `@deepseek-ai/node-addon-system`: the Linux `landlock-run` confinement executable and the POSIX `system.node` binding. It shares the root pnpm workspace and lockfile; native packages have one independent version and separate release tooling.
 
 ## Runtime rules
 
@@ -20,7 +20,7 @@ Run `pnpm build:ts`, `pnpm build:native`, `pnpm build:test-oracle`, `pnpm typech
 
 ## Packaging and verification
 
-- `os`/`cpu` and `prebuilds.json` are the checked-in package matrix. CI derives runners from that matrix, builds natively on each architecture, and tests identical addon bytes under several Node releases.
+- `os`/`cpu` and `prebuilds.json` define the native package matrix. Complete-family acceptance builds on matching architectures and tests identical addon bytes under the Node releases listed in [docs/support-matrix.md](docs/support-matrix.md); [docs/release.md](docs/release.md) defines the available publication tooling.
 - Linux packages contain `bin/landlock-run`, `bin/glibc/system.node`, and `bin/musl/system.node`. macOS packages contain `bin/system.node`. No Windows platform package is needed by these capabilities.
 - Platform prepack rejects missing, undeclared, wrong-format, wrong-architecture, and non-Node-API addon payloads. Launcher executability is checked separately.
 - Platform tarballs use npm pack to preserve executable permissions. The entry uses pnpm pack for workspace version conversion.

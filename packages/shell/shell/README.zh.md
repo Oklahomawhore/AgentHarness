@@ -44,6 +44,8 @@ console.log(result.exitCode, result.stdout.text)
 
 每次执行都从带可选字段的 `ShellExecRequest` 开始；执行器的 `resolve()` 在任何东西运行之前，把它变成默认值与上限都已显式填好的 `ShellExecSpec`。这一请求/spec 拆分正是仓库在包边界显式解析的模板：调用方绝不依赖 `run` 或 `start` 内部隐藏的默认值。`resolve()` 从执行器配置填充工作目录与超时、对每次调用的覆盖值设上限，并按原样携带可选输入——`stdin`、普通 `env` 与受信任的 `DSH_*` 快照。
 
+已解析的工作目录与同一组合中的文件系统、subprocess 提供方使用相同执行环境。文件系统的 `processPath` 作为 `workdir` 传入时，必须保持同一含义；组合不能把远程文件系统与无关的本地命令执行器配对。
+
 ### 选择并组合一个执行器
 
 seam 本身不是执行器：每个组合只挂载一个提供方，工具即可不加改动地工作。在 POSIX 上，`dsh-bash-local` 以全新的 `bash -c` 进程运行命令，`dsh-bash-sandbox` 则通过沙箱能力限制每条命令；在 Windows 上，对应实现是 `dsh-pwsh-local` 与 `dsh-pwsh-sandbox`。`bash` 与 `pwsh` 工具只在挂载沙箱执行器时公布升权字段。最小的组合只需执行器本身：
@@ -57,7 +59,7 @@ seam 本身不是执行器：每个组合只挂载一个提供方，工具即可
 
 ### 共享的退出状态约定
 
-工具结果以机器可读的退出标记结尾——`[exit code: N]` 或 `[killed by signal: X]`——模型因此总能知道命令如何结束。seam 拥有该标记格式，以及把渲染结果拆回输出正文与结构化退出状态的 `parseExitStatus` 辅助函数，使 `bash` 与 `pwsh` 两个工具永远不会在此漂移。
+shell 工具会渲染 `[exit code: N]`、`[killed by signal: X]` 等退出标记。seam 拥有这些标记的格式，以及用于拆分渲染文本以供显示的 `parseExitStatus` 辅助函数。输出文本可能与标记相同；需要执行事实的消费方必须使用执行器的类型化结果，不能解析文本来推断。
 
 -----
 

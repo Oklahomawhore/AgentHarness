@@ -236,11 +236,14 @@ interface SubprocessOutcome {
 }
 ```
 
+<a id="terminal-process-primitive"></a>
 ## Terminal-process primitive
 
 `spawnTerminal(spec)` is the non-pipe process primitive. The provider allocates the controlling terminal and owns UTF-8 text transport, foreground-process-group inspection and signalling, and one awaited TERM-to-KILL operation that reaches quiescence for every session member the provider can still observe; providers document substrate-specific observability limits. The PTY backend remains responsible for prompt detection, readiness inference, scrollback, sandbox policy, and persistent-session ownership; ordinary `spawn()` cannot reconstruct controlling-terminal semantics.
 
 The terminal spec fully specifies argv, cwd, environment overrides, dimensions, cleanup grace, and optional allocation cancellation. Its handle exposes `pid`, ordered output, `done`, `write`, `inspectForeground`, `signalForeground`, and awaited `terminate`; the exact public shapes are generated into the [`ctx.subprocess` service catalog](#ctxsubprocess--subprocessruntime-abstract-seam).
+
+If terminal initialization and provider cleanup both fail, `spawnTerminal` rejects with `SubprocessTerminalCleanupError`, exported from `@deepseek-ai/dsh-subprocess`. Its `spawnError` and `cause` retain the initialization failure; `cleanupError` retains the cleanup failure. Rejection does not prove quiescence. Consumers preserve this distinction when tracking owner activity.
 
 ## Service behavior
 
@@ -315,6 +318,7 @@ abstract spawn(spec: SubprocessSpawnSpec): SubprocessHandle
  * foreground groups, signals, and whole-session quiescence.
  * @param spec - fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.
  * @returns the live terminal handle after allocation succeeds.
+ * @throws {@link SubprocessTerminalCleanupError} when initialization and provider cleanup both fail.
  */
 abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
 ```

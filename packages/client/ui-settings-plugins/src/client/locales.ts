@@ -21,9 +21,47 @@ export type PluginsSettingsLocaleKey =
   | 'scopeNetworkLanHint' | 'scopeNetworkInvalidPort' | 'scopeNetworkCustomHint' | 'scopeNetworkRestart'
   | 'scopeNetworkPermission' | 'scopeNetworkRemote' | 'scopeNetworkConflict' | 'scopeNetworkSaved'
   | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'
+  | 'scopeContextTitle'
+  | 'scopeContextDescription'
+  | 'scopeContextMode'
+  | 'scopeContextReported'
+  | 'scopeContextSemantic'
+  | 'scopeContextModel'
+  | 'scopeContextChoose'
+  | 'scopeContextUnavailable'
+  | 'scopeContextLoading'
+  | 'scopeContextLoadFailed'
+  | 'scopeContextPartial'
+  | 'scopeContextRetry'
+  | 'scopeContextMaxCalls'
+  | 'scopeContextBudgetHint'
+  | 'scopeContextDisclosure'
+  | 'scopeContextInvalid'
+  | 'scopeContextRestart'
+  | 'scopeContextConflict'
+  | 'scopeContextSaved'
 
 /** English copy. */
 export const en: Record<PluginsSettingsLocaleKey, string> = {
+  scopeContextTitle: 'Collaboration summaries',
+  scopeContextDescription: 'Choose how this Host supplies context to authorized collaborators.',
+  scopeContextMode: 'Context delivery',
+  scopeContextReported: 'Reports without model summaries',
+  scopeContextSemantic: 'Model summaries',
+  scopeContextModel: 'Summary model',
+  scopeContextChoose: 'Choose a model',
+  scopeContextUnavailable: 'Currently unavailable',
+  scopeContextLoading: 'Loading models…',
+  scopeContextLoadFailed: 'Models could not be loaded. You can still switch off model summaries.',
+  scopeContextPartial: 'Some providers could not be loaded. Choose an available model or retry.',
+  scopeContextRetry: 'Refresh models',
+  scopeContextMaxCalls: 'Cumulative summary call limit',
+  scopeContextBudgetHint: 'This Host shares one persistent call count across Tasks. Restarting or changing models does not reset it. This is neither an agent work-turn allowance nor a monetary limit.',
+  scopeContextDisclosure: 'Authorized shared context is sent to the selected provider using its configured credentials; calls may incur charges. Your Session model stays unchanged. Opening or saving these settings makes no model call.',
+  scopeContextInvalid: 'Enter a positive whole-number call limit. Model summaries also require an available model.',
+  scopeContextRestart: 'Save from this Host’s authenticated management page, then manually restart the Host. The choice applies to context supplied by this Host.',
+  scopeContextConflict: 'Settings or the connection changed. Discard the draft and review the current values before saving.',
+  scopeContextSaved: 'Settings saved. Manually restart the Host to apply the summary choice.',
   nav: 'Plugins',
   title: 'Plugins',
   intro: 'Configure and inspect the plugins installed in this deployment.',
@@ -96,6 +134,25 @@ export const en: Record<PluginsSettingsLocaleKey, string> = {
 
 /** Simplified Chinese copy. */
 export const zh: Record<PluginsSettingsLocaleKey, string> = {
+  scopeContextTitle: '协作摘要',
+  scopeContextDescription: '选择此 Host 向已授权协作者提供上下文的方式。',
+  scopeContextMode: '上下文提供方式',
+  scopeContextReported: '报告（不调用摘要模型）',
+  scopeContextSemantic: '模型摘要',
+  scopeContextModel: '摘要模型',
+  scopeContextChoose: '请选择模型',
+  scopeContextUnavailable: '当前不可用',
+  scopeContextLoading: '正在加载模型…',
+  scopeContextLoadFailed: '无法加载模型，仍可关闭模型摘要。',
+  scopeContextPartial: '部分提供方暂时无法加载，请选择可用模型或重试。',
+  scopeContextRetry: '刷新模型',
+  scopeContextMaxCalls: '摘要累计调用上限',
+  scopeContextBudgetHint: '此 Host 的所有 Task 共用持久化调用计数，重启或切换模型不会清零。这不是 Agent 自动工作轮数，也不是金额上限。',
+  scopeContextDisclosure: '已授权共享的上下文会使用已配置凭据发送给所选提供方，可能产生费用。你的 Session 模型保持不变，打开或保存设置不会调用模型。',
+  scopeContextInvalid: '请填写正整数调用上限；开启模型摘要时还需选择可用模型。',
+  scopeContextRestart: '请从此 Host 的已认证管理页面保存，再手动重启 Host。此选择影响由该 Host 提供的上下文。',
+  scopeContextConflict: '设置或连接已变化，请放弃修改并核对当前值后再保存。',
+  scopeContextSaved: '设置已保存，请手动重启 Host 以应用摘要选择。',
   nav: '插件',
   title: '插件',
   intro: '配置和查看本部署已安装的插件。',

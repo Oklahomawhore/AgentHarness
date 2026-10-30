@@ -1,14 +1,15 @@
 /** Existing owner and remote Agents exchange actual file-tool reports through their separate receive paths. */
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { nativeLocalContributionDomain } from '../src/local-state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, rootTask, run, requestText, TestNetwork, type TestHost } from './fixtures/hosts.ts'
+import { captureColdInputs, writeColdInputs } from './fixtures/cold-input.ts'
 
 const hosts: TestHost[] = []
 const cleanups: (() => void | Promise<void>)[] = []
@@ -60,6 +61,44 @@ async function storedLocal(owner: TestHost, id: string) {
   return nativeLocalContributionDomain.tables.sessions.valueSchema.parse(Reflect.get(raw.tables.sessions, id))
 }
 
+it('ends old local capture when a newer retained binding becomes current without renewing permission', async () => {
+  const { owner, remote, a, b, task, assignment, limits, capture } = await fixture()
+  const current = await rootTask(owner)
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1)
+  try {
+    await owner.ctx.developmentTasks.checkout({ taskId: current.id, participantId: developmentAgentParticipantId(a.id),
+      bindingId: `${assignment.bindingId}-newer` as typeof assignment.bindingId })
+  } finally { clock.mockRestore() }
+  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
+  expect((await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).assignment?.taskId).toBe(current.id)
+  expect((await owner.ctx.developmentTasks.localContributionStatus({ grant: capture.grant })).state).toBe('ended')
+  await expect(owner.ctx.scopeAgentContributions.requestLocal({ agentId: a.id, expectedCapture: null,
+    ...assignment, roots: [owner.workspace], tools: ['write'], limits }))
+    .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission' })
+  await run(owner, a, [toolCallResponse('unshared-new-task', 'write', { file_path: 'unshared.txt', content: 'NEW_TASK_PRIVATE' })])
+  expect(await readFile(join(owner.workspace, 'unshared.txt'), 'utf8')).toBe('NEW_TASK_PRIVATE')
+  for (const taskId of [task.id, current.id]) {
+    expect(owner.ctx.developmentTasks.get({ taskId }).context.filter(item => item.localToolObservation !== undefined)).toEqual([])
+  }
+  expect((await remote.ctx.scopeAgentContributions.status({ agentId: b.id })).capture?.collecting).toBe(true)
+})
+
+it('rejects restored local samples whose permission, execution or admitted receipt was substituted', async () => {
+  const { owner, a } = await fixture()
+  await run(owner, a, [toolCallResponse('local-receipt-proof', 'write', { file_path: 'receipt.txt', content: 'ORIGINAL' })])
+  await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.pendingSamples).toBe(0)
+  const row = await storedLocal(owner, a.id)
+  const sample = row.samples[0]
+  if (sample?.receipt === undefined || sample.turnProof !== undefined) throw new Error('Missing admitted local tool sample')
+  const schema = nativeLocalContributionDomain.tables.sessions.valueSchema
+  expect(schema.safeParse(row).success).toBe(true)
+  expect(schema.safeParse({ ...row, capture: null }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, captureGeneration: 'different-generation' }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, captureId: 'different-capture' } }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, sourceId: '0'.repeat(64) } }] }).success).toBe(false)
+  expect(schema.safeParse({ ...row, samples: [{ ...sample, receipt: { ...sample.receipt, payloadDigest: '0'.repeat(64) } }] }).success).toBe(false)
+})
+
 describe('owner-local native source with an independently authorized remote Agent', () => {
   it.each(['native', 'ptc'] as const)('exchanges real %s work in both directions and withdraws only the stopped local capture', async (mode) => {
     const { owner, remote, a, b, task, capture } = await fixture(mode)
@@ -98,7 +137,7 @@ describe('owner-local native source with an independently authorized remote Agen
     expect(replay.deriveMessages().filter(message => message.source.kind === 'development-task-context'))
       .toEqual(ownerRequest.messages.filter(message => message.source.kind === 'development-task-context'))
     expect(remote.ctx.developmentTasks.list({ limit: 32 })).toEqual([])
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     await run(remote, b)
     const withdrawn = remote.adapter.requests.at(-1)
@@ -139,7 +178,7 @@ describe('owner-local native source with an independently authorized remote Agen
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.collectionIssue).toBe('durability-failed')
     expect(await readFile(join(owner.workspace, 'late.txt'), 'utf8')).toBe('LATE_LOCAL_BODY')
     expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     blocked = false
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.some(item => item.localToolObservation !== undefined)).toBe(false)
@@ -171,7 +210,7 @@ describe('owner-local native source with an independently authorized remote Agen
 
   it('rejects invalid first roots without authority and permits a later valid request', async () => {
     const { owner, a, task, capture, assignment, limits } = await fixture()
-    await owner.ctx.scopeAgentContributions.stop({ agentId: a.id, expectedCapture: capture.selection })
+    await owner.ctx.scopeAgentContributions.stopLocal({ agentId: a.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     const other = await owner.createAgent('fresh-local-agent')
     const participantId = developmentAgentParticipantId(other.id)
@@ -197,15 +236,20 @@ describe('owner-local native source with an independently authorized remote Agen
     const { owner, remote, a, b, task, capture } = await fixture()
     await run(owner, a, [toolCallResponse('before-restart', 'write', { file_path: 'before.txt', content: 'BEFORE_LOCAL_RESTART' })])
     await expect.poll(async () => (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture?.pendingSamples).toBe(0)
+    expect((await storedLocal(owner, a.id)).capture).toMatchObject({ grant: capture.grant, state: 'active' })
+    const inputs = await captureColdInputs(owner,
+      ['scope_agent_local_contributions', 'development_context_tasks', 'development_rooms', 'scope_access'], a)
     const copiedRoot = await mkdtemp(join(tmpdir(), 'dsh-native-local-restart-'))
-    cleanups.push(async () => { await rm(copiedRoot, { recursive: true, force: true }) })
-    // Copy quiescent real persisted files before disposal; no grant, sample, or Task event is fabricated for recovery.
-    await cp(owner.root, copiedRoot, { recursive: true })
+    let copiedOwned = false
+    cleanups.push(async () => { if (!copiedOwned) await rm(copiedRoot, { recursive: true, force: true }) })
     const peerId = owner.peerId
     await owner.ctx.fiber.dispose()
+    await writeColdInputs(copiedRoot, inputs)
     expect((await storedLocal(owner, a.id)).capture?.grant).toEqual(capture.grant)
     const restarted = await createHost(new TestNetwork(), 'owner', 'native', { ownerLocal: true, root: copiedRoot, peerId })
     hosts.push(restarted)
+    copiedOwned = true
+    expect(await restarted.readEvents(a)).toEqual(inputs.events)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).capture).toBeNull()
     const status = await restarted.ctx.developmentTasks.localContributionStatus({ grant: capture.grant })
     expect(status.state).toBe('ended')

@@ -39,6 +39,10 @@ describe('development-room storage invariants', () => {
     const durable = { entries: [first] }
 
     expect(() => {
+      ctx.emit('development-room/changed', room, first, { kind: 'local', nodeId: first.nodeId })
+    }).not.toThrow()
+
+    expect(() => {
       ctx.emit('domain/changed', {
         domain: 'unrelated',
         table: 'logs',

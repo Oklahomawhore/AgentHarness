@@ -8,7 +8,7 @@ import { apply, Config } from '../src/stdio.ts'
 const policy = {
   connectionPath: '/not-read-on-help/private.json', requestTimeoutMs: 1500,
   maxDescriptorBytes: 16384, maxRequestBytes: 32768, maxResponseBytes: 32768,
-  leaseRetryMs: 2000, leaseFallbackTtlMs: 15000, leaseMinHeartbeatMs: 500, leaseMaxHeartbeatMs: 30000,
+  leaseRetryMs: 2000, leaseMinHeartbeatMs: 500, leaseMaxHeartbeatMs: 30000,
 } satisfies Config
 
 afterEach(() => { internals.stdout = process.stdout; internals.stderr = process.stderr })
@@ -40,6 +40,14 @@ describe('mcp profile parsing', () => {
 
   it('rejects invalid heartbeat ordering through the accepted command action', async () => {
     expect((await invoke([], { ...policy, leaseMinHeartbeatMs: 30001 })).exits).toEqual([1])
+  })
+
+  it.each([['--participant-id', ' '], ['--display-name', ' ']])('rejects an empty local identity: %j', async (...args) => {
+    expect((await invoke(args)).exits).toEqual([1])
+  })
+
+  it('requires launcher readiness before acquiring the stdio transport', async () => {
+    await expect(invoke([])).rejects.toThrow('MCP stdio requires the dsh application lifecycle')
   })
 
   it('rejects timer overflow and missing complete-message limits at configuration parsing', () => {

@@ -1,7 +1,7 @@
 /**
  * Keyless snapshot coverage for the TypeScript SDK path: each scenario spawns
  * the real `dsh --profile sdk` runtime through
- * `@deepseek-ai/dsh-sdk-client`, drives one turn over stdio JSON-RPC,
+ * `@deepseek-ai/dsh-sdk-client`, drives recorded next-turn Inbox submissions over stdio JSON-RPC,
  * and pins the SDK `RunResult`, the complete notification stream, and the
  * persisted session logs. Replay serves recorded model
  * responses via `llm-replay` (`cordis.snapshot.yml`); `DSH_SNAPSHOT=record`
@@ -14,7 +14,8 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os'
 import { basename, delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
+import { turnActions } from '../../scripts/fixtures/sdk-snapshot-turn-actions.ts'
 import {
   assertPersistedSessionVersion,
   assertSessionFixtureVersion,
@@ -44,6 +45,7 @@ import {
   stabilizeRefreshLog,
   tokenizeSessionFixtureCwd,
   writesCurrentSessionFixtures,
+  usesSeparateWriterSnapshot,
   materializeProfilePatch,
   formatSystemPromptSnapshot,
   formatToolSchemasSnapshot,
@@ -100,12 +102,16 @@ function dirOf(url: string): string {
 }
 
 interface SdkAssertions {
+  /** Accepted provider titles observed before submitting a later turn. */
+  afterTurnTitles?: readonly { turn: number; title: string }[]
   /** Observe completed background evaluations before issuing the next fixture prompt. */
   afterTurnEvaluations?: readonly { turn: number; taskRevision: number; decision: 'suppress-unchanged' | 'blocked-current' }[]
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
   expectedFinalResponse?: string
+  /** Explicit terminal reasons for scenarios that intentionally stop an automatic turn. */
+  expectedTurnReasons?: readonly ('completed' | 'blocked' | 'aborted' | 'error')[]
   /** Environment overrides passed to the runtime subprocess. */
   environment?: Readonly<Record<string, string>>
   /** A separate DSH SDK child whose persisted session joins the evidence. */
@@ -126,12 +132,79 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'session-title-unchanged-route': {
+    afterTurnTitles: [{ turn: 1, title: 'Initial scope title' }],
+    expectedFinalResponse: 'SECOND_TITLE_DONE',
+  },
+  'scope-unload-claim': {
+    expectedFinalResponse: 'EXPLICIT_CONTINUATION_AFTER_SCOPE_UNLOAD',
+    expectedTurnReasons: ['blocked', 'completed', 'completed'],
+  },
+  'task-context-failure-recovery': {
+    expectedFinalResponse: 'RECOVERED_ORIGINAL_REQUEST',
+    expectedTurnReasons: ['error', 'completed'],
+  },
+  'task-lineage-parent-revisions': {
+    expectedFinalResponse: 'LINEAGE_PARENT_VERIFIED: FROZEN_PARENT_FACT',
+  },
+  'scope-claude-work': {
+    expectedFinalResponse: 'The Claude reports are withdrawn; original review history remains.',
+  },
+  'scope-native-work': {
+    expectedFinalResponse: 'All contributions from the combined permission are withdrawn.',
+  },
+  'scope-initialization-reservations': {
+    expectedFinalResponse: 'The initialized file is withdrawn; the independent answer remains.',
+  },
+  'scope-mixed-source': {
+    expectedFinalResponse: 'The completed answer is withdrawn; command reports remain.',
+  },
+  'scope-turn-outcomes': {
+    expectedFinalResponse: 'Revoked completed answers no longer enter current context.',
+  },
+  'scope-command-outcomes': {
+    expectedFinalResponse: 'Stopped command sharing no longer supplies command outcomes.',
+  },
+  'scope-completed-file': {
+    expectedFinalResponse: 'Withdrawn completed file is no longer shared context.',
+  },
+  'scope-reported-file': {
+    expectedFinalResponse: 'Withdrawn reported file is no longer current context.',
+  },
+  'scope-history-capacity': {
+    expectedFinalResponse: 'The corrected policy arrived without repeating superseded history.',
+  },
+  'scope-automatic-withdrawal': {
+    expectedFinalResponse: 'Ordinary local work continues without the revoked shared facts.',
+    expectedTurnReasons: ['completed', 'aborted', 'completed'],
+  },
+  'scope-semantic-idle': {
+    expectedFinalResponse: 'Semantic idle evidence verified; the Task was left without renewing automatic permission.',
+  },
   'scope-joint-automatic': {
     expectedFinalResponse: 'Original automatic permission remained paused until this read connection was left.',
   },
   'scope-owner-idle': {
     expectedFinalResponse: 'Local Task left; automatic work and local sharing ended.',
     afterTurnEvaluations: [{ turn: 2, taskRevision: 6, decision: 'blocked-current' }],
+  },
+  'scope-recipient-budget': {
+    expectedFinalResponse: 'Shared context fit my original budget; my local responsibility remains.',
+  },
+  'scope-prejoin-initialization': {
+    expectedFinalResponse: 'Recorded and live sharing ended; my local responsibility and the other member remain.',
+  },
+  'scope-capture-self-omission': {
+    expectedFinalResponse: 'B left the shared goal; its original local work and the other members remain.',
+  },
+  'scope-group-join': {
+    expectedFinalResponse: 'B left the shared goal; C remains joined and B local work is saved.',
+  },
+  'scope-local-joint': {
+    expectedFinalResponse: 'The shared scope is left; my original local policy remains paused and local work is saved.',
+  },
+  'scope-dual-contribution': {
+    expectedFinalResponse: 'Both captures ended independently; the local Task and history remain.',
   },
   'scope-owner-participation': {
     expectedFinalResponse: 'Both source captures ended; historical evidence remains.',
@@ -417,11 +490,6 @@ interface JsonObject {
   [key: string]: unknown
 }
 
-interface TurnAction {
-  readonly turn: number
-  readonly content?: JsonObject[]
-}
-
 function records(log: string): JsonObject[] {
   return log.split(/\r?\n/)
     .filter(line => line.trim() !== '')
@@ -439,32 +507,6 @@ function modelFromSession(log: string): { provider: string; model: string } {
     }
   }
   throw new Error('SDK snapshot session has no request model')
-}
-
-function turnActions(log: string): TurnAction[] {
-  const actions: TurnAction[] = []
-  let current: TurnAction | undefined
-  for (const record of records(log)) {
-    if (record.type === 'turn/start') {
-      const data = record.data as JsonObject | undefined
-      if (typeof data?.turn !== 'number') throw new Error('SDK snapshot turn/start has no turn')
-      current = { turn: data.turn }
-      continue
-    }
-    if (record.type === 'user/message' && current !== undefined && current.content === undefined) {
-      const data = record.data as JsonObject | undefined
-      const source = data?.source as JsonObject | undefined
-      if (source?.kind === 'user' && Array.isArray(data?.content)) {
-        current = { turn: current.turn, content: data.content as JsonObject[] }
-      }
-      continue
-    }
-    if (record.type === 'turn/end' && current !== undefined) {
-      actions.push(current)
-      current = undefined
-    }
-  }
-  return actions
 }
 
 function postTurnEventTypes(log: string): string[] {
@@ -579,6 +621,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   cwd: string
 }> {
   const cwd = await mkdtemp(join(tmpdir(), `sdk-snapshot-${scenario.name}-`))
+  onTestFinished(() => rm(cwd, { recursive: true, force: true }))
   const dshHome = join(cwd, '.dsh')
   const sessionsRoot = join(dshHome, 'sessions')
   const replayFixtures = recording ? [] : await hydrateReplayFixtures(scenario, cwd)
@@ -639,11 +682,13 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     dshHome,
     processCwd: cwd,
     env,
+    initializeTimeoutMs: 110_000,
     requestTimeoutMs: 110_000,
     cwd,
     provider: route.provider,
     model: route.model,
   })
+  onTestFinished(() => harness.close())
   try {
     const notifications: HarnessNotification[] = []
     const observedMethods = new Set<string>()
@@ -680,6 +725,21 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           },
         })
         results.push(result)
+        if (assertions.expectedTurnReasons !== undefined) {
+          for (const ended of result.events.filter(event => event.type === 'turn/end')) {
+            expect(ended.data.reason.kind, `${scenario.name}: turn ${ended.data.turn} before continuing: ${JSON.stringify(ended.data)}`)
+              .toBe(assertions.expectedTurnReasons[ended.data.turn - 1])
+          }
+        }
+        if (scenario.name === 'scope-local-joint' || scenario.name === 'scope-group-join') {
+          const ended = result.events.findLast(event => event.type === 'turn/end')
+          expect(ended?.data, 'joined owner turn before automatic wait').toEqual({ turn: action.turn, reason: { kind: 'completed' } })
+        }
+        if (scenario.name === 'scope-semantic-idle' && action.turn === 1) {
+          // Subsequent automatic turns require this setup turn to finish successfully.
+          const setupEnd = result.events.findLast(event => event.type === 'turn/end')
+          expect(setupEnd?.data, 'semantic idle setup turn').toEqual({ turn: 1, reason: { kind: 'completed' } })
+        }
         if (scenario.manifest.environment?.DSH_SNAPSHOT_FEEDBACK === '1') {
           const feedback = result.events.filter(event => event.type.startsWith('feedback/'))
           expect(feedback.map(event => event.type)).toEqual([
@@ -694,6 +754,13 @@ async function runScenario(scenario: CorpusScenario): Promise<{
         )
         await waitForScopeEvaluations(subscription, sessionId,
           assertions.afterTurnEvaluations?.filter(target => target.turn === action.turn) ?? [], observe)
+        for (const target of assertions.afterTurnTitles?.filter(item => item.turn === action.turn) ?? []) {
+          await waitForRootEvent(subscription, sessionId, event => {
+            const data = event.data as JsonObject | undefined
+            return event.type === 'session/title' && data?.title === target.title
+              && (data.source as JsonObject | undefined)?.kind === 'provider'
+          }, observe)
+        }
       }
       for (const type of postTurnEventTypes(primaryFixture)) {
         await waitForRootEvent(subscription, sessionId, event => event.type === type, observe)
@@ -837,13 +904,13 @@ async function verifyHeaders(
 describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
   for (const scenario of sdkScenarios) {
     const scenarioTest = recording
-      && (scenario.manifest.recording === 'authored' || scenario.manifest.sessionFormat !== undefined)
+      && (scenario.manifest.recording === 'authored' || usesSeparateWriterSnapshot(scenario.manifest))
       ? it.skip
       : it
     scenarioTest(`${mode}s ${scenario.name} through dsh --profile sdk`, async () => {
       const scenarioDir = scenario.dir
-      const retained = scenario.manifest.sessionFormat !== undefined
-      const notificationsExpectedPath = join(scenarioDir, retained ? 'notifications.current.expected.jsonl' : 'notifications.expected.jsonl')
+      const separateWriter = usesSeparateWriterSnapshot(scenario.manifest)
+      const notificationsExpectedPath = join(scenarioDir, separateWriter ? 'notifications.current.expected.jsonl' : 'notifications.expected.jsonl')
       const resultExpectedPath = join(scenarioDir, 'result.expected.json')
       const hasWireGoldens = existsSync(notificationsExpectedPath) || existsSync(resultExpectedPath)
       const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
@@ -852,9 +919,14 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       let files = await fixtureFiles(scenario)
       const replayContents = await Promise.all(files.map(file => readFile(file, 'utf8')))
       if (!recording && !refreshing) {
-        const writerFiles = (await readdir(scenarioDir)).filter(name => /^writer(?:\.[1-9]\d*)?\.expected\.jsonl$/u.test(name)).sort()
-        expect(writerFiles, 'native writer oracle inventory').toEqual(retained
-          ? files.map((_, index) => writerSnapshotName(index)).sort() : [])
+        const suffix = scenario.manifest.writerRevision === undefined ? '.expected.jsonl'
+          : `.r${scenario.manifest.writerRevision}.expected.jsonl`
+        const writerFiles = (await readdir(scenarioDir))
+          .filter(name => /^writer(?:\.[1-9]\d*)?(?:\.r[1-9]\d*)?\.expected\.jsonl$/u.test(name))
+          .filter(name => name.endsWith(suffix) && (scenario.manifest.writerRevision !== undefined || !name.includes('.r')))
+          .sort()
+        expect(writerFiles, 'native writer oracle inventory').toEqual(separateWriter
+          ? files.map((_, index) => writerSnapshotName(index, scenario.manifest.writerRevision)).sort() : [])
       }
       const { results, notifications, observedMethods, logs, initialWorkspace, finalWorkspace, cwd } = await runScenario(scenario)
       const ordered = orderLogs(
@@ -864,17 +936,21 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       const actualContext = contextOf(ordered, cwd)
       if (assertions.expectedFinalResponse !== undefined) {
-        expect(results.at(-1)?.finalResponse, `${scenario.name}: final response`).toBe(assertions.expectedFinalResponse)
         const parent = ordered[0]
         const expected = replayContents[0]
         if (parent === undefined || expected === undefined) throw new Error(`${scenario.name}: no primary session log`)
         const turnEnds = records(parent.content).filter(record => record.type === 'turn/end')
         expect(turnEnds, `${scenario.name}: completed turns`).toHaveLength(turnActions(expected).length)
-        for (const turnEnd of turnEnds) expect(turnEnd).toMatchObject({ data: { reason: { kind: 'completed' } } })
+        const reasons = assertions.expectedTurnReasons ?? turnEnds.map(() => 'completed')
+        expect(reasons, `${scenario.name}: expected turn reasons`).toHaveLength(turnEnds.length)
+        for (const [index, turnEnd] of turnEnds.entries()) {
+          expect(turnEnd, `${scenario.name}: turn ${index + 1}: ${JSON.stringify(turnEnd)}`).toMatchObject({ data: { reason: { kind: reasons[index] } } })
+        }
+        expect(results.at(-1)?.finalResponse, `${scenario.name}: final response`).toBe(assertions.expectedFinalResponse)
       }
 
-      let expectedContents = retained && !refreshing
-        ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index)), 'utf8')))
+      let expectedContents = separateWriter && !refreshing
+        ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index, scenario.manifest.writerRevision)), 'utf8')))
         : replayContents
 
       if (recording) {
@@ -884,7 +960,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         ))
       }
 
-      if (refreshing && (writesSessionFixtures || retained)) {
+      if (refreshing && (writesSessionFixtures || separateWriter)) {
         const harvested = ordered.map((log): HarvestedLog => ({
           id: String(log.header.id),
           createdAt: Number(log.header.createdAt),
@@ -902,9 +978,9 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         expectedContents = redactSessionSnapshotIds(stabilizeFixtureMessageIds(refreshed, expectedContents))
       }
 
-      if (writesSessionFixtures || refreshing && retained) {
-        const outputFiles = ordered.map((log, index) => join(scenarioDir, retained
-          ? writerSnapshotName(index)
+      if (writesSessionFixtures || refreshing && separateWriter) {
+        const outputFiles = ordered.map((log, index) => join(scenarioDir, separateWriter
+          ? writerSnapshotName(index, scenario.manifest.writerRevision)
           : sessionFixtureName(index, sessionHeaderVersion(log.content, `harvested Session ${index}`))))
         await Promise.all(expectedContents.map((stable, index) => writeFile(outputFiles[index] as string, stable)))
         files = outputFiles
@@ -918,11 +994,11 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       expect(redactSessionSnapshotIds(expectedContents), `${scenario.name}: identity redaction fixed point`)
         .toEqual(expectedContents)
 
-      if (retained) {
+      if (separateWriter) {
         expect(await Promise.all((await fixtureFiles(scenario)).map(file => readFile(file, 'utf8'))),
-          'historical replay input remains unchanged').toEqual(replayContents)
+          'independent replay input remains unchanged').toEqual(replayContents)
         for (const [index, content] of expectedContents.entries()) {
-          expect(sessionHeaderVersion(content, writerSnapshotName(index))).toBe(SESSION_FORMAT_VERSION)
+          expect(sessionHeaderVersion(content, writerSnapshotName(index, scenario.manifest.writerRevision))).toBe(SESSION_FORMAT_VERSION)
         }
       }
 

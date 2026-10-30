@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { loadEmergenceProfile, saveEmergenceProfile } from '../src/client/profile.ts'
 
 function storage(initial?: string): Storage {
@@ -28,6 +28,25 @@ describe('Emergence Center browser profile', () => {
       id: 'human-replacement',
       displayName: '',
     })
+  })
+
+  it.each([null, 'old-profile', {}, { id: 'Human Jet', displayName: 'Jet' },
+    { id: 'human-jet', displayName: 7 }])('replaces invalid browser JSON %j with a persistable identity', (value) => {
+    const target = storage(JSON.stringify(value))
+    const created = loadEmergenceProfile(target, () => 'replacement')
+    expect(created).toEqual({ id: 'human-replacement', displayName: '' })
+    expect(loadEmergenceProfile(target, () => 'unused')).toEqual(created)
+  })
+
+  it('still supplies a new identity when browser policy denies preference reads and writes', () => {
+    const denied = new Error('storage denied')
+    const target = {
+      getItem: vi.fn(() => { throw denied }),
+      setItem: vi.fn(() => { throw denied }),
+    }
+    const created = loadEmergenceProfile(target, () => 'private-window')
+    expect(created).toEqual({ id: 'human-private-window', displayName: '' })
+    expect(() => { saveEmergenceProfile(target, { ...created, displayName: 'Jet' }) }).toThrow(denied)
   })
 
   it('persists profile edits', () => {

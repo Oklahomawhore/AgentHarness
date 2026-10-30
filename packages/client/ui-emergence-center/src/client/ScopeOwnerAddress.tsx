@@ -18,7 +18,7 @@ interface ScopeOwnerAddressProps extends PropsLocale<'emergenceCenter'> {
  */
 export function resolveOwnerAddress(addresses: readonly string[], selected: string | undefined): string {
   if (selected !== undefined) return addresses.includes(selected) ? selected : ''
-  return addresses.length === 1 ? (addresses[0] ?? '') : ''
+  return addresses.length === 1 ? addresses[0] as string : ''
 }
 
 function displayAddress(address: string): { local: boolean; label: string } {

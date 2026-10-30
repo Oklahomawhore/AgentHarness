@@ -12,6 +12,12 @@ import { peerContributionGrantSchema, peerContributionPayloadDigest, peerContrib
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import type { ScopePeerId, ScopeTransportRequest } from '@deepseek-ai/dsh-scope-transport/types'
 import { contributionInvitationSchema, contributionRequestSchema, contributionResponseSchema,
+  recordedContributionRequestSchema, recordedContributionResponseSchema,
+  completedFileContributionRequestSchema, completedFileContributionResponseSchema,
+  commandContributionRequestSchema, commandContributionResponseSchema,
+  completedTurnContributionRequestSchema, completedTurnContributionResponseSchema, contributionKind,
+  nativeWorkContributionRequestSchema, nativeWorkContributionResponseSchema,
+  claudeWorkContributionRequestSchema, claudeWorkContributionResponseSchema,
   validateContributionReceipt, contributionApproveSchema, contributionRecoverSchema, decodeContributionText, encodeContributionInvitation } from './contribution-schema.ts'
 import type { Config } from './index.ts'
 import type { ScopeContributionInvitation, ScopeContributionSample, ScopeContributionStatusResult,
@@ -21,8 +27,20 @@ import type { ScopeContributionInvitation, ScopeContributionSample, ScopeContrib
   ScopeContributionManagementErrorCode } from './types.ts'
 
 const PROTOCOL = '/agentharness/scope-contribute/1'
-type WireRequest = ReturnType<typeof contributionRequestSchema.parse>
-type WireResponse = ReturnType<typeof contributionResponseSchema.parse>
+const RECORDED_PROTOCOL = '/agentharness/scope-contribute/2'
+const COMPLETED_FILE_PROTOCOL = '/agentharness/scope-contribute/3'
+const COMMAND_PROTOCOL = '/agentharness/scope-contribute/4'
+const TURN_PROTOCOL = '/agentharness/scope-contribute/5'
+const NATIVE_WORK_PROTOCOL = '/agentharness/scope-contribute/6'
+const CLAUDE_WORK_PROTOCOL = '/agentharness/scope-contribute/7'
+type WireRequest = ReturnType<typeof contributionRequestSchema.parse> | ReturnType<typeof recordedContributionRequestSchema.parse>
+  | ReturnType<typeof completedFileContributionRequestSchema.parse> | ReturnType<typeof commandContributionRequestSchema.parse>
+  | ReturnType<typeof completedTurnContributionRequestSchema.parse> | ReturnType<typeof nativeWorkContributionRequestSchema.parse>
+  | ReturnType<typeof claudeWorkContributionRequestSchema.parse>
+type WireResponse = ReturnType<typeof contributionResponseSchema.parse> | ReturnType<typeof recordedContributionResponseSchema.parse>
+  | ReturnType<typeof completedFileContributionResponseSchema.parse> | ReturnType<typeof commandContributionResponseSchema.parse>
+  | ReturnType<typeof completedTurnContributionResponseSchema.parse> | ReturnType<typeof nativeWorkContributionResponseSchema.parse>
+  | ReturnType<typeof claudeWorkContributionResponseSchema.parse>
 interface Owner {
   readonly config: Config
   readonly signal: AbortSignal
@@ -55,7 +73,20 @@ export class ContributionAccess {
   private started = false
 
   constructor(private readonly ctx: Context, private readonly owner: Owner) {
-    ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, input => owner.track(this.respond(input))), 'scope-access: peer contributions')
+    ctx.effect(() => ctx.scopeTransport.register(PROTOCOL, input => owner.track(this.respond(input, 1))),
+      'scope-access: peer contributions')
+    ctx.effect(() => ctx.scopeTransport.register(RECORDED_PROTOCOL, input => owner.track(this.respond(input, 2))),
+      'scope-access: recorded peer contributions')
+    ctx.effect(() => ctx.scopeTransport.register(COMPLETED_FILE_PROTOCOL, input => owner.track(this.respond(input, 3))),
+      'scope-access: completed native file contributions')
+    ctx.effect(() => ctx.scopeTransport.register(COMMAND_PROTOCOL, input => owner.track(this.respond(input, 4))),
+      'scope-access: foreground command contributions')
+    ctx.effect(() => ctx.scopeTransport.register(TURN_PROTOCOL, input => owner.track(this.respond(input, 5))),
+      'scope-access: completed-turn contributions')
+    ctx.effect(() => ctx.scopeTransport.register(NATIVE_WORK_PROTOCOL, input => owner.track(this.respond(input, 6))),
+      'scope-access: combined native work contributions')
+    ctx.effect(() => ctx.scopeTransport.register(CLAUDE_WORK_PROTOCOL, input => owner.track(this.respond(input, 7))),
+      'scope-access: Claude work contributions')
     ctx.on('development-task/changed', () => { this.scheduleExpiry() })
     ctx.effect(() => () => { clearTimeout(this.timer) }, 'scope-access: contribution expiry')
   }
@@ -83,20 +114,6 @@ export class ContributionAccess {
         // Read/watch and later Task commits retry expiry; failed persistence never schedules a zero-delay loop.
       })
     }, Math.min(2_147_483_647, Math.max(0, next - Date.now())))
-  }
-
-  /**
-   * Greatest committed terminal revision; ordinary new samples do not invalidate captured reads.
-   * @param taskId - Task whose committed contribution endings are inspected.
-   * @returns greatest terminal event revision, or zero when no ending is recorded for this Task.
-   */
-  terminalRevision(taskId: DevelopmentTaskId): number {
-    let revision = 0
-    for (const event of this.ctx.developmentTasks.log()) {
-      if (event.taskId === taskId && (event.change.kind === 'peer-contribution-ended'
-        || event.change.kind === 'local-contribution-ended')) revision = Math.max(revision, event.revision)
-    }
-    return revision
   }
 
   private failure(code: ScopeContributionManagementErrorCode): RemoteError {
@@ -188,7 +205,9 @@ export class ContributionAccess {
   }
 
   private async managedInvite(grant: DevelopmentTaskPeerContributionGrant, ownerAddress: string): Promise<ScopeContributionApproval> {
-    const result = this.approval(contributionInvitationSchema.parse({ version: 1, kind: grant.source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution', ownerAddress, grant }))
+    const result = this.approval(contributionInvitationSchema.parse({
+      version: 1, kind: contributionKind(grant.source), ownerAddress, grant,
+    }))
     try { await this.invite({ grant, ownerAddress }) } catch (error) {
       if (error instanceof DevelopmentTaskError && error.code === 'POLICY_REJECTED'
         && this.authority(grant, grant.contributorPeerId, grant.ownerPeerId)?.state === 'ended') {
@@ -242,10 +261,10 @@ export class ContributionAccess {
       if (prior === undefined || prior.grant.generation !== request.generation) throw this.failure('scope-contribution/stale-selection')
       const identity = await this.ctx.scopeTransport.identity()
       this.owner.signal.throwIfAborted()
-      if (identity.peerId !== prior.grant.ownerPeerId || !identity.addresses.includes(request.ownerAddress)) {
+      if (!identity.addresses.includes(request.ownerAddress)) {
         throw this.failure('scope-contribution/invalid-permission')
       }
-      const invitation = contributionInvitationSchema.parse({ version: 1, kind: prior.grant.source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution',
+      const invitation = contributionInvitationSchema.parse({ version: 1, kind: contributionKind(prior.grant.source),
         ownerAddress: request.ownerAddress, grant: prior.grant })
       this.invitationBounds(invitation)
       return this.approval(invitation)
@@ -263,22 +282,24 @@ export class ContributionAccess {
     const grant = peerContributionGrantSchema.parse(request.grant)
     const identity = await this.ctx.scopeTransport.identity()
     this.owner.signal.throwIfAborted()
-    const invitation = contributionInvitationSchema.parse({ version: 1, kind: grant.source.kind === 'tool-observations' ? 'tool-contribution' : 'openapi-contribution', ...request, grant })
+    const invitation = contributionInvitationSchema.parse({ version: 1, kind: contributionKind(grant.source), ...request, grant })
     if (grant.ownerPeerId !== peerId || grant.contributorPeerId === peerId || !identity.addresses.includes(request.ownerAddress)
       || grant.expiresAt <= Date.now() || grant.expiresAt - Date.now() > this.owner.config.maxInvitationLifetimeMs
       || grant.maxSampleBytes > this.owner.config.maxContributionRequestBytes) {
       throw this.failure('scope-contribution/invalid-permission')
     }
     this.invitationBounds(invitation)
-    const result = await this.ctx.developmentTasks.openPeerContribution(grant)
+    await this.ctx.developmentTasks.openPeerContribution(grant)
     this.owner.signal.throwIfAborted()
-    if (result.state !== 'active') throw this.failure('scope-contribution/grant-ended')
     this.scheduleExpiry()
     return invitation
   }
 
   private invitationBounds(invitation: ScopeContributionInvitation): void {
-    const end: WireRequest = { version: 1, requestId: randomUUID(), op: 'end', invitation }
+    const version = invitation.grant.source.kind === 'claude-work' ? 7 : invitation.grant.source.kind === 'native-work' ? 6
+      : invitation.grant.source.kind === 'completed-turn-outcomes' ? 5
+        : invitation.grant.source.kind === 'tool-observations' && invitation.grant.source.version === 4 ? 4 : 1
+    const end: WireRequest = { version, requestId: randomUUID(), op: 'end', invitation }
     if (Buffer.byteLength(JSON.stringify(end), 'utf8') > this.owner.config.maxContributionRequestBytes) {
       throw this.failure('scope-contribution/capacity')
     }
@@ -311,21 +332,26 @@ export class ContributionAccess {
    * @returns verified active or terminal permission, refusal, capacity failure, or temporary unavailability.
    */
   async status(request: { readonly invitation: ScopeContributionInvitation }, signal: AbortSignal): Promise<ScopeContributionStatusResult> {
-    const response = await this.send({ version: 1, requestId: randomUUID(), op: 'status', invitation: request.invitation }, signal)
-    if (response.op !== 'status') throw new Error('scope-access: contribution operation mismatch')
+    const version = request.invitation.grant.source.kind === 'claude-work' ? 7 : request.invitation.grant.source.kind === 'native-work' ? 6
+      : request.invitation.grant.source.kind === 'completed-turn-outcomes' ? 5
+        : request.invitation.grant.source.kind === 'tool-observations' && request.invitation.grant.source.version === 4 ? 4 : 1
+    const response = await this.send({ version, requestId: randomUUID(), op: 'status', invitation: request.invitation }, signal)
     return response.result
   }
 
   /**
-   * Submit exactly one retained sample; a timeout does not establish whether the owner committed it.
+   * Submit one retained sample using its explicit wire version, without fallback; a timeout leaves admission uncertain.
    * @param request - matching contribution invitation and original durable sample, unchanged on retry.
    * @param signal - cancellation of this submission; an already committed owner event remains durable.
    * @returns the matched sample receipt, terminal permission, refusal, capacity failure, or temporary unavailability.
    */
   async submit(request: { readonly invitation: ScopeContributionInvitation; readonly sample: ScopeContributionSample },
     signal: AbortSignal): Promise<ScopeContributionSubmitResult> {
-    const response = await this.send({ version: 1, requestId: randomUUID(), op: 'sample', ...request }, signal)
-    if (response.op !== 'sample') throw new Error('scope-access: contribution operation mismatch')
+    const version = request.invitation.grant.source.kind === 'claude-work' ? 7 : request.invitation.grant.source.kind === 'native-work' ? 6
+      : request.invitation.grant.source.kind === 'completed-turn-outcomes' ? 5
+        : request.invitation.grant.source.kind === 'tool-observations' && request.invitation.grant.source.version === 4
+          ? 4 : 'kind' in request.sample.result ? request.sample.result.version : 1
+    const response = await this.send({ version, requestId: randomUUID(), op: 'sample', ...request }, signal)
     return response.result
   }
 
@@ -336,8 +362,10 @@ export class ContributionAccess {
    * @returns confirmed terminal reason and receipt, or refusal, capacity failure, or temporary unavailability.
    */
   async end(request: { readonly invitation: ScopeContributionInvitation }, signal: AbortSignal): Promise<ScopeContributionEndResult> {
-    const response = await this.send({ version: 1, requestId: randomUUID(), op: 'end', invitation: request.invitation }, signal)
-    if (response.op !== 'end') throw new Error('scope-access: contribution operation mismatch')
+    const version = request.invitation.grant.source.kind === 'claude-work' ? 7 : request.invitation.grant.source.kind === 'native-work' ? 6
+      : request.invitation.grant.source.kind === 'completed-turn-outcomes' ? 5
+        : request.invitation.grant.source.kind === 'tool-observations' && request.invitation.grant.source.version === 4 ? 4 : 1
+    const response = await this.send({ version, requestId: randomUUID(), op: 'end', invitation: request.invitation }, signal)
     return response.result
   }
 
@@ -358,18 +386,31 @@ export class ContributionAccess {
   }
 
   private reply(request: WireRequest, result: WireResponse['result']): WireResponse {
-    const response = contributionResponseSchema.parse({ version: 1, requestId: request.requestId, op: request.op, result })
+    const fields = { version: request.version, requestId: request.requestId, op: request.op, result }
+    const response = request.version === 7 ? claudeWorkContributionResponseSchema.parse(fields)
+      : request.version === 6 ? nativeWorkContributionResponseSchema.parse(fields)
+        : request.version === 5 ? completedTurnContributionResponseSchema.parse(fields)
+          : request.version === 4 ? commandContributionResponseSchema.parse(fields)
+            : request.version === 3 ? completedFileContributionResponseSchema.parse(fields)
+              : request.version === 2 ? recordedContributionResponseSchema.parse(fields) : contributionResponseSchema.parse(fields)
     if (Buffer.byteLength(JSON.stringify(response), 'utf8') > this.owner.config.maxResponseBytes) {
       throw this.failure('scope-contribution/capacity')
     }
     return response
   }
 
+  private send<Op extends WireRequest['op']>(input: WireRequest & { readonly op: Op },
+    consumerSignal: AbortSignal): Promise<Extract<WireResponse, { readonly op: Op }>>
   private async send(input: WireRequest, consumerSignal: AbortSignal): Promise<WireResponse> {
     const peerId = await this.owner.ready()
     consumerSignal.throwIfAborted()
     this.owner.signal.throwIfAborted()
-    const request = contributionRequestSchema.parse(input)
+    const request = input.version === 7 ? claudeWorkContributionRequestSchema.parse(input)
+      : input.version === 6 ? nativeWorkContributionRequestSchema.parse(input)
+        : input.version === 5 ? completedTurnContributionRequestSchema.parse(input)
+          : input.version === 4 ? commandContributionRequestSchema.parse(input)
+            : input.version === 3 ? completedFileContributionRequestSchema.parse(input)
+              : input.version === 2 ? recordedContributionRequestSchema.parse(input) : contributionRequestSchema.parse(input)
     const grant = request.invitation.grant
     if (grant.contributorPeerId !== peerId || grant.ownerPeerId === peerId) {
       throw new Error('scope-access: contribution invitation names another contributor')
@@ -382,18 +423,24 @@ export class ContributionAccess {
     const signal = AbortSignal.any([consumerSignal, this.owner.signal, AbortSignal.timeout(this.owner.config.requestTimeoutMs)])
     try {
       const raw = await this.ctx.scopeTransport.request({ peerId: grant.ownerPeerId, address: request.invitation.ownerAddress },
-        PROTOCOL, request, signal)
+        request.version === 7 ? CLAUDE_WORK_PROTOCOL : request.version === 6 ? NATIVE_WORK_PROTOCOL : request.version === 5 ? TURN_PROTOCOL
+          : request.version === 4 ? COMMAND_PROTOCOL : request.version === 3 ? COMPLETED_FILE_PROTOCOL
+            : request.version === 2 ? RECORDED_PROTOCOL : PROTOCOL, request, signal)
       signal.throwIfAborted()
       if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > this.owner.config.maxResponseBytes) {
         throw new Error('scope-access: contribution response exceeds budget')
       }
-      const response = contributionResponseSchema.parse(raw)
+      const response = request.version === 7 ? claudeWorkContributionResponseSchema.parse(raw)
+        : request.version === 6 ? nativeWorkContributionResponseSchema.parse(raw)
+          : request.version === 5 ? completedTurnContributionResponseSchema.parse(raw)
+            : request.version === 4 ? commandContributionResponseSchema.parse(raw)
+              : request.version === 3 ? completedFileContributionResponseSchema.parse(raw)
+                : request.version === 2 ? recordedContributionResponseSchema.parse(raw) : contributionResponseSchema.parse(raw)
       if (response.requestId !== request.requestId || response.op !== request.op) {
         throw new Error('scope-access: contribution response does not match its request')
       }
       const result = response.result
-      if (result.status === 'accepted' || result.status === 'reused') {
-        if (request.op !== 'sample') throw new Error('scope-access: unsolicited contribution sample receipt')
+      if (request.op === 'sample' && (result.status === 'accepted' || result.status === 'reused')) {
         validateContributionReceipt(request.invitation, result.receipt, request.sample)
       } else if (result.status === 'active' || result.status === 'ended') {
         validateContributionReceipt(request.invitation, result.receipt, undefined,
@@ -423,11 +470,16 @@ export class ContributionAccess {
     return current !== undefined && isDeepStrictEqual(current.grant, grant) ? current : undefined
   }
 
-  private async respond(input: ScopeTransportRequest): Promise<WireResponse> {
+  private async respond(input: ScopeTransportRequest, version: 1 | 2 | 3 | 4 | 5 | 6 | 7): Promise<WireResponse> {
     if (Buffer.byteLength(JSON.stringify(input.payload), 'utf8') > this.owner.config.maxContributionRequestBytes) {
       throw new Error('scope-access: contribution request exceeds budget')
     }
-    const request = contributionRequestSchema.parse(input.payload)
+    const request = version === 7 ? claudeWorkContributionRequestSchema.parse(input.payload)
+      : version === 6 ? nativeWorkContributionRequestSchema.parse(input.payload)
+        : version === 5 ? completedTurnContributionRequestSchema.parse(input.payload)
+          : version === 4 ? commandContributionRequestSchema.parse(input.payload)
+            : version === 3 ? completedFileContributionRequestSchema.parse(input.payload)
+              : version === 2 ? recordedContributionRequestSchema.parse(input.payload) : contributionRequestSchema.parse(input.payload)
     const peerId = await this.owner.ready()
     const signal = AbortSignal.any([input.signal, this.owner.signal])
     signal.throwIfAborted()

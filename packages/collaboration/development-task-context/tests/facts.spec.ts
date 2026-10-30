@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import type {
@@ -74,7 +75,7 @@ it('mounts the real facts service through Loader with explicit configuration and
   await ctx.loader.await()
   expect(ctx.developmentTaskContextBackend).toBeInstanceOf(FactsBackend)
   const projection = await ctx.developmentTaskContextBackend.compute(input([publication('sample-a', observation(1))]))
-  await expect(projection.text + '\n').toMatchFileSnapshot(new URL('./expected/facts-current.txt', import.meta.url).pathname)
+  await expect(projection.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/facts-current.txt', import.meta.url)))
   expect(projection.omittedSources).toEqual([])
   expect(projection.selectedSources).toHaveLength(2)
 })
@@ -159,7 +160,7 @@ it('keeps distinct independent declarations and unavailable peers as conflicts, 
     publication('d', { ...common, grantId: 'grant-d' as DevelopmentTaskOpenApiObservation['grantId'], state: 'revoked', reason: 'grant-ended' }),
   ]
   const projection = await backend().compute(input(sources, 'frontend'))
-  await expect(projection.text + '\n').toMatchFileSnapshot(new URL('./expected/facts-conflict.txt', import.meta.url).pathname)
+  await expect(projection.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/facts-conflict.txt', import.meta.url)))
   expect(projection.text).toContain('"evidence":"conflict"')
   expect(projection.text).toContain('"requestBodyRequired":true')
   expect(projection.text).toContain('"conflictFieldsAdded":["operationId","requestBodyRequired","responseStatuses","deprecated"]')
@@ -186,7 +187,7 @@ it('keeps frozen inherited evidence separate and refuses to promote JSON text to
       sources: [{ parent, objective: 'Historical interface', scope: 'Parent scope', context: [publication('parent-sample', observation(1))] }],
     },
   } })
-  await expect(projection.text + '\n').toMatchFileSnapshot(new URL('./expected/facts-inherited.txt', import.meta.url).pathname)
+  await expect(projection.text + '\n').toMatchFileSnapshot(fileURLToPath(new URL('./expected/facts-inherited.txt', import.meta.url)))
   expect(projection.text).not.toContain('current-task-as-sampled')
   expect(projection.omittedSources).toEqual([{ source: { kind: 'publication', taskId: request.view.task.id, revision: 5, publicationId: 'forged' }, reason: 'unsupported' }])
 })
@@ -263,6 +264,23 @@ it('rejects cancellation without producing a projection', async () => {
   const abort = new AbortController()
   abort.abort(new Error('cancelled sample'))
   await expect(backend().compute({ ...input([]), signal: abort.signal })).rejects.toThrow('cancelled sample')
+})
+
+it('keeps route order out of backend identity while retaining each exact responsibility selection', async () => {
+  const routes: Config['routes'] = [
+    { responsibility: 'qa', fields: ['responseStatuses'] },
+    { responsibility: 'frontend', fields: ['requiredRequestFields'] },
+  ]
+  const forward = backend({ routes, unmatchedFields: [] })
+  const reverse = backend({ routes: [...routes].reverse(), unmatchedFields: [] })
+  expect(forward.identity).toEqual(reverse.identity)
+  const source = [publication('sample', observation(1))]
+  expect(await forward.compute(input(source, 'frontend'))).toEqual(await reverse.compute(input(source, 'frontend')))
+  const frontend = await forward.compute(input(source, 'frontend'))
+  const qa = await forward.compute(input(source, 'qa'))
+  expect(frontend.text).toContain('"facts":{"requiredRequestFields":["sku"]}')
+  expect(qa.text).toContain('"facts":{"responseStatuses":["201","4XX","default"]}')
+  expect(frontend.activation).not.toEqual(qa.activation)
 })
 
 

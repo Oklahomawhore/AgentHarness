@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 配置
 
-两个字段：数据库路径与 journal mode。`:memory:` 打开一个进程内数据库，其内容随进程消失。
+配置数据库路径、journal mode，以及可选的初始快照后端。`:memory:` 打开一个进程内数据库，其内容随进程消失。
 
 ```yaml
 - name: '@deepseek-ai/dsh-storage'
@@ -49,12 +49,16 @@ kind: "package-reference"
 |---|---|---|
 | `path` | 必填 | SQLite 数据库文件路径，或 `:memory:` |
 | `journalMode` | `wal` | Journal mode：`wal`、`delete`、`truncate` 或 `persist` |
+| `bootstrapFrom` | 不配置 | 提供新单元初始快照的已注册后端 |
 
 `wal` 适合本地磁盘；回滚日志模式（`delete`／`truncate`／`persist`）适合 WAL 共享内存文件不可用的文件系统，例如网络挂载。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-storage-sqlite)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
+<a id="observable-behavior"></a>
 ### 可观察行为
 
-缺失的目录与数据库文件会以仅所有者可访问的权限创建（`0o700`／`0o600`）；已有数据库保持其既有模式。已存格式版本与描述符不同的单元拒绝 `version-mismatch`，盖有非当前物理布局版本的数据库会直接拒绝——不做迁移，预发布立场。失败携带稳定的 `StorageError` 代码，写入 resolve 后即已持久。
+配置 `bootstrapFrom` 后，SQLite 中尚不存在的单元会在一个事务内复制来源快照、创建表并写入版本标记。导入失败不会留下已完成的单元标记或部分行，重新打开可再次导入。目标单元一旦存在，就不会再读取来源，即使目标记录已全部删除。来源文件保持原样。接管期间必须停止其他写入方；成功后以 SQLite 为准。复制不改变记录格式，domain schema 和所有者在恢复时校验记录。
+
+缺失的目录与数据库文件会以仅所有者可访问的权限创建（`0o700`／`0o600`）；已有数据库保持其既有模式。已存格式版本与描述符不同的单元拒绝 `version-mismatch`，盖有非当前物理布局版本的数据库会直接拒绝——不转换格式版本。失败携带稳定的 `StorageError` 代码，写入 resolve 后即已持久。
 
 -----
 
@@ -71,7 +75,7 @@ kind: "package-reference"
 - **每行一份文档。** 每个单元表都变成一张物理 STRICT 表 `u_<unit>_<table> (key TEXT PRIMARY KEY, value TEXT)`，其 `value` 列保存记录的 JSON 文本；全局单例存放在共享的 `unit_globals` 表中。一个键的更新恰好触碰一行——这就是把高频变更领域路由到这里的原因。
 - **单语句原子性。** 每个写入原语都是一条预处理语句，因此 SQLite 的逐语句原子性无需显式事务即可满足 KV 约定；写入顺序仍由调用方负责（领域层的写入链）。
 - **名称在 DDL 之前校验。** 单元名与表名在进入 DDL 之前必须匹配 `UNIT_NAME_RE`，因此任何外部输入都不会被插值进 SQL 标识符。
-- **版本明确报错。** 物理布局版本存放在 `PRAGMA user_version`（全新数据库最后盖戳）；单元格式版本存放在 `units` 表中。任何其他已标记值都会被拒绝——不做迁移。
+- **版本明确报错。** 物理布局版本存放在 `PRAGMA user_version`（全新数据库最后盖戳）；单元格式版本存放在 `units` 表中。任何其他已标记值都会被拒绝——不转换格式版本。
 
 ### 打开顺序
 
@@ -81,7 +85,7 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口：后端注册、`path`／`journalMode` 配置、单元表 |
+| [`src/index.ts`](src/index.ts) | 插件入口：后端注册、配置、原子快照接管、单元表 |
 | [`src/schema.ts`](src/schema.ts) | 打开顺序、物理布局版本、元数据表、记录表命名 |
 | [`src/unit.ts`](src/unit.ts) | 一个已打开单元：预处理语句、JSON 值解析、关闭 |
 | — | 不发布运行时不变式伴生入口；版本是打开时检查。 |

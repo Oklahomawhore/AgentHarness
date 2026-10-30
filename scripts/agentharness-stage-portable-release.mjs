@@ -373,7 +373,7 @@ export function renderPowerShellInstallScript({ baseUrl, version, artifacts, clu
     '  if ($LASTEXITCODE -ne 0) { throw "could not inspect $Archive" }',
     '  foreach ($Member in $Members) {',
     '    $NormalizedMember = $Member.Replace("\\", "/")',
-    '    if ($NormalizedMember.StartsWith("/") -or $NormalizedMember -match "^[A-Za-z]:" -or $NormalizedMember -match "(^|/)\.\.(/|$)") { throw "archive contains an unsafe path: $Member" }',
+    '    if ($NormalizedMember.StartsWith("/") -or $NormalizedMember -match "^[A-Za-z]:" -or $NormalizedMember -match "(^|/)[.][.](/|$)") { throw "archive contains an unsafe path: $Member" }',
     '  }',
     '  $Payload = Join-Path $TempDir "payload"',
     '  New-Item -ItemType Directory -Path $Payload | Out-Null',

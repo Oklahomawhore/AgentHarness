@@ -12,14 +12,15 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import { EmergenceCenterPanel } from './EmergenceCenterPanel.tsx'
 import { NativeScopeAction, type NativeScopeInjected } from './NativeScopeAction.tsx'
-import { createNativeScopeSource } from './native-scopes.ts'
+import { createNativeScopeSource, type NativeScopeDependencies } from './native-scopes.ts'
 import { createNativeContributionDirectory } from './native-contributions.ts'
 import { createNativeLocalContributionDirectory } from './native-local-contributions.ts'
 import type { NativeLocalContributionActions } from './NativeLocalContributionPanel.tsx'
 import type { NativeContributionActions } from './NativeContributionPanel.tsx'
 import { createMcpClientSetupDirectory } from './mcp-clients.ts'
 import { createContributionDirectory } from './contribution-directory.ts'
-import type { OwnerContributionValue } from './OwnerContributionPanel.tsx'
+import { readOwnerContributions, type OwnerContributionValue } from './owner-contributions.ts'
+import type { ScopeAccessValue } from './ScopeAccessPanel.tsx'
 import { createClaudeScopeDirectory } from './claude-scopes.ts'
 import { createObservedScopeDirectory } from './observed-scopes.ts'
 import { createParticipantDirectory } from './participant-directory.ts'
@@ -45,6 +46,10 @@ class EmergenceCenterRemoteError extends Error {
     super(message)
     this.name = 'EmergenceCenterRemoteError'
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected Task assignment change: ${JSON.stringify(value)}`)
 }
 
 /** Required services for the footer action, localized copy, and Host Remotes. */
@@ -98,9 +103,12 @@ export function apply(ctx: Context): void {
     status: async request => unwrap(await ctx.remote.scopeAgentContributions.localStatus(request)),
     checkout: async request => unwrap(await ctx.remote.developmentTaskAssignments.checkout(request)),
     request: async request => unwrap(await ctx.remote.scopeAgentContributions.requestLocal(request)),
-    stop: async request => unwrap(await ctx.remote.scopeAgentContributions.stop(request)),
+    stopLocal: async request => unwrap(await ctx.remote.scopeAgentContributions.stopLocal(request)),
   }, (error) => { console.error('[ui-emergence-center] local contribution management failed:', error) })
+  const suggestNativeContributionPermission: NativeContributionActions['suggestNativeContributionPermission'] = async agentId =>
+    unwrap(await ctx.remote.scopeAgentContributions.permissionDraft({ agentId }))
   const nativeLocalActions: NativeLocalContributionActions = {
+    suggestNativeContributionPermission,
     readNativeLocalContribution: (agentId) => {
       tasks.refresh(); participants.refresh(); void nativeLocalContributions.directory.refresh(agentId)
     },
@@ -109,6 +117,7 @@ export function apply(ctx: Context): void {
     stopNativeLocalContribution: request => nativeLocalContributions.stop(request),
   }
   const nativeContributionActions: NativeContributionActions = {
+    suggestNativeContributionPermission,
     readNativeContribution: (agentId) => { void nativeContributions.directory.refresh(agentId) },
     requestNativeContribution: request => nativeContributions.request(request),
     recoverNativeContributionRoute: request => nativeContributions.recoverRoute(request),
@@ -128,27 +137,24 @@ export function apply(ctx: Context): void {
     async sessionKey => unwrap(await ctx.remote.claudeScope.contributionDetail({ sessionKey })),
     (error) => { console.error('[ui-emergence-center] source contribution management failed:', error) },
   )
-  const ownerContributions = createContributionDirectory<DevelopmentTaskId, OwnerContributionValue>(async (taskId, previous) => {
-    const [identity, grantPage, applicationPage] = await Promise.all([
-      ctx.remote.scopeAccess.identity().then(unwrap),
-      previous?.inventory.nextGrantId === null ? undefined : ctx.remote.scopeAccess.contributionInventory({
-        taskId, ...(previous?.inventory.nextGrantId == null ? {} : { afterGrantId: previous.inventory.nextGrantId }),
-      }).then(unwrap),
-      previous?.applications.nextEntryId === null ? undefined : ctx.remote.scopeAccess.contributionApplications({
-        taskId, ...(previous?.applications.nextEntryId == null ? {} : { afterEntryId: previous.applications.nextEntryId }),
-      }).then(unwrap),
-    ])
-    const grants = new Map(previous?.inventory.entries.map(item => [item.grant.grantId, item]))
-    for (const item of grantPage?.entries ?? []) grants.set(item.grant.grantId, item)
-    const applications = new Map(previous?.applications.entries.map(item => [item.entry.entryId, item]))
-    for (const item of applicationPage?.entries ?? []) applications.set(item.entry.entryId, item)
-    return { identity,
-      inventory: { entries: [...grants.values()],
-        nextGrantId: grantPage === undefined ? previous?.inventory.nextGrantId ?? null : grantPage.nextGrantId },
-      applications: { entries: [...applications.values()],
-        nextEntryId: applicationPage === undefined ? previous?.applications.nextEntryId ?? null : applicationPage.nextEntryId },
-    }
-  }, (error) => { console.error('[ui-emergence-center] owner contribution management failed:', error) })
+  const ownerContributions = createContributionDirectory<DevelopmentTaskId, OwnerContributionValue>(
+    (taskId, previous) => readOwnerContributions({
+      identity: async () => unwrap(await ctx.remote.scopeAccess.identity()),
+      contributionInventory: async request => unwrap(await ctx.remote.scopeAccess.contributionInventory(request)),
+      contributionApplications: async request => unwrap(await ctx.remote.scopeAccess.contributionApplications(request)),
+      groupEntries: async request => unwrap(await ctx.remote.scopeAccess.groupEntries(request)),
+      groupApplications: async request => unwrap(await ctx.remote.scopeAccess.groupApplications(request)),
+    }, taskId, previous),
+    (error) => { console.error('[ui-emergence-center] owner contribution management failed:', error) },
+  )
+  const scopeAccess = createContributionDirectory<'inventory', ScopeAccessValue>(async () => {
+    const [identity, access] = await Promise.all([ctx.remote.scopeAccess.identity(), ctx.remote.scopeAccess.list()])
+    return { identity: unwrap(identity), access: unwrap(access) }
+  }, (error) => { console.error('[ui-emergence-center] read permission management failed:', error) })
+  const mutateScopeAccess = <T>(operation: () => Promise<T>): Promise<T | undefined> => scopeAccess.mutate('inventory', async () => {
+    try { return await operation() }
+    finally { claudeScopes.refresh() }
+  })
 
   const observedScopes = createObservedScopeDirectory({
     candidates: async request => unwrap(await ctx.remote.developmentTasks.observedCandidates(request)),
@@ -168,28 +174,36 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => ctx.remote.$on('development-task/assignment-changed', (assignment, entry) => {
       tasks.applyAssignment(assignment ?? undefined, entry.bindingId)
-      nativeLocalContributions.assignmentsChanged()
+      switch (entry.change.kind) {
+        case 'task-bound': case 'task-cleared': nativeLocalContributions.assignmentsChanged(entry.participantId); break
+        case 'context-acknowledged': break
+        default: assertNever(entry.change)
+      }
       observedScopes.refresh(); claudeScopes.refresh()
     }),
     'ui-emergence-center: assignment changes',
   )
   ctx.effect(() => ctx.remote.$on('scope-access/contribution-application-changed', ({ taskId }) => {
     ownerContributions.invalidate(taskId)
+    scopeAccess.invalidate('inventory')
   }), 'ui-emergence-center: online application changes')
   ctx.effect(() => ctx.remote.$on('claude-scope/session-changed', (sessionKey) => {
     sourceContributions.invalidate(sessionKey)
     claudeScopes.refresh()
   }), 'ui-emergence-center: source permission changes')
-  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset() })
+  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset(); scopeAccess.reset() })
   ctx.effect(() => () => participants.dispose(), 'ui-emergence-center: human lease')
-  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose() }, 'ui-emergence-center: contribution management')
+  ctx.effect(() => () => { tasks.dispose(); mcpClients.dispose() }, 'ui-emergence-center: Host directories')
+  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose(); scopeAccess.dispose() }, 'ui-emergence-center: contribution management')
   ctx.effect(() => () => { claudeScopes.dispose() }, 'ui-emergence-center: Claude session directory')
 
   ctx.effect(() => () => { observedScopes.dispose() }, 'ui-emergence-center: remote observation directory')
 
+  const connection = (ctx.get('connection') as ConnectionHandle).generation
   const updateTask = async (operation: () => Promise<DevelopmentTaskSnapshot>): Promise<DevelopmentTaskSnapshot> => {
+    const issued = connection.getSnapshot()
     const task = await operation()
-    tasks.applyTask(task)
+    if (connection.getSnapshot() === issued) tasks.applyTask(task)
     return task
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
@@ -201,8 +215,10 @@ export function apply(ctx: Context): void {
       const source = createNativeScopeSource({
         agentId, port: ctx.remote.scopeAgentContext,
         projection: binding.session.projections.faceOf('scopeAgentContext'),
+        evidence: binding.session.projections.faceOf('scopeAgentEvidence'),
+        contextProgress: binding.session.projections.faceOf('sessionStats') as NativeScopeDependencies['contextProgress'],
         session: binding.session,
-        connection: (ctx.get('connection') as ConnectionHandle).generation,
+        connection,
         subscribeReset: listener => ctx.on('connection/reset', listener),
         subscribeAssignments: listener => ctx.remote.$on('development-task/assignment-changed', listener),
       })
@@ -217,7 +233,7 @@ export function apply(ctx: Context): void {
     order: 34,
     locale: NS,
     inject: (): EmergenceCenterPanelFace => ({
-      hooks: { participants, tasks, mcpClients, claudeScopes, observedScopes, sourceContributions, ownerContributions },
+      hooks: { participants, tasks, mcpClients, claudeScopes, observedScopes, sourceContributions, ownerContributions, scopeAccess },
       initialProfile,
       setProfile: async (profile) => {
         await participants.setProfile(profile)
@@ -225,7 +241,7 @@ export function apply(ctx: Context): void {
       },
       focusTask: async (taskId) => {
         const task = tasks.getSnapshot().tasks.find(item => item.id === taskId)
-        observedScopes.focus(task?.ownerNodeId === participants.getSnapshot().nodeId ? taskId : undefined)
+        observedScopes.focus(task !== undefined && task.ownerNodeId === participants.getSnapshot().nodeId ? taskId : undefined)
         await tasks.focus(taskId)
       },
       createTask: request => tasks.create(request),
@@ -234,8 +250,14 @@ export function apply(ctx: Context): void {
       setupClaudeHooks: request => claudeScopes.setup(request),
       checkClaudeHooks: request => claudeScopes.projectSetup(request),
       removeClaudeHooks: request => claudeScopes.removeSetup(request),
-      joinClaudeScope: request => claudeScopes.join(request),
-      leaveClaudeScope: request => claudeScopes.leave(request),
+      joinClaudeScope: async (request) => {
+        try { return await claudeScopes.join(request) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
+      leaveClaudeScope: async (request) => {
+        try { return await claudeScopes.leave(request) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
       refreshClaudeScopes: () => { claudeScopes.refresh() },
       readContribution: (sessionKey) => { void sourceContributions.refresh(sessionKey) },
       requestContribution: async (request) => {
@@ -265,11 +287,30 @@ export function apply(ctx: Context): void {
         }
         finally { claudeScopes.refresh() }
       },
+      leaveJointContribution: async (request) => {
+        try {
+          await sourceContributions.mutate(request.sessionKey,
+            async () => unwrap(await ctx.remote.claudeScope.leaveJoint(request)))
+        } finally { claudeScopes.refresh() }
+      },
+      recoverJointContribution: async (request) => {
+        try {
+          await sourceContributions.mutate(request.sessionKey,
+            async () => unwrap(await ctx.remote.claudeScope.recoverJoint(request)))
+        } finally { claudeScopes.refresh() }
+      },
+      probeContributionEntry: async request => unwrap(await ctx.remote.scopeAccess.probeContributionEntry(request)),
       previewContributionText: async text => unwrap(await ctx.remote.scopeAccess.previewContributionText({ text })),
       readOwnedContributions: (taskId) => { void ownerContributions.refresh(taskId) },
       moreOwnedContributions: (taskId) => { void ownerContributions.more(taskId) },
       createContributionEntry: async (request) => {
         await ownerContributions.mutate(request.taskId, async () => unwrap(await ctx.remote.scopeAccess.createContributionEntry(request)))
+      },
+      createGroupEntry: async (request) => {
+        await ownerContributions.mutate(request.taskId, async () => unwrap(await ctx.remote.scopeAccess.createGroupEntry(request)))
+      },
+      closeGroupEntry: async (taskId, request) => {
+        await ownerContributions.mutate(taskId, async () => unwrap(await ctx.remote.scopeAccess.closeGroupEntry(request)))
       },
       recoverContributionEntry: (taskId, request) => ownerContributions.mutate(taskId,
         async () => unwrap(await ctx.remote.scopeAccess.recoverContributionEntry(request))),
@@ -286,14 +327,17 @@ export function apply(ctx: Context): void {
       revokeContribution: async (request) => {
         await ownerContributions.mutate(request.grant.taskId, async () => unwrap(await ctx.remote.scopeAccess.revokeContribution(request)))
       },
-      readScopeAccess: async () => {
-        const [identity, access] = await Promise.all([ctx.remote.scopeAccess.identity(), ctx.remote.scopeAccess.list()])
-        return { identity: unwrap(identity), access: unwrap(access) }
+      readScopeAccess: () => { void scopeAccess.refresh('inventory') },
+      inviteScope: request => mutateScopeAccess(async () => unwrap(await ctx.remote.scopeAccess.invite(request))),
+      revokeScope: async (request) => { await mutateScopeAccess(async () => { unwrap(await ctx.remote.scopeAccess.revoke(request)) }) },
+      receiveClaudeScope: async (request) => {
+        try { return await mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receive(request))) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
       },
-      inviteScope: async request => unwrap(await ctx.remote.scopeAccess.invite(request)),
-      revokeScope: async (request) => { unwrap(await ctx.remote.scopeAccess.revoke(request)) },
-      receiveClaudeScope: async request => unwrap(await ctx.remote.claudeScope.receive(request)),
-      stopClaudeReceive: async request => unwrap(await ctx.remote.claudeScope.receiveLeave(request)),
+      stopClaudeReceive: async (request) => {
+        try { return await mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receiveLeave(request))) }
+        finally { sourceContributions.invalidate(request.sessionKey) }
+      },
       approveObservedScope: request => observedScopes.approve(request),
       endObservedScope: request => observedScopes.end(request),
       refreshObservedScopes: () => { observedScopes.refresh() },

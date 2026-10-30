@@ -1,0 +1,43 @@
+# Agent Note: Semantic evidence for bounded collaboration responses
+
+Status: implemented
+
+English | [中文](2026-10-05-semantic-response-evidence.zh.md)
+
+## Problem
+
+A recipient-directed summary can correctly omit an unrelated report while its Task revision and source ledger change. Comparing the complete projection treats that bookkeeping change as a reason to spend another locally authorized automatic response. This weakens the value of automatic context selection for people with separate responsibilities.
+
+## Decision
+
+The [semantic backend](../../../../packages/collaboration/development-task-context/README.md) supplies conservative recipient evidence through the existing activation interface. Its digest retains exact selected summary text, quotes, complete relevant source bodies and attribution, mandatory records, frozen parent revisions, recipient routing, and Task identity, objective, scope, and origin. Only references belonging to the current Task lose their captured revision in this comparison. The exact projection still retains that revision and every source disposition.
+
+Result versions 3–7 exclude references omitted as irrelevant, self-published, or superseded from the digest. Full delivery coverage retains every disposition. Replacing an irrelevant report must not spend another automatic response solely because the earlier report becomes superseded. Current relevant bodies, source identities, authorization intervals, sequence numbers, mandatory command outcomes, withdrawals, and structured evidence remain in the comparison. A relevant source becoming irrelevant removes its quoted update and therefore changes the evidence. Different summaries do not compare equal merely because they might mean the same thing; identical quotes cannot conceal other changes in a relevant body.
+
+The [native receiver](../../../../packages/collaboration/scope-agent-context/README.md) owns scheduling. It suppresses a response only after a freshly authorized comparison with evidence from an actual successful automatic turn for the same local goal and binding. Prefetching, an ordinary user request, a failed request, and cancelled work cannot establish that baseline. Suppression saves no summary reservation and grants no new tool authority.
+
+Semantic result version 5 preserves this comparison while deduplicating delivery references through inline source and authorization tables. Mandatory peer command evidence can repeat an already cited source and authorization even when the summary is short. The renderer reuses only exact existing identities and explicitly lists the encoded mandatory entries, so literal opaque records cannot be mistaken for references. Expanding the tables preserves complete sources, grants, operation outcomes, publication text, quotes, and coverage; table numbering cannot affect activation. Unknown or unmatched records remain literal. This reduces repeated bytes without dropping audit information or shortening the chosen summary.
+
+Result version 6 displays superseded publication coverage as counts per exact Task revision. Repeated replacements can otherwise exhaust the recipient budget while retaining only one current command outcome. Counts replace only model-visible historical identities; complete dispositions remain in projection metadata, the captured summary input, and audit. Current sources and every other omission reason retain their references. Counts grant no authority, do not affect activation, and cannot reconstruct individual historical identities from the displayed text. Complete captured evidence and other omission reasons can still grow beyond their configured limits.
+
+Result version 7 also counts withdrawn publication identities per exact Task revision. Ending a source interval changes its earlier superseded records to withdrawn, so retaining each withdrawn reference can otherwise prevent delivery of the terminal notice after sustained work. The notice remains complete mandatory evidence, and full identities remain in projection metadata and captured evidence. Only historical display references become counts; other omission reasons and all current evidence remain exact. A sources-free withdrawal requires no summary call. This does not change request version 2: withdrawn identities still occupy that model input when another active source needs summarization.
+
+Request version 2 separates complete captured evidence from actual model messages. Repeating superseded identities in a paid summary request can exhaust its input budget even while current evidence and recipient delivery remain small. Model coverage therefore counts only superseded publications by exact Task revision. The same atomic reservation retains canonical full capture and exact transmitted text; its key binds both and the request version. This preserves distinct audit and projection metadata when two histories produce identical counts. Every restored or newly reserved request checks their correspondence before changing reservation state, including pending and failed requests. Version 1 retains its original key and complete model text. Separate deployment limits bound new capture and actual model input; a sources-free projection uses capture and delivery limits without model preparation or reservation.
+
+Audit recovery reconstructs each result using its recorded version and rejects a changed digest or projection. Versions 1–6 retain their exact rendering; version 2 retains superseded omissions in its conservative comparison, and version 1 retains exact activation. New computations use a different backend identity while the same audit Session retains its cumulative reservation count; committed logs are not rewritten.
+
+## Alternatives considered
+
+**Compare the complete projection.** This remains suitable for the Text backend but wakes a semantic recipient for changes confined to omitted-source accounting.
+
+**Compare only summary text or exact excerpts.** This loses unquoted source changes, authorization, mandatory withdrawals, and frozen-history distinctions that can matter to the recipient.
+
+**Discard historical provenance.** This prevents complete source-coverage validation and audit recovery. Display counts retain the historical disposition without repeating each identity; projection metadata and captured inputs still preserve every source.
+
+**Let the model declare that no response is needed.** An unchecked declaration would add another model judgment to the scheduling decision. The deterministic digest compares recorded evidence instead.
+
+## Consequences
+
+The mechanism supports agents that retain their humans' separate goals and permissions. It does not decompose a shared goal or delegate one participant's authority to another. Live context reads and audit records continue when automatic work is suppressed; the next authorized model request receives current context.
+
+Relevance remains a model judgment. A useful ordinary report incorrectly marked irrelevant can still be omitted and fail to trigger work. Mandatory command outcomes, terminal notices, and structured evidence do not depend on that judgment. Keyless controlled responses can verify comparison, scheduling, and replay, but cannot establish real-model relevance, task quality, total cost savings, or two-device usability.

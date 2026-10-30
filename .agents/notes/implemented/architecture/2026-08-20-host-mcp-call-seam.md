@@ -14,7 +14,9 @@ Add `@deepseek-ai/dsh-mcp` as the transport-independent Service Definition for H
 
 `@deepseek-ai/dsh-mcp-client` is both the shipped Service Provider and the existing model-tool bridge. After connection and successful discovery, it publishes the same client generation to `ctx.mcp` and registers discovered definitions on `ctx.tools`. Disconnect removes the direct Host route before closing the generation. The last known model-tool definitions keep their existing outage behavior so a reconnect can replace them without prompt-schema churn. Reconnect publishes only the recovered generation.
 
-The base bundle mounts the Service Definition, while MCP transports remain optional composition. Consumers depend on `@deepseek-ai/dsh-mcp`, not on the concrete client implementation. A Consumer owns the policy that selects, bounds, and records any returned evidence before it becomes model-visible.
+The transport provider owns one parser for canonical and compatibility MCP responses on both call paths. Shared validation prevents protocol drift without routing Host retrieval through model execution.
+
+Host compositions that make direct MCP calls mount the Service Definition with an explicit server bound; MCP transports remain optional composition. ACP mounts one private Service Definition for each nonempty Session server list. Provider lifecycle notifications use their owning service as the dispatch receiver, so diagnostics in another Cordis service isolation realm cannot observe or invalidate that private registry. Consumers depend on `@deepseek-ai/dsh-mcp`, not on the concrete client implementation. A Consumer owns the policy that selects, bounds, and records any returned evidence before it becomes model-visible.
 
 ## Consequences
 

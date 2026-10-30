@@ -5,16 +5,66 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { expect, it } from 'vitest'
+import { expect, it, onTestFailed } from 'vitest'
+import { createCodexCliFixture } from '../fixtures/codex-cli.ts'
 
 const repository = fileURLToPath(new URL('../../../../../../', import.meta.url))
 const sourceArgs = ['--import', import.meta.resolve('tsx/esm'), join(repository, 'apps/cli/src/bin.ts')]
 const builtArgs = [join(repository, 'apps/cli/lib/bin.js')]
 const deadlineMs = 60_000
+
+it.skipIf(process.platform === 'win32')('built: re-announces an invalid Host lease while keeping MCP tools available', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-lease-'))
+  const calls: string[] = []
+  let announcements = 0
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith('/?token=') === true) {
+      response.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-lease=v1.test.cookie; Path=/; HttpOnly' }).end()
+      return
+    }
+    request.setEncoding('utf8')
+    let body = ''
+    request.on('data', (chunk: string) => { body += chunk })
+    request.on('end', () => {
+      const rpc = JSON.parse(body) as { method: string; rpcId: string }
+      calls.push(rpc.method)
+      const value = rpc.method === 'developmentTasks/list' ? []
+        : { presenceTtlMs: rpc.method === 'developmentRooms/announce' && announcements++ === 0 ? 0 : 1500 }
+      response.writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ type: 'server-response', rpcId: rpc.rpcId, result: { ok: true, value } }))
+    })
+  })
+  let client: Client | undefined
+  try {
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('expected TCP fixture')
+    await mkdir(join(home, 'mcp'), { mode: 0o700 })
+    await writeFile(join(home, 'mcp/connection.json'), JSON.stringify({ version: 1, generation: 'lease-fixture',
+      launchUrl: `http://127.0.0.1:${String(address.port)}/?token=private-lease-fixture` }), { mode: 0o600 })
+    client = (await bridge(builtArgs, home, 'built')).client
+    expect(await client.callTool({ name: 'agentharness_task_list', arguments: {} }))
+      .toMatchObject({ structuredContent: { items: [] } })
+    await expect.poll(() => announcements, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
+    const second = calls.indexOf('developmentRooms/announce', calls.indexOf('developmentRooms/announce') + 1)
+    expect(calls.slice(0, second)).not.toContain('developmentRooms/heartbeat')
+    await expect.poll(() => calls.includes('developmentRooms/heartbeat'), { timeout: 15_000 }).toBe(true)
+    await client.close()
+    client = undefined
+    expect(calls.at(-1)).toBe('developmentRooms/withdraw')
+  } finally {
+    try { await client?.close() } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+      await rm(home, { recursive: true, force: true })
+    }
+  }
+}, deadlineMs)
 
 function environment(home: string, mode: string): Record<string, string> {
   const env: Record<string, string> = { HOME: home, USERPROFILE: home, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1' }
@@ -24,6 +74,41 @@ function environment(home: string, mode: string): Record<string, string> {
   }
   if (mode === 'source') env.TSX_TSCONFIG_PATH = join(repository, 'tsconfig.base.json')
   return env
+}
+
+for (const phase of ['authentication', 'request', 'response'] as const) {
+  it.skipIf(process.platform === 'win32')(`built: reports a safe ${phase} timeout through the MCP profile`, async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-timeout-'))
+    const server = createServer((request, response) => {
+      if (request.url?.startsWith('/?token=') === true) {
+        if (phase !== 'authentication') response.writeHead(303, { location: '/',
+          'set-cookie': 'dsh-auth-timeout=v1.test.cookie; Path=/; HttpOnly' }).end()
+      } else if (phase === 'response') {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.write('{')
+      }
+    })
+    let client: Client | undefined
+    try {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('expected TCP fixture')
+      await mkdir(join(home, 'mcp'), { mode: 0o700 })
+      await writeFile(join(home, 'mcp/connection.json'), JSON.stringify({ version: 1, generation: 'timeout-fixture',
+        launchUrl: `http://127.0.0.1:${String(address.port)}/?token=private-timeout-fixture` }), { mode: 0o600 })
+      client = (await bridge(builtArgs, home, 'built')).client
+      const result = await client.callTool({ name: 'agentharness_task_list', arguments: {} }, undefined, { timeout: deadlineMs })
+      await expect(JSON.stringify(result, null, 2) + '\n')
+        .toMatchFileSnapshot(new URL(`./expected/${phase}-timeout.json`, import.meta.url).pathname)
+    } finally {
+      try { await client?.close() } finally {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+        await rm(home, { recursive: true, force: true })
+      }
+    }
+  }, deadlineMs)
 }
 
 async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -140,13 +225,17 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
 
   it.skipIf(process.platform === 'win32')(`${mode}: authenticates real Host calls and adopts a restarted Host in the same MCP session`, async () => {
     const home = await mkdtemp(join(tmpdir(), 'dsh-mcp-restart-'))
+    const clientBin = join(home, 'client-bin')
+    let hostDiagnostics = ''
+    onTestFailed(() => { console.error(hostDiagnostics.replace(/https?:\/\/\S+/gu, '[private-url]')) })
     const start = (): ChildProcessWithoutNullStreams => {
       const child = spawn(process.execPath, [...args, '--profile', 'web', '--no-open', '--port', '0'], {
-        cwd: home, env: environment(home, mode), stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: home, env: { ...environment(home, mode), PATH: [clientBin, process.env.PATH ?? ''].join(delimiter) },
+        stdio: ['pipe', 'pipe', 'pipe'],
       })
       // The Web startup URL contains a secret. Drain it without including it in diagnostics.
       child.stdout.resume()
-      child.stderr.resume()
+      child.stderr.on('data', (chunk) => { hostDiagnostics = (hostDiagnostics + String(chunk)).slice(-16384) })
       return child
     }
     let host = start()
@@ -159,13 +248,26 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       })
       expect(unauthenticated.status).toBe(401)
       await unauthenticated.body?.cancel()
+      const { settingsPath: codexSettings, registrationLogPath: codexRegistrationLog } = await createCodexCliFixture(home, clientBin)
       // Generate an actual client entry through Host setup, then execute it from an unrelated cwd.
       await mkdir(join(home, '.cursor'))
       await writeFile(join(home, '.cursor/mcp.json'), '{"mcpServers":{}}')
+      await writeFile(join(home, '.workbuddy'), 'preserve unusable client configuration\n')
       const login = await fetch(first.launchUrl, { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
       const cookie = login.headers.getSetCookie()[0]?.split(';', 1)[0]
       await login.body?.cancel()
       if (cookie === undefined) throw new Error('Host did not issue a setup authentication cookie')
+      const inspection = await fetch(`${origin}/api/mcpClientSetup/list`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'inspect-fixture', method: 'mcpClientSetup/list', payload: { args: {} } }),
+      })
+      expect(inspection.status).toBe(200)
+      const inspected: unknown = await inspection.json()
+      expect(inspected).toMatchObject({ result: { ok: true } })
+      expect(inspected).toHaveProperty('result.value.clients', expect.arrayContaining([
+        expect.objectContaining({ id: 'workbuddy', state: 'failed', canSetup: false }),
+        expect.objectContaining({ id: 'cursor', state: 'not-configured', canSetup: true }),
+      ]))
       const setup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
         method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({ type: 'client-request', rpcId: 'setup-fixture', method: 'mcpClientSetup/setup',
@@ -173,11 +275,51 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       })
       expect(setup.status).toBe(200)
       expect(await setup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      expect(await readFile(join(home, '.workbuddy'), 'utf8')).toBe('preserve unusable client configuration\n')
       const configuration = JSON.parse(await readFile(join(home, '.cursor/mcp.json'), 'utf8')) as { mcpServers: { agentharness: ClientEntry } }
       const entry = configuration.mcpServers.agentharness
       expect(entry.args).toEqual(expect.arrayContaining(['--profile', 'mcp', '--connection', join(home, 'mcp/connection.json')]))
       expect(entry.env.DSH_HOME).toBe(home)
       expect(entry.env.TSX_TSCONFIG_PATH).toBe(mode === 'source' ? join(repository, 'tsconfig.base.json') : undefined)
+      const codexSetup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'setup-codex-fixture', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(codexSetup.status).toBe(200)
+      expect(await codexSetup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      const settings = JSON.parse(await readFile(codexSettings, 'utf8')) as {
+        keep: string
+        servers: { name: string; enabled: boolean; transport: ClientEntry }[]
+      }
+      const codexEntry = settings.servers.find(server => server.name === 'agentharness')
+      if (codexEntry === undefined) throw new Error('Host setup did not register its Codex launcher')
+      codexEntry.enabled = false
+      await writeFile(codexSettings, JSON.stringify(settings))
+      const disabledSettings = await readFile(codexSettings, 'utf8')
+      const originalRegistrations = await readFile(codexRegistrationLog, 'utf8')
+      const disabledList = await fetch(`${origin}/api/mcpClientSetup/list`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'disabled-codex-inspect', method: 'mcpClientSetup/list', payload: { args: {} } }),
+      })
+      expect(disabledList.status).toBe(200)
+      expect(await disabledList.json()).toHaveProperty('result.value.clients', expect.arrayContaining([
+        expect.objectContaining({ id: 'codex', state: 'manual', canSetup: false, restartRequired: false,
+          detail: 'The AgentHarness MCP server is disabled in Codex. Enable it in Codex MCP settings.' }),
+      ]))
+      const disabledSetup = await fetch(`${origin}/api/mcpClientSetup/setup`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'disabled-codex-setup', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(disabledSetup.status).toBe(200)
+      expect(await disabledSetup.json()).toMatchObject({ result: { ok: true,
+        value: { outcome: 'manual', client: { state: 'manual', canSetup: false, restartRequired: false } } } })
+      expect(await readFile(codexSettings, 'utf8')).toBe(disabledSettings)
+      expect(await readFile(codexRegistrationLog, 'utf8')).toBe(originalRegistrations)
+      expect(settings.keep).toBe('unrelated preference')
+      expect(settings.servers[0]).toEqual({ name: 'sibling', enabled: true,
+        transport: { type: 'stdio', command: 'existing-server', args: [] } })
       const clientCwd = join(home, 'external-client-cwd')
       await mkdir(clientCwd)
       const connected = await bridge(args, clientCwd, mode, entry)

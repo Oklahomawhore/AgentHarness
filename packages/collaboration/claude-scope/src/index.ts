@@ -2,32 +2,35 @@
 
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { PROFILE_TEMPLATES, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-development-room'
 import type {} from '@deepseek-ai/dsh-development-mesh'
 import type {} from '@deepseek-ai/dsh-scope-access'
-import { encodeContributionProposal } from '@deepseek-ai/dsh-scope-access/schema'
+import { encodeContributionProposal, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import type {} from '@deepseek-ai/dsh-development-task'
 import {
   DevelopmentTaskError, observedIntervalId, type DevelopmentParticipantId, type DevelopmentTaskBindingId,
   type DevelopmentTaskObservedSourceId, type DevelopmentTaskObservedIntervalIdentity,
   type DevelopmentTaskObservedReceipt, type DevelopmentTaskObservedInterval,
-  type DevelopmentTaskContextView,
 } from '@deepseek-ai/dsh-development-task'
 import type DevelopmentTaskContextBackend from '@deepseek-ai/dsh-development-task-context/backend'
+import { hasNewTaskContextWithdrawal } from '@deepseek-ai/dsh-development-task-context/local'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { authorizeClaudeScopeTool, claudeScopeToolArgumentDigest, parseClaudeScopeHook, renderClaudeScopeObservation } from './capture.ts'
 import { admitScopeObservation, flushCompletionSamples } from './admission.ts'
 import { flushArtifactSamples, prepareArtifactSamples, revokeArtifactSamples } from './artifact-capture.ts'
 import { resolveOpenApiSources } from './openapi.ts'
-import { receivedScopeProjection } from './receive.ts'
+import { receivedScopeProjection, remainingReceiveContextBytes } from './receive.ts'
 import { IndependentContribution } from './contribution.ts'
+import { retainedLeaseCount } from './work-capture.ts'
+import { advanceReadSelection, nextReadRevision, ownsJointCapture, ownsJointRead, jointNeedsWork, recoverJointRoute, reconcileJoint } from './joint.ts'
 import { computeScopeProjection, scopeDigest, withdrawnScopeProjection } from './projection.ts'
 import { claudeScopeDomainSpec, type ScopeGrant, type ScopeProjection, type ScopeSession, type ScopeToolLease } from './state.ts'
 import { createClaudeScopeDescriptor, type ClaudeScopeDescriptorConfig } from './transport.ts'
@@ -38,7 +41,7 @@ import type {
   ClaudeScopeProjectSetupResult, ClaudeScopeRemoveSetupResult, ClaudeScopeSetupConfig, ClaudeScopeSetupRequest, ClaudeScopeSetupResult,
   ClaudeScopePrepareContributionRequest, ClaudeScopeContributionPreparation, ClaudeScopeActivateContributionRequest,
   ClaudeScopeContributionDetailRequest, ClaudeScopeContributionDetail, ClaudeScopeContributionLeaveRequest,
-  ClaudeScopeContributionSelection, ClaudeScopeRequestContributionRequest,
+  ClaudeScopeContributionSelection, ClaudeScopeRequestContributionRequest, ClaudeScopeLeaveJointRequest, ClaudeScopeRecoverJointRequest,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -47,16 +50,6 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Authorized external Claude sessions connected to local Task scopes. */
     claudeScope: ClaudeScopeService
-  }
-}
-
-declare module '@deepseek-ai/dsh-typert-protocol' {
-  interface RemoteErrorDetailsMap {
-    'claude-scope/project-invalid': {}
-    'claude-scope/configuration-conflict': {}
-    'claude-scope/configuration-invalid': {}
-    'claude-scope/configuration-too-large': {}
-    'claude-scope/write-failed': {}
   }
 }
 
@@ -116,7 +109,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
 
   private readonly lifetime = new AbortController()
   private readonly ready: Promise<ScopeDomain>
-  private readonly descriptor: { readonly generation: string }
+  private readonly descriptor: ReturnType<typeof createClaudeScopeDescriptor>
   private tail: Promise<unknown> = Promise.resolve()
   private readonly changes = new Map<ClaudeScopeSessionKey, number>()
   private readonly operations = new Set<Promise<unknown>>()
@@ -125,7 +118,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
   private backendGeneration = ''
   private installationId = ''
   private recovery: Promise<void> | undefined
-  private controlRevision = 0
   private readonly contributionWorkers = new Map<ClaudeScopeSessionKey, Promise<void>>()
   private readonly contribution: IndependentContribution
 
@@ -181,6 +173,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
       const opened = await opening.catch(() => undefined) // A failed open owns no domain handle.
       await opened?.close()
     }, 'claude-scope: durable state and in-flight operations')
+  }
+
+  async [Service.init](): Promise<void> {
+    await this.descriptor.ready
   }
 
   /**
@@ -343,7 +339,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
 
   /**
    * Retain local file permission and bounded consent, then reconcile the owner application without blocking other sessions.
-   * @param request - exact local selection, single-capture owner entry, and accepted automatic-activation limits.
+   * @param request - exact local selection, owner entry, optional passive joint consent, and accepted automatic-activation limits.
    * @returns committed local intent; session-changed notifications report later waiting, active, or cancellation state.
    */
   @Remote('requestContribution')
@@ -377,6 +373,64 @@ export default class ClaudeScopeService extends TypertRemoteService {
       summary(await this.contribution.stop(domain, request.sessionKey, request.invitation)))
   }
 
+  /**
+   * Stop only the contribution and receiving interval created by the selected joint operation.
+   * @param request - original joint identity; later manual reading and later captures remain independent.
+   * @returns durable local stop state while exact remote cleanup continues in the background.
+   */
+  @Remote('leaveJoint')
+  async leaveJoint(request: ClaudeScopeLeaveJointRequest): Promise<ClaudeScopeSessionSummary> {
+    const domain = await this.ready
+    const selected = this.requireSession(domain, request.sessionKey)
+    if (selected.joint?.id !== request.jointId) throw new RemoteError('claude-scope/source-conflict',
+      'The selected joint operation has changed', { sessionKey: request.sessionKey })
+    if (ownsJointCapture(selected.contribution, selected.joint)) this.contribution.invalidate(request.sessionKey)
+    this.invalidate(request.sessionKey)
+    return this.enqueue(async (current) => {
+      const session = this.requireSession(current, request.sessionKey)
+      const joint = session.joint
+      if (session.version === undefined || joint?.id !== request.jointId) throw new RemoteError('claude-scope/source-conflict',
+        'The selected joint operation has changed', { sessionKey: request.sessionKey })
+      const ownRead = ownsJointRead(session, joint)
+      const capture = ownsJointCapture(session.contribution, joint) ? session.contribution : undefined
+      const stopped: ScopeSession = { ...session,
+        ...(ownRead && session.receive !== undefined
+          ? { readRevision: nextReadRevision(session), receive: { ...session.receive, status: 'left' } } : {}),
+        ...(capture === undefined ? {} : { contribution: { ...capture, state: 'ending',
+          ...(capture.application === undefined ? {} : { application: { ...capture.application, state: 'cancelling' } }) } }),
+        joint: { ...joint, intent: 'leave' as const, cleanupPending: joint.subscription !== undefined,
+          state: joint.subscription === undefined ? 'ended' : joint.state },
+      }
+      await current.table('sessions').put(request.sessionKey, stopped)
+      this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+      this.scheduleContribution(current, request.sessionKey)
+      return summary(stopped)
+    })
+  }
+
+  /**
+   * Retain one replacement owner address for both permissions of the original joint operation.
+   * @param request - displayed joint and read revision; only an identical lost-response retry bypasses the current revision.
+   * @returns committed route intent; background adoption preserves all grant and capture identities.
+   */
+  @Remote('recoverJoint')
+  async recoverJoint(request: ClaudeScopeRecoverJointRequest): Promise<ClaudeScopeSessionSummary> {
+    const domain = await this.ready
+    const selected = this.requireSession(domain, request.sessionKey)
+    recoverJointRoute(selected, request)
+    this.invalidate(request.sessionKey)
+    if (selected.joint !== undefined && ownsJointCapture(selected.contribution, selected.joint)) {
+      this.contribution.invalidate(request.sessionKey)
+    }
+    return this.enqueue(async (current) => {
+      const session = recoverJointRoute(this.requireSession(current, request.sessionKey), request)
+      await current.table('sessions').put(request.sessionKey, session)
+      this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+      this.scheduleContribution(current, request.sessionKey)
+      return summary(session)
+    })
+  }
+
   private async manageContribution<T>(
     request: { sessionKey: ClaudeScopeSessionKey; expectedCapture: ClaudeScopeContributionSelection | null },
     operation: (domain: ScopeDomain, signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -399,8 +453,13 @@ export default class ClaudeScopeService extends TypertRemoteService {
     } finally { this.scheduleContribution(domain, request.sessionKey) }
   }
 
+  private needsContributionWork(domain: ScopeDomain, key: ClaudeScopeSessionKey): boolean {
+    const session = domain.table('sessions').get(key)
+    return session?.receive?.status === 'left' || jointNeedsWork(session) || this.contribution.needsWork(domain, key)
+  }
+
   private scheduleContribution(domain: ScopeDomain, key: ClaudeScopeSessionKey): void {
-    if (this.lifetime.signal.aborted || this.contributionWorkers.has(key) || !this.contribution.needsWork(domain, key)) return
+    if (this.lifetime.signal.aborted || this.contributionWorkers.has(key) || !this.needsContributionWork(domain, key)) return
     const signal = this.contribution.captureSignal(key)
     const worker = (async () => {
       while (true) {
@@ -408,19 +467,30 @@ export default class ClaudeScopeService extends TypertRemoteService {
         try {
           if (domain.table('sessions').get(key)?.contribution?.application !== undefined) {
             await this.contribution.pollApplication(key, operation => this.enqueue(operation), signal)
-          } else {
+          } else if (domain.table('sessions').get(key)?.contribution !== undefined) {
             await this.contribution.pollRecovery(key, operation => this.enqueue(operation), signal)
+          }
+          await reconcileJoint(this.ctx, operation => this.enqueue(operation), key, this.lifetime.signal)
+          if (domain.table('sessions').get(key)?.receive?.status === 'left') {
+            await this.enqueue(async current => this.leaveReceive(current, this.requireSession(current, key), false))
           }
         } catch (error) {
           if (signal.aborted) return
           this.ctx.logger.warn('claude-scope: contribution attempt failed: %s', String(error))
-          try { await this.enqueue(async current => this.contribution.attemptFailed(current, key, signal)) }
+          try { await this.enqueue(async (current) => {
+            await this.contribution.attemptFailed(current, key, signal)
+            const session = this.requireSession(current, key)
+            if (jointNeedsWork(session) && session.joint.intent === 'adopt') {
+              await current.table('sessions').put(key, { ...session, joint: { ...session.joint, state: 'failed' as const } })
+              this.ctx.emit('claude-scope/session-changed', key)
+            }
+          }) }
           catch (failure) {
             signal.throwIfAborted()
             this.ctx.logger.error('claude-scope: contribution issue could not be saved: %s', String(failure))
           }
         }
-        if (!this.contribution.needsWork(domain, key)) return
+        if (!this.needsContributionWork(domain, key)) return
         try { await delay(this.config.contributionPollIntervalMs, undefined, { signal }) }
         catch (error) { if (!signal.aborted) throw error }
       }
@@ -457,9 +527,12 @@ export default class ClaudeScopeService extends TypertRemoteService {
       }
       const access = this.ctx.get('scopeAccess')
       if (access === undefined) throw new Error('claude-scope: independent scope access is unavailable')
+      const selected = advanceReadSelection(session)
+      await domain.table('sessions').put(session.sessionKey, selected)
+      this.scheduleContribution(domain, session.sessionKey)
       const subscription = await access.join({ invitation: request.invitation })
       const invitation = subscription.invitation
-      const joined: ScopeSession = { ...session, receive: {
+      const joined: ScopeSession = { ...selected, receive: {
         subscriptionId: subscription.id, generation: subscription.generation,
         taskId: invitation.taskId, ownerPeerId: invitation.ownerPeerId,
         grantId: invitation.grantId, grantGeneration: invitation.generation,
@@ -482,7 +555,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
   @Remote('receiveLeave')
   receiveLeave(request: ClaudeScopeLeaveRequest): Promise<ClaudeScopeSessionSummary> {
     this.invalidate(request.sessionKey)
-    return this.enqueue(async domain => summary(await this.leaveReceive(domain, this.requireSession(domain, request.sessionKey))))
+    return this.enqueue(async (domain) => {
+      try { return summary(await this.leaveReceive(domain, this.requireSession(domain, request.sessionKey))) }
+      finally { this.scheduleContribution(domain, request.sessionKey) }
+    })
   }
 
   /**
@@ -518,8 +594,9 @@ export default class ClaudeScopeService extends TypertRemoteService {
     const domain = await this.ready
     operationSignal.throwIfAborted()
     const key = scopeDigest([this.installationId, input.sessionId]) as ClaudeScopeSessionKey
+    this.contribution.noticePrompt(key, input, domain.table('sessions').get(key)?.contribution)
     const contributionSignal = domain.table('sessions').get(key)?.contribution === undefined
-      ? undefined : this.contribution.captureSignal(key)
+      ? undefined : this.contribution.captureSignal(key, input.event === 'Stop' || input.event === 'UserPromptSubmit')
     if (input.event === 'SessionEnd') {
       this.invalidate(key)
       this.contribution.invalidate(key)
@@ -538,16 +615,23 @@ export default class ClaudeScopeService extends TypertRemoteService {
     })
     operationSignal.throwIfAborted()
     if (input.event === 'UserPromptSubmit' || input.event === 'PostToolBatch') {
+      let sampled: ClaudeScopeHookResult | undefined
+      if (input.event === 'UserPromptSubmit' && session.contribution !== undefined && 'kind' in session.contribution.source
+        && session.contribution.source.kind === 'claude-work' && contributionSignal !== undefined) {
+        sampled = await this.enqueue(() => this.contribution.capture(domain, input, key,
+          AbortSignal.any([operationSignal, contributionSignal])))
+      }
       const projection = await this.project(domain, key, operationSignal)
       operationSignal.throwIfAborted()
-      if (projection === undefined) return omitted('session-not-joined')
+      if (projection === undefined) return sampled ?? omitted('session-not-joined')
       return {
         output: { hookSpecificOutput: { hookEventName: input.event, additionalContext: projection.text } },
         receipt: { status: projection.kind === 'withdrawal' || projection.kind === 'suspended' ? 'withdrawn' : 'projected',
           ...(projection.kind === 'suspended' && projection.receive !== undefined ? { reason: projection.receive.status } : {}), projectionId: projection.projectionId },
       }
     }
-    if (input.event === 'PreToolUse' || input.event === 'PostToolUse' || input.event === 'PostToolUseFailure') {
+    if (input.event === 'PreToolUse' || input.event === 'PostToolUse' || input.event === 'PostToolUseFailure'
+      || input.event === 'Stop' || input.event === 'StopFailure') {
       const change = this.changes.get(key)
       try {
         return await this.enqueue(async () => this.capture(domain, input, session.sessionKey, change, operationSignal, contributionSignal))
@@ -561,6 +645,13 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (domain.global.get().installationId === null) await domain.global.set({ installationId })
     this.lifetime.signal.throwIfAborted()
     this.installationId = installationId
+    for (const [key, projection] of domain.table('projections').entries()) {
+      if (key !== projection.projectionId) throw new Error('claude-scope: stored projection key does not match its identity')
+    }
+    for (const [, lease] of domain.table('work_leases').entries()) {
+      const session = domain.table('sessions').get(lease.sessionKey)
+      if (session?.version !== 3 || session.contribution === undefined) throw new Error('claude-scope: work lease has no generation-3 local permit')
+    }
     for (const [, lease] of domain.table('contribution_leases').entries()) {
       if (domain.table('sessions').get(lease.sessionKey)?.contribution === undefined) {
         throw new Error('claude-scope: stored contribution lease has no local permit')
@@ -573,6 +664,28 @@ export default class ClaudeScopeService extends TypertRemoteService {
       if (session.lastProjectionId !== undefined && domain.table('projections').get(session.lastProjectionId)?.sessionKey !== key) {
         throw new Error('claude-scope: stored recipient projection is missing or belongs to another session')
       }
+      if (session.joint !== undefined) {
+        const access = this.ctx.get('scopeAccess')
+        if (access === undefined) throw new Error('claude-scope: stored joint consent requires scope access')
+        const joint = session.joint
+        if ((await access.identity()).peerId !== joint.proposal.contributorPeerId) {
+          throw new Error('claude-scope: stored joint consent belongs to another local peer')
+        }
+        if (joint.subscription !== undefined) {
+          const subscription = (await access.list()).subscriptions.find(item => item.id === joint.subscription?.id)
+          if (subscription !== undefined && (subscription.generation !== joint.subscription.generation
+            || !sameReadGrant(subscription.invitation, joint.subscription.invitation)
+            || !isDeepStrictEqual(subscription.originalCapture, joint.subscription.originalCapture))) {
+            throw new Error('claude-scope: stored joint subscription belongs to another original plan')
+          }
+        }
+      }
+      if (session.grant === undefined && session.pendingEnd === undefined) {
+        // Local artifact retirement may outlive the old Task grant; it does not cancel independent receiving consent.
+        await revokeArtifactSamples(this.ctx, domain, session, this.lifetime.signal)
+        await this.ctx.developmentTasks.clear({ bindingId: session.bindingId, participantId: session.participantId })
+        await this.clearOutbox(domain, session.sessionKey)
+      }
       await this.contribution.restore(domain, session)
       const restored = this.requireSession(domain, key)
       if (session.receive !== undefined) {
@@ -584,7 +697,12 @@ export default class ClaudeScopeService extends TypertRemoteService {
         if (subscription === undefined || subscription.generation !== receive.generation
           || subscription.invitation.taskId !== receive.taskId || subscription.invitation.ownerPeerId !== receive.ownerPeerId
           || subscription.invitation.grantId !== receive.grantId || subscription.invitation.generation !== receive.grantGeneration
-          || subscription.invitation.expiresAt !== receive.expiresAt) {
+          || subscription.invitation.expiresAt !== receive.expiresAt
+          || (subscription.version === 2 && (session.joint?.subscription?.id !== subscription.id
+            || session.joint.subscription.generation !== subscription.generation
+            || session.joint.subscription.originalCapture.captureId !== subscription.originalCapture.captureId
+            || session.joint.subscription.originalCapture.captureGeneration !== subscription.originalCapture.captureGeneration))
+          || (subscription.version !== 2 && session.joint?.subscription?.id === subscription.id)) {
           throw new Error('claude-scope: stored receiving interval does not match its subscription')
         }
         if (session.ended) await this.revoke(domain, restored, true)
@@ -593,9 +711,9 @@ export default class ClaudeScopeService extends TypertRemoteService {
           await this.ctx.developmentRooms.announce({ id: session.participantId, kind: 'agent', displayName: 'Claude scope session' })
         }
         await this.recoverRemote(domain, session)
-      } else if (session.ended || session.grant === undefined || !this.bindingCurrent(session, session.grant)) {
+      } else if (session.ended || (session.grant !== undefined && !this.bindingCurrent(session, session.grant))) {
         await this.revoke(domain, restored, session.ended, true)
-      } else {
+      } else if (session.grant !== undefined) {
         await this.ctx.developmentRooms.announce({ id: session.participantId, kind: 'agent', displayName: 'Claude scope session' })
         const grant = session.grant
         await flushArtifactSamples(this.ctx, domain, session, grant, this.lifetime.signal,
@@ -626,21 +744,33 @@ export default class ClaudeScopeService extends TypertRemoteService {
     return session
   }
 
-  private async leaveReceive(domain: ScopeDomain, session: ScopeSession): Promise<ScopeSession> {
-    if (session.receive !== undefined) {
-      const access = this.ctx.get('scopeAccess')
-      if (access === undefined) throw new Error('claude-scope: independent scope access is unavailable')
-      await access.leave({ subscriptionId: session.receive.subscriptionId })
-      const { receive: _receive, ...retained } = session
-      const left: ScopeSession = retained
-      await domain.table('sessions').put(session.sessionKey, left)
-      return left
-    }
-    return session
+  private async leaveReceive(domain: ScopeDomain, session: ScopeSession, advance = true): Promise<ScopeSession> {
+    const selected = advance ? advanceReadSelection(session) : session
+    const stopped: ScopeSession = selected.receive === undefined ? selected
+      : { ...selected, receive: { ...selected.receive, status: 'left' } }
+    await domain.table('sessions').put(session.sessionKey, stopped)
+    this.ctx.emit('claude-scope/session-changed', session.sessionKey)
+    if (stopped.receive === undefined) return stopped
+    const access = this.ctx.get('scopeAccess')
+    if (access === undefined) throw new Error('claude-scope: independent scope access is unavailable')
+    await access.leave({ subscriptionId: stopped.receive.subscriptionId })
+    const { receive: _receive, ...left } = stopped
+    await domain.table('sessions').put(session.sessionKey, left)
+    this.ctx.emit('claude-scope/session-changed', session.sessionKey)
+    return left
   }
 
   private async revoke(domain: ScopeDomain, session: ScopeSession, ended: boolean, preserveContribution = false): Promise<ScopeSession> {
-    session = await this.leaveReceive(domain, session)
+    const capture = session.contribution
+    session = { ...advanceReadSelection(session), ended,
+      ...(session.receive === undefined ? {} : { receive: { ...session.receive, status: 'left' } }),
+      ...(preserveContribution || capture === undefined ? {} : { contribution: { ...capture, state: 'ending',
+        ...(capture.application === undefined ? {} : { application: { ...capture.application, state: 'cancelling' } }) } }),
+    }
+    await domain.table('sessions').put(session.sessionKey, session)
+    this.ctx.emit('claude-scope/session-changed', session.sessionKey)
+    try { session = await this.leaveReceive(domain, session, false) }
+    catch (error) { this.ctx.logger.warn('claude-scope: stopped receiving awaits cleanup: %s', String(error)) }
     const { grant, sharingIssue: _issue, ...retained } = session
     let left: ScopeSession = {
       ...retained, ended,
@@ -730,12 +860,11 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (grant?.remote === undefined) return session
     if (session.ended || !this.bindingCurrent(session, grant)) return this.revoke(domain, session, session.ended)
     const change = this.changes.get(session.sessionKey)
-    const control = this.controlRevision
     let intervals: readonly DevelopmentTaskObservedInterval[]
     try { intervals = await this.ctx.developmentTasks.observedIntervals({ taskId: grant.taskId }) } catch (error) {
       return this.remoteFailure(domain, session, error)
     }
-    if (control !== this.controlRevision || !this.current(domain, session, grant, change)) {
+    if (!this.current(domain, session, grant, change)) {
       return this.requireSession(domain, session.sessionKey)
     }
     const interval = intervals.find(item => item.sourceNodeId === grant.epoch.nodeId
@@ -752,7 +881,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
     await domain.table('sessions').put(session.sessionKey, refreshed)
     if (interval === undefined || refreshed.grant === undefined) return refreshed
     try {
-      const current = () => control === this.controlRevision && this.current(domain, refreshed, refreshed.grant, change)
+      const current = () => this.current(domain, refreshed, refreshed.grant, change)
       if (await flushArtifactSamples(this.ctx, domain, refreshed, refreshed.grant, this.lifetime.signal, current)) {
         await flushCompletionSamples(this.ctx, domain, refreshed, refreshed.grant, this.lifetime.signal, current)
       }
@@ -781,7 +910,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
   }
 
   private async capture(
-    domain: ScopeDomain, input: ClaudeScopeHookInput, key: ClaudeScopeSessionKey, change: number | undefined, signal: AbortSignal,
+    domain: ScopeDomain, input: Parameters<IndependentContribution['capture']>[1], key: ClaudeScopeSessionKey, change: number | undefined, signal: AbortSignal,
     contributionSignal?: AbortSignal,
   ): Promise<ClaudeScopeHookResult> {
     signal.throwIfAborted()
@@ -791,8 +920,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
       return this.contribution.capture(domain, input, key, AbortSignal.any([signal, contributionSignal]))
     }
     const grant = session.grant
-    const control = this.controlRevision
-    const current = () => control === this.controlRevision && this.current(domain, session, grant, change)
+    const current = () => this.current(domain, session, grant, change)
     if (grant === undefined || session.ended || !current()) return omitted('session-not-joined')
     if (grant.remote !== undefined && (grant.remote.intervalId === undefined || session.sharingIssue !== undefined)) {
       return omitted(session.sharingIssue ?? 'owner-approval-pending')
@@ -830,7 +958,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
     if (input.event === 'PreToolUse') {
       if (retained !== undefined && !sameLease(retained, lease)) return omitted('tool-lease-conflict')
       if (retained === undefined) {
-        if (leases.size + domain.table('contribution_leases').size >= this.config.maxLeases) return omitted('tool-lease-limit')
+        if (retainedLeaseCount(domain) >= this.config.maxLeases) return omitted('tool-lease-limit')
         await leases.put(leaseKey, lease)
       }
       signal.throwIfAborted()
@@ -844,7 +972,6 @@ export default class ClaudeScopeService extends TypertRemoteService {
     ]) as DevelopmentTaskObservedSourceId
     const observation = renderClaudeScopeObservation(input, prepared, sourceId, this.config.maxObservationBytes)
     if (observation.kind === 'omitted') return omitted(observation.reason)
-    if (input.event !== 'PostToolUse' && input.event !== 'PostToolUseFailure') return omitted('not-tool-completion')
     const terminal = { event: input.event, textDigest: scopeDigest([observation.text]) }
     if (retained.terminal !== undefined
       && (retained.terminal.event !== terminal.event || retained.terminal.textDigest !== terminal.textDigest)) {
@@ -895,11 +1022,13 @@ export default class ClaudeScopeService extends TypertRemoteService {
       if (session.receive !== undefined) {
         const access = this.ctx.get('scopeAccess')
         if (access === undefined) throw new Error('claude-scope: independent scope access is unavailable')
-        const result = await access.retrieve(session.receive.subscriptionId, signal)
+        const result = session.receive.status === 'left' ? { status: 'left' as const }
+          : await access.retrieveWithinBudget({ subscriptionId: session.receive.subscriptionId,
+            maxContextBytes: remainingReceiveContextBytes({ ...session, receive: session.receive }, this.config.maxContextBytes) }, signal)
         signal.throwIfAborted()
         if (!this.current(domain, session, undefined, change)) continue
         const prepared = receivedScopeProjection({ ...session, receive: session.receive }, result, this.config.maxContextBytes)
-        const projection = records.get(prepared.projectionId) ?? prepared
+        const projection = previous?.cacheKey === prepared.cacheKey ? previous : records.get(prepared.projectionId) ?? prepared
         const saved = await this.storeProjection(domain, session, undefined, change, projection, signal)
         if (!saved) continue
         const subscription = (await access.list()).subscriptions.find(item => item.id === session.receive?.subscriptionId)
@@ -920,7 +1049,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
       if (grant === undefined || (grant.remote !== undefined && grant.remote.intervalId === undefined)) {
         if (previous === undefined) return undefined
         const withdrawal = previous.kind === 'withdrawal' && previous.maxContextBytes === this.config.maxContextBytes
-          ? previous : withdrawnScopeProjection(session, this.config.maxContextBytes)
+          ? previous : withdrawnScopeProjection(previous, this.config.maxContextBytes)
         const saved = await this.storeProjection(domain, session, grant, change, withdrawal, signal)
         if (saved) return withdrawal
         continue
@@ -946,12 +1075,14 @@ export default class ClaudeScopeService extends TypertRemoteService {
       })
       signal.throwIfAborted()
       if (this.ctx.developmentTaskContextBackend.identity !== identity || !this.current(domain, session, grant, change)) continue
-      if (peerEvidenceEnded(view, await this.ctx.developmentTasks.currentContextView(grant.taskId))) continue
+      await this.ctx.developmentTasks.currentContextView(grant.taskId)
+      if (hasNewTaskContextWithdrawal(view.task, this.ctx.developmentTasks.get({ taskId: grant.taskId }))) continue
       signal.throwIfAborted()
       const saved = await this.storeProjection(domain, session, grant, change, projection, signal, identity)
       signal.throwIfAborted()
       if (!saved || this.ctx.developmentTaskContextBackend.identity !== identity) continue
-      if (peerEvidenceEnded(view, await this.ctx.developmentTasks.currentContextView(grant.taskId))) continue
+      await this.ctx.developmentTasks.currentContextView(grant.taskId)
+      if (hasNewTaskContextWithdrawal(view.task, this.ctx.developmentTasks.get({ taskId: grant.taskId }))) continue
       signal.throwIfAborted()
       if (!this.current(domain, session, grant, change)) continue
       return projection
@@ -991,7 +1122,7 @@ export default class ClaudeScopeService extends TypertRemoteService {
   ): boolean {
     if (this.lifetime.signal.aborted || this.changes.get(session.sessionKey) !== change) return false
     const latest = domain.table('sessions').get(session.sessionKey)
-    if (latest?.grant?.policy.revision !== grant?.policy.revision) return false
+    if (latest?.grant?.policy.revision !== grant?.policy.revision || latest?.readRevision !== session.readRevision) return false
     if (latest?.receive?.subscriptionId !== session.receive?.subscriptionId
       || latest?.receive?.generation !== session.receive?.generation) return false
     if (session.receive !== undefined && latest?.ended) return false
@@ -1013,11 +1144,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
   }
 
   private invalidate(key: ClaudeScopeSessionKey): void {
-    this.controlRevision += 1
     this.changes.set(key, (this.changes.get(key) ?? 0) + 1)
   }
 
-  private enqueue<T>(operation: (domain: ScopeDomain) => Promise<T>): Promise<T> {
+  private enqueue<T>(operation: (domain: ScopeDomain) => T | Promise<T>): Promise<T> {
     const result = this.tail.then(async () => {
       const domain = await this.ready
       this.lifetime.signal.throwIfAborted()
@@ -1028,23 +1158,20 @@ export default class ClaudeScopeService extends TypertRemoteService {
   }
 }
 
-/** Compare direct evidence only; frozen inherited parent snapshots retain their historical meaning. */
-function peerEvidenceEnded(captured: DevelopmentTaskContextView, current: DevelopmentTaskContextView): boolean {
-  const key = (item: NonNullable<DevelopmentTaskContextView['task']['context'][number]['peerContribution']>) =>
-    JSON.stringify([item.grant.grantId, item.grant.generation])
-  const known = new Set(captured.task.context.flatMap(item => item.peerContribution === undefined ? [] : [key(item.peerContribution)]))
-  const ended = new Set(captured.task.context.flatMap(item =>
-    item.peerContribution?.ended === undefined ? [] : [key(item.peerContribution)]))
-  return current.task.context.some(item => item.peerContribution?.ended !== undefined
-    && known.has(key(item.peerContribution)) && !ended.has(key(item.peerContribution)))
-}
-
 function summary(session: ScopeSession): ClaudeScopeSessionSummary {
   const sharingState = session.pendingEnd !== undefined ? 'withdrawal-pending'
     : session.grant === undefined ? undefined
       : session.grant.remote !== undefined && session.grant.remote.intervalId === undefined ? 'awaiting-approval' : 'active'
   return {
     sessionKey: session.sessionKey, sessionId: session.sessionId, observedAt: session.observedAt, ended: session.ended,
+    readRevision: session.readRevision ?? 0,
+    ...(session.joint === undefined ? {} : { joint: { id: session.joint.id,
+      capture: { captureId: session.joint.proposal.captureId, captureGeneration: session.joint.proposal.captureGeneration },
+      expectedReadRevision: session.joint.expectedReadRevision, state: session.joint.state, intent: session.joint.intent,
+      cleanupPending: session.joint.cleanupPending
+        || (ownsJointCapture(session.contribution, session.joint) && session.contribution?.state === 'ending'),
+      ...(session.joint.subscription === undefined ? {} : { subscriptionId: session.joint.subscription.id }),
+    } }),
     ...(session.cwd === undefined ? {} : { cwd: session.cwd }),
     ...(session.receive === undefined ? {} : {
       receiveSubscriptionId: session.receive.subscriptionId, receiveTaskId: session.receive.taskId,

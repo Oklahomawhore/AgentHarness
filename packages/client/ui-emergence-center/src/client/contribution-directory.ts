@@ -35,7 +35,12 @@ export function createContributionDirectory<K extends string, T>(
   read: (key: K, previous?: T) => Promise<T>, onError: (error: unknown) => void,
 ): ContributionDirectory<K, T> {
   const listeners = new Set<() => void>()
-  const records = new Map<K, { revision: number; pending: boolean; read?: { revision: number; append: boolean; promise: Promise<void> } }>()
+  const records = new Map<K, {
+    revision: number
+    pending: boolean
+    mutationError?: string
+    read?: { revision: number; append: boolean; promise: Promise<void> }
+  }>()
   // The generic mapped keys are all optional; TypeScript cannot infer that for {}.
   const empty = (): Readonly<Partial<Record<K, ContributionEntry<T>>>> => ({}) as Readonly<Partial<Record<K, ContributionEntry<T>>>>
   let snapshot = empty()
@@ -59,6 +64,7 @@ export function createContributionDirectory<K extends string, T>(
   const load = (key: K, clearError: boolean, append = false): Promise<void> => {
     if (!active) return Promise.resolve()
     const state = record(key)
+    if (clearError) delete state.mutationError
     if (state.read?.revision === state.revision) {
       if (state.read.append === append) return state.read.promise
       state.revision += 1
@@ -69,11 +75,12 @@ export function createContributionDirectory<K extends string, T>(
     const prior: ContributionEntry<T> | undefined = snapshot[key]
     const { error: _error, ...retained } = prior ?? { status: 'loading' as const, pending: state.pending }
     publish(key, { ...retained, status: 'loading', pending: state.pending,
-      ...(!clearError && prior?.error !== undefined ? { error: prior.error } : {}) })
+      ...(state.mutationError === undefined ? {} : { error: state.mutationError }) })
     const promise = (async () => {
       try {
         const value = await Promise.resolve().then(() => read(key, append ? snapshot[key]?.value : undefined))
-        if (current()) publish(key, { ...snapshot[key], value, status: 'ready', pending: state.pending })
+        if (current()) publish(key, { value, status: 'ready', pending: state.pending,
+          ...(state.mutationError === undefined ? {} : { error: state.mutationError }) })
       } catch (error) {
         if (current()) { report(error); publish(key, { ...snapshot[key], status: 'error', pending: state.pending, error: code(error) }) }
       } finally {
@@ -101,6 +108,7 @@ export function createContributionDirectory<K extends string, T>(
       const current = (): boolean => active && generation === issued
       state.pending = true
       state.revision += 1
+      delete state.mutationError
       const prior: ContributionEntry<T> | undefined = snapshot[key]
       const { error: _error, ...retained } = prior ?? { status: 'loading' as const, pending: true }
       publish(key, { ...retained, pending: true })
@@ -108,8 +116,11 @@ export function createContributionDirectory<K extends string, T>(
       try { result = await operation() }
       catch (error) {
         if (current()) {
+          state.mutationError = code(error)
           report(error)
-          publish(key, { ...snapshot[key], status: snapshot[key]?.status ?? 'loading', pending: true, error: code(error) })
+          // The mutation publishes this key before sending the Host request.
+          const entry = snapshot[key] as ContributionEntry<T>
+          publish(key, { ...entry, pending: true, error: state.mutationError })
         }
       } finally {
         // A connection reset cannot cancel a mutation already sent to the Host.
@@ -122,7 +133,8 @@ export function createContributionDirectory<K extends string, T>(
             if (!alive()) break
             if (observedGeneration !== generation || observedRevision !== state.revision) continue
             state.pending = false
-            publish(key, { ...snapshot[key], status: snapshot[key]?.status ?? 'error', pending: false })
+            const entry = snapshot[key] as ContributionEntry<T>
+            publish(key, { ...entry, pending: false })
             break
           }
         }

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
+import { DevelopmentTaskError } from '@deepseek-ai/dsh-development-task'
 import { peerContributionGrantSchema, peerContributionPublicationId } from '@deepseek-ai/dsh-development-task/schema'
 import type { DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
@@ -75,6 +76,28 @@ it.each(['peer', 'task', 'capture', 'selector', 'generation'] as const)('refuses
   expect(result).toEqual({ status: 'denied' })
   expect(a.tasks.get({ taskId: task.id }).revision).toBe(revision)
   expect(JSON.stringify(result)).not.toContain(task.id)
+})
+
+it('preserves active authority after an injected Task policy refusal and admits the original retry', async () => {
+  const { a, b, task, grant, invitation } = await granted()
+  const report = sample()
+  const before = a.tasks.get({ taskId: task.id })
+  const entries = a.tasks.log()
+  const rejected = vi.spyOn(a.tasks, 'admitPeerContribution')
+    .mockRejectedValueOnce(new DevelopmentTaskError('fixture admission policy refused this request', 'POLICY_REJECTED'))
+  try {
+    const raw = await b.transport.request({ peerId: grant.ownerPeerId, address: invitation.ownerAddress }, '/agentharness/scope-contribute/1',
+      { version: 1, requestId: randomUUID(), op: 'sample', invitation, sample: report }, signal())
+    expect(contributionResponseSchema.parse(raw).result).toEqual({ status: 'denied' })
+    expect(rejected).toHaveBeenCalledExactlyOnceWith({ grant, ...report }, grant.contributorPeerId)
+    expect(a.tasks.peerContributions({ taskId: task.id })).toMatchObject([{ grant, state: 'active' }])
+    expect(a.tasks.get({ taskId: task.id })).toEqual(before)
+    expect(a.tasks.log()).toEqual(entries)
+  } finally { rejected.mockRestore() }
+  await expect(b.access.contribute({ invitation, sample: report }, signal())).resolves.toMatchObject({ status: 'accepted',
+    receipt: { publicationId: peerContributionPublicationId({ grant, ...report }) } })
+  expect(a.tasks.get({ taskId: task.id }).revision).toBe(before.revision + 1)
+  expect(a.tasks.contextView(task.id).task.context).toHaveLength(1)
 })
 
 it('recovers the exact original receipt after a committed response is lost and a grant ends', async () => {

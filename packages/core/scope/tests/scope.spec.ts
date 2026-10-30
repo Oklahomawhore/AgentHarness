@@ -1,9 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { bindScopeParent, carrierKeyOf, createScope, isScopeCarrier, scopeChainOf, scopeOf, scopeParentOf, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scope, Scoped } from '@deepseek-ai/dsh-scope'
 
 declare module '@deepseek-ai/cordis' {
+  interface Context {
+    scopeTestValue: { readonly value: string }
+  }
   interface Events {
     /**
      * Test-only event for scope-filtered dispatch.
@@ -22,6 +25,41 @@ async function mintScope(ctx: Context, key: object): Promise<Scope> {
 }
 
 describe('createScope', () => {
+  it('inherits the minting plugin dependency in an isolated service realm', async () => {
+    const ctx = new Context()
+    class Probe extends Service {
+      constructor(parent: Context, public readonly value: string) { super(parent, 'scopeTestValue') }
+    }
+    const isolated = ctx.isolate('scopeTestValue')
+    let scope: Scope | undefined
+    try {
+      await ctx.plugin(Probe, 'outer')
+      await isolated.plugin(Probe, 'inner')
+      await isolated.plugin({ name: 'isolated-scope-owner', inject: ['scopeTestValue'], apply(owner) {
+        expect(owner.scopeTestValue.value).toBe('inner')
+        scope = createScope(owner, {})
+        expect(scope.ctx.scopeTestValue.value).toBe('inner')
+      } })
+      expect(scope?.ctx.scopeTestValue.value).toBe('inner')
+    } finally { await scope?.dispose(); await ctx.fiber.dispose() }
+  })
+
+  it('does not inherit a provider across a different isolation key', async () => {
+    const ctx = new Context()
+    class Probe extends Service {
+      constructor(parent: Context) { super(parent, 'scopeTestValue') }
+      readonly value = 'outer'
+    }
+    let scope: Scope | undefined
+    try {
+      await ctx.plugin(Probe)
+      await ctx.isolate('scopeTestValue').plugin((owner: Context) => {
+        scope = createScope(owner, {})
+        expect(() => scope!.ctx.scopeTestValue).toThrow('without inject')
+      })
+    } finally { await scope?.dispose(); await ctx.fiber.dispose() }
+  })
+
   it('tags contexts and derived contexts, with the nearest tag winning', async () => {
     const ctx = new Context()
     const outerKey = { name: 'outer' }

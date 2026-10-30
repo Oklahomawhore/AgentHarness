@@ -13,15 +13,19 @@ import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-sub
 import { readClientBuildRecord } from '../../../scripts/client-build-environment.ts'
 import { REPO_ROOT } from './support.ts'
 
-const CLIENT_ARTIFACT_PATTERNS = [
+const WATCHER_ARTIFACT_PATTERNS = [
   'apps/web/dist/**/*',
   'packages/*/*/lib/client.js',
   'packages/*/*/lib/client.js.map',
+  'packages/client/ui-conversation/lib/types/**/*',
+  'packages/client/ui-conversation/lib/tsconfig.tsbuildinfo',
+  'packages/client/ui-layout/lib/types/**/*',
+  'packages/client/ui-layout/lib/tsconfig.tsbuildinfo',
 ]
 
-/** Return every artifact that `pnpm run dev:web` can rewrite. */
-function clientArtifactPaths(): string[] {
-  return globSync(CLIENT_ARTIFACT_PATTERNS, { cwd: REPO_ROOT })
+/** Return browser artifacts and the edited package's TypeScript outputs. */
+function watcherArtifactPaths(): string[] {
+  return globSync(WATCHER_ARTIFACT_PATTERNS, { cwd: REPO_ROOT })
     .map(path => join(REPO_ROOT, path))
     .filter(path => statSync(path).isFile())
     .sort()
@@ -82,20 +86,25 @@ async function stopTree(child: SubprocessHandle): Promise<void> {
   await child.done
 }
 
-it('hot-reloads a real client-plugin source edit without refreshing the page', async () => {
+it.each(['feature', 'root layout'] as const)('hot-reloads a real %s source edit without refreshing the page', async (target) => {
   const world = await mkdtemp(join(tmpdir(), 'dsh-web-hmr-world-'))
-  const sourcePath = join(REPO_ROOT, 'packages/client/ui-conversation/src/client/locales.ts')
+  const sourcePath = join(REPO_ROOT, target === 'feature'
+    ? 'packages/client/ui-conversation/src/client/locales.ts' : 'packages/client/ui-layout/src/client/AppFrame.tsx')
+  const emittedLocalePath = join(REPO_ROOT, target === 'feature'
+    ? 'packages/client/ui-conversation/lib/types/client/locales.js' : 'packages/client/ui-layout/lib/types/client/AppFrame.js')
   const binPath = join(REPO_ROOT, 'apps/cli/lib/bin.js')
   if (!existsSync(binPath)) throw new Error('HMR browser test needs the built dsh bin; run pnpm run build first')
   const clientBuildEnvironment = readClientBuildRecord(REPO_ROOT).environment
-  const originalClientArtifacts = await Promise.all(clientArtifactPaths()
+  const originalWatcherArtifacts = await Promise.all(watcherArtifactPaths()
     .map(async path => [path, await readFile(path)] as const))
-  const originalClientArtifactPaths = new Set(originalClientArtifacts.map(([path]) => path))
+  const originalWatcherArtifactPaths = new Set(originalWatcherArtifacts.map(([path]) => path))
   const originalSource = await readFile(sourcePath)
+  const originalEmittedLocale = await readFile(emittedLocalePath)
   const oldText = 'Into the Unknown'
-  const sourceNeedle = "'hero.headline': 'Into the Unknown'"
-  const newText = `HMR UPDATED ${'x'.repeat(80)}`
-  const updatedSource = originalSource.toString().replace(sourceNeedle, `'hero.headline': '${newText}'`)
+  const sourceNeedle = target === 'feature' ? "'hero.headline': 'Into the Unknown'" : 'className={css.frame}'
+  const newText = target === 'feature' ? `HMR UPDATED ${'x'.repeat(80)}` : 'root-layout-updated'
+  const updatedSource = originalSource.toString().replace(sourceNeedle, target === 'feature'
+    ? `'hero.headline': '${newText}'` : `${sourceNeedle} data-hmr-probe="${newText}"`)
   if (updatedSource === originalSource.toString()) throw new Error(`HMR source lacks ${JSON.stringify(sourceNeedle)}`)
 
   const subprocessCtx = new Context()
@@ -136,7 +145,9 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
     })
 
     await writeFile(sourcePath, updatedSource)
-    await page.getByText(newText, { exact: true }).waitFor({ timeout: 30_000 })
+    await (target === 'feature' ? page.getByText(newText, { exact: true }) : page.locator(`[data-hmr-probe="${newText}"]`))
+      .waitFor({ timeout: 30_000 })
+    await expect.poll(() => readFile(emittedLocalePath, 'utf8'), { timeout: 30_000 }).toContain(newText)
     expect(await page.evaluate(() => (window as Window & { __dshHmrPageIdentity?: string }).__dshHmrPageIdentity))
       .toBe(pageIdentity)
     expect(pageErrors).toEqual([])
@@ -148,14 +159,23 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
     if (host !== undefined) await stopTree(host).catch((error: unknown) => failures.push(error))
     await browser?.close().catch((error: unknown) => failures.push(error))
     await subprocessFiber?.dispose().catch((error: unknown) => failures.push(error))
-    await Promise.all(clientArtifactPaths()
-      .filter(path => !originalClientArtifactPaths.has(path))
-      .map(async (path) => { await rm(path, { force: true }) }))
-      .catch((error: unknown) => failures.push(error))
-    await Promise.all(originalClientArtifacts.map(async ([path, content]) => {
-      await writeFile(path, content)
-    })).catch((error: unknown) => failures.push(error))
+    for (const path of watcherArtifactPaths().filter(path => !originalWatcherArtifactPaths.has(path))) {
+      await rm(path, { force: true }).catch((error: unknown) => failures.push(error))
+    }
+    for (const [path, content] of originalWatcherArtifacts) {
+      await writeFile(path, content).catch((error: unknown) => failures.push(error))
+    }
+    for (const [path, content] of originalWatcherArtifacts) {
+      try {
+        expect((await readFile(path)).equals(content), path).toBe(true)
+      } catch (error) {
+        failures.push(error)
+      }
+    }
     try {
+      expect(watcherArtifactPaths()).toEqual([...originalWatcherArtifactPaths])
+      expect((await readFile(sourcePath)).equals(originalSource)).toBe(true)
+      expect((await readFile(emittedLocalePath)).equals(originalEmittedLocale)).toBe(true)
       readClientBuildRecord(REPO_ROOT)
     } catch (error) {
       failures.push(error)

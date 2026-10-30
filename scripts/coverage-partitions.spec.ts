@@ -12,6 +12,7 @@ import {
   coverageTestTimeoutArgs,
   forwardedCoverageArgs,
   parseCoveragePartitionCount,
+  parseCoverageTestTimeout,
   parseListOutput,
   readFileDurations,
   writeFileDurations,
@@ -98,6 +99,7 @@ describe('coverage partition count', () => {
 
 describe('coverage partition timeout', () => {
   it('applies one configured timeout to tests, polling, and hooks', () => {
+    expect(parseCoverageTestTimeout('30000')).toBe(30000)
     expect(coverageTestTimeoutArgs('30000')).toEqual([
       '--testTimeout=30000',
       '--expect.poll.timeout=30000',
@@ -106,10 +108,13 @@ describe('coverage partition timeout', () => {
   })
 
   it('keeps Vitest defaults when the timeout is absent', () => {
+    expect(parseCoverageTestTimeout(undefined)).toBeUndefined()
+    expect(parseCoverageTestTimeout('')).toBeUndefined()
     expect(coverageTestTimeoutArgs(undefined)).toEqual([])
   })
 
   it('rejects invalid timeout input', () => {
+    expect(() => parseCoverageTestTimeout('0')).toThrow(`${COVERAGE_TEST_TIMEOUT_ENV} must be a positive integer`)
     expect(() => coverageTestTimeoutArgs('0'))
       .toThrow(`${COVERAGE_TEST_TIMEOUT_ENV} must be a positive integer`)
   })

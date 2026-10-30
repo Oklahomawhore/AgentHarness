@@ -144,6 +144,118 @@ describe.skipIf(process.platform === 'win32')('AgentHarness MCP bridge', () => {
     ])
   })
 
+  it('forwards Task listing and exact lookups without creating a session binding', async () => {
+    const calls: Call[] = []
+    const state: State = { assignments: [], nextBinding: 0 }
+    const client = await clientWith(calls, state)
+    const listed = await client.callTool({ name: 'agentharness_task_list', arguments: { mine: true, limit: 7 } })
+    expect(listed.structuredContent).toEqual({ items: [task()] })
+    const fetched = await client.callTool({ name: 'agentharness_task_get', arguments: { taskId: 'selected-task' } })
+    expect(fetched.structuredContent).toEqual(task('selected-task'))
+    expect(calls).toEqual([
+      { endpoint: 'developmentRooms/announce', args: { request: { id: 'codex-agent', kind: 'agent', displayName: 'Codex Agent' } } },
+      { endpoint: 'developmentTasks/list', args: { request: { limit: 7, participantId: 'codex-agent' } } },
+      { endpoint: 'developmentRooms/announce', args: { request: { id: 'codex-agent', kind: 'agent', displayName: 'Codex Agent' } } },
+      { endpoint: 'developmentTasks/get', args: { request: { taskId: 'selected-task' } } },
+    ])
+    await client.callTool({ name: 'agentharness_task_list', arguments: {} })
+    expect(calls.at(-1)).toEqual({ endpoint: 'developmentTasks/list', args: { request: { limit: 200 } } })
+    expect(state.assignments).toEqual([])
+  })
+
+  it.each([false, true])('forwards immutable parent revisions with explicit exclusions=%s', async (exclude) => {
+    const calls: Call[] = []
+    const state: State = { assignments: [], nextBinding: 0 }
+    const client = await clientWith(calls, state)
+    const parent = { taskId: 'parent-one', revision: 3 }
+    const parents = [parent, { taskId: 'parent-two', revision: 5 }]
+    const excluded = exclude ? { excludedContextIds: ['publication-one'] } : {}
+    for (const [name, origin, arguments_] of [
+      ['agentharness_task_create', { kind: 'root' }, {}],
+      ['agentharness_task_fork', { kind: 'fork', parent }, { parent, ...excluded }],
+      ['agentharness_task_merge', { kind: 'merge', parents }, { parents, ...excluded }],
+    ] as const) {
+      const response = await client.callTool({ name, arguments: { objective: 'Owned objective', scope: 'Owned scope', ...arguments_ } })
+      expect(response.isError).not.toBe(true)
+      expect(calls.at(-1)).toEqual({ endpoint: 'developmentTasks/create', args: { request: {
+        origin, objective: 'Owned objective', scope: 'Owned scope', createdBy: 'codex-agent',
+        ...(origin.kind === 'root' ? {} : excluded),
+      } } })
+    }
+    expect(state.assignments).toEqual([])
+  })
+
+  it('rebinds only the supplied session and disconnects it without clearing other conversations', async () => {
+    const calls: Call[] = []
+    const state: State = { assignments: [
+      { bindingId: 'binding-one', participantId: 'codex-agent', taskId: 'task-one' },
+      { bindingId: 'binding-two', participantId: 'codex-agent', taskId: 'task-two' },
+      { bindingId: 'foreign-binding', participantId: 'other-agent', taskId: 'task-one' },
+    ], nextBinding: 0 }
+    const client = await clientWith(calls, state)
+    const connected = await client.callTool({ name: 'agentharness_task_connect', arguments: {
+      bindingId: 'binding-one', taskId: 'replacement-task',
+    } })
+    expect(connected.structuredContent).toMatchObject({ bindingId: 'binding-one', connectedTask: { id: 'replacement-task' } })
+    const disconnected = await client.callTool({ name: 'agentharness_task_disconnect', arguments: { bindingId: 'binding-one' } })
+    expect(disconnected.structuredContent).toEqual({ disconnected: true, bindingId: 'binding-one', previousTaskId: 'replacement-task' })
+    expect(state.assignments).toEqual([
+      { bindingId: 'binding-two', participantId: 'codex-agent', taskId: 'task-two' },
+      { bindingId: 'foreign-binding', participantId: 'other-agent', taskId: 'task-one' },
+    ])
+    expect(state.nextBinding).toBe(0)
+    expect(calls.at(-1)).toEqual({ endpoint: 'developmentTaskAssignments/clear', args: {
+      request: { bindingId: 'binding-one', participantId: 'codex-agent' },
+    } })
+  })
+
+  it.each(['missing-binding', 'foreign-binding'])('refuses publication, status and disconnect for %s', async (bindingId) => {
+    const calls: Call[] = []
+    const state: State = { assignments: [{ bindingId: 'foreign-binding', participantId: 'other-agent', taskId: 'task-one' }], nextBinding: 0 }
+    const client = await clientWith(calls, state)
+    for (const name of ['agentharness_task_disconnect', 'agentharness_task_status', 'agentharness_task_context_publish']) {
+      const response = await client.callTool({ name, arguments: { bindingId, taskId: 'task-one', text: 'must not publish' } })
+      expect(response.isError).toBe(true)
+      expect(response.structuredContent).toMatchObject({ error: {
+        code: name === 'agentharness_task_context_publish' ? 'POLICY_REJECTED' : 'INVALID_REQUEST', bindingId,
+      } })
+    }
+    expect(calls.map(call => call.endpoint)).toEqual(Array.from({ length: 3 }, () => [
+      'developmentRooms/announce', 'developmentTaskAssignments/list',
+    ]).flat())
+    expect(state.assignments).toEqual([{ bindingId: 'foreign-binding', participantId: 'other-agent', taskId: 'task-one' }])
+  })
+
+  it.each([false, true])('publishes connected context with artifact reference=%s and acknowledges the returned view', async (artifact) => {
+    const calls: Call[] = []
+    const client = await clientWith(calls, { assignments: [{ bindingId: 'binding-one', participantId: 'codex-agent', taskId: 'task-one' }],
+      nextBinding: 0 })
+    const uri = artifact ? { uri: 'file:///project/contract.json' } : {}
+    const response = await client.callTool({ name: 'agentharness_task_context_publish', arguments: {
+      bindingId: 'binding-one', taskId: 'task-one', text: 'Completed API fact', ...uri,
+    } })
+    expect(response.isError).not.toBe(true)
+    expect(response.structuredContent).toMatchObject({ bindingId: 'binding-one', connectedTask: task(), contextDelta: { task: task() } })
+    expect(calls.map(call => call.endpoint)).toEqual([
+      'developmentRooms/announce', 'developmentTaskAssignments/list', 'developmentTasks/publishContext',
+      'developmentTasks/context', 'developmentTaskAssignments/acknowledge',
+    ])
+    expect(calls[2]?.args).toEqual({ request: { taskId: 'task-one', participantId: 'codex-agent', text: 'Completed API fact', ...uri } })
+    expect(calls.at(-1)?.args).toEqual({ request: { bindingId: 'binding-one', participantId: 'codex-agent', taskId: 'task-one', revision: 2 } })
+  })
+
+  it('leaves an unconnected status read unbound and rejects oversized list requests before announcing', async () => {
+    const calls: Call[] = []
+    const client = await clientWith(calls)
+    const status = await client.callTool({ name: 'agentharness_task_status', arguments: {} })
+    expect(status.structuredContent).toMatchObject({ assignment: null })
+    expect(status.structuredContent).toHaveProperty('guidance', expect.stringContaining('not connected'))
+    expect(calls.map(call => call.endpoint)).toEqual(['developmentRooms/announce'])
+    const invalid = await client.callTool({ name: 'agentharness_task_list', arguments: { limit: 501 } })
+    expect(invalid.isError).toBe(true)
+    expect(calls.map(call => call.endpoint)).toEqual(['developmentRooms/announce'])
+  })
+
   it('does not let one Codex session binding select a Task for another session', async () => {
     const state: State = { assignments: [], nextBinding: 0 }
     const client = await clientWith([], state)
@@ -224,6 +336,42 @@ describe.skipIf(process.platform === 'win32')('AgentHarness MCP bridge', () => {
     try { expect(wireSignal.aborted).toBe(true) } finally { release.resolve(undefined) }
     await server.close()
     expect(calls).toEqual(['developmentRooms/announce'])
+  })
+
+  it('does not acknowledge a cancelled connect reply or roll back the Host binding that already committed', async () => {
+    const calls: Call[] = []
+    const state: State = { assignments: [], nextBinding: 0 }
+    const host = rpcFetch(calls, state)
+    const committed = Promise.withResolvers<AbortSignal>()
+    const release = Promise.withResolvers<undefined>()
+    const options = await connectionOptions(async (input, init) => {
+      const response = await host(input, init)
+      if (calls.at(-1)?.endpoint === 'developmentTaskAssignments/checkout') {
+        if (init?.signal == null) throw new Error('Missing connection request cancellation')
+        committed.resolve(init.signal)
+        await release.promise
+      }
+      return response
+    })
+    const server = createAgentHarnessBridge({ ...options, participantId: 'codex-agent', displayName: 'Codex Agent' })
+    const client = new Client({ name: 'committed-connect', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    closers.push(async () => { release.resolve(undefined); await client.close(); await server.close() })
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+    const controller = new AbortController()
+    const pending = expect(client.callTool({ name: 'agentharness_task_connect', arguments: { taskId: 'task-one' } },
+      undefined, { signal: controller.signal })).rejects.toThrow('stop after commit')
+    try {
+      const signal = await committed.promise
+      controller.abort(new Error('stop after commit'))
+      await pending
+      expect(signal.aborted).toBe(true)
+      release.resolve(undefined)
+      await server.close()
+      expect(calls.map(call => call.endpoint)).toEqual(['developmentRooms/announce', 'developmentTaskAssignments/checkout'])
+      expect(state.assignments).toEqual([{ bindingId: 'binding-session-1', participantId: 'codex-agent', taskId: 'task-one' }])
+    } finally { release.resolve(undefined) }
   })
 
   it('rejects non-loopback and non-HTTP origin pins', async () => {

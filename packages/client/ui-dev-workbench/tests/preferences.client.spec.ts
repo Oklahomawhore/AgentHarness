@@ -20,8 +20,13 @@ describe('createDevWorkbenchPreferences', () => {
     })
   })
 
-  it('resets malformed localStorage before components read it', () => {
-    localStorage.setItem('dsh.dev-workbench.view.v1', JSON.stringify({ width: 'wide' }))
+  it.each([
+    { name: 'null', value: null },
+    { name: 'an array', value: [] },
+    { name: 'invalid geometry', value: { width: 'wide' } },
+    { name: 'a non-string entry selection', value: { selectedEntryId: 42, selectedViewByEntry: {} } },
+  ])('resets $name in localStorage before components read it', ({ value }) => {
+    localStorage.setItem('dsh.dev-workbench.view.v1', JSON.stringify(value))
     expect(createDevWorkbenchPreferences().getSnapshot()).toEqual({ selectedViewByEntry: {} })
   })
 })

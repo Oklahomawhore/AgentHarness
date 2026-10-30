@@ -11,16 +11,21 @@
   - status: 自动协作已暂停
   - paragraph: 自动启动额度已用完。增加有限额度后才能恢复。
   - paragraph: 累计已用 1 / 1 次 · 每轮最多 1 步
-  - term: 共享 Task
-  - definition: {{taskId}}
-  - term: 来源设备
-  - definition: {{ownerPeerId}}
   - term: 邀请中的职责
   - definition: frontend
   - paragraph: 本地目标：按已授权的订单接口事实更新前端。
   - paragraph: 接收配置不代表对方当前在线或模型已采用；每次请求都会重新核验读取权限。
+  - region "已记录共享上下文":
+    - heading "已记录共享上下文" [level=3]
+    - paragraph: 共享内容 1236 字节 · 纳入 2 条来源记录。
+    - paragraph: 因容量限制未纳入 0 条来源记录。
+    - paragraph: 字节数包含共享上下文的说明文字，不含本地目标、聊天历史或工具定义。
+    - paragraph: 这是保存在当前会话中的记录，不代表模型请求已发送、模型已理解或读取权限当前仍有效。
   - button "离开共享上下文"
   - paragraph: 暂停会阻止新的自动启动，并取消本功能当前的自动轮次；手动工作不受影响。已发送的请求和已执行的操作无法撤销。
+  - group: 连接详情
+  - group: 更新所有者连接地址
+  - group: 其他协作入口
   - group "本机执行许可":
     - text: 本机执行许可
     - radio "允许自动协作" [checked]
@@ -38,6 +43,9 @@
     - paragraph: 允许此会话为“按已授权的订单接口事实更新前端。”再自动启动最多 1 次。
   - button "确认启用自动协作"
   - paragraph: 本机会话设置已更新；后续请求将在线核验读取权限。
-  - group: 分享本会话的文件工作
+  - group: 分享本会话的工作
+  - region "当前目标的自动协作记录":
+    - heading "当前目标的自动协作记录" [level=3]
+    - paragraph: 最近完成自动响应：第 3 轮，共享版本 2。
   - button "重新读取状态"
   - button "查看来源"

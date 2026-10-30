@@ -78,6 +78,7 @@ async function configureMcpClient(portableRoot, clientHome, harnessHome, environ
   const result = await setupMcpClient({
     home: clientHome, path: fixtureBin, applicationRoots: [applications], environment,
     nodePath: join(portableRoot, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'), dshPath: join(portableRoot, 'lib', 'bin.js'), nodeArgs: [],
+    commandTimeoutMs: 10_000,
     descriptorPath: join(harnessHome, 'mcp', 'connection.json'), harnessHome, username: 'portable-fixture',
   }, { clientId: 'cursor' })
   if (process.platform === 'win32') {
@@ -92,7 +93,7 @@ async function proveMcp(portableRoot, configuration, environment, expectExisting
   const result = await promisify(execFile)(process.execPath, [
     resolve(import.meta.dirname, '../../../scripts/agentharness-portable-live-e2e.mjs'),
     '--root', portableRoot, '--config', configuration, ...expectExisting ? ['--expect-existing'] : [],
-  ], { env: environment, timeout: 60_000, maxBuffer: 1024 * 1024 })
+  ], { cwd: portableRoot, env: environment, timeout: 60_000, maxBuffer: 1024 * 1024 })
   const proof = JSON.parse(result.stdout)
   assert(proof.contextInherited === true && proof.independentBindings.length === 2, 'portable MCP proof was incomplete')
   if (expectExisting) assert(proof.restoredTasksBeforeCreate > 0, 'MCP task state did not survive Host restart')
@@ -113,7 +114,7 @@ async function main(args) {
     HOME: clientHome, USERPROFILE: clientHome, USER: 'portable-fixture', DSH_HOME: harnessHome,
   }
   const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--port', '0'], {
+  const start = () => spawn(join(current, 'runtime', runtimeName), [join(current, 'start.mjs'), '--no-open', '--port', '0'], {
     cwd: current,
     env: environment,
     stdio: ['ignore', 'pipe', 'pipe'],

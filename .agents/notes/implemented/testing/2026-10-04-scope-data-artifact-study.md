@@ -16,7 +16,11 @@ A fixed source Agent uses production native file tools and contribution capture.
 
 Finite reservations precede model dispatch. Missing usage stops subsequent dispatches; an existing execution directory prevents automatic retry with renewed budgets. Static preflight checks recorded bytes without loading credentials. These measures make an authorized run reviewable without treating an unexecuted registration as model evidence.
 
+Stream observation limits count serialized chunks rather than plain output text. Fragmentation and repeated completed blocks therefore consume budget independently of requested tokens. The registration range permits larger explicit observation budgets while retaining the same counting rule, finite reservations, and unknown-usage stop; it does not authorize increasing a frozen run's limits.
+
 The separate [continuity protocol](../../../../scripts/scope-evaluation/continuity-study/README.md) preserves one receiving Session and one automatic allowance through initial support, correction and contribution termination. A public ready/blocked decision separates current permission to use a policy from retained historical work. Its embedded ready policy must match the sealed policy; withdrawal blocks new use without deleting old artifacts. Source and pre-step barriers fix phase ordering while production admission owns each actual request.
+
+Live registrations identify an official service or a named HTTPS gateway separately from the production adapter. This permits explicitly authorized compatible accounts without replacing pre-dispatch reservations, usage checks, or native Session execution. Network mode is explicit as well: inherited proxies cannot silently alter a direct run, and selected proxy references are validated before launching Hosts. The frozen manifest records the selected route; a gateway declaration cannot attest its upstream model.
 
 ## Alternatives considered
 

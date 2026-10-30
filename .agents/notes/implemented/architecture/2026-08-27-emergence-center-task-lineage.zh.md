@@ -14,13 +14,19 @@ Status: implemented
 
 **继承内容是显式的内容寻址快照。**Fork 和 Merge 把每个父 Task 的名称、初始共享上下文和显式 publication 写成 canonical JSON，并以 SHA-256 寻址。调用方可在评估大小限制前删除单条显式 publication。私聊、完整 Session、编辑器与工具历史、内部推理永远不是快照输入。Merge 标注每个来源，但要求填写新的 Task 名称和初始共享上下文，不宣称自动解决语义冲突。
 
-**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
+**仅追加 Task 行与内存 DAG 复用现有 storage seam。**`development_context_tasks` domain 通过 SQLite 分别存储事件、context block 和 Session binding 事件，拒绝 `1` 以外的 domain version，先恢复 block 再恢复依赖事件，并清理长期未引用 block。后台 Room 修复以在途 Promise 排除重叠；停用会先清除重试定时器，再等待该次修复。每个 Task 的协调分别报告自身失败。存储与 Mesh 解析器负责 Task 事件字段类型和整数范围；Task 服务负责来源、顺序、修订版本与谱系，不重复这些基础字段校验。Room 存储与 Mesh 入口校验共享的封闭变更 schema；源代码覆盖率豁免穷尽 switch 的兜底分支及其断言辅助方法。Task Mesh 对已解析的命令、分配和区间联合采用同一规则；分配查询的意外错误分支保留防御作用。Room persistence 只在本地序号头恢复且写入监听器安装完成后提供恢复就绪 service；Task recovery 必须等到该 service 可用才协调隐藏 Room，因此 Loader 并行启动不会创建冲突的 Room 位置。恢复在接纳值前校验行键是否匹配 block id 或事件的来源节点与序号。Task service 在持久化前派生或验证 block digest，并在恢复时再次校验；存储适配器为已验证的 digest 保留首个行。事件和分配行仍独立检查身份冲突，因为结果未知的写入可能已持久化，却尚未发布投影。远端事件会持久缓存，owner 离线时仍可读取。产品限制图遍历和事件数量，因此图数据库只会增加部署与备份成本，并不负责当前必需查询。
 
-**通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。同一不可变事件标识出现冲突内容时会隔离 peer。认证提供节点身份和完整性，不提供传输保密。
+**SQLite 一次性接管当前格式 JSON。**Web 路由使用 `development_context_tasks`；新 SQLite 单元在同一事务中复制 JSON 快照并写入单元标记。单元行记录已完成接管，后续打开不再读取 JSON，也不会恢复已删除行。复制失败会回滚记录和标记。来源字节保留以供检查；恢复仍负责记录 schema、行身份与 Task 重放校验。接管期间必须停止其他写入方。旧生命周期 domain 和 Session generation 不会被导入或改写。迁移由拥有目标事务的后端负责，不增加双写、回退读取或存储层的领域专用解析。浏览器 Worker 显式把当前 Task domain 路由到既有 JSON 后端；若禁用原生 SQLite 却保留指向它的路由，存储 facility 及其依赖项将无法激活。
 
-**原生与外部 Agent 通过按 Session 隔离的 binding 获得上下文。**原生 Harness Agent 在 `agent/pre-step` 收到可回放的 `user/message` Task 快照。外部 MCP Agent 无法接收编辑器之外的强制上下文推送，因此目标对话调用 `agentharness_task_connect`，保留自己的 binding id，并在后续调用中接收 context delta。同一客户端的多个 Session 可以绑定不同 Task。一个纯浏览器 projection 把安全 MCP 检测、在线状态、binding 和确认状态转换为一个当前状态与一个可执行下一步，不渲染原始诊断或 cluster secret。
+**Task 和分配校验先于持久发布。**本地和复制的变更在持久化前使用同一投影校验，包括重复 Task 事件的身份检查；内存投影和通知只在写入成功后改变。创建文本和 checkout 标签在写入继承 block 或终结 capture 前校验。创建、复制准入与冷恢复都会拒绝 Merge 中重复的父 Task id，并按不可变 origin 检查继承块的存在性，以及父任务 id 和 revision 的顺序。每个继承来源还必须匹配所选父版本的名称及初始上下文；保留的 publication 必须是该版本内容不变且顺序一致的子集。有效 digest 和父引用本身不能证明这种关系。父内容校验发生在 Task 选用内容块时；存储未引用的内容块并不授权其内容。已交付 revision 必须为正安全整数。与已保留内容相同的 Task 和分配事件直接返回，不再次写入或通知；分配重试返回当前绑定，即使该绑定已确认或清除。Invariant 比较 Task 身份与 revision，避免相同时间戳掩盖过期或归属错误的通知。倒退或超出 Task 当前版本的确认、序号缺口和冲突身份不会占用持久日志位置。Task Mesh 会等待绑定的目标 Task 和确认引用的 Task revision 从其 owner 到达。
 
-**涌现协作中心呈现谱系，而不是聊天。**React Flow 渲染不可变边，Dagre 提供有界从左到右布局，Root/Fork/Merge 表单预览父 Task 上下文。Agent Session 连接是直接可见的重点区域，页头只有一个创建入口，侧栏徽标上限为 `99+`。MCP catalog 只提供 Task，不暴露面向模型的 Room 或 Mission 工具。
+**通用认证 Mesh 承载带版本的 consumer。**`development-mesh` 负责 channel registry 和 transport 操作；`development-mesh-websocket` 负责 discovery、认证 WebSocket 连接、重放拒绝、增量 heads 和 owner command；Room 与 Task 包分别注册带版本 channel。至少 32 字节的 credential 使用 HMAC 认证 discovery、handshake 和每个 envelope。Upgrade 路径必须是规范 URL pathname，peer URL 不含 fragment，且每个 peer 的完整初始 hello 在拨号前必须满足 envelope 字节额度。发现服务会在建立连接前拒绝不满足准入条件的 peer。同一不可变事件标识出现冲突内容时会隔离并断开 peer，但不会跳过 channel 离线通知；该 peer 在隔离状态下的后续入站连接会被拒绝。接收帧时要求所属 socket 仍然打开，因此关闭握手期间的新命令不会被准入，已经准入的处理器不受影响。认证提供节点身份和完整性，不提供传输保密。Socket 清理先于显式拨号和发现服务启动注册，因此初始化失败会释放已取得的 peer 和重连定时器。
+
+**原生与外部 Agent 通过按 Session 隔离的 binding 获得上下文。**原生 Harness Agent 在 `agent/pre-step` 收到可回放的 `user/message` Task 快照。外部 MCP Agent 无法接收编辑器之外的强制上下文推送，因此目标对话调用 `agentharness_task_connect`，保留自己的 binding id，并在后续调用中接收 context delta。同一客户端的多个 Session 可以绑定不同 Task。原生本地 checkout 的控件与保留表单的提交都要求 Task 目录已就绪。一个纯浏览器 projection 把安全 MCP 检测、在线状态、binding 和确认状态转换为一个当前状态与一个可执行下一步，不渲染原始诊断或 cluster secret。 匹配但明确设为 `enabled=false` 的 Codex 启动项仍为仅支持手动：注册内容正确不代表可以覆盖客户端启用策略，配置操作不会隐式启用它。MCP 目录重置会推进连接代际。尚未结束的配置操作仍返回已发送请求的结果，但只有该代际仍为当前值才发布配置；迟到回复不能覆盖重连后正在进行或已经完成的读取。 列表读取还保留开始时的快照身份。较新的成功配置会使该读取的成功和错误发布失效，不取消其他配置操作；已有在途读取仍需结束后才能再次刷新。
+
+**涌现协作中心呈现谱系，而不是聊天。**React Flow 渲染不可变边，Dagre 提供有界从左到右布局，Root/Fork/Merge 表单预览父 Task 上下文。Agent Session 连接是直接可见的重点区域，页头只有一个创建入口，侧栏徽标上限为 `99+`。MCP catalog 只提供 Task，不暴露面向模型的 Room 或 Mission 工具。所有者观察跟随所选 Task 恢复后的身份与 owner，无论目录还是本地节点身份先恢复。所有者查询要求 Task 已存在并匹配已知本地节点。保留的选择暂未出现在恢复中的目录时，详情和操作保持未选定，直到其谱系到达或用户选择其他 Task。所选 Merge 父 Task 的快照缺失时仍保留原选择，创建须等待其恢复。一个带 Task 标识的发布草稿与精确提交对象身份，防止跨 Task 披露和迟到完成清除新草稿。同步准入标记在 React 渲染进行中状态前排除同一帧的重复操作。创建与变更回复保留其连接代际，仅在该代际仍有效时更新目录；已发送的操作仍返回自身结果。
+
+**协作面板复用应用主题。**不透明背景以及文字、状态和操作的语义颜色通过共享主题别名解析。React Flow 的节点、边、控件和小地图使用同一套别名，默认浅色主题不能覆盖外围应用。主题切换不依赖 Task 状态，也无需维护第二套配色。
 
 ## 曾考虑的替代方案
 
@@ -42,4 +48,8 @@ Status: implemented
 
 该设计明确放弃谱系编辑、Task 删除或 rebase、自动语义合并、完整 Session 继承、局域网传输加密和一个 Task 多个 Run。启用 Mesh 时共享 cluster secret 成为必需条件；旧 Room-only 协议不能与带版本 Mesh 互通，因此升级需要统一维护窗口。
 
-验证覆盖 Root/Fork/Merge invariant、精确 revision 上下文选择与限制、逐行重启恢复、Room 自愈、同一客户端的独立 Session binding、真实三节点认证增量复制与重连、篡改/重放/冲突拒绝、STDIO MCP 工具与 resource 交付、直接可见的 Agent 指引、有界 DAG UI 和徽标几何、真实 Loader 的 keyless transcript，以及便携安装、升级与 cluster credential 流程。
+验证覆盖 Root/Fork/Merge invariant、精确 revision 上下文选择与限制、逐行重启恢复、Room 自愈、同一客户端的独立 Session binding、真实三节点认证增量复制与重连、篡改/重放/冲突拒绝、STDIO MCP 工具与 resource 交付、直接可见的 Agent 指引、有界 DAG UI 和徽标几何、真实 Loader 的 keyless transcript，以及便携安装、升级与 cluster credential 流程。[分配 API 回放](../../../../snapshots/session/cordis-task-assignment-retry/snapshot.yml)验证检查结果会向后续模型请求提供已提交事件的重试语义；这不代表真实模型已采用这些信息。 [谱系 SDK 回放](../../../../snapshots/sdk/task-lineage-parent-revisions/snapshot.yml)拒绝摘要自洽的伪造快照，以同一所有者序号重试规范子任务，并在父任务变化后记录规范继承事实。该回放还会在引用的 Task 版本到达前拒绝未来确认。受控回复不证明真实模型采用。
+
+[浏览器协作流程](../../../../apps/web/tests/emergence-center.e2e.ts)验证所选 Task 和已终止的观察许可在传输断开及一次不可用的重连后保持不变，并在恢复的连接上继续接收 Host 的新发布。
+
+客户端注册测试在审批回复丢失后确认所有者已保留的审批，并验证刷新仍保留明确结束的观察状态。已终结的贡献申请在重试后保持原决定，不创建授权。真实三节点测试验证隔离冲突 peer 后，其他所有者仍能复制 Task 并路由更新。

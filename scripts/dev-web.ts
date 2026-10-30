@@ -6,17 +6,16 @@
  * triggers reloads; this script is merely the convenient way to keep them all
  * rebuilt on source change.
  *
- * Three stages, because the compile shell links built lib products rather than
- * sources: `tsc -b tsconfig.client.json` emits `lib/types` (the tsdown lib
- * entries are that emit, not `src`), tsdown bundles `lib/index.js` and
- * `lib/client.js`, and `vite build` rewrites `apps/web/dist`, which `dsh web`
- * serves. A missing stage does not fail — it silently shows the previous
- * artifact, so an edit appears to do nothing.
+ * `tsc -b tsconfig.client.json` emits `lib/types` for package library entries.
+ * tsdown bundles those entries and watches client-plugin sources directly in
+ * development; `vite build` rewrites `apps/web/dist`, which `dsh web` serves.
+ * These watchers complete independently: a browser hot update can precede the
+ * corresponding TypeScript file output.
  *
  * MUST NOT run concurrently with `pnpm run build`: both write the same
  * `lib/` and `apps/web/dist/` trees.
  *
- * Usage: `pnpm exec tsx scripts/dev-web.ts [--poll[=ms]]`. Requires one prior
+ * Usage: `node scripts/dev-web.ts [--poll[=ms]]`. Requires one prior
  * `pnpm run build`: every stage is incremental over the previous stage's output
  * and none of them bootstraps a missing tree. `--poll` switches the source
  * watchers to polling (default 500ms): network mounts (weka) deliver no inotify
@@ -27,6 +26,8 @@
  * Each package keeps its own tsdown.config.ts untouched: this script layers
  * `watch` through API-level inline config (tsdown workspace mode fills inline
  * keys under each package's file config, and no package config defines it).
+ * This development entry uses Node's type stripping; its source imports must
+ * remain erasable TypeScript. tsdown owns configuration module loading.
  */
 import { globSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -217,7 +218,7 @@ if (isMain) {
   const args = process.argv.slice(2)
   const pollArg = args.find(a => a === '--poll' || a.startsWith('--poll='))
   if (args.some(a => a !== pollArg)) {
-    console.error('dev-web: usage: tsx scripts/dev-web.ts [--poll[=ms]]')
+    console.error('dev-web: usage: node scripts/dev-web.ts [--poll[=ms]]')
     process.exit(1)
   }
   const pollInterval = pollArg === undefined ? undefined : Number(pollArg.split('=')[1] ?? '500')

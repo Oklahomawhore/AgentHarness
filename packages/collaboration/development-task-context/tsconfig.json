@@ -18,6 +18,9 @@
       "path": "../../core/agent"
     },
     {
+      "path": "../../core/scope"
+    },
+    {
       "path": "../../core/session"
     },
     {
@@ -58,6 +61,9 @@
     },
     {
       "path": "../../util/values"
+    },
+    {
+      "path": "../../settings/settings"
     }
   ]
 }
