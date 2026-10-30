@@ -19,6 +19,7 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest, ScopeAgentContributionPermissionDraft,
   ScopeAgentContributionRecoverRouteRequest, ScopeContributionEntry,
   ScopeContributionInventory, ScopeContributionInventoryRequest, ScopeContributionRecoverRequest, ScopeContributionEndResult,
+  ScopeAccessList, ScopeInvitation, ScopeInviteRequest,
   McpClientSetupRequest, McpClientSetupResult, McpClientSetupSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type { DevelopmentTaskAssignmentLogEntry } from '@deepseek-ai/dsh-development-task/types'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -212,6 +213,9 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
     Promise<RemoteResult<ScopeContributionApproval>>>().mockRejectedValue(new Error('No grant recovery configured'))
     const revokeContribution = vi.fn<(request: { grant: ScopeContributionInvitation['grant'] }) =>
     Promise<RemoteResult<ScopeContributionEndResult>>>().mockRejectedValue(new Error('No contribution revocation configured'))
+    const accessList = vi.fn(async (): Promise<RemoteResult<ScopeAccessList>> => ok({ grants: [], subscriptions: [] }))
+    const inviteScope = vi.fn<(request: ScopeInviteRequest) => Promise<RemoteResult<ScopeInvitation>>>()
+      .mockRejectedValue(new Error('No read invitation configured'))
     const remote = new TestRemote(runtime.ctx, {
       developmentRooms: { list: roomsList,
         announce, withdraw },
@@ -224,7 +228,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         contributionDetail, leaveJoint, recoverJoint },
       scopeAccess: {
         identity: async () => ok({ peerId: applicationEntry.ownerPeerId, addresses: [applicationEntry.ownerAddress] }),
-        list: async () => ok({ grants: [], subscriptions: [] }),
+        list: accessList, invite: inviteScope,
         contributionInventory, recoverContributionInvitation, revokeContribution,
         contributionApplications: async () => ok({ entries: [], nextEntryId: null }),
         groupEntries: async () => ok({ entries: [], nextEntryId: null }),
@@ -263,6 +267,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       nativeStatus, localStatus, permissionDraft, observedCandidates, observedIntervals, approveObserved, endObserved,
       contributionDetail, leaveJoint, recoverJoint, scopeStatus, recoverNativeRoute, leaveNativeJoin,
       contributionInventory, recoverContributionInvitation, revokeContribution,
+      accessList, inviteScope,
       issuedApproval: () => approved }
   } catch (error) { await runtime.dispose(); throw error }
 }
@@ -274,6 +279,105 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it('refreshes the original selected Session from committed source notifications while retaining its unsubmitted draft', async () => {
+    const other: ClaudeScopeSessionSummary = { ...session, sessionKey: 'other-observed-session' as typeof session.sessionKey,
+      sessionId: 'other-independent-session', cwd: '/other-project' }
+    const subject = await mountPanel([session, other])
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      const element = screen.getByRole('heading', { name: zh['contribution.sourceTitle'] }).parentElement?.parentElement
+      if (element == null) throw new Error('Selected source controls missing')
+      const source = within(element)
+      await source.findByText(zh['contribution.stopped'])
+      const draft = 'Unsubmitted entry for my original Session'
+      fireEvent.change(source.getByLabelText(zh['contribution.application.paste']), { target: { value: draft } })
+      fireEvent.change(source.getByLabelText(zh['contribution.roots']), { target: { value: '/project/frontend' } })
+      fireEvent.change(source.getByLabelText(zh['contribution.hours']), { target: { value: '2' } })
+      const granted: ScopeContributionInvitation = { version: 1, kind: 'tool-contribution', ownerAddress: applicationEntry.ownerAddress,
+        grant: { version: 1, taskId: task.id, ownerPeerId: applicationEntry.ownerPeerId, ...capture.proposal, ...capture.limits,
+          grantId: 'notified-source-grant' as ScopeContributionInvitation['grant']['grantId'],
+          generation: 'notified-source-generation' as ScopeContributionInvitation['grant']['generation'] } }
+      const active: ClaudeScopeSessionSummary = { ...session, contributionState: 'active', contributionTaskId: task.id }
+      const detail: ClaudeScopeContributionDetail = { session: active, capture: { selection: capture.selection,
+        proposal: capture.proposal, proposalText: JSON.stringify(proposalDocument), roots: ['/project'],
+        source: { kind: 'tool-observations', tools: ['Write', 'Edit'] }, invitation: granted, application: null } }
+      const sourceReads = subject.contributionDetail.mock.calls.length
+      const sessionReads = subject.sessions.mock.calls.length
+      subject.contributionDetail.mockResolvedValue(ok(detail))
+      subject.sessions.mockResolvedValue(ok([other, active]))
+      await act(async () => { subject.remote.emit('claude-scope/session-changed', [session.sessionKey]) })
+      await source.findByText(zh['contribution.active'])
+      expect(screen.getByRole<HTMLInputElement>('radio', { name: new RegExp(session.sessionId) }).checked).toBe(true)
+      expect(screen.getByRole<HTMLInputElement>('radio', { name: new RegExp(other.sessionId) }).checked).toBe(false)
+      subject.contributionDetail.mockResolvedValue(ok({ session, capture: null }))
+      subject.sessions.mockResolvedValue(ok([other, session]))
+      await act(async () => { subject.remote.emit('claude-scope/session-changed', [session.sessionKey]) })
+      await source.findByText(zh['contribution.stopped'])
+      expect(source.getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste']).value).toBe(draft)
+      expect(source.getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('/project/frontend')
+      expect(source.getByLabelText<HTMLInputElement>(zh['contribution.hours']).value).toBe('2')
+      expect(screen.getByRole<HTMLInputElement>('radio', { name: new RegExp(session.sessionId) }).checked).toBe(true)
+      expect(subject.contributionDetail).toHaveBeenCalledTimes(sourceReads + 2)
+      expect(subject.contributionDetail).toHaveBeenLastCalledWith({ sessionKey: session.sessionKey })
+      expect(subject.sessions).toHaveBeenCalledTimes(sessionReads + 2)
+      expect(subject.prepare).not.toHaveBeenCalled()
+      expect(subject.requestSource).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.stopSource).not.toHaveBeenCalled()
+      expect(subject.join).not.toHaveBeenCalled()
+      expect(subject.leave).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
+  it('issues only the explicitly selected Root Task read invitation through the mounted access controls', async () => {
+    const subject = await mountPanel([session])
+    try {
+      subject.inviteScope.mockImplementationOnce(async (request) => {
+        const read: ScopeInvitation = { ...invitation, ...request, ownerPeerId: applicationEntry.ownerPeerId,
+          grantId: 'explicit-read-grant' as ScopeInvitation['grantId'],
+          generation: 'explicit-read-generation' as ScopeInvitation['generation'] }
+        subject.accessList.mockResolvedValue(ok({ grants: [{ invitation: read, state: 'active' }], subscriptions: [] }))
+        return ok(read)
+      })
+      fireEvent.click(screen.getByText(zh['access.title']))
+      const element = screen.getByText(zh['access.title']).parentElement
+      if (element === null) throw new Error('Read access controls missing')
+      const access = within(element)
+      fireEvent.change(access.getByLabelText(zh['access.recipient']), { target: { value: '  independent-recipient  ' } })
+      fireEvent.change(access.getByLabelText(zh['claude.responsibility']), { target: { value: '  Frontend integration  ' } })
+      fireEvent.change(access.getByLabelText(zh['access.hours']), { target: { value: '2' } })
+      const requestedAt = Date.now()
+      fireEvent.click(access.getByRole('button', { name: zh['access.invite'] }))
+      const text = await access.findByLabelText<HTMLTextAreaElement>(zh['access.created'])
+      const returned = subject.inviteScope.mock.results[0]
+      if (returned?.type !== 'return') throw new Error('Read invitation did not return')
+      const reply = await returned.value
+      if (!reply.ok) throw new Error('Read invitation did not commit')
+      const result = reply.value
+      expect(text.value).toBe(JSON.stringify(result))
+      expect(result.expiresAt).toBeGreaterThanOrEqual(requestedAt + 7_200_000)
+      expect(result.expiresAt).toBeLessThanOrEqual(Date.now() + 7_200_000)
+      expect(subject.inviteScope).toHaveBeenCalledExactlyOnceWith({ taskId: task.id,
+        recipientPeerId: 'independent-recipient', ownerAddress: applicationEntry.ownerAddress,
+        responsibility: 'Frontend integration', expiresAt: result.expiresAt })
+      expect(result).toEqual({ ...invitation, taskId: task.id, ownerPeerId: applicationEntry.ownerPeerId,
+        recipientPeerId: 'independent-recipient', ownerAddress: applicationEntry.ownerAddress,
+        responsibility: 'Frontend integration', expiresAt: result.expiresAt,
+        grantId: 'explicit-read-grant', generation: 'explicit-read-generation' })
+      await access.findByText(zh['access.granted'])
+      expect(subject.accessList).toHaveBeenCalledTimes(2)
+      expect(subject.approve).not.toHaveBeenCalled()
+      expect(subject.prepare).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.requestSource).not.toHaveBeenCalled()
+      expect(subject.requestNative).not.toHaveBeenCalled()
+      expect(subject.requestLocal).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(subject.resume).not.toHaveBeenCalled()
+      expect(subject.join).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
   it.each(['tasks', 'clients'] as const)('discards a pending %s inventory failure after plugin disposal', async (inventory) => {
     const subject = await mountPanel()
     const read = Promise.withResolvers<RemoteResult<never>>()

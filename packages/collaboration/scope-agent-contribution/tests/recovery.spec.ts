@@ -113,6 +113,80 @@ async function blockSourceCommit(source: TestHost, backupName: string, domain = 
 }
 
 describe('native completion durability recovery', () => {
+  it('contains a worker waiting on failed restore and recovers the original local permission after storage repair', async () => {
+    const source = await createHost(new TestNetwork(), 'source', 'native', { ownerLocal: true })
+    hosts.push(source)
+    const task = await rootTask(source)
+    const agent = await source.createAgent('restore-worker-source')
+    await mkdir(join(source.workspace, 'project'))
+    const participantId = developmentAgentParticipantId(agent.id)
+    await expect.poll(() => source.ctx.developmentRooms.list().participants.some(item => item.id === participantId)).toBe(true)
+    await source.ctx.developmentTasks.checkout({ taskId: task.id, participantId })
+    const assignment = (await source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).assignment
+    if (assignment === null) throw new Error('Missing local assignment')
+    const selected = await source.ctx.scopeAgentContributions.requestLocal({ agentId: agent.id, expectedCapture: null,
+      ...assignment, roots: [source.workspace], tools: ['write'],
+      limits: { expiresAt: Date.now() + 50000, maxSamples: 8, maxSampleBytes: 8192 } })
+    if (selected.capture === null) throw new Error('Missing local permission')
+    const grant = selected.capture.grant
+    await expect.poll(async () => (await source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.collecting)
+      .toBe(true)
+    await writeFiles(source, agent, ['before-restore.txt'])
+    await expect.poll(async () => (await source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture?.pendingSamples)
+      .toBe(0)
+    const events = agent.session.snapshotEvents()
+    const modelRequests = source.adapter.requests.length
+    const path = join(source.root, 'domains', `${nativeLocalContributionDomain.name}.json`)
+    const bytes = await readFile(path, 'utf8')
+    const original = source.ctx.storageDomain.get(nativeLocalContributionDomain.name)?.table('sessions').get(agent.id)
+    expect(original?.samples).toHaveLength(1)
+    const entry = [...source.ctx.loader.entries()].find(item => item.options.name === 'contribution')
+    if (entry === undefined) throw new Error('Missing contribution Loader entry')
+    await entry.update({ disabled: true })
+    await source.ctx.loader.await()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const identity = source.ctx.scopeAccess.identity.bind(source.ctx.scopeAccess)
+    const readingIdentity = vi.spyOn(source.ctx.scopeAccess, 'identity').mockImplementationOnce(async () => {
+      entered.resolve(undefined)
+      await release.promise
+      return await identity()
+    })
+    restores.push(() => { readingIdentity.mockRestore() })
+    restores.push(() => { release.resolve(undefined) })
+    await entry.update({ disabled: false })
+    await entered.promise
+    const blocked = await blockSourceCommit(source, 'before-local-restore-failure.json', nativeLocalContributionDomain.name)
+    await source.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: task.createdBy,
+      text: 'Refresh the retained local Task while its contribution consumer is reopening.' })
+    const taskEvents = source.ctx.developmentTasks.log()
+    release.resolve(undefined)
+    await expect(source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).rejects.toThrow()
+    await expect.poll(() => source.ctx.logger.buffer.some(message => message.type === 'error'
+      && message.args[0] === 'scope-agent-contribution: worker failed: %s')).toBe(true)
+    expect(source.ctx.logger.buffer.some(message => message.type === 'error'
+      && message.args[0] === 'scope-agent-contribution: initialization failed: %s')).toBe(true)
+    expect(source.ctx.storageDomain.get(nativeLocalContributionDomain.name)?.table('sessions').get(agent.id)).toEqual(original)
+    expect(await readFile(blocked.backup, 'utf8')).toBe(bytes)
+    expect(source.ctx.developmentTasks.log()).toEqual(taskEvents)
+    expect(agent.session.snapshotEvents()).toEqual(events)
+    expect(await source.readEvents(agent)).toEqual(events)
+    expect(source.adapter.requests).toHaveLength(modelRequests)
+    await entry.update({ disabled: true })
+    await source.ctx.loader.await()
+    await blocked.restore()
+    readingIdentity.mockRestore()
+    await entry.update({ disabled: false })
+    await source.ctx.loader.await()
+    await expect.poll(async () => (await source.ctx.scopeAgentContributions.localStatus({ agentId: agent.id })).capture).toBeNull()
+    expect(await source.ctx.developmentTasks.localContributionStatus({ grant })).toMatchObject({ state: 'ended', grant })
+    expect(source.ctx.agents.get(agent.id)).toBe(agent)
+    expect(agent.session.snapshotEvents()).toEqual(events)
+    expect(source.adapter.requests).toHaveLength(modelRequests)
+    expect(source.ctx.developmentTasks.get({ taskId: task.id }).context.filter(item => item.localToolObservation)).toHaveLength(1)
+    expect(source.exitCodes).toEqual([])
+  })
+
   it.each(['local', 'remote'] as const)('retries a failed %s stop without waiting for report work or permission expiry', async (role) => {
     const { source, agent, selection } = await fixture(16, role === 'local')
     let selected = selection

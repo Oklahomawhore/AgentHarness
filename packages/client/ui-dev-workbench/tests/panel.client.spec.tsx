@@ -7,6 +7,7 @@ import type { DevWorkbenchEntryId, DevWorkbenchEntrySnapshot, DevWorkbenchSnapsh
 import { DevWorkbenchPanel, type DevWorkbenchPanelProps } from '../src/client/DevWorkbenchPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 import { apply, inject } from '../src/client/index.ts'
+import { createDevWorkbenchPreferences } from '../src/client/preferences.ts'
 
 afterEach(cleanup)
 
@@ -206,6 +207,8 @@ describe('DevWorkbenchPanel', () => {
   it.each(['idle', 'exited', 'failed'] as const)('controls %s task ranges and releases panel polling on disposal', async (phase) => {
     const runtime = await SlotTestRuntime.create()
     const clearInterval = vi.spyOn(window, 'clearInterval')
+    const storageKey = 'dsh.dev-workbench.view.v1'
+    const storedPreferences = localStorage.getItem(storageKey)
     try {
       const locale = new LocaleRuntime(runtime.ctx)
       locale.setLocale('zh')
@@ -221,7 +224,7 @@ describe('DevWorkbenchPanel', () => {
           ...current.readiness === undefined ? {} : { readiness: { url: current.readiness.url, state: 'checking' as const } } }
         return { ok: true as const, value: current }
       })
-      const stop = vi.fn(async () => {
+      const stop = vi.fn(async (): Promise<RemoteResult<DevWorkbenchEntrySnapshot>> => {
         current = { ...current, phase: 'stopped', finishedAt: 4 }
         return { ok: true as const, value: current }
       })
@@ -232,6 +235,24 @@ describe('DevWorkbenchPanel', () => {
       await runtime.mount({ inject, apply })
       runtime.renderSlot('sidebar.footer.action', { wide: true })
       fireEvent.click(await screen.findByRole('button', { name: zh['trigger.aria'] }))
+      if (phase === 'idle') {
+        fireEvent.click(screen.getByRole('button', { name: /AgentHarness Agent/ }))
+        fireEvent.click(screen.getByRole('button', { name: 'Local-debug' }))
+        expect(screen.getByTitle('Local-debug').getAttribute('src')).toBe(current.views[1]?.url)
+        const panel = document.querySelector<HTMLElement>('[data-dev-workbench]')!
+        const measure = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+          x: 100, y: 10, left: 100, top: 10, right: 1000, bottom: 610,
+          width: 900, height: 600, toJSON: () => ({}),
+        })
+        try {
+          fireEvent.pointerDown(screen.getByTitle(zh['panel.resize']), { clientX: 100, clientY: 610 })
+          fireEvent.pointerMove(window, { clientX: 40, clientY: 670 })
+          fireEvent.pointerUp(window)
+          expect(createDevWorkbenchPreferences().getSnapshot()).toEqual({
+            width: 960, height: 660, selectedEntryId: ENTRY, selectedViewByEntry: { agent: 'local-debug' },
+          })
+        } finally { fireEvent.pointerCancel(window); measure.mockRestore() }
+      }
       if (phase !== 'idle') {
         expect(screen.queryByText(zh['readiness.waiting'])).toBeNull()
         expect(screen.getByText(zh['readiness.stopped'])).toBeTruthy()
@@ -245,6 +266,10 @@ describe('DevWorkbenchPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: phase === 'idle' ? zh['action.start'] : zh['action.restart'] }))
       await screen.findByRole('button', { name: new RegExp(zh['status.running']) })
       expect(start).toHaveBeenCalledWith(ENTRY)
+      stop.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'Stop acknowledgement unavailable', {}) })
+      fireEvent.click(screen.getByRole('button', { name: zh['action.stop'] }))
+      await screen.findByText('gateway/internal: Stop acknowledgement unavailable')
+      expect(screen.getByRole('button', { name: zh['action.stop'] }).hasAttribute('disabled')).toBe(false)
       fireEvent.click(screen.getByRole('button', { name: zh['action.stop'] }))
       await screen.findByRole('button', { name: new RegExp(zh['status.stopped']) })
       expect(stop).toHaveBeenCalledWith(ENTRY)
@@ -252,8 +277,12 @@ describe('DevWorkbenchPanel', () => {
       expect(document.querySelector('[data-dev-workbench]')).toBeNull()
       expect(clearInterval).toHaveBeenCalled()
     } finally {
-      await runtime.dispose()
-      clearInterval.mockRestore()
+      try { await runtime.dispose() }
+      finally {
+        clearInterval.mockRestore()
+        if (storedPreferences === null) localStorage.removeItem(storageKey)
+        else localStorage.setItem(storageKey, storedPreferences)
+      }
     }
   })
 
