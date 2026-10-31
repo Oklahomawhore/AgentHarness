@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { isValidElement } from 'react'
+import type { Node, NodeMouseHandler } from '@xyflow/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
@@ -20,9 +21,10 @@ import { en, zh } from '../src/client/locales.ts'
 
 const flowCapture = vi.hoisted(() => ({ props: {} as Record<string, unknown> }))
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
+  ReactFlow: (props: Record<string, unknown> & { children?: React.ReactNode; nodes?: Node[]; onNodeClick?: NodeMouseHandler }) => {
     flowCapture.props = props
-    return <div data-testid="task-graph">{props.children}</div>
+    return <div data-testid="task-graph">{props.nodes?.map(node => <button key={node.id} type="button"
+      onClick={event => props.onNodeClick?.(event, node)}>Graph {node.id}</button>)}{props.children}</div>
   },
   Background: () => null,
   Controls: () => null,
@@ -163,11 +165,18 @@ function openPanel(props: EmergenceCenterPanelProps): void {
 
 describe('EmergenceCenterPanel', () => {
   it('renders a bounded lineage without inventing an edge to an unavailable parent', () => {
-    const fork = task(FORK_ONE, 'Bounded fork', { kind: 'fork', parent: { taskId: ROOT, revision: 1 } })
+    const fork = { ...task(FORK_ONE, 'Bounded fork', { kind: 'fork', parent: { taskId: ROOT, revision: 1 } }),
+      inheritedContextBlockId: 'root-context' as NonNullable<DevelopmentTaskSnapshot['inheritedContextBlockId']> }
     const graph = taskGraph([fork], makeTranslate(zh))
     expect(graph.nodes.map(node => node.id)).toEqual([FORK_ONE])
     expect(graph.edges).toEqual([])
     expect(fork.origin).toEqual({ kind: 'fork', parent: { taskId: ROOT, revision: 1 } })
+    const props = panelProps([fork])
+    const readTasks = props.useTasks
+    openPanel({ ...props, useTasks: selector => readTasks(state => selector({ ...state, boundaryTaskIds: [ROOT] })) })
+    expect(screen.getByText(makeTranslate(zh)('graph.boundary', { count: 1 }))).toBeTruthy()
+    expect(screen.getByText(zh['context.inheritedReady'])).toBeTruthy()
+    expect(screen.queryByRole('button', { name: `Graph ${ROOT}` })).toBeNull()
   })
 
   it('cancels a Fork draft and reopens the center to create a Root without sending the cancelled operation', async () => {
@@ -463,6 +472,47 @@ describe('EmergenceCenterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${zh['detail.origin.fork']}.*r1.*Fork one`) }))
     expect(screen.getByRole('heading', { name: 'Fork one', level: 1 })).toBeTruthy()
     expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('')
+  })
+
+  it('selects graph context after a failed focus read without publishing or assigning work', async () => {
+    const props = panelProps()
+    vi.mocked(props.focusTask).mockRejectedValueOnce(new Error('lineage unavailable'))
+    openPanel(props)
+    await waitFor(() => { expect(props.focusTask).toHaveBeenLastCalledWith(ROOT) })
+    fireEvent.click(screen.getByRole('button', { name: `Graph ${FORK_ONE}` }))
+    await waitFor(() => { expect(props.focusTask).toHaveBeenLastCalledWith(FORK_ONE) })
+    expect(screen.getByRole('heading', { name: 'Fork one', level: 1 })).toBeTruthy()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('')
+    expect(props.publishContext).not.toHaveBeenCalled()
+    expect(props.createTask).not.toHaveBeenCalled()
+  })
+
+  it('clears details when the selected Task leaves the catalog and permits selecting a remaining Task', () => {
+    const props = panelProps()
+    const view = render(<EmergenceCenterPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: zh['trigger.aria'] }))
+    fireEvent.click(screen.getByRole('button', { name: `Graph ${FORK_ONE}` }))
+    fireEvent.change(screen.getByPlaceholderText(zh['context.placeholder']), { target: { value: 'Unpublished Fork context' } })
+    const remaining = panelProps([task(ROOT, 'Root', { kind: 'root' })])
+    view.rerender(<EmergenceCenterPanel {...props} useTasks={remaining.useTasks} />)
+    expect(screen.queryByRole('heading', { name: 'Fork one', level: 1 })).toBeNull()
+    expect(screen.queryByPlaceholderText(zh['context.placeholder'])).toBeNull()
+    expect(screen.getByText(zh['panel.emptyContext'])).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: `Graph ${ROOT}` }))
+    expect(screen.getByRole('heading', { name: 'Root', level: 1 })).toBeTruthy()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>(zh['context.placeholder']).value).toBe('')
+    expect(props.publishContext).not.toHaveBeenCalled()
+  })
+
+  it('shows a newly connected unnamed Session as unacknowledged', () => {
+    const assignments: DevelopmentTaskAssignment[] = [
+      { bindingId: binding('new-session'), participantId: AGENT, taskId: ROOT, assignedAt: 1 },
+    ]
+    openPanel(panelProps(lineage(), { assignments }))
+    const hub = within(screen.getByRole('region', { name: zh['agents.connectTitle'] }))
+    expect(hub.getByText(`${zh['agents.unnamedSession']} · ${makeTranslate(zh)('detail.revision', { revision: 0 })}`)).toBeTruthy()
+    const steps = within(hub.getByRole('list', { name: zh['agents.progress'] })).getAllByRole('listitem')
+    expect(steps.at(-1)?.getAttribute('data-state')).toBe('pending')
   })
 
   it.each(['other-task', 'same-task'] as const)('does not clear a replacement %s draft when an earlier publication finishes', async (selection) => {

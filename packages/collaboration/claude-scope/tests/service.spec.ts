@@ -626,30 +626,44 @@ describe('Claude scope service', () => {
     expect(host.ctx.developmentTasks.assignmentLog().some(entry => entry.change.kind === 'context-acknowledged')).toBe(false)
   })
 
-  it('replays the persisted sample after admission failure and restart without rereading changed bytes', async () => {
+  it('recovers every operation sampled by one completion without rereading post-crash bytes', async () => {
     const first = await boot()
     const scenario = await apiScenario(first)
-    const input = scenario.tool('sample-before-restart', apiDocument(['original_field']))
+    const secondSource = { ...scenario.source, name: 'replace-orders', method: 'put' as const }
+    await first.scope.join({ sessionKey: scenario.a, taskId: scenario.task.id, responsibility: 'backend',
+      roots: [first.directory], bashCommands: [], openApiSources: [scenario.source, secondSource] })
+    const document = JSON.parse(apiDocument(['original_field'])) as { paths: { '/orders': { post: object; put?: object } } }
+    document.paths['/orders'].put = { ...document.paths['/orders'].post, operationId: 'replaceOrder' }
+    const content = JSON.stringify(document)
+    const input = scenario.tool('multi-operation-before-restart', content)
     await first.hook('api-author', 'PreToolUse', input)
-    await writeFile(scenario.source.filePath, apiDocument(['original_field']))
-    const admit = vi.spyOn(first.ctx.developmentTasks, 'admitObservedContext').mockRejectedValueOnce(new Error('Task storage unavailable'))
+    await writeFile(scenario.source.filePath, content)
+    vi.spyOn(first.ctx.developmentTasks, 'admitObservedContext').mockRejectedValueOnce(new Error('Task storage unavailable'))
     await expect(first.hook('api-author', 'PostToolUse', input)).rejects.toThrow('Task storage unavailable')
     expect(first.ctx.developmentTasks.get({ taskId: scenario.task.id }).context).toHaveLength(0)
-    admit.mockRestore()
+    const leases = first.facility.get('claude_scope')!.table('leases')
+    const pending = [...leases.entries()].flatMap(([, lease]) => (lease as ScopeToolLease).artifactSamples ?? [])
+    expect(pending).toHaveLength(2)
     await writeFile(scenario.source.filePath, apiDocument(['later_unobserved_field']))
     await first.ctx.fiber.dispose()
     const second = await boot(first.pool, first.directory)
     await useFacts(second)
     const recovered = second.ctx.developmentTasks.get({ taskId: scenario.task.id }).context
-    expect(recovered).toHaveLength(1)
-    expect(recovered[0]!.observation).toMatchObject({ state: 'valid', sequence: 1, facts: { requiredRequestFields: ['original_field'] } })
-    await second.hook('api-author', 'PostToolUse', input)
+      .flatMap(publication => publication.observation ?? [])
+    expect(recovered).toMatchObject([
+      { sourceName: 'orders-api', operation: { method: 'post', path: '/orders' }, sequence: 1,
+        state: 'valid', facts: { requiredRequestFields: ['original_field'] } },
+      { sourceName: 'replace-orders', operation: { method: 'put', path: '/orders' }, sequence: 1,
+        state: 'valid', facts: { requiredRequestFields: ['original_field'] } },
+    ])
+    expect(recovered.map(observation => observation.sourceId)).toEqual(pending.map(sample => sample.sourceId))
     const frontend = (await second.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
     expect(frontend).toContain('"requiredRequestFields":["original_field"]')
     expect(frontend).not.toContain('later_unobserved_field')
+    await second.hook('api-author', 'PostToolUse', input)
+    expect(second.ctx.developmentTasks.get({ taskId: scenario.task.id }).context
+      .flatMap(publication => publication.observation ?? [])).toEqual(recovered)
     expect(await readFile(scenario.source.filePath, 'utf8')).toContain('later_unobserved_field')
-    const samples = second.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation !== undefined)
-    expect(samples).toHaveLength(1)
   })
 
   it('invalidates old declarations after a failed partial write and retires evidence after an external binding clear', async () => {
@@ -2466,6 +2480,31 @@ describe('explicit Claude command and Stop contribution', () => {
         commands: [{ command: 'printf work-result', rootIndex: 1 }], stopReports: false } }))
       .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
     expect((await source.scope.contributionDetail({ sessionKey })).capture).toBeNull()
+  })
+
+  it('validates selected command roots before preparing consent and keeps their ordinals when sorting', async () => {
+    const { owner, source } = await contributionPair()
+    const sessionKey = await source.observe('command-root-consent')
+    for (const request of [
+      { roots: [source.directory], source: { kind: 'claude-work' as const, tools: [],
+        commands: [{ command: 'printf outside', rootIndex: 1 }], stopReports: false } },
+      { roots: [], source: { kind: 'claude-work' as const, tools: ['Write' as const], commands: [], stopReports: false } },
+    ]) {
+      await expect(source.scope.prepareContribution({ sessionKey, expectedCapture: null, ...request }))
+        .rejects.toMatchObject({ code: 'claude-scope/local-permission-invalid' })
+      expect((await source.scope.contributionDetail({ sessionKey })).capture).toBeNull()
+    }
+    const prepared = await source.scope.prepareContribution({ sessionKey, expectedCapture: null,
+      roots: [source.directory, owner.directory], source: { kind: 'claude-work', tools: ['Write', 'Edit'],
+        commands: [{ command: 'printf second-root', rootIndex: 1 }, { command: 'printf zeta', rootIndex: 0 },
+          { command: 'printf alpha', rootIndex: 0 }], stopReports: false } })
+    expect(prepared.proposal.source).toEqual({ kind: 'claude-work', version: 7, name: 'session-work', tools: ['Edit', 'Write'],
+      commands: [{ command: 'printf alpha', rootIndex: 0 }, { command: 'printf zeta', rootIndex: 0 },
+        { command: 'printf second-root', rootIndex: 1 }], stopReports: false })
+    expect(JSON.stringify(prepared.proposal)).not.toContain(source.directory)
+    expect(JSON.stringify(prepared.proposal)).not.toContain(owner.directory)
+    expect((await source.scope.contributionDetail({ sessionKey })).capture?.roots)
+      .toEqual(await Promise.all([source.directory, owner.directory].map(path => realpath(path))))
   })
 
   it('requires a prompt observed under active consent and preserves reports without claiming turn finality', async () => {

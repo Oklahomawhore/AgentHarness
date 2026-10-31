@@ -69,6 +69,15 @@ async function waitForReadiness(service: DevWorkbenchService, state: string): Pr
 }
 
 describe('DevWorkbenchService', () => {
+  it.each([
+    { maxOutputBytes: 0 }, { maxOutputBytes: 1.5 }, { maxOutputBytes: Number.MAX_SAFE_INTEGER + 1 },
+    { graceMs: 2_147_483_648 },
+  ])('rejects invalid resource limits at construction: %j', (limits) => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    expect(() => new DevWorkbenchService(ctx, { ...config([]), ...limits })).toThrow('must be a positive safe integer')
+  })
+
   it.each(['intervalMs', 'requestTimeoutMs'] as const)('rejects readiness %s that Node would clamp to one millisecond', async (field) => {
     const ctx = new Context()
     contexts.push(ctx)
@@ -108,6 +117,33 @@ describe('DevWorkbenchService', () => {
       { method: 'start', invocation: { kind: 'direct' } },
       { method: 'stop', invocation: { kind: 'direct' } },
     ])
+  })
+
+  it('leaves an idle task unchanged and accepts a new start after executable resolution fails', async () => {
+    const { ctx, service } = await bench(['-e', 'setInterval(() => {}, 1000)'])
+    const initial = service.list().entries[0]
+    expect(await service.stop(id('fixture'))).toEqual(initial)
+    const resolve = vi.spyOn(ctx.subprocess, 'resolveExecutable').mockRejectedValueOnce(new Error('executable unavailable'))
+    try {
+      await expect(service.start(id('fixture'))).rejects.toThrow('executable unavailable')
+      expect(service.list().entries[0]).toEqual(initial)
+      await expect(service.start(id('fixture'))).resolves.toMatchObject({ phase: 'running' })
+      await expect(service.stop(id('fixture'))).resolves.toMatchObject({ phase: 'stopped' })
+    } finally { resolve.mockRestore() }
+  })
+
+  it('rejects controls after unloading the task owner', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(LocalSubprocessRuntime)
+    const plugin = await ctx.plugin(DevWorkbenchService, config(['-e', 'setInterval(() => {}, 1000)']))
+    const service = ctx.devWorkbench
+    await service.start(id('fixture'))
+    await plugin.dispose()
+    expect(service.list().entries[0]).toMatchObject({ phase: 'exited' })
+    expect(service.list().entries[0]?.outcome).toBeDefined()
+    await expect(service.start(id('fixture'))).rejects.toThrow('service is disposing')
+    await expect(service.stop(id('fixture'))).rejects.toThrow('service is disposing')
   })
 
   it('starts an argv without a shell and retains bounded output after exit', async () => {
@@ -349,54 +385,72 @@ describe('DevWorkbenchService', () => {
     stage = 'complete'
   })
 
-  it('fails loud on unknown entries and invalid self-contained config', async () => {
-    const { service } = await bench(['-e', ''])
-    await expect(service.start(id('missing'))).rejects.toThrow('unknown entry')
+  it.each(['disconnect', 'timeout'] as const)('keeps a task stoppable when readiness encounters %s', async (failure) => {
+    const server = createServer((request) => {
+      if (failure === 'disconnect') request.socket.destroy()
+    })
+    servers.push(server)
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('fixture server has no TCP address')
+    const { service } = await bench(['-e', 'setInterval(() => {}, 1000)'], {
+      url: `http://127.0.0.1:${String(address.port)}/unavailable`, acceptedStatusCodes: [200],
+      intervalMs: 60_000, requestTimeoutMs: 100,
+      warnAfterMs: failure === 'disconnect' ? Number.MAX_SAFE_INTEGER : 1,
+    })
+    await service.start(id('fixture'))
+    await expect.poll(() => service.list().entries[0]?.readiness?.error, {
+      timeout: TestRunner.getCurrentTest()!.timeout,
+    }).toBe(failure === 'disconnect' ? 'fetch failed' : 'request timed out after 100ms')
+    expect(service.list().entries[0]).toMatchObject({
+      phase: 'running', readiness: { state: failure === 'disconnect' ? 'checking' : 'delayed' },
+    })
+    await expect(service.stop(id('fixture'))).resolves.toMatchObject({ phase: 'stopped' })
+  })
 
-    const badCwd = new Context()
-    contexts.push(badCwd)
-    expect(() => new DevWorkbenchService(badCwd, {
-      ...config([]), entries: { bad: { label: 'Bad', cwd: '.', command: 'node' } },
-    })).toThrow('cwd must be absolute')
+  it.each([
+    { key: 'Bad', entry: { label: 'Task', cwd: process.cwd(), command: 'node' }, error: 'entry id' },
+    { key: 'fixture', entry: { label: 'Task', cwd: '.', command: 'node' }, error: 'cwd must be absolute' },
+    { key: 'fixture', entry: { label: ' ', cwd: process.cwd(), command: 'node' }, error: 'label must not be blank' },
+    { key: 'fixture', entry: { label: 'Task', cwd: process.cwd(), command: ' ' }, error: 'command must not be blank' },
+    ...[
+      { id: 'Bad', label: 'View', url: 'https://example.com/', error: 'view id' },
+      { id: 'view', label: ' ', url: 'https://example.com/', error: 'label must not be blank' },
+      { id: 'view', label: 'View', url: 'file:///tmp/preview', error: 'must use HTTP(S)' },
+      { id: 'view', label: 'View', url: 'http://user@example.com/', error: 'must not contain credentials' },
+      { id: 'view', label: 'View', url: 'https://:password@example.com/', error: 'must not contain credentials' },
+    ].map(({ error, ...view }) => ({
+      key: 'fixture', entry: { label: 'Task', cwd: process.cwd(), command: 'node', views: [view] }, error,
+    })),
+    ...[
+      { url: 'file:///tmp/readiness', acceptedStatusCodes: [200], error: 'must use HTTP(S)' },
+      { url: 'https://:password@example.com/', acceptedStatusCodes: [200], error: 'must not contain credentials' },
+      { url: 'http://user:secret@example.com/', acceptedStatusCodes: [200], error: 'must not contain credentials' },
+      { url: 'http://example.com/', acceptedStatusCodes: [], error: 'acceptedStatusCodes' },
+    ].map(({ url, acceptedStatusCodes, error }) => ({
+      key: 'fixture', entry: { label: 'Task', cwd: process.cwd(), command: 'node', readiness: {
+        url, acceptedStatusCodes, intervalMs: 1, requestTimeoutMs: 1, warnAfterMs: 1,
+      } }, error,
+    })),
+    { key: 'fixture', entry: { label: 'Task', cwd: process.cwd(), command: 'node', views: [
+      { id: 'view', label: 'One', url: 'https://example.com/one' },
+      { id: 'view', label: 'Two', url: 'https://example.com/two' },
+    ] }, error: 'duplicate view ids' },
+  ])('rejects unsafe or ambiguous task configuration: $error', ({ key, entry, error }) => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    expect(() => new DevWorkbenchService(ctx, { ...config([]), entries: { [key]: entry } })).toThrow(error)
+  })
 
-    const badStatuses = new Context()
-    contexts.push(badStatuses)
-    expect(() => new DevWorkbenchService(badStatuses, {
-      ...config([]),
-      entries: {
-        bad: {
-          label: 'Bad',
-          cwd: process.cwd(),
-          command: 'node',
-          readiness: {
-            url: 'http://127.0.0.1:3001/',
-            acceptedStatusCodes: [],
-            intervalMs: 1,
-            requestTimeoutMs: 1,
-            warnAfterMs: 1,
-          },
-        },
-      },
-    })).toThrow('acceptedStatusCodes')
-
-    const badUrl = new Context()
-    contexts.push(badUrl)
-    expect(() => new DevWorkbenchService(badUrl, {
-      ...config([]),
-      entries: {
-        bad: {
-          label: 'Bad',
-          cwd: process.cwd(),
-          command: 'node',
-          readiness: {
-            url: 'http://user:secret@127.0.0.1:3001/',
-            acceptedStatusCodes: [200],
-            intervalMs: 1,
-            requestTimeoutMs: 1,
-            warnAfterMs: 1,
-          },
-        },
-      },
-    })).toThrow('must not contain credentials')
+  it('rejects an unknown task without starting a process', async () => {
+    const { ctx, service } = await bench(['-e', ''])
+    const spawn = vi.spyOn(ctx.subprocess, 'spawn')
+    try {
+      await expect(service.start(id('missing'))).rejects.toThrow('unknown entry')
+      expect(spawn).not.toHaveBeenCalled()
+    } finally { spawn.mockRestore() }
   })
 })

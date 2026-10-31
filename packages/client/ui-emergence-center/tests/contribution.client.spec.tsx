@@ -987,22 +987,22 @@ describe.each(['completed-turn-outcomes', 'native-work'] as const)('%s source co
 })
 
 
-describe('owner completed-answer entry selection', () => {
+describe.each(['completed-turn-outcomes', 'native-work'] as const)('owner %s entry selection', (sourceKind) => {
   it.each(['join', 'group', 'contribution'] as const)('retains the explicit source for %s participation', (participation) => {
     const actions = ownerActions()
     render(<OwnerContributionPanel taskId={TASK} entry={{ status: 'ready', pending: false, value: owned }} {...actions} t={t} />)
     fireEvent.click(screen.getByText(zh['contribution.ownerTitle']))
     paste(zh['contribution.join.purpose'], participation)
-    paste(zh['contribution.sourceKind'], 'completed-turn-outcomes')
+    paste(zh['contribution.sourceKind'], sourceKind)
     paste(zh['contribution.application.entryHours'], '1')
     if (participation === 'group') paste(zh['contribution.group.capacity'], '2')
-    expect(screen.getByText(zh['native.outcomes.entryHint'])).toBeTruthy()
+    expect(screen.getByText(zh[sourceKind === 'native-work' ? 'native.work.entryHint' : 'native.outcomes.entryHint'])).toBeTruthy()
     expect(screen.queryByText(zh['contribution.join.entryHint'])).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: zh[participation === 'group' ? 'contribution.group.create'
       : participation === 'join' ? 'contribution.join.create' : 'contribution.application.create'] }))
     const sent = participation === 'group' ? vi.mocked(actions.createGroupEntry).mock.calls[0]?.[0]
       : vi.mocked(actions.createContributionEntry).mock.calls[0]?.[0]
-    expect(sent).toEqual({ taskId: TASK, sourceKind: 'completed-turn-outcomes', ownerAddress: invitation.ownerAddress,
+    expect(sent).toEqual({ taskId: TASK, sourceKind, ownerAddress: invitation.ownerAddress,
       expiresAt: expect.any(Number) as unknown, ...(participation === 'group' ? { maxMembers: 2 }
         : participation === 'join' ? { participation: 'join' } : {}) })
   })
