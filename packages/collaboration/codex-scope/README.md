@@ -83,6 +83,7 @@ This adapter preserves unchanged prepared bytes but does not own Codex's request
 <a id="known-limitations-and-deferred-work"></a>
 
 - Codex reports the parent session ID to descendant hooks. The logical receiving scope includes those descendants; this adapter cannot isolate child agents using that ID.
+- The external runtime decides which completions invoke hooks. A failed MCP tool can finish without `PostToolUse`; receiving then waits for the next supported hook.
 - This adapter receives context only. It grants no tool capture, publication, automatic execution, or authority over another user's agent.
 - Earlier text remains in Codex's history after withdrawal. Preparation does not prove model adoption or historical erasure.
 - Retention is bounded without automatic pruning. Operators must provision sufficient explicit limits.

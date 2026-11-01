@@ -14,6 +14,8 @@ Status: implemented
 
 [Task 服务](../../../../packages/collaboration/development-task/README.zh.md)在耐久队列中串行处理授权、准入和终结事件。认证来自 transport；publication 保留贡献者 PeerId，不虚构 Mesh 节点或 participant。Owner 根据获批 selector 生成出处，并在 OpenAPI 模式下生成工件身份。精确重试恢复原 receipt；既有来源的正文变化会被拒绝。Receipt 区分批准、采样和终结提交。来源端保留 outbox 或待撤回记录，直到收到匹配的 owner receipt。公开准入方法负责 grant 校验与终结幂等性；私有队列终结提交依赖这些已确定的结果。 恢复和贡献清单访问将保留的所有者与固定传输身份进行核对；路由恢复检查当前公告地址，不重复该身份比较。
 
+[共享 controller](../../../../packages/collaboration/scope-access/src/contribution.ts)负责串行选择 outbox 条目。原生适配器借用同一同步操作中选出的条目；再次查询自身 outbox 只是在将同一个选择与自身比较。Peer 请求后仍必须核对 capture、邀请和样本，因为停止或替换 capture 可能在此期间发生。完成检查点恢复后，原生适配器根据当前保留条目与预留重新判断容量耗尽，瞬时持久化问题的标签不能清除仍然成立的容量限制。
+
 只有获授权的 Write 或 Edit lease 才采集许可的来源。Hook 在等待本地队列前保留其 capture generation。替换许可不能授权较早排队的 Hook。接收的上下文和生成的投影不是采集来源。OpenAPI 采样中的无效或缺失文件产生明确的不可用证据，而不是让旧的有效字段保持当前状态。
 
 Grant 到期、owner 撤销和贡献者离开均产生终结 Task 事件并撤下当前证据。`currentContextView` 在返回当前输入前完成 owner 到期处理；消费者也在异步投影后重新检查。持久化失败会拒绝当前交付，包括缓存文本。新提交的终结事件使捕获投影失效；普通新采样可以等待下一次请求。非 owner 的 Mesh 副本遇到有效独立同伴证据时拒绝交付，因为复制无法确立 owner 当前的授权。冻结父 revision 仍为历史记录。

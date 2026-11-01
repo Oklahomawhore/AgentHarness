@@ -254,39 +254,61 @@ it.each(['samples', 'retention'] as const)('shares one cumulative %s allowance a
   await work(f, operations())
   await expect.poll(async () => (await row(f)).samples.filter(item => item.receipt !== undefined).length).toBe(3)
   expect((await row(f)).samples.map(item => 'kind' in item.sample.result ? item.sample.result.version : 'openapi')).toEqual([1, 1, 4])
-  expect((await f.status()).capture?.collectionIssue).toBe(bound === 'samples' ? 'sample-limit' : 'retention-limit')
+  // Receipt bytes can precede the source domain's in-memory update and completion cleanup.
+  await expect.poll(async () => (await f.status()).capture).toMatchObject({ pendingSamples: 0,
+    collectionIssue: bound === 'samples' ? 'sample-limit' : 'retention-limit' })
   expect(f.publications().some(item => item.localTurnOutcome !== undefined)).toBe(false)
   expect(f.agent.session.deriveMessages().at(-1)?.content).toEqual([{ type: 'text', text: 'RELEASE_HELD_BY_CUSTOMER' }])
 })
 
-it('retains the shared retention warning while already reserved file and command completions settle', async () => {
-  const f = await fixture('local', { maxLeases: 3 })
-  const records = f.source.ctx.storageDomain.get('scope_agent_local_contributions')?.table('sessions')
-  if (records === undefined) throw new Error('Missing native local records')
-  const entered = Promise.withResolvers<undefined>()
-  const release = Promise.withResolvers<undefined>()
-  releases.push(() => { release.resolve(undefined) })
-  const put = records.put.bind(records)
-  let held = false
-  vi.spyOn(records, 'put').mockImplementation(async (id, value) => {
-    await put(id, value)
-    const saved = nativeLocalContributionDomain.tables.sessions.valueSchema.parse(value)
-    if (!held && saved.capture?.sequence === 1) {
-      held = true
-      entered.resolve(undefined)
-      await release.promise
+it.each(['uninterrupted', 'recovered-checkpoint'] as const)(
+  'retains the shared retention warning while reserved completions settle through %s durability', async (durability) => {
+    const f = await fixture('local', { maxLeases: 3 })
+    const records = f.source.ctx.storageDomain.get('scope_agent_local_contributions')?.table('sessions')
+    if (records === undefined) throw new Error('Missing native local records')
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    releases.push(() => { release.resolve(undefined) })
+    const put = records.put.bind(records)
+    let held = false
+    vi.spyOn(records, 'put').mockImplementation(async (id, value) => {
+      await put(id, value)
+      const saved = nativeLocalContributionDomain.tables.sessions.valueSchema.parse(value)
+      if (!held && saved.capture?.sequence === 1) {
+        held = true
+        entered.resolve(undefined)
+        await release.promise
+      }
+    })
+    const turn = work(f, operations())
+    releases.push(async () => { await turn })
+    await entered.promise
+    await turn
+    expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
+    const retrying = Promise.withResolvers<undefined>()
+    const repaired = Promise.withResolvers<undefined>()
+    releases.push(() => { repaired.resolve(undefined) })
+    let checkpoints = 0
+    if (durability === 'recovered-checkpoint') releases.push(f.source.ctx.on('session/flush', async (session) => {
+      if (session !== f.agent.session) return
+      checkpoints++
+      if (checkpoints === 1) throw new Error('Controlled checkpoint participant failed after capacity was reached')
+      if (checkpoints === 2) {
+        retrying.resolve(undefined)
+        await repaired.promise
+      }
+    }))
+    release.resolve(undefined)
+    if (durability === 'recovered-checkpoint') {
+      await retrying.promise
+      expect((await f.status()).capture?.collectionIssue).toBe('durability-failed')
+      repaired.resolve(undefined)
     }
-  })
-  const turn = work(f, operations())
-  releases.push(async () => { await turn })
-  await entered.promise
-  await turn
-  expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
-  release.resolve(undefined)
-  await expect.poll(async () => (await row(f)).samples.filter(item => item.receipt !== undefined).length).toBe(3)
-  expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
-  expect(f.publications().some(item => item.localTurnOutcome !== undefined)).toBe(false)
-})
+    await expect.poll(async () => (await row(f)).samples.filter(item => item.receipt !== undefined).length).toBe(3)
+    expect((await f.status()).capture?.collectionIssue).toBe('retention-limit')
+    expect(f.publications().some(item => item.localTurnOutcome !== undefined)).toBe(false)
+  },
+)
 
 it('rejects upgrading old durable rows or changing categories within an active capture', async () => {
   const f = await fixture('local')

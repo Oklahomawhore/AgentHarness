@@ -79,6 +79,8 @@ Claude hook 的 stdout 只确认本地输出：其他 hook 或请求取消仍可
 
 该运行时从 MCP 文本内容读取 hook JSON，而不是采用同时提供的不同 `structuredContent` 值。第二次投递后，捕获的请求同时保留先前上下文及其撤回通知。20,000 字符的 MCP 上下文会写入磁盘并缩短；设置 command handler 的 `additionalContextLimit = 0` 在该受测运行时不能解除这一 MCP 限制。Consumer 必须限制完整的内联输出，并明确标记修订与撤回；这些通道证据不能证明历史内容已被抹除、空闲唤醒或模型正确采用。
 
+MCP 正反对照实验在成功的 PostToolUse 投递中保留了小型 JSON 输入／结果值以及工具／轮次身份。`isError:true` 响应作为失败的工具结果到达模型，但受测运行时没有发出 PostToolUse 回调，其 HookEventName 也没有 PostToolUseFailure。这不能证明内置 shell 或 patch 工具失败时的行为。普通工作贡献和每次工具结果后的投递仍未验证。
+
 [Codex Consumer](../../../../packages/collaboration/codex-scope/README.zh.md)保存独立的外部会话关联与确切准备输出，读取权限仍由 ScopeAccess 管理。它先持久化原订阅计划再采用订阅，先持久化停止意图再终止订阅，避免不确定回复导致创建替代订阅。单个耐久写入者与取消机制拒绝已被取代的读取；管理操作使用显式接收版本。UI 选择 Claude 或 Codex，但不共用两者的会话身份。Hook 安装写入定义，不替用户批准。Codex 子 Agent 共用父会话的接收身份；不授予工作采集或自主执行权限。真实模型采用和依赖工作验收仍独立于通道与授权证据。
 
 ### 表示形式

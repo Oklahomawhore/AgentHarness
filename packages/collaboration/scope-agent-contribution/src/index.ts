@@ -24,7 +24,7 @@ import type {} from '@deepseek-ai/dsh-development-task'
 import type {} from '@deepseek-ai/dsh-development-room'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
 import { ContributionController } from '@deepseek-ai/dsh-scope-access/contribution'
-import type { ContributionStore, ContributionOutboxItem } from '@deepseek-ai/dsh-scope-access/contribution'
+import type { ContributionStore } from '@deepseek-ai/dsh-scope-access/contribution'
 import { contributionEntrySchema, contributionLimitsSchema, sameReadGrant } from '@deepseek-ai/dsh-scope-access/schema'
 import { directAddress } from '@deepseek-ai/dsh-scope-transport/address'
 import type { ScopeContributionEntry, ScopeContributionSample, ScopeContributionApplicationResult } from '@deepseek-ai/dsh-scope-access/types'
@@ -1367,11 +1367,6 @@ export default class ScopeAgentContributions extends TypertRemoteService {
   private store(domain: NativeContributionDomain, id: SessionId): ContributionStore<NativeCapture> {
     const role = 'remote'
     const row = () => domain.table('sessions').get(id)
-    const retained = (item: ContributionOutboxItem): NativeSample => {
-      const sample = row()?.samples.find(value => value.id === item.id)
-      if (sample === undefined || !isDeepStrictEqual(sample.sample, item.sample)) throw new Error('scope-agent-contribution: original sample changed')
-      return sample
-    }
     return {
       current: () => ({ capture: row()?.capture ?? undefined, ended: false }),
       save: async (capture) => {
@@ -1404,12 +1399,14 @@ export default class ScopeAgentContributions extends TypertRemoteService {
         this.sources[role].pending.delete(id); this.sources[role].completed.delete(id); this.sources[role].collectionIssues.delete(id)
       },
       outbox: () => row()?.samples ?? [],
-      validateOutbox: (item, capture) => { validateNativeSample(id, retained(item), capture) },
+      validateOutbox: (item, capture) => {
+        // The controller borrows an entry from this complete native outbox in the same serialized operation.
+        validateNativeSample(id, item as NativeSample, capture)
+      },
       saveReceipt: async (item, receipt) => {
         const source = row()
         if (source?.capture == null) throw new Error('scope-agent-contribution: sample receipt has no capture')
-        const original = retained(item)
-        await this.save(domain, id, source.capture, source.samples.map(value => value.id === item.id ? { ...original, receipt } : value))
+        await this.save(domain, id, source.capture, source.samples.map(value => value.id === item.id ? { ...value, receipt } : value))
       },
       requireCompatible: (invitation) => { this.requireCompatible(id, invitation.grant) },
       selectApproval: async (capture, approval) => await this.selectReceiving(domain, id, capture, approval),
@@ -1634,9 +1631,10 @@ export default class ScopeAgentContributions extends TypertRemoteService {
             const retained = await (completion.kind === 'turn' ? this.finishTurn(completion)
               : this.finish(completion.pending, completion.event, completion.failed))
             completions.delete(seq)
-            if (retained && (this.sources[role].collectionIssues.get(id) !== 'retention-limit'
-              || this.retainedSamples(domain) + this.pendingReservations() < this.config.maxLeases)) {
-              this.sources[role].collectionIssues.delete(id)
+            if (retained) {
+              if (this.retainedSamples(domain) + this.pendingReservations() >= this.config.maxLeases) {
+                this.sources[role].collectionIssues.set(id, 'retention-limit')
+              } else this.sources[role].collectionIssues.delete(id)
             }
             this.notify(domain, id)
           } catch (error) {

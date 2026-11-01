@@ -1,12 +1,13 @@
 /** Real source tools, durable Session evidence, owner admission, and recipient model requests. */
 import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import type { ScopeAgentContributionCapture } from '../src/types.ts'
+import { nativeContributionDomain } from '../src/state.ts'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, requestText, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
 
@@ -85,6 +86,73 @@ function assertRequestReplay(host: TestHost, agent: Agent): string {
 }
 
 describe('native contribution through Loader, actual tools, and independent owner authority', () => {
+  it('discards a delayed accepted reply after Stop and retains only a newly authorized capture’s receipts', async () => {
+    const f = await fixture()
+    const admitted = Promise.withResolvers<undefined>()
+    const release = gate()
+    const contribute = f.source.ctx.scopeAccess.contribute.bind(f.source.ctx.scopeAccess)
+    const replying = vi.spyOn(f.source.ctx.scopeAccess, 'contribute').mockImplementationOnce(async (request, signal) => {
+      const result = await contribute(request, signal)
+      expect(result.status).toBe('accepted')
+      admitted.resolve(undefined)
+      await release.promise
+      return result
+    })
+    releases.push(() => { replying.mockRestore() })
+    await run(f.source, f.agent, calls('native', [
+      { name: 'write', args: { file_path: 'project/old.txt', content: 'PREVIOUS_CAPTURE_CANARY' } },
+    ]))
+    await admitted.promise
+    const records = f.source.ctx.storageDomain.get(nativeContributionDomain.name)?.table('sessions')
+    if (records === undefined) throw new Error('Missing native source records')
+    const original = nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(f.agent.id))
+    expect(original.samples).toHaveLength(1)
+    expect(original.samples[0]?.receipt).toBeUndefined()
+    expect(f.owner.ctx.developmentTasks.get({ taskId: f.task.id }).context
+      .filter(item => item.peerToolObservation !== undefined)).toHaveLength(1)
+    await f.source.ctx.scopeAgentContributions.stop({ agentId: f.agent.id, expectedCapture: f.selection })
+    const lateReceipts: unknown[] = []
+    releases.push(f.source.ctx.on('domain/changed', (change) => {
+      if (change.domain !== nativeContributionDomain.name || change.key !== f.agent.id || change.operation !== 'put') return
+      const row = nativeContributionDomain.tables.sessions.valueSchema.parse(change.value)
+      lateReceipts.push(...row.samples.filter(sample => sample.captureId === f.selection.captureId && sample.receipt !== undefined))
+    }))
+    release.resolve(undefined)
+    await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()
+    expect(lateReceipts).toEqual([])
+    expect(nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(f.agent.id)).samples).toEqual([])
+    replying.mockRestore()
+
+    const [ownerAddress] = (await f.owner.ctx.scopeAccess.identity()).addresses
+    if (ownerAddress === undefined) throw new Error('Missing owner address')
+    const limits = { expiresAt: Date.now() + 50000, maxSamples: 8, maxSampleBytes: 8192 }
+    const { entry } = await f.owner.ctx.scopeAccess.createContributionEntry({ taskId: f.task.id,
+      sourceKind: 'tool-observations', ownerAddress, expiresAt: limits.expiresAt })
+    const requested = await f.source.ctx.scopeAgentContributions.request({ agentId: f.agent.id, expectedCapture: null,
+      entry, roots: [f.allowed], tools: ['write', 'edit'], limits })
+    if (requested.capture === null) throw new Error('Missing replacement capture')
+    const selection = requested.capture.selection
+    expect(selection.captureId).not.toBe(f.selection.captureId)
+    await expect.poll(async () => (await f.owner.ctx.scopeAccess.contributionApplications({ taskId: f.task.id })).entries
+      .find(item => item.entry.entryId === entry.entryId)?.result.status).toBe('pending')
+    await f.owner.ctx.scopeAccess.approveContributionApplication({ entryId: entry.entryId,
+      expectedProposal: requested.capture.proposal, limits, ownerAddress })
+    await expect.poll(async () => (await f.source.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture?.collecting)
+      .toBe(true)
+    await run(f.source, f.agent, calls('native', [
+      { name: 'write', args: { file_path: 'project/current.txt', content: 'CURRENT_AUTHORIZED_CANARY' } },
+    ]))
+    await expect.poll(() => nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(f.agent.id))
+      .samples.filter(sample => sample.receipt !== undefined).length).toBe(1)
+    const current = nativeContributionDomain.tables.sessions.valueSchema.parse(records.get(f.agent.id))
+    expect(current.samples).toMatchObject([{ captureId: selection.captureId, sample: { sequence: 1 } }])
+    expect(current.samples[0]?.id).not.toBe(original.samples[0]?.id)
+    await run(f.receiver, f.recipient)
+    const visible = assertRequestReplay(f.receiver, f.recipient)
+    expect(visible).toContain('CURRENT_AUTHORIZED_CANARY')
+    expect(visible).not.toContain('PREVIOUS_CAPTURE_CANARY')
+  })
+
   it('persists a real source Session through its configured JSONL provider', async () => {
     const source = await createHost(new TestNetwork(), 'source')
     hosts.push(source)

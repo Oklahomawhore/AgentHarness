@@ -399,7 +399,7 @@ export interface ClaudeScopeSetupConfig {
 }
 ```
 
-Source: [`packages/collaboration/claude-scope/src/index.ts:57`](../packages/collaboration/claude-scope/src/index.ts)
+Source: [`packages/collaboration/claude-scope/src/index.ts:58`](../packages/collaboration/claude-scope/src/index.ts)
 
 <a id="deepseek-aidsh-claude-scopecommand"></a>
 

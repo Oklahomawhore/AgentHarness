@@ -5,6 +5,7 @@ import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/pro
 import { createHash, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import { Context } from '@deepseek-ai/cordis'
 import DevelopmentMeshService from '@deepseek-ai/dsh-development-mesh'
 import type { DevelopmentMeshSnapshot } from '@deepseek-ai/dsh-development-mesh/types'
@@ -1083,6 +1084,88 @@ describe('Claude scope service', () => {
     release.resolve(undefined)
     await cancelled
     expect((await following).receipt.status).toBe('projected')
+  })
+
+  it.each([
+    { kind: 'task', outcome: 'queued-cancel' },
+    { kind: 'task', outcome: 'predecessor-cancel' },
+    { kind: 'task', outcome: 'completed' },
+    { kind: 'read-invitation', outcome: 'queued-cancel' },
+    { kind: 'read-invitation', outcome: 'predecessor-cancel' },
+    { kind: 'read-invitation', outcome: 'completed' },
+  ] as const)('settles queued $kind Hooks after $outcome', async ({ kind, outcome }) => {
+    const independent = kind === 'read-invitation' ? await independentScopes() : undefined
+    const host = independent === undefined ? await boot() : independent.receiver
+    const sessionId = independent === undefined ? 'queued-recipient' : 'read-only-session'
+    if (independent === undefined) {
+      const task = await host.createTask('Independent recipient cancellation')
+      await host.connect(await host.observe(sessionId), task.id)
+    }
+    const compute = host.backend.compute.bind(host.backend)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    let firstSignal: AbortSignal | undefined
+    const computed = vi.spyOn(host.backend, 'compute')
+    const retrieve = independent === undefined ? undefined : host.ctx.scopeAccess.retrieveWithinBudget.bind(host.ctx.scopeAccess)
+    const retrieved = independent === undefined ? undefined : vi.spyOn(host.ctx.scopeAccess, 'retrieveWithinBudget')
+    if (retrieve !== undefined && retrieved !== undefined) retrieved.mockImplementationOnce(async (request, signal) => {
+      firstSignal = signal
+      entered.resolve(undefined)
+      await release.promise
+      return retrieve(request, signal)
+    })
+    else computed.mockImplementationOnce(async (input) => {
+      firstSignal = input.signal
+      entered.resolve(undefined)
+      await release.promise
+      return compute(input)
+    })
+    const predecessorCancellation = new AbortController()
+    const first = host.hook(sessionId, 'UserPromptSubmit', {}, predecessorCancellation.signal)
+    const firstOutcome = first.then(value => value, (error: unknown) => error)
+    let second: ReturnType<typeof host.hook> | undefined
+    let secondOutcome: Promise<unknown> | undefined
+    try {
+      await Promise.race([entered.promise, first])
+      const sessions = host.facility.get('claude_scope')!.table('sessions')
+      const put = sessions.put.bind(sessions)
+      const observed = Promise.withResolvers<undefined>()
+      vi.spyOn(sessions, 'put').mockImplementationOnce(async (key, value) => {
+        await put(key, value)
+        observed.resolve(undefined)
+      })
+      const cancellation = new AbortController()
+      const reason = new Error('Queued recipient cancelled')
+      let settled = false
+      second = host.hook(sessionId, 'UserPromptSubmit', {}, cancellation.signal)
+      secondOutcome = second.then((value) => { settled = true; return value }, (error: unknown) => { settled = true; return error })
+      await Promise.race([observed.promise, second])
+      // The observation's completed promise must enter its projection wait before cancellation.
+      await nextTurn()
+      if (outcome === 'queued-cancel') {
+        cancellation.abort(reason)
+        await expect.poll(() => settled).toBe(true)
+        expect(await secondOutcome).toBe(reason)
+      } else {
+        if (outcome === 'predecessor-cancel') predecessorCancellation.abort(reason)
+        expect(settled).toBe(false)
+      }
+      expect(firstSignal?.aborted).toBe(outcome === 'predecessor-cancel')
+      expect(independent === undefined ? computed : retrieved).toHaveBeenCalledOnce()
+      expect(host.facility.get('claude_scope')!.table('projections').size).toBe(0)
+      release.resolve(undefined)
+      const original = outcome === 'predecessor-cancel' ? undefined : await first
+      if (original === undefined) expect(await firstOutcome).toBe(reason)
+      else expect(original.receipt.status).toBe('projected')
+      const queued = outcome === 'queued-cancel' ? undefined : await second
+      if (queued !== undefined) expect(queued.receipt.status).toBe('projected')
+      const following = await host.hook(sessionId, 'UserPromptSubmit')
+      expect(following.receipt.status).toBe('projected')
+      expect(following.receipt.projectionId).toBeDefined()
+      expect(following.receipt.projectionId).toBe((queued ?? original)?.receipt.projectionId)
+      expect(computed).toHaveBeenCalledTimes(independent === undefined ? outcome === 'predecessor-cancel' ? 2 : 1 : 0)
+      if (independent !== undefined) expect(retrieved).toHaveBeenCalledTimes(outcome === 'queued-cancel' ? 2 : 3)
+    } finally { release.resolve(undefined); await Promise.allSettled([first, firstOutcome, second, secondOutcome]) }
   })
 
   it('clears a stale externally changed binding and sends withdrawal instead of looping', async () => {

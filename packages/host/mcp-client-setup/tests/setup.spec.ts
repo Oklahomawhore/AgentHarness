@@ -572,7 +572,7 @@ describe('MCP client setup', () => {
     'inspects receiving hooks with a %s Codex home without writing configuration', async (home) => {
       const { root, options } = await fixture()
       await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nprintf "[]"\n')
-      const { CODEX_HOME: _codexHome, ...environment } = options.environment
+      const { CODEX_HOME: _codexHome, ...environment } = { ...options.environment }
       const result = await listMcpClients({ ...options, environment: {
         ...environment, ...(home === 'relative' ? { CODEX_HOME: 'relative-codex-home' } : {}),
       } })

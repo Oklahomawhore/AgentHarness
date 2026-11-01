@@ -83,6 +83,7 @@ Hook 载体提供稳定的 `clientId`、Codex 的 `sessionId`、绝对 `cwd`、�
 <a id="known-limitations-and-deferred-work"></a>
 
 - Codex 向后代 Hook 报告父会话 ID。逻辑接收范围包含这些后代；本适配器无法用该 ID 隔离子 Agent。
+- 外部运行时决定哪些工具完成会触发 Hook。失败的 MCP 工具可能不会触发 `PostToolUse`；上下文更新会等到下一次受支持的 Hook。
 - 本适配器只接收上下文，不授予工具采集、发布、自动执行或控制其他用户 Agent 的权限。
 - 撤回后，早先文本仍留在 Codex 历史中。准备完成不证明模型采用或历史擦除。
 - 保留容量有界，且不自动裁剪。运维者需要配置足够的明确限制。

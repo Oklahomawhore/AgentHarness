@@ -2,6 +2,7 @@
 
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
+import { addAbortListener } from 'node:events'
 import { isDeepStrictEqual } from 'node:util'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
@@ -993,12 +994,18 @@ export default class ClaudeScopeService extends TypertRemoteService {
     return { output: {}, receipt: { status: admitted.outcome } }
   }
 
-  private project(domain: ScopeDomain, key: ClaudeScopeSessionKey, signal: AbortSignal): Promise<ScopeProjection | undefined> {
+  private async project(domain: ScopeDomain, key: ClaudeScopeSessionKey, signal: AbortSignal): Promise<ScopeProjection | undefined> {
     const pending = this.pendingProjections.get(key)
-    if (pending !== undefined) return pending.then(
-      () => this.project(domain, key, signal),
-      () => this.project(domain, key, signal),
-    )
+    if (pending !== undefined) {
+      signal.throwIfAborted()
+      const cancelled = Promise.withResolvers<never>()
+      const listener = addAbortListener(signal, () => { cancelled.reject(signal.reason) })
+      try {
+        // The originating Hook owns predecessor failures; this Hook recomputes its authorized projection.
+        await Promise.race([pending.then(() => undefined, () => undefined), cancelled.promise])
+      } finally { listener[Symbol.dispose]() }
+      return this.project(domain, key, signal)
+    }
     const operation = this.computeAndStore(domain, key, signal)
     this.pendingProjections.set(key, operation)
     this.operations.add(operation)
