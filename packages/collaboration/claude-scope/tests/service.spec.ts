@@ -101,8 +101,14 @@ const contexts: Context[] = []
 const directories: string[] = []
 
 afterEach(async () => {
-  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  const disposed = await Promise.allSettled(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  const removed = await Promise.allSettled(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  vi.restoreAllMocks()
+  const failures: unknown[] = []
+  for (const result of [...disposed, ...removed]) {
+    if (result.status === 'rejected') failures.push(result.reason)
+  }
+  if (failures.length > 0) throw new AggregateError(failures, 'Claude scope fixture cleanup failed')
 })
 
 async function boot(
@@ -399,17 +405,28 @@ describe('Claude scope service', () => {
       && entry.change.kind === 'observed-interval-ended')).toHaveLength(1)
   })
 
-  it('persists a racing admission before its terminal owner event and prevents late completion from reviving it', async () => {
+  it.each([0, 1, 2])('retains a racing admission and stops the remaining work with %i API operations', async (operations) => {
     const owner = await boot()
     const task = await owner.createTask('Remote admission and leave overlap')
     const link: RemoteLink = { owner, offline: false, dropAdmission: false, dropEnd: false }
     const source = await bootRemote(link)
+    const admission = vi.spyOn(source.ctx.developmentTasks, 'admitObservedRemote')
     const key = await source.observe('remote-race')
-    await source.connect(key, task.id)
+    const filePath = join(source.directory, 'openapi.json')
+    const document = JSON.parse(apiDocument(['retire-racing-nonce'])) as { paths: { '/orders': { post: object; put?: object } } }
+    if (operations === 2) document.paths['/orders'].put = { ...document.paths['/orders'].post, operationId: 'replaceOrder' }
+    const content = JSON.stringify(document)
+    await writeFile(filePath, apiDocument())
+    await source.scope.join({ sessionKey: key, taskId: task.id, responsibility: 'backend', roots: [source.directory],
+      bashCommands: [], openApiSources: operations === 0 ? [] : [
+        { name: 'orders-api', filePath, method: 'post', path: '/orders' },
+        ...operations === 2 ? [{ name: 'replace-orders', filePath, method: 'put' as const, path: '/orders' }] : [],
+      ] })
     const identity = await remoteIdentity(owner, source, key)
     await owner.ctx.developmentTasks.approveObservedInterval(identity)
-    const input = source.tool('racing-write', 'retire-racing-nonce')
+    const input = { tool_use_id: 'racing-write', tool_name: 'Write', tool_input: { file_path: filePath, content } }
     await source.hook('remote-race', 'PreToolUse', input)
+    await writeFile(filePath, content)
     const entered = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
     owner.ctx.on('development-task/persist', async (entry) => {
@@ -418,19 +435,50 @@ describe('Claude scope service', () => {
       await release.promise
     })
     const completing = source.hook('remote-race', 'PostToolUse', input)
-    await entered.promise
-    const leaving = source.scope.leave({ sessionKey: key })
-    release.resolve(undefined)
-    expect((await completing).receipt.reason).toBe('binding-changed-after-admission')
-    expect((await leaving).sharingState).toBeUndefined()
-    const events = owner.ctx.developmentTasks.log().filter(entry => entry.taskId === task.id)
-    expect(events.map(entry => entry.change.kind)).toEqual(['task-created', 'observed-interval-opened', 'context-published', 'observed-interval-ended'])
-    expect(source.ctx.developmentTasks.get({ taskId: task.id }).context).toHaveLength(0)
-    expect((await source.hook('remote-race', 'PostToolUse', input)).receipt.reason).toBe('session-not-joined')
-    const receiver = await owner.observe('owner-recipient')
-    await owner.connect(receiver, task.id)
-    const projection = (await owner.hook('owner-recipient', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
-    expect(projection).not.toContain('retire-racing-nonce')
+    let leaving: Promise<unknown> | undefined
+    try {
+      await Promise.race([entered.promise, completing.then(() => { throw new Error('Completion missed its admission barrier') })])
+      link.dropEnd = operations > 0
+      leaving = source.scope.leave({ sessionKey: key })
+      release.resolve(undefined)
+      expect((await completing).receipt.reason).toBe(operations === 0 ? 'binding-changed-after-admission' : 'binding-changed')
+      const stopped = await leaving
+      expect(stopped).toMatchObject(operations === 0 ? {} : {
+        sharingState: 'withdrawal-pending', withdrawalTaskId: task.id, sharingIssue: 'owner-unavailable',
+      })
+      const events = owner.ctx.developmentTasks.log().filter(entry => entry.taskId === task.id)
+      expect(events.map(entry => entry.change.kind)).toEqual(['task-created', 'observed-interval-opened', 'context-published', 'observed-interval-ended'])
+      expect(source.ctx.developmentTasks.get({ taskId: task.id }).context).toHaveLength(0)
+      if (operations > 0) {
+        const lease = [...source.facility.get('claude_scope')!.table('leases').entries()][0]![1] as ScopeToolLease
+        expect(lease.artifactSamples).toHaveLength(operations)
+        expect(lease.artifactSamples?.map(sample => sample.receipt?.sourceId))
+          .toEqual(lease.artifactSamples?.map((sample, index) => index === 0 ? sample.sourceId : undefined))
+        expect(lease.completion).toBeUndefined()
+        expect(admission).toHaveBeenCalledTimes(1)
+        await source.ctx.fiber.dispose()
+        const restored = await bootRemote(link, source.pool, source.directory)
+        const restoredAdmission = vi.spyOn(restored.ctx.developmentTasks, 'admitObservedRemote')
+        const retained = [...restored.facility.get('claude_scope')!.table('leases').entries()][0]![1] as ScopeToolLease
+        expect(retained).toEqual(lease)
+        expect(restoredAdmission).not.toHaveBeenCalled()
+        expect((await restored.hook('remote-race', 'PostToolUse', input)).receipt.status).toBe('omitted')
+        expect(restoredAdmission).not.toHaveBeenCalled()
+        link.dropEnd = false
+        expect((await restored.scope.leave({ sessionKey: key })).sharingState).toBeUndefined()
+        expect(restored.facility.get('claude_scope')!.table('leases').size).toBe(0)
+        expect(owner.ctx.developmentTasks.log().filter(entry => entry.taskId === task.id)).toEqual(events)
+      } else {
+        expect((await source.hook('remote-race', 'PostToolUse', input)).receipt.reason).toBe('session-not-joined')
+      }
+      const receiver = await owner.observe('owner-recipient')
+      await owner.connect(receiver, task.id)
+      const projection = (await owner.hook('owner-recipient', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+      expect(projection).not.toContain('retire-racing-nonce')
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completing, ...(leaving === undefined ? [] : [leaving])])
+    }
   })
 
   it('retains a pending stop when the owner rejects it and exposes a stable issue without clearing evidence', async () => {
@@ -760,7 +808,7 @@ describe('Claude scope service', () => {
     expect(retired).not.toContain('before_failure')
   })
 
-  it.each(['lease', 'artifact'] as const)('rejects restored pending %s evidence from a different source without restamping it', async (record) => {
+  it.each(['lease', 'artifact', 'sample'] as const)('rejects restored pending %s evidence from a different source without restamping it', async (record) => {
     const first = await boot()
     const scenario = await apiScenario(first)
     const input = scenario.tool('stored-mismatch', apiDocument())
@@ -774,17 +822,27 @@ describe('Claude scope service', () => {
     const lease = entry[1] as ScopeToolLease
     if (record === 'lease') {
       records.set(entry[0], { ...lease, epoch: { ...lease.epoch, seq: lease.epoch.seq + 1 } })
-    } else {
+    } else if (record === 'artifact') {
       const artifacts = first.pool.media.get('claude_scope')!.tables.get('artifacts')!
       const row = [...artifacts.entries()][0]!
       const chain = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(row[1])
       artifacts.set(row[0], { ...chain, artifactId: 'f'.repeat(64) })
+    } else {
+      records.set(entry[0], claudeScopeDomainSpec.tables.leases.valueSchema.parse({ ...lease,
+        artifactSamples: lease.artifactSamples?.map(sample => ({ ...sample, observation: {
+          kind: 'openapi-artifact', version: 1, artifactId: sample.observation.artifactId,
+          sourceName: sample.observation.sourceName, grantId: sample.observation.grantId,
+          sequence: sample.observation.sequence, operation: sample.observation.operation,
+          state: 'revoked', reason: 'grant-ended',
+        } })),
+      }))
     }
     const taskTables = first.pool.media.get('development_context_tasks')!.tables
     const before = structuredClone([...taskTables].map(([name, rows]) => [name, [...rows]]))
     await expect(boot(first.pool, first.directory)).rejects.toThrow(record === 'lease'
       ? 'pending artifact lease does not match its original Task interval'
-      : 'pending artifact evidence does not match its original read grant')
+      : record === 'artifact' ? 'pending artifact evidence does not match its original read grant'
+        : 'a tool sample cannot revoke an artifact grant')
     expect([...taskTables].map(([name, rows]) => [name, [...rows]])).toEqual(before)
   })
 
@@ -878,7 +936,91 @@ describe('Claude scope service', () => {
     expect(evidence).not.toContain('old_field')
   })
 
-  it('discards an in-flight sample after leave invalidates its grant and retires prior evidence', async () => {
+  it('checks collection permission again before reading after its initial authority snapshot', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    const input = scenario.tool('leave-before-read', apiDocument(['must_not_read']))
+    await host.hook('api-author', 'PreToolUse', input)
+    await writeFile(scenario.source.filePath, input.tool_input.content)
+    const before = structuredClone(host.ctx.developmentTasks.log())
+    const sampled = vi.spyOn(OpenApi, 'sampleOpenApiSource')
+    const actual = host.ctx.developmentTasks.assignmentLog.bind(host.ctx.developmentTasks)
+    let leaving: Promise<unknown> | undefined
+    // The synchronous authority snapshot can precede a control change at the next async continuation.
+    vi.spyOn(host.ctx.developmentTasks, 'assignmentLog').mockImplementationOnce(() => {
+      const snapshot = actual()
+      queueMicrotask(() => { leaving = host.scope.leave({ sessionKey: scenario.a }) })
+      return snapshot
+    })
+    const completion = host.hook('api-author', 'PostToolUse', input)
+    try {
+      expect((await completion).receipt.reason).toBe('binding-changed')
+      expect(leaving).toBeDefined()
+      await leaving
+      expect(sampled).not.toHaveBeenCalled()
+      expect(host.ctx.developmentTasks.log()).toEqual(before)
+    } finally {
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
+  })
+
+  it.each(['local', 'remote'] as const)('reports lost outbox storage after %s artifact admission without abandoning withdrawal', async (authority) => {
+    const owner = await boot()
+    const task = await owner.createTask('Separate owner and outbox commits')
+    const link: RemoteLink = { owner, offline: false, dropAdmission: false, dropEnd: false }
+    const source = authority === 'local' ? owner : await bootRemote(link)
+    const key = await source.observe('lost-artifact-outbox')
+    const filePath = join(source.directory, 'openapi.json')
+    const content = apiDocument(['committed_field'])
+    await writeFile(filePath, content)
+    await source.scope.join({ sessionKey: key, taskId: task.id, responsibility: 'backend', roots: [source.directory],
+      bashCommands: [], openApiSources: [{ name: 'orders-api', filePath, method: 'post', path: '/orders' }] })
+    if (authority === 'remote') await owner.ctx.developmentTasks.approveObservedInterval(await remoteIdentity(owner, source, key))
+    const input = { tool_use_id: 'lost-outbox-write', tool_name: 'Write', tool_input: { file_path: filePath, content } }
+    await source.hook('lost-artifact-outbox', 'PreToolUse', input)
+    const leases = source.facility.get('claude_scope')!.table('leases')
+    // Owner admission and source outbox storage do not share a transaction.
+    owner.ctx.on('development-task/persist', async (entry) => {
+      if (entry.change.kind !== 'context-published') return
+      for (const [id] of leases.entries()) await leases.delete(id)
+    })
+    await expect(source.hook('lost-artifact-outbox', 'PostToolUse', input))
+      .rejects.toThrow('admitted artifact lost its durable outbox')
+    expect(leases.size).toBe(0)
+    expect(source.facility.get('claude_scope')!.table('artifacts').size).toBe(1)
+    const committed = owner.ctx.developmentTasks.get({ taskId: task.id }).context
+    expect(committed).toHaveLength(1)
+    expect(committed[0]?.observation).toMatchObject({ state: 'valid', facts: { requiredRequestFields: ['committed_field'] } })
+    await source.scope.leave({ sessionKey: key })
+    expect(source.facility.get('claude_scope')!.table('artifacts').size).toBe(0)
+    expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context.at(-1))
+      .toMatchObject(authority === 'local' ? { observation: { state: 'revoked' } } : { observedIntervalEnded: true })
+  })
+
+  it('blocks fresh reads from a retained retirement marker despite a stale restored session grant', async () => {
+    const first = await boot()
+    const scenario = await apiScenario(first)
+    await scenario.change('before-retiring', apiDocument(['retiring_field']))
+    const session = claudeScopeDomainSpec.tables.sessions.valueSchema.parse(first.facility.get('claude_scope')!.table('sessions').get(scenario.a))
+    vi.spyOn(first.ctx.developmentTasks, 'revokeObservedArtifact').mockRejectedValueOnce(new Error('retain retirement intent'))
+    await expect(first.scope.leave({ sessionKey: scenario.a })).rejects.toThrow('retain retirement intent')
+    await first.ctx.fiber.dispose()
+    first.pool.media.get('claude_scope')!.tables.get('sessions')!.set(scenario.a, session)
+    const second = await boot(first.pool, first.directory)
+    const input = scenario.tool('stale-grant-write', apiDocument(['must_not_read']))
+    await second.hook('api-author', 'PreToolUse', input)
+    await writeFile(scenario.source.filePath, input.tool_input.content)
+    const before = structuredClone(second.ctx.developmentTasks.log())
+    const sampled = vi.spyOn(OpenApi, 'sampleOpenApiSource')
+    await expect(second.hook('api-author', 'PostToolUse', input)).rejects.toThrow('artifact grant is being revoked')
+    expect(sampled).not.toHaveBeenCalled()
+    expect(second.ctx.developmentTasks.log()).toEqual(before)
+    await second.scope.leave({ sessionKey: scenario.a })
+    expect(second.facility.get('claude_scope')!.table('artifacts').size).toBe(0)
+    expect(second.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.at(-1)?.observation?.state).toBe('revoked')
+  })
+
+  it.each(['sampling', 'persistence'] as const)('discards an in-flight sample when leave starts during %s', async (phase) => {
     const host = await boot()
     const scenario = await apiScenario(host)
     await scenario.change('before-raced-leave', apiDocument(['before_leave']))
@@ -887,23 +1029,41 @@ describe('Claude scope service', () => {
     await writeFile(scenario.source.filePath, apiDocument(['after_leave']))
     const entered = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
-    const actual = OpenApi.sampleOpenApiSource
-    vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
-      const sample = await actual(...args)
-      entered.resolve(undefined)
-      await release.promise
-      return sample
-    })
+    if (phase === 'sampling') {
+      const actual = OpenApi.sampleOpenApiSource
+      vi.spyOn(OpenApi, 'sampleOpenApiSource').mockImplementationOnce(async (...args) => {
+        const sample = await actual(...args)
+        entered.resolve(undefined)
+        await release.promise
+        return sample
+      })
+    } else {
+      const records = host.facility.get('claude_scope')!.table('artifacts')
+      const actual = records.put.bind(records)
+      vi.spyOn(records, 'put').mockImplementationOnce(async (...args) => {
+        await actual(...args)
+        entered.resolve(undefined)
+        await release.promise
+      })
+    }
     const completion = host.hook('api-author', 'PostToolUse', input)
-    await entered.promise
-    const leaving = host.scope.leave({ sessionKey: scenario.a })
-    release.resolve(undefined)
-    expect((await completion).receipt.reason).toBe('binding-changed')
-    await leaving
-    const evidence = (await host.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
-    expect(evidence).toContain('"evidence":"revoked"')
-    expect(evidence).not.toContain('after_leave')
-    expect(host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.filter(item => item.observation?.state === 'valid')).toHaveLength(1)
+    let leaving: Promise<unknown> | undefined
+    try {
+      await Promise.race([entered.promise, completion.then(() => { throw new Error('Completion missed its sampling barrier') })])
+      leaving = host.scope.leave({ sessionKey: scenario.a })
+      release.resolve(undefined)
+      expect((await completion).receipt.reason).toBe('binding-changed')
+      await leaving
+      const evidence = (await host.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+      expect(evidence).toContain('"evidence":"revoked"')
+      expect(evidence).not.toContain('after_leave')
+      const observations = host.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.flatMap(item => item.observation ?? [])
+      expect(observations.filter(item => item.state === 'valid')).toHaveLength(1)
+      expect(observations.at(-1)).toMatchObject({ state: 'revoked', sequence: phase === 'sampling' ? 2 : 3 })
+    } finally {
+      release.resolve(undefined)
+      await Promise.allSettled([completion, ...(leaving === undefined ? [] : [leaving])])
+    }
   })
 
   it('publishes an authorized in-flight sample while another session leaves the same Task', async () => {

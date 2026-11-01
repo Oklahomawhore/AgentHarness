@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-02-claude-scope-adapter.md
-2026-10-02-claude-scope-adapter.md: 2f99dd32b2d7bf5feadb6fdd08f0fd609fbc321d
-2026-10-02-claude-scope-adapter.zh.md: 3372806a7a2703312b0549323b1887f5a7c44eed
+2026-10-02-claude-scope-adapter.md: d0f946930118e3602196e800830a701ae62c36b0
+2026-10-02-claude-scope-adapter.zh.md: 976c6639e2c2bbfb2e39dd48590d9a59320d3ea9
