@@ -73,6 +73,14 @@ The initial allowlist covers explicitly authorized Edit, Write, and constrained 
 
 Claude hook stdout confirms local output only: another hook or a cancelled request can still prevent model inclusion. Without a host admission receipt, each supported injection event resends the current exact projection; caching saves computation rather than suppressing delivery. External additionalContext is appended history, so a newer projection names its predecessor and a withdrawal marks it inactive without claiming to erase earlier context. Idle wake requires a separate verified path after next-request delivery works. Official integration details remain owned by [Claude Hooks](https://code.claude.com/docs/en/hooks).
 
+### Codex receiving experiment
+
+Prefer [MCP tool hooks](https://learn.chatgpt.com/docs/hooks#mcp-tool-hooks) on the existing connection over a second command transport. A controlled Codex `0.166.0-alpha.5.1` experiment verifies `UserPromptSubmit` and `PostToolUse` delivery into captured developer messages. One prompt and two tool completions receive distinct hook outputs without another user message or a model-selected recall. Normal exact-definition trust is required; the untrusted control executes no hook. These tests use a local scripted response endpoint and no model account.
+
+This runtime consumes hook JSON from MCP text content rather than a competing `structuredContent` value. After the second delivery, the captured request retains both the earlier context and its withdrawal notice. A 20,000-character MCP context is spilled and shortened; setting the command-handler option `additionalContextLimit = 0` does not lift this MCP limit in the tested runtime. The Consumer must bound complete inline output and frame revisions and withdrawals explicitly; it cannot claim historical erasure, idle wake, or correct model adoption from this carrier evidence.
+
+A Codex Consumer still needs its own durable external-session binding, fresh authorization through ScopeAccess, exact delivered output, and explicit receiving controls. Reuse existing transport and read authority; do not forward stored Task history as current context or disguise Codex sessions as Claude sessions. Subagent receiving identity, restart, cancellation, expiry, withdrawal, bounded full-output delivery, and dependent work remain acceptance obligations before shipping this integration.
+
 ### Representations
 
 Embedding retrieval is an immediate implementation option for relevance and deduplication, while delivery can remain text. Hidden-state or KV Cache transfer is a different provider category that requires compatible model internals and explicit receiver support. [LatentMAS](https://arxiv.org/html/2511.20639v3) assumes compatible Transformer structure, and [Interlat](https://arxiv.org/html/2511.09149) trains communication components and states the limitation of API-only models. A vector serialized into text does not satisfy latent communication.

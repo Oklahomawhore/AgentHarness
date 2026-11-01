@@ -73,6 +73,14 @@ Consumer 在 Session 中记录实际选中的输出，并按配置上限检查�
 
 Claude hook 的 stdout 只确认本地输出：其他 hook 或请求取消仍可能阻止内容进入模型。没有宿主采用回执时，每次受支持的注入事件都重送当前准确投影；缓存节省计算，不省略投递。外部 additionalContext 会追加到历史，因此新投影标明其前序投影，撤回内容将其标为失效，而不声称擦除先前上下文。下一请求投递工作后，空闲唤醒还需要单独验证路径。官方集成细节以 [Claude Hooks](https://code.claude.com/docs/en/hooks) 为准。
 
+### Codex 接收实验
+
+优先使用现有连接上的 [MCP tool hooks](https://learn.chatgpt.com/docs/hooks#mcp-tool-hooks)，不另建 command transport。受控 Codex `0.166.0-alpha.5.1` 实验验证了 `UserPromptSubmit` 与 `PostToolUse` 的输出进入所捕获的 developer 消息。一次 prompt 和两次工具完成收到不同 hook 输出，无需用户再次发消息或模型主动 recall。必须正常信任精确的 hook 定义；未信任的反向用例不执行 hook。这些测试使用本地脚本响应端点，不使用模型账户。
+
+该运行时从 MCP 文本内容读取 hook JSON，而不是采用同时提供的不同 `structuredContent` 值。第二次投递后，捕获的请求同时保留先前上下文及其撤回通知。20,000 字符的 MCP 上下文会写入磁盘并缩短；设置 command handler 的 `additionalContextLimit = 0` 在该受测运行时不能解除这一 MCP 限制。Consumer 必须限制完整的内联输出，并明确标记修订与撤回；这些通道证据不能证明历史内容已被抹除、空闲唤醒或模型正确采用。
+
+Codex Consumer 仍需独立的耐久外部会话绑定、通过 ScopeAccess 重新验证当前授权、准确的已投递输出及明确的接收控制。复用现有传输和读取权限，不将存储的 Task 历史当作当前上下文转发，也不将 Codex 会话伪装为 Claude 会话。子 agent 接收身份、重启、取消、过期、撤回、有界全文投递及依赖工作仍是该集成发布前的验收义务。
+
 ### 表示形式
 
 embedding 检索可以立即用于相关性与去重，投递仍可保持文本。隐藏状态或 KV Cache 传输属于不同 provider 类别，需要兼容的模型内部能力及明确的接收端支持。[LatentMAS](https://arxiv.org/html/2511.20639v3)假设兼容的 Transformer 结构，[Interlat](https://arxiv.org/html/2511.09149)训练通信组件并说明了仅提供 API 的模型限制。将向量序列化为文本不构成潜在表示通信。
