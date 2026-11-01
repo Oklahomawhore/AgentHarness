@@ -477,7 +477,7 @@ it.each([false, true])('orders an owned freeze write before local stop, with rem
 })
 
 
-it.each([false, true])('ends cold version-two source state without replaying or reselecting history (acknowledged: %s)', async (acknowledged) => {
+it.each([false, true])('retains cold history through capacity rejection and repair; acknowledged=%s', async (acknowledged) => {
   const f = await fixture()
   await f.write('COLD_HISTORICAL_OBSERVATION')
   await expect.poll(() => f.localRow().samples.length).toBe(1)
@@ -488,13 +488,33 @@ it.each([false, true])('ends cold version-two source state without replaying or 
   await remote.approve()
   await expect.poll(async () => (await f.status()).capture?.initialization?.coverage.acknowledged).toBe(acknowledged ? 1 : 0)
   expect(f.remoteRow()).toMatchObject({ version: 2, capture: { initialization: { state: 'frozen' } } })
+  expect(f.localRow().samples).toHaveLength(1)
+  expect(f.remoteRow().samples).toHaveLength(1)
   const inputs = await captureColdInputs(f.source, ['scope_agent_contributions', 'scope_agent_local_contributions',
     'development_context_tasks', 'development_rooms', 'scope_access'], f.agent)
   const copied = await mkdtemp(join(tmpdir(), 'dsh-history-source-restart-'))
   scratchRoots.push(copied)
   await f.source.ctx.fiber.dispose()
   await writeColdInputs(copied, inputs)
-  const restarted = await createHost(f.network, 'source', 'native', { ownerLocal: true, root: copied, peerId: f.source.peerId })
+  const ownerEvents = structuredClone(f.owner.ctx.developmentTasks.log())
+  const limited = await createHost(f.network, 'source', 'native', { ownerLocal: true, root: copied,
+    peerId: f.source.peerId, maxSessions: 1, maxLeases: 1 })
+  hosts.push(limited)
+  await expect(limited.ctx.scopeAgentContributions.status({ agentId: f.agent.id }))
+    .rejects.toThrow('restored inventory exceeds configured retention')
+  for (const name of ['scope_agent_contributions', 'scope_agent_local_contributions']) {
+    const path = join('domains', `${name}.json`)
+    const original = inputs.files.find(file => file.path === path)
+    if (original === undefined) throw new Error('Original source domain missing')
+    expect(await readFile(join(copied, path))).toEqual(Buffer.from(original.bytes))
+  }
+  expect(await limited.readEvents(f.agent)).toEqual(inputs.events)
+  expect(limited.adapter.requests).toEqual([])
+  expect(f.owner.ctx.developmentTasks.log()).toEqual(ownerEvents)
+  await limited.ctx.fiber.dispose()
+
+  const restarted = await createHost(f.network, 'source', 'native', { ownerLocal: true, root: copied,
+    peerId: f.source.peerId, maxSessions: 1, maxLeases: 2 })
   hosts.push(restarted)
   expect(await restarted.readEvents(f.agent)).toEqual(inputs.events)
   await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: f.agent.id })).capture).toBeNull()

@@ -1328,6 +1328,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
   /**
    * Restore a durable mixed-origin Task log without rewriting it.
    * Parent dependencies are resolved before child events.
+   * Restoring more than maxTasks rejects without rewriting persisted events.
    * Configured capacity must retain every local live artifact grant's revocation reservation.
    * @param candidates - validated persisted events.
    */
@@ -1529,6 +1530,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
     }
     const projected = this.projectEntry(current, entry, code)
     if (entry.change.kind === 'task-created') {
+      if (this.tasks.size >= this.config.maxTasks) throw new DevelopmentTaskError('Task limit reached', 'LIMIT_EXCEEDED')
       const block = projected.inheritedContextBlockId === undefined ? undefined : this.contextBlocks.get(projected.inheritedContextBlockId)
       if (block !== undefined) for (const source of block.sources) {
         const parent = this.inheritedSource(source.parent)

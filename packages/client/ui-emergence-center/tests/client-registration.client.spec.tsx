@@ -13,7 +13,8 @@ import type { ClaudeScopeJoinRequest, ClaudeScopeSessionSummary, ClaudeScopeSetu
   DevelopmentRoomDirectorySnapshot, McpClientSnapshot, RemoteResult, ScopeAgentBindingStatus, ScopeAgentBindRequest,
   ScopeAgentBindingRequest,
   ScopeAgentResumeRequest, ScopeAgentContributionStatus, ScopeAgentContributionRequest, ClaudeScopeContributionDetail,
-  ClaudeScopePrepareContributionRequest, ClaudeScopeActivateContributionRequest, ScopeContributionApproval,
+  ClaudeScopePrepareContributionRequest, ClaudeScopeContributionPreparation, ClaudeScopeActivateContributionRequest,
+  ScopeContributionApproval,
   ScopeContributionApproveRequest, ScopeContributionInvitation, ScopeContributionTransfer,
   ClaudeScopeRequestContributionRequest, DevelopmentTaskCheckoutRequest,
   ScopeAgentLocalContributionRequest, ScopeAgentContributionStopRequest, ScopeAgentContributionPermissionDraft,
@@ -86,7 +87,9 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
       currentSessions = [session]; return ok(session)
     })
     let sourceDetail: ClaudeScopeContributionDetail = { session, capture: null }
-    const prepare = vi.fn(async (request: ClaudeScopePrepareContributionRequest) => {
+    const prepare = vi.fn(async (
+      request: ClaudeScopePrepareContributionRequest,
+    ): Promise<RemoteResult<ClaudeScopeContributionPreparation>> => {
       const prepared: ClaudeScopeSessionSummary = { ...session, contributionState: 'prepared' }
       currentSessions = [prepared]
       sourceDetail = { session: prepared, capture: { selection: capture.selection, proposal: capture.proposal,
@@ -640,6 +643,74 @@ describe('Collaboration client registration lifecycle', () => {
       expect(subject.bind).not.toHaveBeenCalled()
       expect(diagnostics).toHaveBeenCalledOnce()
     } finally {
+      try { await subject.runtime.dispose() }
+      finally { diagnostics.mockRestore() }
+    }
+  })
+
+  it.each(['reply', 'lost-reply'] as const)('settles the original source after selection changes during preparation (%s)', async (outcome) => {
+    const other: ClaudeScopeSessionSummary = { ...session, sessionKey: 'independent-source' as typeof session.sessionKey,
+      sessionId: 'other-source-session', cwd: '/other-project' }
+    const subject = await mountPanel([session, other])
+    const release = Promise.withResolvers<Awaited<ReturnType<typeof subject.prepare>>>()
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let original: ClaudeScopeContributionDetail = { session, capture: null }
+    subject.contributionDetail.mockImplementation(async ({ sessionKey }) => ok(sessionKey === session.sessionKey
+      ? original : { session: other, capture: null }))
+    subject.prepare.mockReturnValueOnce(release.promise)
+    const sourceControls = () => {
+      const element = screen.getByRole('heading', { name: zh['contribution.sourceTitle'] }).closest('section')
+      if (element === null) throw new Error('Selected source panel missing')
+      return within(element)
+    }
+    try {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      await sourceControls().findByText(zh['contribution.stopped'])
+      fireEvent.click(sourceControls().getByText(zh['contribution.application.manual']))
+      fireEvent.click(sourceControls().getByRole('button', { name: zh['contribution.prepare'] }))
+      expect(subject.prepare).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, expectedCapture: null,
+        roots: ['/project'], source: { kind: 'tool-observations', tools: ['Write', 'Edit'] } })
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(other.sessionId) }))
+      await sourceControls().findByText(zh['contribution.stopped'])
+      expect(sourceControls().getByLabelText<HTMLTextAreaElement>(zh['contribution.roots']).value).toBe('/other-project')
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      fireEvent.click(sourceControls().getByText(zh['contribution.application.manual']))
+      expect(sourceControls().getByRole('button', { name: zh['contribution.prepare'] })).toHaveProperty('disabled', true)
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(other.sessionId) }))
+      await sourceControls().findByText(zh['contribution.stopped'])
+      const draft = sourceControls().getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste'])
+      fireEvent.change(draft, { target: { value: 'Unsubmitted independent source entry' } })
+      expect(sourceControls().getByRole('button', { name: zh['contribution.application.verify'] })).toHaveProperty('disabled', false)
+      const prepared: ClaudeScopeSessionSummary = { ...session, contributionState: 'prepared' }
+      original = { session: prepared, capture: { selection: capture.selection, proposal: capture.proposal,
+        proposalText: JSON.stringify(proposalDocument), roots: ['/project'],
+        source: { kind: 'tool-observations', tools: ['Write', 'Edit'] }, invitation: null, application: null } }
+      subject.sessions.mockResolvedValue(ok([prepared, other]))
+      const reads = subject.contributionDetail.mock.calls.length
+      await act(async () => {
+        release.resolve(outcome === 'reply' ? ok({ session: prepared, proposal: capture.proposal,
+          proposalText: JSON.stringify(proposalDocument) })
+          : { ok: false, error: new RemoteError('gateway/internal', 'Private preparation reply lost', {}) })
+        await release.promise
+      })
+      await waitFor(() => { expect(subject.contributionDetail.mock.calls.length).toBeGreaterThan(reads) })
+      expect(sourceControls().getByLabelText<HTMLTextAreaElement>(zh['contribution.application.paste'])).toBe(draft)
+      expect(draft.value).toBe('Unsubmitted independent source entry')
+      expect(sourceControls().queryByLabelText(zh['contribution.proposalText'])).toBeNull()
+      expect(sourceControls().queryByRole('alert')).toBeNull()
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(session.sessionId) }))
+      expect((await sourceControls().findByLabelText<HTMLTextAreaElement>(zh['contribution.proposalText'])).value)
+        .toBe(JSON.stringify(proposalDocument))
+      await waitFor(() => { expect(sourceControls().getByRole('button', { name: zh['contribution.stop'] })).toHaveProperty('disabled', false) })
+      expect(subject.prepare).toHaveBeenCalledOnce()
+      expect(subject.requestSource).not.toHaveBeenCalled()
+      expect(subject.activate).not.toHaveBeenCalled()
+      expect(subject.join).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+      expect(diagnostics).toHaveBeenCalledTimes(outcome === 'reply' ? 0 : 1)
+    } finally {
+      release.resolve(ok({ session, proposal: capture.proposal, proposalText: JSON.stringify(proposalDocument) }))
+      await release.promise
       try { await subject.runtime.dispose() }
       finally { diagnostics.mockRestore() }
     }

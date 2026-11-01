@@ -79,7 +79,7 @@ For joint reading, explicitly include the observed read-state sequence with rout
 
 Agent disposal stops both captures and retains their separate termination work until each owner confirms it. A local Task clear or rebind ends only its old local capture. Remote file permission belongs to the Session and retains its explicit roots, tools, and remote Task across local reassignment. Restart waits for application readiness, then ends both retained permissions without resuming collection. Active capture retries reuse persisted samples unchanged. Cold restoration retains the outbox only until termination is confirmed; unsaved completions cannot survive process death.
 
-New source consent and cold restoration reclaim completely cleared Sessions only when the inventory needs space. Both roles must have no capture, samples, or pending receiving continuation. Unfinished cancellation and withdrawal keep their slots. Reclamation persists revision floors before deleting rows, so status revisions do not decrease after partial failure or renewed consent. Cold inventories containing too many unfinished Sessions still reject without discarding their authority.
+New source consent and cold restoration reclaim completely cleared Sessions only when the inventory needs space. Both roles must have no capture, samples, or pending receiving continuation. Unfinished cancellation and withdrawal keep their slots. Reclamation persists revision floors before deleting rows, so status revisions do not decrease after partial failure or renewed consent. Cold inventories exceeding the combined local/remote sample allowance or unfinished-Session limit reject without discarding their authority.
 
 -----
 
