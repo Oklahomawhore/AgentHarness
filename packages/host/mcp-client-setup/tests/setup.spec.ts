@@ -569,6 +569,41 @@ describe('MCP client setup', () => {
   })
 
   // Official Codex list output includes the user's independent server-enabled policy.
+  it.skipIf(process.platform === 'win32')('adds receiving hooks to a matching Codex MCP registration without registering it again', async () => {
+    const { root, options } = await fixture()
+    const identity = (await listMcpClients(options)).clients.find(client => client.id === 'codex')!
+    const transport = { type: 'stdio', command: options.nodePath,
+      args: [options.dshPath, '--profile', 'mcp', '--connection', options.descriptorPath,
+        '--participant-id', identity.participantId, '--display-name', identity.displayName],
+      env: { DSH_HOME: options.harnessHome } }
+    const mutationLog = join(root, 'unexpected-registration.log')
+    await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nif [ "$1" = mcp ] && [ "$2" = list ]; then printf "%s" "$MCP_SETUP_LIST"; exit 0; fi\nprintf "%s" "$*" > "$MCP_SETUP_MUTATION_LOG"\nexit 9\n')
+    const deployment = { ...options, environment: { ...options.environment, MCP_SETUP_MUTATION_LOG: mutationLog,
+      MCP_SETUP_LIST: JSON.stringify([{ name: 'agentharness', enabled: true, transport }]) } }
+    const hookPath = join(root, 'home', '.codex/hooks.json')
+    expect((await listMcpClients(deployment)).clients.find(client => client.id === 'codex')).toMatchObject({
+      state: 'configured', canSetup: true, automaticContext: { state: 'not-configured', configPath: hookPath },
+    })
+    expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({ outcome: 'configured', client: {
+      state: 'configured', canSetup: false, automaticContext: { state: 'configured' },
+    } })
+    await expect(readFile(mutationLog)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({ outcome: 'already-configured' })
+    const conflict = JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{
+      type: 'mcp_tool', server: 'agentharness', tool: 'agentharness_codex_hook',
+    }] }] } })
+    await writeFile(hookPath, conflict)
+    expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({ outcome: 'conflict', client: {
+      state: 'configured', canSetup: false, automaticContext: { state: 'conflict' },
+    } })
+    expect(await readFile(hookPath, 'utf8')).toBe(conflict)
+    await writeFile(hookPath, 'invalid JSON')
+    expect(await setupMcpClient(deployment, { clientId: 'codex' })).toMatchObject({ outcome: 'failed', client: {
+      state: 'configured', canSetup: false, automaticContext: { state: 'failed' },
+    } })
+    await expect(readFile(mutationLog)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it.skipIf(process.platform === 'win32')('reports a disabled matching Codex launcher without enabling it or changing sibling settings', async () => {
     const { root, options } = await fixture()
     const identity = (await listMcpClients(options)).clients.find(client => client.id === 'codex')

@@ -14,6 +14,7 @@ import s from '@deepseek-ai/schemastery'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { publishLocalConnectionDescriptor } from '@deepseek-ai/dsh-client-connection/local-access'
+import { configureCodexHooks, inspectCodexHooks } from './codex-hooks.ts'
 import type {
   McpClientId,
   McpClientSetupRequest,
@@ -102,7 +103,7 @@ const CLIENTS: readonly ClientDefinition[] = [
   },
   {
     id: 'codex', label: 'Codex', mechanism: 'cli', executable: 'codex',
-    executableCandidates: ['ChatGPT.app/Contents/Resources/codex'], applications: ['ChatGPT.app'],
+    executableCandidates: ['ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex', 'ChatGPT.app/Contents/Resources/codex'], applications: ['ChatGPT.app'],
     addArguments: entry => ['mcp', 'add', SERVER_NAME, ...entryEnvironment(entry), '--', entry.command, ...entry.args],
   },
   {
@@ -345,6 +346,7 @@ async function inspectClient(
   let path: string | undefined
   let isDetected = false
   let observation: { state: McpClientSnapshot['state']; detail?: string }
+  let automaticContext: McpClientSnapshot['automaticContext']
   try {
     command = await executable(definition, options)
     isDetected = await detected(definition, options, command)
@@ -363,6 +365,9 @@ async function inspectClient(
     }
     else if (definition.id === 'codex' && command !== undefined) {
       observation = await inspectCodex(command, entry, options.environment, options.commandTimeoutMs)
+      const codexHome = options.environment.CODEX_HOME ?? join(options.home, '.codex')
+      if (!isAbsolute(codexHome)) throw new Error('CODEX_HOME must be absolute')
+      automaticContext = await inspectCodexHooks(join(codexHome, 'hooks.json'))
     }
     // Remaining registry entries declare the JSON path used for inspection.
     else observation = await inspectJson(path as string, entry)
@@ -380,12 +385,15 @@ async function inspectClient(
       detected: isDetected,
       mechanism: definition.mechanism,
       state: observation.state,
-      canSetup: observation.state === 'not-configured',
+      canSetup: (observation.state === 'not-configured'
+        || (observation.state === 'configured' && automaticContext?.state === 'not-configured'))
+        && automaticContext?.state !== 'conflict' && automaticContext?.state !== 'failed',
       participantId,
       displayName,
       restartRequired: observation.state === 'configured',
       ...(path === undefined ? {} : { configPath: path }),
       ...(observation.detail === undefined ? {} : { detail: observation.detail }),
+      ...(automaticContext === undefined ? {} : { automaticContext }),
     },
   }
 }
@@ -458,16 +466,22 @@ export async function setupMcpClient(
   const resolved = resolveOptions(options)
   const before = await inspectClient(definition, resolved, request.displayName)
   if (before.snapshot.state === 'unsupported') return { outcome: 'unsupported', client: before.snapshot }
-  if (before.snapshot.state === 'configured') return { outcome: 'already-configured', client: before.snapshot }
+  if (before.snapshot.automaticContext?.state === 'conflict') return { outcome: 'conflict', client: before.snapshot }
+  if (before.snapshot.automaticContext?.state === 'failed') return { outcome: 'failed', client: before.snapshot }
+  if (before.snapshot.state === 'configured' && !before.snapshot.canSetup) return { outcome: 'already-configured', client: before.snapshot }
   if (before.snapshot.state === 'not-installed') return { outcome: 'not-installed', client: before.snapshot }
   if (before.snapshot.state === 'manual') return { outcome: 'manual', client: before.snapshot }
   if (before.snapshot.state === 'conflict') return { outcome: 'conflict', client: before.snapshot }
   if (!before.snapshot.canSetup) return { outcome: 'failed', client: before.snapshot }
   try {
-    if (definition.mechanism === 'json') await configureJson(before)
-    else await configureCli(before, resolved.environment, resolved.commandTimeoutMs)
+    if (before.snapshot.state !== 'configured') {
+      if (definition.mechanism === 'json') await configureJson(before)
+      else await configureCli(before, resolved.environment, resolved.commandTimeoutMs)
+    }
+    if (before.snapshot.automaticContext !== undefined) await configureCodexHooks(before.snapshot.automaticContext.configPath)
     const after = await inspectClient(definition, resolved, request.displayName)
-    if (after.snapshot.state !== 'configured') {
+    if (after.snapshot.state !== 'configured'
+      || (after.snapshot.automaticContext !== undefined && after.snapshot.automaticContext.state !== 'configured')) {
       return { outcome: 'failed', client: { ...after.snapshot, detail: after.snapshot.detail ?? 'Registration completed but verification did not pass.' } }
     }
     return { outcome: 'configured', client: after.snapshot }

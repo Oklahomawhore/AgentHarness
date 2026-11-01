@@ -37,6 +37,8 @@ function rpcFetch(calls: Call[], state: State): typeof fetch {
     calls.push({ endpoint: body.method, args: body.payload.args })
     const request = (body.payload.args as { request?: Record<string, unknown> }).request
     let value: unknown = { ok: body.method }
+    if (body.method === 'codexScope/hook') value = { output: request?.sessionId === 'joined-session'
+      ? { hookSpecificOutput: { hookEventName: request.event, additionalContext: 'Current authorized scope' } } : {} }
     if (body.method === 'developmentRooms/announce') {
       value = { participants: [], rooms: [], presenceTtlMs: 15_000, nodeId: 'node-a' }
     }
@@ -97,9 +99,10 @@ async function clientWith(calls: Call[], state: State = { assignments: [], nextB
 }
 
 describe.skipIf(process.platform === 'win32')('AgentHarness MCP bridge', () => {
-  it('publishes only context-lineage and session-connection tools', async () => {
+  it('publishes context-lineage tools and the dedicated automatic receiving hook', async () => {
     const client = await clientWith([])
     expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'agentharness_codex_hook',
       'agentharness_task_list',
       'agentharness_task_get',
       'agentharness_task_create',
@@ -113,6 +116,25 @@ describe.skipIf(process.platform === 'win32')('AgentHarness MCP bridge', () => {
     expect((await client.listResourceTemplates()).resourceTemplates).toEqual([
       expect.objectContaining({ uriTemplate: 'agentharness://tasks/{taskId}/context', mimeType: 'application/json' }),
     ])
+  })
+
+  it('returns hook JSON in MCP text and fixes the receiving client to this bridge identity', async () => {
+    const calls: Call[] = []
+    const client = await clientWith(calls)
+    for (const event of ['UserPromptSubmit', 'PostToolUse']) {
+      const received = await client.callTool({ name: 'agentharness_codex_hook',
+        arguments: { sessionId: 'joined-session', cwd: '/workspace', event } })
+      expect(received).toEqual({ content: [{ type: 'text', text: JSON.stringify({
+        hookSpecificOutput: { hookEventName: event, additionalContext: 'Current authorized scope' },
+      }) }] })
+      expect(calls.at(-1)).toEqual({ endpoint: 'codexScope/hook', args: {
+        request: { clientId: 'codex-agent', sessionId: 'joined-session', cwd: '/workspace', event },
+      } })
+    }
+    expect(await client.callTool({ name: 'agentharness_codex_hook',
+      arguments: { sessionId: 'unjoined-session', cwd: '/workspace', event: 'UserPromptSubmit' } }))
+      .toEqual({ content: [{ type: 'text', text: '{}' }] })
+    expect(calls).toHaveLength(3)
   })
 
   it('connects one explicit Agent session and returns its binding with acknowledged context', async () => {

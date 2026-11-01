@@ -54,6 +54,7 @@ it.each(['identity-first', 'catalog-first'] as const)('restores selected owner o
       },
       developmentTaskAssignments: { list: async () => ok([]) },
       mcpClientSetup: { list: async () => ok({ clients: [] }) },
+      codexScope: { sessions: async () => ({ ok: true, value: [] }) },
       claudeScope: { sessions: async () => ok([]) },
       scopeAccess: {
         identity: async () => ok({ peerId: 'owner-peer', addresses: [] }),

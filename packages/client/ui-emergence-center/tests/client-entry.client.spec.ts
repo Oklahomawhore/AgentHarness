@@ -13,6 +13,7 @@ describe('Emergence Center client entry', () => {
   it('declares every Remote namespace read by the assembled plugin', () => {
     expect(inject).toContain('remote.developmentTaskAssignments')
     expect(inject).toContain('remote.claudeScope')
+    expect(inject).toContain('remote.codexScope')
     expect(inject).toContain('remote.scopeAccess')
     expect(inject).toContain('remote.scopeAgentContributions')
   })
@@ -36,6 +37,7 @@ describe('Emergence Center client entry', () => {
           developmentTasks: { list: async () => ({ ok: true, value: [] }) },
           developmentTaskAssignments: { list: async () => ({ ok: true, value: [assignment] }) },
           mcpClientSetup: { list: async () => ({ ok: true, value: { clients: [] } }) },
+          codexScope: { sessions: async () => ({ ok: true, value: [] }) },
           claudeScope: { sessions: async () => ({ ok: true, value: [] }) },
           scopeAccess: {}, scopeAgentContext: {}, scopeAgentContributions: { localStatus },
         })

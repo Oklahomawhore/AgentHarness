@@ -345,6 +345,13 @@
           hookTimeoutSeconds: 30
           maxSettingsBytes: 1048576
 
+    - id: codex-scope
+      name: '@deepseek-ai/dsh-codex-scope'
+      config:
+        maxSessions: 256
+        maxProjections: 8192
+        maxContextBytes: 8000
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: cordis-host-runner

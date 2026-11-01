@@ -3,6 +3,41 @@
   "entries": [
     {
       "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeSessionKey",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeClientId",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeSessionSummary",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeReceiveRequest",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeLeaveRequest",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeHookRequest",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
+      "symbol": "CodexScopeHookResult",
+      "source": "packages/collaboration/codex-scope/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/development-room.md",
       "symbol": "ClaudeScopeSessionKey",
       "source": "packages/collaboration/claude-scope/src/types.ts"
     },

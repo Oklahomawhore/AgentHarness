@@ -1,7 +1,7 @@
 /** Browser assembly for the Task-first Emergence Center. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { ClaudeScopeSessionKey, ClaudeScopeContributionDetail, DevelopmentTaskId, DevelopmentTaskSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ClaudeScopeSessionKey, ClaudeScopeContributionDetail, CodexScopeSessionSummary, DevelopmentTaskId, DevelopmentTaskSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
@@ -55,7 +55,7 @@ function assertNever(value: never): never {
 /** Required services for the footer action, localized copy, and Host Remotes. */
 export const inject = [
   'slots', 'locale', 'remote', 'remote.developmentRooms', 'remote.developmentTasks',
-  'remote.developmentTaskAssignments', 'remote.mcpClientSetup', 'remote.claudeScope', 'remote.scopeAccess',
+  'remote.developmentTaskAssignments', 'remote.mcpClientSetup', 'remote.claudeScope', 'remote.codexScope', 'remote.scopeAccess',
   'remote.scopeAgentContext', 'remote.scopeAgentContributions', 'sessions', 'connection',
 ]
 
@@ -151,6 +151,10 @@ export function apply(ctx: Context): void {
     const [identity, access] = await Promise.all([ctx.remote.scopeAccess.identity(), ctx.remote.scopeAccess.list()])
     return { identity: unwrap(identity), access: unwrap(access) }
   }, (error) => { console.error('[ui-emergence-center] read permission management failed:', error) })
+  const codexScopes = createContributionDirectory<'inventory', readonly CodexScopeSessionSummary[]>(
+    async () => unwrap(await ctx.remote.codexScope.sessions()),
+    (error) => { console.error('[ui-emergence-center] Codex session synchronization failed:', error) },
+  )
   const mutateScopeAccess = <T>(operation: () => Promise<T>): Promise<T | undefined> => scopeAccess.mutate('inventory', async () => {
     try { return await operation() }
     finally { claudeScopes.refresh() }
@@ -191,10 +195,12 @@ export function apply(ctx: Context): void {
     sourceContributions.invalidate(sessionKey)
     claudeScopes.refresh()
   }), 'ui-emergence-center: source permission changes')
-  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset(); scopeAccess.reset() })
+  ctx.effect(() => ctx.remote.$on('codex-scope/session-changed', () => { codexScopes.invalidate('inventory') }),
+    'ui-emergence-center: Codex session changes')
+  ctx.on('connection/reset', () => { participants.reset(); tasks.reset(); mcpClients.reset(); claudeScopes.reset(); observedScopes.reset(); sourceContributions.reset(); ownerContributions.reset(); scopeAccess.reset(); codexScopes.reset() })
   ctx.effect(() => () => participants.dispose(), 'ui-emergence-center: human lease')
   ctx.effect(() => () => { tasks.dispose(); mcpClients.dispose() }, 'ui-emergence-center: Host directories')
-  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose(); scopeAccess.dispose() }, 'ui-emergence-center: contribution management')
+  ctx.effect(() => () => { sourceContributions.dispose(); ownerContributions.dispose(); scopeAccess.dispose(); codexScopes.dispose() }, 'ui-emergence-center: contribution management')
   ctx.effect(() => () => { claudeScopes.dispose() }, 'ui-emergence-center: Claude session directory')
 
   ctx.effect(() => () => { observedScopes.dispose() }, 'ui-emergence-center: remote observation directory')
@@ -233,7 +239,8 @@ export function apply(ctx: Context): void {
     order: 34,
     locale: NS,
     inject: (): EmergenceCenterPanelFace => ({
-      hooks: { participants, tasks, mcpClients, claudeScopes, observedScopes, sourceContributions, ownerContributions, scopeAccess },
+      hooks: { participants, tasks, mcpClients, claudeScopes, codexScopes, observedScopes,
+        sourceContributions, ownerContributions, scopeAccess },
       initialProfile,
       setProfile: async (profile) => {
         await participants.setProfile(profile)
@@ -338,10 +345,13 @@ export function apply(ctx: Context): void {
         try { return await mutateScopeAccess(async () => unwrap(await ctx.remote.claudeScope.receiveLeave(request))) }
         finally { sourceContributions.invalidate(request.sessionKey) }
       },
+      readCodexScopes: () => { void codexScopes.refresh('inventory') },
+      receiveCodexScope: request => codexScopes.mutate('inventory', async () => unwrap(await ctx.remote.codexScope.receive(request))),
+      stopCodexReceive: request => codexScopes.mutate('inventory', async () => unwrap(await ctx.remote.codexScope.receiveLeave(request))),
       approveObservedScope: request => observedScopes.approve(request),
       endObservedScope: request => observedScopes.end(request),
       refreshObservedScopes: () => { observedScopes.refresh() },
-      refresh: () => { participants.refresh(); tasks.refresh(); mcpClients.refresh(); claudeScopes.refresh(); observedScopes.refresh() },
+      refresh: () => { participants.refresh(); tasks.refresh(); mcpClients.refresh(); claudeScopes.refresh(); observedScopes.refresh(); void codexScopes.refresh('inventory') },
     }),
   }, EmergenceCenterPanel))
 }

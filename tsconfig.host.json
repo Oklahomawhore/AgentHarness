@@ -889,6 +889,9 @@
     },
     {
       "path": "./packages/collaboration/scope-agent-context"
+    },
+    {
+      "path": "./packages/collaboration/codex-scope"
     }
   ]
 }

@@ -223,6 +223,7 @@ async function mountPanel(initialSessions: readonly ClaudeScopeSessionSummary[] 
         observedCandidates, observedIntervals, approveObservedInterval: approveObserved, endObservedInterval: endObserved },
       developmentTaskAssignments: { list: assignmentsList, checkout },
       mcpClientSetup: { list: clientsList, setup: setupClient },
+      codexScope: { sessions: async () => ({ ok: true, value: [] }) },
       claudeScope: { sessions, setup, projectSetup, removeSetup, join, leave,
         prepareContribution: prepare, activateContribution: activate, contributionLeave: stopSource, requestContribution: requestSource,
         contributionDetail, leaveJoint, recoverJoint },

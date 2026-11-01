@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-10-02-scope-context-backends.md
-2026-10-02-scope-context-backends.md: b9decf15d4c77fec05436097bb2c27489fd6fe71
-2026-10-02-scope-context-backends.zh.md: e64bdb7653098249f38f486691c4837728253553
+2026-10-02-scope-context-backends.md: fc0db001f1fde1c15b82d0594b006206e2657ab1
+2026-10-02-scope-context-backends.zh.md: 3d909cc1f51d2a0d37b98868d5e36e7f34b31440

@@ -44,6 +44,11 @@ export interface McpClientSnapshot {
   readonly restartRequired: boolean
   readonly configPath?: string
   readonly detail?: string
+  /** Codex hook definitions only; trust, activation, and model admission remain client-owned. */
+  readonly automaticContext?: {
+    readonly state: 'configured' | 'not-configured' | 'conflict' | 'failed'
+    readonly configPath: string
+  }
 }
 
 /** Complete point-in-time client registry. */

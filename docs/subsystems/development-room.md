@@ -14,6 +14,74 @@ Task ids, context block ids, session binding ids, participant ids, Room ids, and
 
 Each Agent session owns an explicit Task binding. Several sessions from one Codex, Cursor, or Claude participant may connect to different Tasks; switching or clearing one binding does not affect the others. Native Agents receive connected Task context as a replayable user-role Session event at pre-step. An external MCP conversation calls `agentharness_task_connect`, retains its returned binding id, and receives context delta on later Task calls.
 
+## Codex receiving hooks
+
+The [Codex Consumer](../../packages/collaboration/codex-scope/README.md) binds an observed external conversation to one explicit ScopeAccess read invitation. Prompt and completed-tool hooks prepare freshly authorized context through the existing [MCP bridge](../../packages/mcp/agentharness-bridge/README.md). Its durable identity and receiving revision are independent of native and Claude Sessions. Codex descendants share their parent’s logical receiving scope; the adapter neither captures their work nor starts them.
+
+```ts type-equiv
+/** Installation-local identity of one Codex logical receiving scope. */
+type CodexScopeSessionKey = Branded<'CodexScopeSessionKey'>
+```
+
+```ts type-equiv
+/** Stable identity of the configured Codex client installation. */
+type CodexScopeClientId = Branded<'CodexScopeClientId'>
+```
+
+```ts type-equiv
+/** One observed Codex session; observation alone grants no receiving permission. */
+interface CodexScopeSessionSummary {
+  readonly sessionKey: CodexScopeSessionKey
+  readonly clientId: CodexScopeClientId
+  readonly sessionId: string
+  readonly cwd?: string | undefined
+  readonly observedAt: number
+  readonly readRevision: number
+  readonly receiveSubscriptionId?: ExternalScopeReceive['subscriptionId'] | undefined
+  readonly receiveTaskId?: ExternalScopeReceive['taskId'] | undefined
+  readonly receiveState?: ExternalScopeReceive['status'] | undefined
+}
+```
+
+```ts type-equiv
+/** Explicit receiving consent at the displayed local selection revision. */
+interface CodexScopeReceiveRequest {
+  readonly sessionKey: CodexScopeSessionKey
+  readonly expectedReadRevision: number
+  readonly invitation: ScopeInvitation
+}
+```
+
+```ts type-equiv
+/** Stop only the receiving selection displayed to the caller. */
+interface CodexScopeLeaveRequest {
+  readonly sessionKey: CodexScopeSessionKey
+  readonly expectedReadRevision: number
+}
+```
+
+```ts type-equiv
+/** Codex supplies its parent's session ID to descendant hooks; that ID selects their shared receiving scope. */
+interface CodexScopeHookRequest {
+  readonly clientId: CodexScopeClientId
+  readonly sessionId: string
+  readonly cwd: string
+  readonly event: 'UserPromptSubmit' | 'PostToolUse'
+}
+```
+
+```ts type-equiv
+/** Prepared hook text; Codex separately owns model admission and conversation history. */
+interface CodexScopeHookResult {
+  readonly output: {
+    readonly hookSpecificOutput?: {
+      readonly hookEventName: CodexScopeHookRequest['event']
+      readonly additionalContext: string
+    }
+  }
+}
+```
+
 ## Claude scope hooks
 
 The Claude adapter links external main sessions, explicit collection grants, tool-start leases, and exact recipient projections in its own durable records. It creates no Harness Session and does not treat output receipts as model admission; the [package README](../../packages/collaboration/claude-scope/README.md) owns installation, authorization, and delivery limits.
@@ -3151,6 +3219,44 @@ Local authenticated management and command-hook service; no external Session is 
 
 Source: [`packages/collaboration/claude-scope/src/index.ts`](../../packages/collaboration/claude-scope/src/index.ts)
 
+<a id="ctxcodexscope--codexscopeservice"></a>
+
+### `ctx.codexScope` — `CodexScopeService`
+
+Local authenticated management and passive hooks; this service never executes or captures Codex work.
+
+```ts cordis-catalog
+/**
+ * List observed logical receiving scopes without granting permission.
+ * @returns current local identities and receiving selections.
+ */
+@Remote('sessions') async sessions(): Promise<readonly CodexScopeSessionSummary[]>
+
+/**
+ * Retain explicit consent before adopting one preallocated read subscription.
+ * @param request - observed scope, displayed read revision, and recipient-pinned invitation.
+ * @returns current selection after adopting the original subscription; a failed adoption retains pending consent.
+ */
+@Remote('receive') async receive(request: CodexScopeReceiveRequest): Promise<CodexScopeSessionSummary>
+
+/**
+ * Stop reception durably before terminating the original local subscription.
+ * @param request - scope and displayed read revision; stale selections cannot stop later consent.
+ * @returns stopped local selection; earlier Codex history remains owned by Codex.
+ */
+@Remote('receiveLeave') async receiveLeave(request: CodexScopeLeaveRequest): Promise<CodexScopeSessionSummary>
+
+/**
+ * Observe a Codex logical scope and prepare freshly authorized context at a supported hook.
+ * @param request - client and Codex-provided logical session identity; descendants share their parent's identity.
+ * @param signal - carrier deadline or cancellation; no private request deadline is added.
+ * @returns exact durable additionalContext, or empty output before explicit receiving consent.
+ */
+@Remote('hook') async hook(request: CodexScopeHookRequest, signal: AbortSignal): Promise<CodexScopeHookResult>
+```
+
+Source: [`packages/collaboration/codex-scope/src/index.ts`](../../packages/collaboration/codex-scope/src/index.ts)
+
 <a id="ctxdevelopmentmesh--developmentmeshservice-abstract-seam"></a>
 
 ### `ctx.developmentMesh` — `DevelopmentMeshService` (abstract seam)
@@ -4237,6 +4343,27 @@ A locally observed session's durable management state changed after commit.
 ```
 
 Source: [`packages/collaboration/claude-scope/src/types.ts`](../../packages/collaboration/claude-scope/src/types.ts)
+
+<a id="codex-scope-events"></a>
+
+### `codex-scope/*` events
+
+<a id="codex-scopesession-changed--emit"></a>
+
+#### `codex-scope/session-changed` — emit
+
+A local receiving scope changed after durable persistence.
+
+```ts cordis-catalog
+/**
+ * A local receiving scope changed after durable persistence.
+ * @param sessionKey - external scope whose authenticated inventory can be refreshed.
+ * @mode emit
+ */
+'codex-scope/session-changed'(sessionKey: CodexScopeSessionKey): void
+```
+
+Source: [`packages/collaboration/codex-scope/src/types.ts`](../../packages/collaboration/codex-scope/src/types.ts)
 
 <a id="development-mesh-events"></a>
 

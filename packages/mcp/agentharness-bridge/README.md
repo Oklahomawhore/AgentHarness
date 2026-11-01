@@ -35,6 +35,8 @@ Each RPC reads the current private descriptor and exchanges its launch token for
 
 The server exposes nine `agentharness_task_*` tools and `agentharness://tasks/{taskId}/context`. Task has no lifecycle tools. `agentharness_task_connect` returns an opaque `bindingId`; only the calling conversation retains and reuses it. A connection without a `bindingId` creates an independent session binding, even for the same participant identity.
 
+`agentharness_codex_hook` is a separate receiving tool for reviewed Codex `UserPromptSubmit` and `PostToolUse` hooks. The bridge fixes `clientId` to its configured participant and forwards Codex's logical session identity to [Codex scope context](../../collaboration/codex-scope/README.md). Its MCP text contains the exact hook-output JSON, including fresh authorized context or an authorization-unavailable notice. It does not publish local work or wake an idle Agent. Hook installation and review are described in [client setup](../../host/mcp-client-setup/README.md).
+
 Context publication requires a binding connected to the requested Task; otherwise it returns `POLICY_REJECTED` with the binding's assignment. Status and publication record the returned Task revision before the MCP response is delivered. The server reads binding state from the Host and keeps no local Task replica.
 
 Stdout is reserved for MCP JSON-RPC while the transport is active. Stdin EOF, SIGINT, and SIGTERM use the dsh launcher's bounded shutdown. The protocol SDK owns transport callbacks. Presence starts after application readiness, requires a positive integer Host TTL, renews at a bounded fraction of that TTL, and re-announces after invalid lease replies or failed renewal. Disposal cancels ordinary requests and renewals, waits for them, and attempts a separately bounded withdrawal, including after an unacknowledged announcement. Host unavailability leaves TTL expiry as the fallback. MCP cancellation reaches authentication and every subsequent RPC step; it cannot undo a Host mutation that already committed. Profile changes take effect at the next process start.
@@ -47,7 +49,7 @@ Stdout is reserved for MCP JSON-RPC while the transport is active. Stdin EOF, SI
 
 #### What the model sees
 
-Nine bounded `agentharness_task_*` tools, one `agentharness://tasks/{taskId}/context` resource template, session-binding instructions, safe RPC failure codes, and stored context views. Private Harness Sessions and editor actions performed outside MCP are not visible.
+The receiving hook tool, nine bounded `agentharness_task_*` tools, one `agentharness://tasks/{taskId}/context` resource template, session-binding instructions, safe RPC failure codes, and stored context views. Private Harness Sessions and editor actions performed outside MCP are not visible.
 
 #### Token effect
 

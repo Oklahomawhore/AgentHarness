@@ -35,6 +35,8 @@ Bundle patch 显式提供所有时间和字节上限：`requestTimeoutMs`、`max
 
 Server 暴露九项 `agentharness_task_*` 工具及 `agentharness://tasks/{taskId}/context`。Task 没有生命周期工具。`agentharness_task_connect` 返回不透明的 `bindingId`，仅由发起调用的 conversation 保存并复用。不带 `bindingId` 的连接会创建独立 Session binding，即使 participant 身份相同。
 
+`agentharness_codex_hook` 是独立的接收工具，供经过审阅的 Codex `UserPromptSubmit` 与 `PostToolUse` Hook 使用。桥接器将 `clientId` 固定为配置的 participant，并把 Codex 的逻辑 Session 身份转交给 [Codex scope 上下文](../../collaboration/codex-scope/README.zh.md)。MCP 文本包含精确的 Hook 输出 JSON，其中是新鲜授权上下文或授权不可用通知。它不发布本地工作，也不唤醒空闲 Agent。Hook 安装与审阅见[客户端配置](../../host/mcp-client-setup/README.zh.md)。
+
 发布上下文要求 binding 已连接到所请求的 Task，否则返回 `POLICY_REJECTED` 及该 binding 的 assignment。Status 和 publication 在 MCP 响应交付前记录所返回的 Task revision。Server 从 Host 读取 binding 状态，不保留本地 Task 副本。
 
 Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SIGTERM 使用 dsh launcher 的有界关闭。协议 SDK 管理 transport 回调。Presence 在应用 ready 后启动，要求 Host TTL 为正整数，在该 TTL 的有界分段时间内续租，租期回复无效或续租失败后重新 announce。Dispose 取消普通请求和续租并等待结算，然后尝试具有独立 deadline 的 withdraw，包括尚未收到 announce 回复的情况。Host 不可用时以 TTL 到期作为后备。MCP 取消会传递到认证及每一步后续 RPC，但不能撤销 Host 已提交的修改。Profile 修改在下次进程启动时生效。
@@ -47,7 +49,7 @@ Transport 活动期间 stdout 只承载 MCP JSON-RPC。Stdin EOF、SIGINT 和 SI
 
 #### 模型看到什么
 
-九项有界的 `agentharness_task_*` 工具、一个 `agentharness://tasks/{taskId}/context` resource template、Session binding instructions、安全 RPC 错误码及已保存的上下文视图。私有 Harness Session 和绕过 MCP 的编辑器操作不可见。
+接收 Hook 工具、九项有界的 `agentharness_task_*` 工具、一个 `agentharness://tasks/{taskId}/context` resource template、Session binding instructions、安全 RPC 错误码及已保存的上下文视图。私有 Harness Session 和绕过 MCP 的编辑器操作不可见。
 
 #### Token 影响
 

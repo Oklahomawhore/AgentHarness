@@ -27,7 +27,7 @@ import { authorizeClaudeScopeTool, claudeScopeToolArgumentDigest, parseClaudeSco
 import { admitScopeObservation, flushCompletionSamples } from './admission.ts'
 import { flushArtifactSamples, prepareArtifactSamples, revokeArtifactSamples } from './artifact-capture.ts'
 import { resolveOpenApiSources } from './openapi.ts'
-import { receivedScopeProjection, remainingReceiveContextBytes } from './receive.ts'
+import { receivedExternalScopeProjection as receivedScopeProjection, remainingExternalScopeContextBytes as remainingReceiveContextBytes } from '@deepseek-ai/dsh-scope-access/receiving'
 import { IndependentContribution } from './contribution.ts'
 import { retainedLeaseCount } from './work-capture.ts'
 import { advanceReadSelection, nextReadRevision, ownsJointCapture, ownsJointRead, jointNeedsWork, recoverJointRoute, reconcileJoint } from './joint.ts'
@@ -1024,10 +1024,10 @@ export default class ClaudeScopeService extends TypertRemoteService {
         if (access === undefined) throw new Error('claude-scope: independent scope access is unavailable')
         const result = session.receive.status === 'left' ? { status: 'left' as const }
           : await access.retrieveWithinBudget({ subscriptionId: session.receive.subscriptionId,
-            maxContextBytes: remainingReceiveContextBytes({ ...session, receive: session.receive }, this.config.maxContextBytes) }, signal)
+            maxContextBytes: remainingReceiveContextBytes({ ...session, receive: session.receive }, this.config.maxContextBytes, 'claude') }, signal)
         signal.throwIfAborted()
         if (!this.current(domain, session, undefined, change)) continue
-        const prepared = receivedScopeProjection({ ...session, receive: session.receive }, result, this.config.maxContextBytes)
+        const prepared = receivedScopeProjection({ ...session, receive: session.receive }, result, this.config.maxContextBytes, 'claude')
         const projection = previous?.cacheKey === prepared.cacheKey ? previous : records.get(prepared.projectionId) ?? prepared
         const saved = await this.storeProjection(domain, session, undefined, change, projection, signal)
         if (!saved) continue

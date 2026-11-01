@@ -138,6 +138,9 @@ The [service](src/index.ts) owns authorization and lifecycle, [types](src/types.
 - [Storage domains](../../storage/storage-domain/README.md) own durable records.
 
 <a id="model-experience"></a>
+
+External receiving Consumers share the `./receiving` text formatter and strict durable projection schemas. Each complete UTF-8 allowance includes recipient framing, current authorization, predecessor attribution, and owner text. An unavailable or terminal result carries an explicit notice without cached source facts. The [Claude](../claude-scope/README.md) and [Codex](../codex-scope/README.md) Consumers own their external session associations and client delivery.
+
 ## Model Experience
 
 Indirectly, through recipient consumers that admit exact authorized backend context into model requests.

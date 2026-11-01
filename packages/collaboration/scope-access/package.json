@@ -39,6 +39,10 @@
     "./contribution": {
       "types": "./lib/types/contribution-client.d.ts",
       "default": "./lib/types/contribution-client.js"
+    },
+    "./receiving": {
+      "types": "./lib/types/receiving.d.ts",
+      "default": "./lib/types/receiving.js"
     }
   },
   "files": [

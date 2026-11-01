@@ -148,6 +148,7 @@ async function mountOwner(initiallyApproved: boolean, recipientState?: 'availabl
     },
     developmentTaskAssignments: { list: async () => ok([]) },
     mcpClientSetup: { list: async () => ok({ clients: [] }) },
+    codexScope: { sessions: async () => ({ ok: true, value: [] }) },
     claudeScope: { sessions, receive, receiveLeave, contributionDetail },
     scopeAgentContext: {}, scopeAgentContributions: {},
     scopeAccess: {
@@ -513,7 +514,7 @@ describe('Emergence Center owner read inventory', () => {
         fireEvent.click(consent)
         expect(consent.checked).toBe(true)
         fireEvent.change(access.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(readInvitation) } })
-        fireEvent.change(access.getByLabelText(zh['claude.chooseSession']), { target: { value: subject.recipient.sessionKey } })
+        fireEvent.change(access.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${subject.recipient.sessionKey}` } })
         fireEvent.click(access.getByRole('button', { name: zh['access.receive'] }))
         await access.findByText(zh['access.state.pending'])
         await waitFor(() => { expect(consent.disabled).toBe(true); expect(consent.checked).toBe(false) })
@@ -548,7 +549,7 @@ describe('Emergence Center owner read inventory', () => {
     try {
       if (operation === 'receive') {
         fireEvent.change(panel.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(readInvitation) } })
-        fireEvent.change(panel.getByLabelText(zh['claude.chooseSession']), { target: { value: subject.recipient.sessionKey } })
+        fireEvent.change(panel.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${subject.recipient.sessionKey}` } })
       }
       fireEvent.click(panel.getByRole('button', { name: zh[operation === 'receive' ? 'access.receive' : 'access.stop'] }))
       await panel.findByText(zh['access.loadFailed'])

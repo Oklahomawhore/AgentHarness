@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import type { ScopeAccessProjection as AccessProjection } from '@deepseek-ai/dsh-scope-access/types'
 import { afterEach, expect, it, vi } from 'vitest'
-import { receivedScopeProjection, remainingReceiveContextBytes } from '../src/receive.ts'
+import { receivedExternalScopeProjection as receivedScopeProjection, remainingExternalScopeContextBytes as remainingReceiveContextBytes } from '@deepseek-ai/dsh-scope-access/receiving'
 import type { ScopeReceive, ScopeSession } from '../src/state.ts'
 
 const receive: ScopeReceive = {
@@ -27,10 +27,10 @@ afterEach(() => { vi.restoreAllMocks() })
 
 it('retains exact independent context and distinct offline, revoked, and expired notices', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(100)
-  const active = receivedScopeProjection(session, { status: 'active', projection }, 4000)
+  const active = receivedScopeProjection(session, { status: 'active', projection }, 4000, 'claude')
   const retained = { ...session, lastProjectionId: active.projectionId }
   for (const status of ['unavailable', 'revoked', 'expired', 'left'] as const) {
-    const suspended = receivedScopeProjection(retained, { status }, 4000)
+    const suspended = receivedScopeProjection(retained, { status }, 4000, 'claude')
     expect(suspended.kind).toBe('suspended')
     expect(suspended.selectedSources).toEqual([])
     expect(suspended.text).not.toContain('displayName')
@@ -42,12 +42,12 @@ it('retains exact independent context and distinct offline, revoked, and expired
 
 it('checks expiry after owner authorization and measures the complete UTF-8 frame', () => {
   vi.spyOn(Date, 'now').mockReturnValue(100)
-  const active = receivedScopeProjection(session, { status: 'active', projection }, 4000)
+  const active = receivedScopeProjection(session, { status: 'active', projection }, 4000, 'claude')
   const bytes = Buffer.byteLength(active.text)
-  expect(receivedScopeProjection(session, { status: 'active', projection }, bytes).text.length).toBeGreaterThan(0)
-  expect(() => receivedScopeProjection(session, { status: 'active', projection }, bytes - 1)).toThrow('complete Hook budget')
+  expect(receivedScopeProjection(session, { status: 'active', projection }, bytes, 'claude').text.length).toBeGreaterThan(0)
+  expect(() => receivedScopeProjection(session, { status: 'active', projection }, bytes - 1, 'claude')).toThrow('complete Hook budget')
   vi.spyOn(Date, 'now').mockReturnValue(10001)
-  const expired = receivedScopeProjection(session, { status: 'active', projection }, 4000)
+  const expired = receivedScopeProjection(session, { status: 'active', projection }, 4000, 'claude')
   expect(expired.receive?.status).toBe('expired')
   expect(expired.text).not.toContain('displayName')
 })
@@ -58,13 +58,13 @@ it.each([undefined, 'claude-projection-' + 'a'.repeat(64)])(
     const current = { ...session, receive: { ...receive, taskId: 'task-界-"-\\' as ScopeReceive['taskId'] },
       ...(lastProjectionId === undefined ? {} : { lastProjectionId }) }
     const totalBytes = 2400
-    const available = remainingReceiveContextBytes(current, totalBytes)
-    expect(available).toBe(remainingReceiveContextBytes({ ...current, lastProjectionId: 'claude-projection-' + 'a'.repeat(64) }, totalBytes))
+    const available = remainingReceiveContextBytes(current, totalBytes, 'claude')
+    expect(available).toBe(remainingReceiveContextBytes({ ...current, lastProjectionId: 'claude-projection-' + 'a'.repeat(64) }, totalBytes, 'claude'))
     const content = '界🙂'
     const bounded: AccessProjection = { ...projection, taskId: current.receive.taskId,
       projectionId: 'b'.repeat(64) as AccessProjection['projectionId'], taskRevision: Number.MAX_SAFE_INTEGER,
       maxContextBytes: available, text: content + 'x'.repeat(available - Buffer.byteLength(content, 'utf8')) }
-    const rendered = receivedScopeProjection(current, { status: 'active', projection: bounded }, totalBytes)
+    const rendered = receivedScopeProjection(current, { status: 'active', projection: bounded }, totalBytes, 'claude')
     expect(available).toBeGreaterThan(0)
     expect(available).toBeLessThan(totalBytes)
     const renderedBytes = Buffer.byteLength(rendered.text, 'utf8')
@@ -74,14 +74,14 @@ it.each([undefined, 'claude-projection-' + 'a'.repeat(64)])(
     expect(rendered.selectedSources).toEqual(bounded.selectedSources)
     expect(() => receivedScopeProjection(current, { status: 'active', projection: {
       ...bounded, text: bounded.text + 'x'.repeat(totalBytes - renderedBytes + 1),
-    } }, totalBytes))
+    } }, totalBytes, 'claude'))
       .toThrow('complete Hook budget')
   },
 )
 
 it('rejects an allowance with no room for any owner context before requesting it', () => {
   const allowance = 3000
-  const frameBytes = allowance - remainingReceiveContextBytes(session, allowance)
-  expect(() => remainingReceiveContextBytes(session, frameBytes)).toThrow('receiving framing exceeds maxContextBytes')
-  expect(remainingReceiveContextBytes(session, frameBytes + 1)).toBe(1)
+  const frameBytes = allowance - remainingReceiveContextBytes(session, allowance, 'claude')
+  expect(() => remainingReceiveContextBytes(session, frameBytes, 'claude')).toThrow('receiving framing exceeds maxContextBytes')
+  expect(remainingReceiveContextBytes(session, frameBytes + 1, 'claude')).toBe(1)
 })

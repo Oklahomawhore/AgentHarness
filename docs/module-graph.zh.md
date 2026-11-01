@@ -197,6 +197,7 @@ flowchart TD
   end
   subgraph group_collaboration["packages/collaboration"]
     pkg_claude_scope["claude-scope"]
+    pkg_codex_scope["codex-scope"]
     pkg_development_mesh["development-mesh"]
     pkg_development_mesh_websocket["development-mesh-websocket"]
     pkg_development_room["development-room"]
@@ -1028,6 +1029,9 @@ flowchart TD
   pkg_claude_scope --> pkg_scope_transport
   pkg_claude_scope --> pkg_storage_domain
   pkg_claude_scope --> pkg_typert_protocol
+  pkg_codex_scope --> pkg_scope_access
+  pkg_codex_scope --> pkg_storage_domain
+  pkg_codex_scope --> pkg_typert_protocol
   pkg_scope_agent_context --> pkg_agent
   pkg_scope_agent_context --> pkg_development_room_agent_presence
   pkg_scope_agent_context --> pkg_development_task
@@ -1570,6 +1574,7 @@ flowchart TD
 | [`api-settings-controller`](../packages/api/settings-controller) | `api` | [`agent-presets`](../packages/preset/agent-presets), [`credentials`](../packages/credentials/credentials), [`native-command`](../packages/util/native-command), [`session`](../packages/core/session), [`settings`](../packages/settings/settings), [`typert-protocol`](../packages/typert/protocol) |
 | [`web-app`](../packages/bundle/web-app) | `bundle` | [`shell-env`](../packages/shell/shell-env), [`system-prompt`](../packages/core/system-prompt) |
 | [`claude-scope`](../packages/collaboration/claude-scope) | `collaboration` | [`client-connection`](../packages/client/connection), [`cmdline`](../packages/boot/cmdline), [`development-room`](../packages/collaboration/development-room), [`development-task`](../packages/collaboration/development-task), [`development-task-context`](../packages/collaboration/development-task-context), [`host-webserver`](../packages/host/webserver), [`scope-access`](../packages/collaboration/scope-access), [`scope-transport`](../packages/collaboration/scope-transport), [`storage-domain`](../packages/storage/storage-domain), [`typert-protocol`](../packages/typert/protocol) |
+| [`codex-scope`](../packages/collaboration/codex-scope) | `collaboration` | [`scope-access`](../packages/collaboration/scope-access), [`storage-domain`](../packages/storage/storage-domain), [`typert-protocol`](../packages/typert/protocol) |
 | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | `collaboration` | [`agent`](../packages/core/agent), [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-task`](../packages/collaboration/development-task), [`development-task-context`](../packages/collaboration/development-task-context), [`llm`](../packages/llm/llm), [`scope-access`](../packages/collaboration/scope-access), [`scope-transport`](../packages/collaboration/scope-transport), [`session`](../packages/core/session), [`session-persistence`](../packages/session/session-persistence), [`session-projection`](../packages/session/session-projection), [`typert-protocol`](../packages/typert/protocol) |
 | [`compaction-tool-result-pruner`](../packages/compaction/compaction-tool-result-pruner) | `compaction` | [`compaction`](../packages/compaction/compaction), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`token-meter`](../packages/llm/token-meter) |
 | [`tool-cordis`](../packages/extensions/tool-cordis) | `extensions` | [`agent`](../packages/core/agent), [`cordis-host-runner`](../packages/extensions/cordis-host-runner), [`llm`](../packages/llm/llm), [`scope`](../packages/core/scope), [`session`](../packages/core/session), [`system-prompt`](../packages/core/system-prompt), [`tools`](../packages/core/tools) |

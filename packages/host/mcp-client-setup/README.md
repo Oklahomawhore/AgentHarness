@@ -28,6 +28,8 @@ The service requires `connection` and `webServer`. On macOS/Linux its plugin act
 
 Windows reports `unsupported`, disables setup, and publishes no descriptor. The ordinary Web application remains available. Participant identities combine a stable 128-bit digest of hostname and username with the complete client id; identical host/account names are not distinguished. A successful client write means the launch configuration matches, including `DSH_HOME` and participant identity. A different existing entry remains a conflict, including after a hostname or account change; remove that registration explicitly before rerunning setup.
 
+Codex setup also adds the exact AgentHarness `UserPromptSubmit` and `PostToolUse` MCP hook definitions to `<CODEX_HOME>/hooks.json`, using `~/.codex` when `CODEX_HOME` is absent. It preserves unrelated hooks, rejects conflicting owned definitions or symbolic-link files, and never changes hook trust. `automaticContext` reports definition state separately from MCP registration; a matching MCP entry can still need hook setup. In Codex, review the definitions with `/hooks`, reload the client, and send a message before selecting the observed conversation in the collaboration center. This requires a Codex runtime supporting MCP tool hooks; matching files do not prove activation, trust, or model admission. Configure this hook in one user-level representation; project, inline, managed, and plugin hook layers remain Codex-owned.
+
 A matching Codex registration with `enabled=false` remains manual-only; setup preserves it and requires the user to enable it in Codex MCP settings.
 
 Unknown client ids reject before discovery or configuration writes; the error does not repeat the supplied id.

@@ -129,6 +129,7 @@ export function EmergenceCenterPanel({
   useTasks,
   useMcpClients,
   useClaudeScopes,
+  useCodexScopes,
   useSourceContributions, useOwnerContributions, useScopeAccess,
   useObservedScopes,
   initialProfile,
@@ -147,6 +148,7 @@ export function EmergenceCenterPanel({
   endObservedScope,
   refreshObservedScopes,
   readScopeAccess, inviteScope, revokeScope, receiveClaudeScope, stopClaudeReceive,
+  readCodexScopes, receiveCodexScope, stopCodexReceive,
   readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
   leaveJointContribution, recoverJointContribution, probeContributionEntry,
   readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
@@ -159,10 +161,12 @@ export function EmergenceCenterPanel({
   const taskState = useTasks(value => value)
   const mcpClients = useMcpClients(value => value)
   const claudeScopes = useClaudeScopes(value => value)
+  const codexScopes = useCodexScopes(value => value.inventory)
   const sourceContributions = useSourceContributions(value => value)
   const ownerContributions = useOwnerContributions(value => value)
   const scopeAccess = useScopeAccess(value => value.inventory)
   const emptyContext = claudeScopes.sessions.some(session => session.receiveSubscriptionId !== undefined)
+    || codexScopes?.value?.some(session => session.receiveSubscriptionId !== undefined)
     ? t('panel.receivingContext') : t('panel.emptyContext')
   const observedScopes = useObservedScopes(value => value)
   const [open, setOpen] = useState(() => window.location.hash === '#agentharness=collaboration')
@@ -486,10 +490,12 @@ export function EmergenceCenterPanel({
             approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
             approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
             previewContributionText={previewContributionText} t={t} />
-          <ScopeAccessPanel sessions={claudeScopes} entry={scopeAccess}
+          <ScopeAccessPanel sessions={claudeScopes} codexScopes={codexScopes} entry={scopeAccess}
+            codexClient={mcpClients.clients.find(client => client.id === 'codex')} setupClient={setupClient}
             {...(selectedTask?.ownerNodeId === participants.nodeId && selectedTask?.origin.kind === 'root' ? { taskId: selectedTask.id } : {})}
             readScopeAccess={readScopeAccess} inviteScope={inviteScope} revokeScope={revokeScope}
-            receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive} t={t} />
+            receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive}
+            readCodexScopes={readCodexScopes} receiveCodexScope={receiveCodexScope} stopCodexReceive={stopCodexReceive} t={t} />
           {selectedTask === undefined ? <div className={css.center}>{emptyContext}</div> : <>
             <header className={css.taskHeader}>
               <div>

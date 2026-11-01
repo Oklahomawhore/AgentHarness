@@ -528,6 +528,26 @@ export interface Config {
 
 Source: [`packages/code-runtime/code-runtime-worker-thread/src/index.ts:25`](../packages/code-runtime/code-runtime-worker-thread/src/index.ts)
 
+<a id="deepseek-aidsh-codex-scope"></a>
+
+## `@deepseek-ai/dsh-codex-scope`
+
+Requires: `scopeAccess` · `storageDomain`
+
+```ts config-catalog
+/** Required local retention and complete prepared-output limits. */
+export interface Config {
+  /** Maximum observed logical receiving scopes retained on this Host. */
+  readonly maxSessions: number
+  /** Maximum exact projections retained across all observed scopes. */
+  readonly maxProjections: number
+  /** Complete UTF-8 hook text allowance, including authorization framing. */
+  readonly maxContextBytes: number
+}
+```
+
+Source: [`packages/collaboration/codex-scope/src/index.ts:32`](../packages/collaboration/codex-scope/src/index.ts)
+
 <a id="deepseek-aidsh-compaction-basic"></a>
 
 ## `@deepseek-ai/dsh-compaction-basic`
@@ -1368,7 +1388,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/host/mcp-client-setup/src/index.ts:43`](../packages/host/mcp-client-setup/src/index.ts)
+Source: [`packages/host/mcp-client-setup/src/index.ts:44`](../packages/host/mcp-client-setup/src/index.ts)
 
 <a id="deepseek-aidsh-host-open-in-app"></a>
 

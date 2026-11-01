@@ -769,6 +769,37 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'codexScope',
+    summary: 'Local authenticated management and passive hooks; this service never executes or captures Codex work.',
+    description: 'Local authenticated management and passive hooks; this service never executes or captures Codex work.',
+    methods: [
+      {
+        signature: '@Remote(\'sessions\') async sessions(): Promise<readonly CodexScopeSessionSummary[]>',
+        description: 'List observed logical receiving scopes without granting permission.',
+        parameters: [],
+        returns: 'current local identities and receiving selections.',
+      },
+      {
+        signature: '@Remote(\'receive\') async receive(request: CodexScopeReceiveRequest): Promise<CodexScopeSessionSummary>',
+        description: 'Retain explicit consent before adopting one preallocated read subscription.',
+        parameters: [{ name: 'request', description: 'observed scope, displayed read revision, and recipient-pinned invitation.' }],
+        returns: 'current selection after adopting the original subscription; a failed adoption retains pending consent.',
+      },
+      {
+        signature: '@Remote(\'receiveLeave\') async receiveLeave(request: CodexScopeLeaveRequest): Promise<CodexScopeSessionSummary>',
+        description: 'Stop reception durably before terminating the original local subscription.',
+        parameters: [{ name: 'request', description: 'scope and displayed read revision; stale selections cannot stop later consent.' }],
+        returns: 'stopped local selection; earlier Codex history remains owned by Codex.',
+      },
+      {
+        signature: '@Remote(\'hook\') async hook(request: CodexScopeHookRequest, signal: AbortSignal): Promise<CodexScopeHookResult>',
+        description: 'Observe a Codex logical scope and prepare freshly authorized context at a supported hook.',
+        parameters: [{ name: 'request', description: 'client and Codex-provided logical session identity; descendants share their parent\'s identity.' }, { name: 'signal', description: 'carrier deadline or cancellation; no private request deadline is added.' }],
+        returns: 'exact durable additionalContext, or empty output before explicit receiving consent.',
+      },
+    ],
+  },
+  {
     key: 'commands',
     summary: 'Human-command registry.',
     description: 'Human-command registry. Plain-context definitions are global; definitions registered through a command-injected child of an agent context shadow globals for that agent.',
@@ -4269,6 +4300,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'sessionKey', description: 'local session whose authenticated inventory can be refreshed.' }],
   },
   {
+    name: 'codex-scope/session-changed',
+    mode: 'emit',
+    signature: '\'codex-scope/session-changed\'(sessionKey: CodexScopeSessionKey): void',
+    summary: 'A local receiving scope changed after durable persistence.',
+    description: 'A local receiving scope changed after durable persistence.',
+    parameters: [{ name: 'sessionKey', description: 'external scope whose authenticated inventory can be refreshed.' }],
+  },
+  {
     name: 'commands/change',
     mode: 'emit',
     signature: '\'commands/change\'(): void',
@@ -5197,6 +5236,34 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CodeRunResult {\n    value?: CodeJsonValue;\n    logs: string[];\n    error?: CodeRunFailure;\n}',
   },
   {
+    name: 'CodexScopeClientId',
+    declaration: 'export type CodexScopeClientId = Branded<\'CodexScopeClientId\'>;',
+  },
+  {
+    name: 'CodexScopeHookRequest',
+    declaration: 'export interface CodexScopeHookRequest {\n    readonly clientId: CodexScopeClientId;\n    readonly sessionId: string;\n    readonly cwd: string;\n    readonly event: \'UserPromptSubmit\' | \'PostToolUse\';\n}',
+  },
+  {
+    name: 'CodexScopeHookResult',
+    declaration: 'export interface CodexScopeHookResult {\n    readonly output: {\n        readonly hookSpecificOutput?: {\n            readonly hookEventName: CodexScopeHookRequest[\'event\'];\n            readonly additionalContext: string;\n        };\n    };\n}',
+  },
+  {
+    name: 'CodexScopeLeaveRequest',
+    declaration: 'export interface CodexScopeLeaveRequest {\n    readonly sessionKey: CodexScopeSessionKey;\n    readonly expectedReadRevision: number;\n}',
+  },
+  {
+    name: 'CodexScopeReceiveRequest',
+    declaration: 'export interface CodexScopeReceiveRequest {\n    readonly sessionKey: CodexScopeSessionKey;\n    readonly expectedReadRevision: number;\n    readonly invitation: ScopeInvitation;\n}',
+  },
+  {
+    name: 'CodexScopeSessionKey',
+    declaration: 'export type CodexScopeSessionKey = Branded<\'CodexScopeSessionKey\'>;',
+  },
+  {
+    name: 'CodexScopeSessionSummary',
+    declaration: 'export interface CodexScopeSessionSummary {\n    readonly sessionKey: CodexScopeSessionKey;\n    readonly clientId: CodexScopeClientId;\n    readonly sessionId: string;\n    readonly cwd?: string | undefined;\n    readonly observedAt: number;\n    readonly readRevision: number;\n    readonly receiveSubscriptionId?: ExternalScopeReceive[\'subscriptionId\'] | undefined;\n    readonly receiveTaskId?: ExternalScopeReceive[\'taskId\'] | undefined;\n    readonly receiveState?: ExternalScopeReceive[\'status\'] | undefined;\n}',
+  },
+  {
     name: 'CollectedOutput',
     declaration: 'export interface CollectedOutput {\n    text: string;\n    truncated: boolean;\n    spillPath?: string;\n}',
   },
@@ -6117,6 +6184,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    tools?: ToolSchema[];\n}',
   },
   {
+    name: 'ExternalScopeReceive',
+    declaration: 'export interface ExternalScopeReceive {\n    readonly subscriptionId: ScopeSubscriptionId;\n    readonly generation: ScopeGeneration;\n    readonly taskId: ScopeAccessProjection[\'taskId\'];\n    readonly ownerPeerId: ScopeAccessProjection[\'ownerPeerId\'];\n    readonly grantId: ScopeAccessProjection[\'grantId\'];\n    readonly grantGeneration: ScopeAccessProjection[\'grantGeneration\'];\n    readonly expiresAt: number;\n    readonly status: \'pending\' | \'active\' | \'revoked\' | \'expired\' | \'unavailable\' | \'left\';\n}',
+  },
+  {
     name: 'FeedbackCategory',
     declaration: 'export type FeedbackCategory = \'task-result\' | \'instruction-following\' | \'product-interaction\' | \'service-stability\' | \'resource-cost\' | \'security-privacy-permission\' | \'other\';',
   },
@@ -6562,7 +6633,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'McpClientSnapshot',
-    declaration: 'export interface McpClientSnapshot {\n    readonly id: McpClientId;\n    readonly label: string;\n    readonly detected: boolean;\n    readonly mechanism: McpClientSetupMechanism;\n    readonly state: McpClientSetupState;\n    readonly canSetup: boolean;\n    readonly participantId: string;\n    readonly displayName: string;\n    readonly restartRequired: boolean;\n    readonly configPath?: string;\n    readonly detail?: string;\n}',
+    declaration: 'export interface McpClientSnapshot {\n    readonly id: McpClientId;\n    readonly label: string;\n    readonly detected: boolean;\n    readonly mechanism: McpClientSetupMechanism;\n    readonly state: McpClientSetupState;\n    readonly canSetup: boolean;\n    readonly participantId: string;\n    readonly displayName: string;\n    readonly restartRequired: boolean;\n    readonly configPath?: string;\n    readonly detail?: string;\n    readonly automaticContext?: {\n        readonly state: \'configured\' | \'not-configured\' | \'conflict\' | \'failed\';\n        readonly configPath: string;\n    };\n}',
   },
   {
     name: 'McpServerId',

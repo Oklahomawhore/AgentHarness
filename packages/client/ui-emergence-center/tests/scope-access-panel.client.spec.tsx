@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ScopeInvitation, ClaudeScopeSessionSummary } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ScopeInvitation, ClaudeScopeSessionSummary, CodexScopeSessionSummary, McpClientSnapshot } from '@deepseek-ai/dsh-api-remotes/client'
 import { ScopeAccessPanel, type ScopeAccessPanelProps, type ScopeAccessValue } from '../src/client/ScopeAccessPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -14,6 +14,8 @@ const invitation: ScopeInvitation = {
 }
 const session: ClaudeScopeSessionSummary = { sessionKey: 'session' as ClaudeScopeSessionSummary['sessionKey'],
   sessionId: 'claude-recipient', observedAt: 1, ended: false, readRevision: 0 }
+const codex: CodexScopeSessionSummary = { sessionKey: 'session' as CodexScopeSessionSummary['sessionKey'],
+  clientId: 'codex-client' as CodexScopeSessionSummary['clientId'], sessionId: 'codex-root', observedAt: 2, readRevision: 3 }
 const inventory: ScopeAccessValue = {
   identity: { peerId: invitation.recipientPeerId, addresses: [invitation.ownerAddress] },
   access: { grants: [], subscriptions: [] },
@@ -41,7 +43,7 @@ it('keeps the invitation available when receive has no confirmed result', async 
   const receiveClaudeScope = vi.fn<ScopeAccessPanelProps['receiveClaudeScope']>(async () => undefined)
   const { props, rerender } = await mount({ receiveClaudeScope })
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
-  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
   await waitFor(() => { expect(receiveClaudeScope).toHaveBeenCalledOnce() })
   expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
@@ -65,6 +67,9 @@ it('uses the explicitly selected invitation duration for the owner request', asy
 function renderPanel(overrides: Partial<ScopeAccessPanelProps> = {}) {
   const props: ScopeAccessPanelProps = {
     sessions: { status: 'ready', sessions: [session] },
+    codexScopes: { status: 'ready', pending: false, value: [] }, readCodexScopes: vi.fn(),
+    codexClient: undefined, setupClient: vi.fn(),
+    receiveCodexScope: vi.fn(), stopCodexReceive: vi.fn(),
     entry: { status: 'ready', pending: false, value: inventory }, readScopeAccess: vi.fn(),
     inviteScope: vi.fn(async () => invitation), revokeScope: vi.fn(async () => {}),
     receiveClaudeScope: vi.fn(async () => session), stopClaudeReceive: vi.fn(async () => session),
@@ -93,7 +98,7 @@ it('receives a device invitation without a local Task or capture-root permission
   expect(screen.queryByLabelText(zh['claude.roots'])).toBeNull()
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(true)
-  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
   await waitFor(() => { expect(props.receiveClaudeScope).toHaveBeenCalledExactlyOnceWith({ sessionKey: session.sessionKey, invitation }) })
   await expect(`${container.textContent}\n`).toMatchFileSnapshot('./expected/independent-receive.zh.txt')
@@ -108,7 +113,7 @@ it('pins a read invitation to the selected owner Task and keeps invalid input av
     recipientPeerId: invitation.recipientPeerId, ownerAddress: invitation.ownerAddress,
     responsibility: 'frontend', expiresAt: 1000 + 24 * 3600000 })
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: 'invalid invitation' } })
-  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
   await screen.findByRole('alert')
   expect(screen.getByDisplayValue('invalid invitation')).toBeTruthy()
@@ -148,7 +153,7 @@ it('retries a failed initial inventory read and enables receipt from confirmed s
   rerender(<ScopeAccessPanel {...props} entry={{ status: 'ready', pending: false, value: inventory }} />)
   expect(screen.queryByRole('alert')).toBeNull()
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
-  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(false)
   expect(props.receiveClaudeScope).not.toHaveBeenCalled()
 })
@@ -160,7 +165,7 @@ it.each(['receive', 'stop'] as const)('retries only the inventory after an uncon
     sessions: { status: 'ready', sessions: [operation === 'receive' ? session : joined] } })
   if (operation === 'receive') {
     fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
-    fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: session.sessionKey } })
+    fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   }
   fireEvent.click(screen.getByRole('button', { name: zh[operation === 'receive' ? 'access.receive' : 'access.stop'] }))
   const mutation = operation === 'receive' ? props.receiveClaudeScope : props.stopClaudeReceive
@@ -186,4 +191,118 @@ it('requires a current published route for read invitations and invalidates a ro
   rerender(<ScopeAccessPanel {...props} entry={{ status: 'ready', pending: false, value: inventory }} />)
   await waitFor(() => { expect(screen.getByLabelText<HTMLSelectElement>(zh['access.address']).value).toBe('') })
   expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.invite'] }).disabled).toBe(true)
+})
+
+it('distinguishes Codex from a Claude session with the same key and uses the current read revision', async () => {
+  const receiveCodexScope = vi.fn<ScopeAccessPanelProps['receiveCodexScope']>(async () => codex)
+  const { props, rerender, container } = await mount({ receiveCodexScope,
+    codexScopes: { status: 'ready', pending: false, value: [codex] } })
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `codex:${codex.sessionKey}` } })
+  expect(screen.getByRole('option', { name: `Codex · ${codex.sessionId}` })).toBeTruthy()
+  rerender(<ScopeAccessPanel {...props} codexScopes={{ status: 'ready', pending: false, value: [{ ...codex, observedAt: 9 }] }} />)
+  fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
+  await waitFor(() => { expect(receiveCodexScope).toHaveBeenCalledExactlyOnceWith({
+    sessionKey: codex.sessionKey, expectedReadRevision: 3, invitation,
+  }) })
+  expect(props.receiveClaudeScope).not.toHaveBeenCalled()
+  expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe('')
+  expect(screen.getByText(zh['access.codexHint'])).toBeTruthy()
+  await expect(`${container.textContent}\n`).toMatchFileSnapshot('./expected/independent-codex-receive.zh.txt')
+})
+
+it('retains an unconfirmed Codex invitation and stops using the confirmed revision', async () => {
+  const receiveCodexScope = vi.fn<ScopeAccessPanelProps['receiveCodexScope']>(async () => undefined)
+  const joined: CodexScopeSessionSummary = { ...codex, readRevision: 4, receiveState: 'active',
+    receiveSubscriptionId: 'subscription' as NonNullable<CodexScopeSessionSummary['receiveSubscriptionId']>, receiveTaskId: invitation.taskId }
+  const { props, rerender } = await mount({ receiveCodexScope,
+    codexScopes: { status: 'ready', pending: false, value: [codex] } })
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `codex:${codex.sessionKey}` } })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
+  await waitFor(() => { expect(receiveCodexScope).toHaveBeenCalledOnce() })
+  expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
+  rerender(<ScopeAccessPanel {...props} codexScopes={{ status: 'ready', pending: false,
+    value: [joined], error: 'contribution/unknown-outcome' }} />)
+  expect(screen.getByRole('alert').textContent).toBe(zh['access.codexFailed'])
+  fireEvent.click(screen.getByRole('button', { name: zh['access.stop'] }))
+  await waitFor(() => { expect(props.stopCodexReceive).toHaveBeenCalledExactlyOnceWith({
+    sessionKey: codex.sessionKey, expectedReadRevision: 4,
+  }) })
+  expect(props.stopClaudeReceive).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: zh['access.refreshCodex'] }))
+  expect(props.readCodexScopes).toHaveBeenCalledTimes(2)
+  expect(receiveCodexScope).toHaveBeenCalledOnce()
+})
+
+it('keeps Claude receiving available when Codex discovery fails and refreshes only Codex discovery', async () => {
+  const { props } = await mount({ codexScopes: { status: 'error', pending: false, error: 'UNAVAILABLE' } })
+  expect(screen.getByRole('alert').textContent).toBe(zh['access.codexFailed'])
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
+  await waitFor(() => { expect(props.receiveClaudeScope).toHaveBeenCalledOnce() })
+  fireEvent.click(screen.getByRole('button', { name: zh['access.refreshCodex'] }))
+  expect(props.readCodexScopes).toHaveBeenCalledTimes(2)
+  expect(props.readScopeAccess).toHaveBeenCalledOnce()
+})
+
+it.each(['loading', 'error', 'pending'] as const)('does not receive or stop from an unconfirmed Codex inventory: %s', async (state) => {
+  const { props, rerender } = await mount({ codexScopes: { status: 'ready', pending: false, value: [codex] } })
+  fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: JSON.stringify(invitation) } })
+  fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `codex:${codex.sessionKey}` } })
+  const status = state === 'pending' ? 'ready' : state
+  rerender(<ScopeAccessPanel {...props} codexScopes={{ status, pending: state === 'pending', value: [codex] }} />)
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(true)
+  expect(props.receiveCodexScope).not.toHaveBeenCalled()
+  rerender(<ScopeAccessPanel {...props} codexScopes={{ status, pending: state === 'pending', value: [{ ...codex,
+    receiveSubscriptionId: 'subscription' as NonNullable<CodexScopeSessionSummary['receiveSubscriptionId']> }] }} />)
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.stop'] }).disabled).toBe(true)
+})
+
+const codexClient: McpClientSnapshot = { id: 'codex', label: 'Codex', detected: true, mechanism: 'cli', state: 'configured',
+  participantId: 'codex-runtime-agent', displayName: 'Codex',
+  canSetup: true, restartRequired: false, automaticContext: { state: 'not-configured', configPath: '/home/test/.codex/hooks.json' } }
+
+it.each(['configured', 'not-configured', 'conflict', 'failed'] as const)('explains Codex hook %s without requiring a local Task', async (state) => {
+  await mount({ codexClient: { ...codexClient, automaticContext: { state, configPath: '/home/test/.codex/hooks.json' } } })
+  expect(screen.getByText(zh[`access.codexSetup.${state}`])).toBeTruthy()
+  expect(screen.getByText('/home/test/.codex/hooks.json')).toBeTruthy()
+  expect(screen.getByText(zh['access.selectRoot'])).toBeTruthy()
+})
+
+it('keeps Codex setup retry available after failure and does not install twice while awaiting a reply', async () => {
+  const failed = Promise.withResolvers<Awaited<ReturnType<ScopeAccessPanelProps['setupClient']>>>()
+  const setupClient = vi.fn<ScopeAccessPanelProps['setupClient']>().mockImplementationOnce(() => failed.promise)
+    .mockResolvedValue({ outcome: 'already-configured', client: codexClient })
+  await mount({ codexClient, setupClient })
+  try {
+    fireEvent.click(screen.getByRole('button', { name: zh['access.setupCodex'] }))
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.setupCodex'] }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: zh['access.setupCodex'] }))
+    expect(setupClient).toHaveBeenCalledExactlyOnceWith({ clientId: 'codex' })
+    await act(async () => { failed.reject(new Error('Setup unavailable')); await failed.promise.catch(() => {}) })
+    expect(screen.getByRole('alert').textContent).toBe(zh['access.codexSetupFailed'])
+    fireEvent.click(screen.getByRole('button', { name: zh['access.setupCodex'] }))
+    await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
+    expect(setupClient).toHaveBeenCalledTimes(2)
+  } finally { failed.resolve({ outcome: 'already-configured', client: codexClient }); await failed.promise.catch(() => {}) }
+})
+
+it('does not route an invitation form submission without an explicitly selected runtime session', async () => {
+  const { props } = await mount({ codexScopes: { status: 'ready', pending: false, value: [codex] } })
+  const field = screen.getByLabelText(zh['access.paste'])
+  fireEvent.change(field, { target: { value: JSON.stringify(invitation) } })
+  fireEvent.submit(field.closest('form')!)
+  expect(props.receiveClaudeScope).not.toHaveBeenCalled()
+  expect(props.receiveCodexScope).not.toHaveBeenCalled()
+})
+
+it('reports unavailable authorization for both runtimes without claiming conversation history was erased', async () => {
+  const { container } = await mount({ sessions: { status: 'ready', sessions: [{ ...session, receiveState: 'unavailable',
+    receiveSubscriptionId: 'claude-subscription' as NonNullable<ClaudeScopeSessionSummary['receiveSubscriptionId']> }] },
+  codexScopes: { status: 'ready', pending: false, value: [{ ...codex, receiveState: 'unavailable',
+    receiveSubscriptionId: 'codex-subscription' as NonNullable<CodexScopeSessionSummary['receiveSubscriptionId']> }] } })
+  expect(screen.getAllByText(zh['access.state.unavailable'])).toHaveLength(2)
+  await expect(`${container.textContent}\n`).toMatchFileSnapshot('./expected/independent-unavailable-receive.zh.txt')
 })

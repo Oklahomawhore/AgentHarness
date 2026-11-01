@@ -138,6 +138,9 @@ Task 事件日志是贡献授权、样本与终态收据的权威。写入可能
 - [存储域](../../storage/storage-domain/README.zh.md)拥有耐久记录。
 
 <a id="model-experience"></a>
+
+外部接收消费方复用 `./receiving` 文本格式化器与严格的持久化投影 schema。完整 UTF-8 额度包含接收方说明、当前授权、前序投影归属与 Owner 文本。不可用或终止结果携带明确通知，不附带缓存来源事实。[Claude](../claude-scope/README.zh.md) 与 [Codex](../codex-scope/README.zh.md) 消费方分别管理外部 Session 关联与客户端投递。
+
 ## 模型体验
 
 本包通过接收方消费组件间接影响模型；这些组件将已获授权的精确后端上下文纳入模型请求。

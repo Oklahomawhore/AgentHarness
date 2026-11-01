@@ -30,6 +30,8 @@ Cursor、WorkBuddy 和 CodeBuddy 使用公开说明的用户级 JSON 文件。�
 
 Windows 返回 `unsupported`，禁用配置操作且不发布描述文件，普通 Web 应用仍可使用。参与者身份由主机名与用户名的稳定 128 位摘要及完整客户端 id 组成；相同主机名与账户名无法区分。客户端写入成功表示启动配置匹配，包括 `DSH_HOME` 和参与者身份。已有不同条目始终报告为冲突，包括更改主机名或账户后的条目；须显式移除该注册后再运行配置。
 
+Codex 安装还会在 `<CODEX_HOME>/hooks.json` 中加入精确的 AgentHarness `UserPromptSubmit` 和 `PostToolUse` MCP Hook 定义；未设置 `CODEX_HOME` 时使用 `~/.codex`。它保留无关 Hook，拒绝冲突的自有定义或符号链接文件，且不更改 Hook 信任。`automaticContext` 独立于 MCP 注册报告定义状态；MCP 条目匹配时仍可能需要安装 Hook。在 Codex 中通过 `/hooks` 审阅定义、重新加载客户端并发送一次消息，然后在协作中心选择已观察到的对话。这要求 Codex 运行时支持 MCP 工具 Hook；文件匹配不能证明激活、信任或模型接纳。请仅用一种用户级表示配置此 Hook；项目、内联、托管和插件 Hook 层仍由 Codex 管理。
+
 匹配但设置了 `enabled=false` 的 Codex 注册仍为仅支持手动；配置操作保留该注册，须由用户在 Codex MCP 设置中启用。
 
 未知客户端 id 会在发现客户端或写入配置之前被拒绝；错误不复述传入的 id。

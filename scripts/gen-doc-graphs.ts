@@ -719,7 +719,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'scope-access',
     title: 'Independent Task read invitations',
     mode: 'core',
-    consumers: ['claude-scope', 'scope-agent-context', 'scope-agent-contribution', 'api-remotes'],
+    consumers: ['claude-scope', 'codex-scope', 'scope-agent-context', 'scope-agent-contribution', 'api-remotes'],
     note: 'Owner grants pin a Root Task to one recipient peer. Every read validates authorization before the owner computes and persists exact recipient context; receiver intent never replicates Task or Room logs.',
   },
   {
@@ -745,6 +745,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     mode: 'core',
     consumers: ['claude-scope', 'api-remotes'],
     note: 'Project hook setup, inspection, and removal are exposed through the browser Remote assembly. Local grants authorize capture; remote Task owners separately approve source binding intervals. Hooks durably queue observations before owner admission and retain stopped intervals until durable withdrawal acknowledgement.',
+  },
+  {
+    key: 'codexScope',
+    pkg: 'codex-scope',
+    title: 'Authorized external Codex receiving context',
+    mode: 'core',
+    consumers: ['api-remotes', 'agentharness-bridge'],
+    note: 'Explicit external-session selection reuses ScopeAccess permission. Reviewed MCP hooks prepare exact context at prompt and tool completion without capturing work or starting Agents.',
   },
   {
     key: 'developmentTaskAssignments',

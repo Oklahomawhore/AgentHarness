@@ -29,7 +29,8 @@ export const activationSchema: z.ZodType<DevelopmentTaskContextActivation> = z.d
   }).strict(),
 ])
 
-const projectionContent = {
+/** Parsed owner projection fields shared with external receiving records. */
+export const projectionContent = {
   projectionId: z.string().regex(/^[a-f0-9]{64}$/).transform(value => value as ScopeProjectionId),
   taskId: task, taskRevision: integer.positive(),
   ownerPeerId: peer, recipientPeerId: peer, grantId, grantGeneration: generation, expiresAt: integer,

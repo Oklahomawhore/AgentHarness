@@ -239,9 +239,12 @@ flowchart LR
   pkg_scope_transport["scope-transport"]
   svc_scopeTransport["ctx.scopeTransport<br/>Authenticated independent peer requests"]
   svc_scopeAccess["ctx.scopeAccess<br/>Independent Task read invitations"]
+  pkg_codex_scope["codex-scope"]
   svc_scopeAgentContext["ctx.scopeAgentContext<br/>Authorized native scope context"]
   svc_scopeAgentContributions["ctx.scopeAgentContributions<br/>Authorized native file-tool contribution"]
   svc_claudeScope["ctx.claudeScope<br/>Authorized external Claude scope context"]
+  svc_codexScope["ctx.codexScope<br/>Authorized external Codex receiving context"]
+  pkg_agentharness_bridge["agentharness-bridge"]
   svc_developmentTaskAssignments["ctx.developmentTaskAssignments<br/>Active Task assignment Remote facade"]
   pkg_development_room_context["development-room-context"]
   svc_developmentRoomContexts["ctx.developmentRoomContexts<br/>Explicit shared-room context"]
@@ -288,6 +291,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_code_runtime --> svc_codeRuntime
   pkg_code_runtime_worker_thread --> svc_codeRuntime
+  pkg_codex_scope --> svc_codexScope
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -426,6 +430,8 @@ flowchart LR
   svc_claudeScope --> pkg_claude_scope
   svc_clientModules --> pkg_client_hmr
   svc_codeRuntime --> pkg_tools
+  svc_codexScope --> pkg_agentharness_bridge
+  svc_codexScope --> pkg_api_remotes
   svc_compaction --> pkg_compaction_basic
   svc_cordisInspect --> pkg_tool_cordis
   svc_credentials --> pkg_api_settings_controller
@@ -487,6 +493,7 @@ flowchart LR
   svc_sandboxPolicy --> pkg_terminal_bash
   svc_scopeAccess --> pkg_api_remotes
   svc_scopeAccess --> pkg_claude_scope
+  svc_scopeAccess --> pkg_codex_scope
   svc_scopeAccess --> pkg_scope_agent_context
   svc_scopeAccess --> pkg_scope_agent_contribution
   svc_scopeAgentContext --> pkg_api_remotes
@@ -653,10 +660,11 @@ flowchart LR
 | `ctx.developmentTaskContextAdmission` | `core` | [`development-task-context`](../packages/collaboration/development-task-context) | - | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | The installed Task consumer exposes its lifetime signal. Managed local scheduling requires this live admission point, and unload invalidates its automatic permission. |
 | `ctx.developmentTaskContextBackend` | `seam` | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | The /backend service accepts authorized Task context and recipient routing inputs; consumers persist bounded provider output in a native Session or an external-recipient projection record. |
 | `ctx.scopeTransport` | `seam` | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-access`](../packages/collaboration/scope-access) | - | The /libp2p provider authenticates persistent peer identities and carries bounded per-request streams over explicit direct addresses. |
-| `ctx.scopeAccess` | `core` | [`scope-access`](../packages/collaboration/scope-access) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Owner grants pin a Root Task to one recipient peer. Every read validates authorization before the owner computes and persists exact recipient context; receiver intent never replicates Task or Room logs. |
+| `ctx.scopeAccess` | `core` | [`scope-access`](../packages/collaboration/scope-access) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`codex-scope`](../packages/collaboration/codex-scope), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | Owner grants pin a Root Task to one recipient peer. Every read validates authorization before the owner computes and persists exact recipient context; receiver intent never replicates Task or Room logs. |
 | `ctx.scopeAgentContext` | `core` | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | [`api-remotes`](../packages/api/remotes) | - | Local Session bindings authorize passive request refresh or bounded automatic work. Change notices trigger fresh owner reads; Session events retain exact adopted context and execution budgets. |
 | `ctx.scopeAgentContributions` | `core` | [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution) | - | [`api-remotes`](../packages/api/remotes) | - | One explicit Session selection permits actual file-tool reports after their source log is durable. Local captures bind an exact owner Task assignment; independent sources use owner approval and the shared scope contribution controller. Both preserve source identity and terminal withdrawal. |
 | `ctx.claudeScope` | `core` | [`claude-scope`](../packages/collaboration/claude-scope) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`api-remotes`](../packages/api/remotes) | - | Project hook setup, inspection, and removal are exposed through the browser Remote assembly. Local grants authorize capture; remote Task owners separately approve source binding intervals. Hooks durably queue observations before owner admission and retain stopped intervals until durable withdrawal acknowledgement. |
+| `ctx.codexScope` | `core` | [`codex-scope`](../packages/collaboration/codex-scope) | - | [`api-remotes`](../packages/api/remotes), [`agentharness-bridge`](../packages/mcp/agentharness-bridge) | - | Explicit external-session selection reuses ScopeAccess permission. Reviewed MCP hooks prepare exact context at prompt and tool completion without capturing work or starting Agents. |
 | `ctx.developmentTaskAssignments` | `core` | [`development-task`](../packages/collaboration/development-task) | - | [`api-remotes`](../packages/api/remotes) | - | Exposes assignment list, checkout, clear, and context acknowledgement as a namespace distinct from Task projection and mutation methods. |
 | `ctx.developmentRoomContexts` | `core` | [`development-room-context`](../packages/collaboration/development-room-context) | - | [`development-room-context-storage-domain`](../packages/collaboration/development-room-context-storage-domain), [`api-remotes`](../packages/api/remotes) | - | Owns current members’ explicit plain-text publications in a separate append-only log and admits unseen joined-room entries to Agent requests through durable source references; it never copies private Session history automatically. |
 | `ctx.developmentMesh` | `seam` | [`development-mesh`](../packages/collaboration/development-mesh) | [`development-mesh-websocket`](../packages/collaboration/development-mesh-websocket) | [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task-mesh`](../packages/collaboration/development-task-mesh) | - | Registers versioned delta and owner-command channels; the WebSocket provider authenticates discovery, handshakes, and envelopes with a shared credential. |

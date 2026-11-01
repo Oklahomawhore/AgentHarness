@@ -287,7 +287,13 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
           payload: { args: { request: { clientId: 'codex' } } } }),
       })
       expect(codexSetup.status).toBe(200)
-      expect(await codexSetup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      expect(await codexSetup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured',
+        client: { automaticContext: { state: 'configured', configPath: join(home, '.codex/hooks.json') } } } } })
+      const hookDefinitions = JSON.parse(await readFile(join(home, '.codex/hooks.json'), 'utf8')) as unknown
+      expect(hookDefinitions).toMatchObject({ hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: 'mcp_tool', server: 'agentharness', tool: 'agentharness_codex_hook' }] }],
+        PostToolUse: [{ hooks: [{ type: 'mcp_tool', server: 'agentharness', tool: 'agentharness_codex_hook' }] }],
+      } })
       const settings = JSON.parse(await readFile(codexSettings, 'utf8')) as {
         keep: string
         servers: { name: string; enabled: boolean; transport: ClientEntry }[]
@@ -324,6 +330,17 @@ for (const [mode, args] of [['source', sourceArgs], ['built', builtArgs]] as con
       await mkdir(clientCwd)
       const connected = await bridge(args, clientCwd, mode, entry)
       client = connected.client
+      expect(await client.callTool({ name: 'agentharness_codex_hook', arguments: {
+        sessionId: 'profile-hook-session', cwd: clientCwd, event: 'UserPromptSubmit',
+      } })).toMatchObject({ content: [{ type: 'text', text: '{}' }] })
+      const observed = await fetch(`${origin}/api/codexScope/sessions`, {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ type: 'client-request', rpcId: 'codex-hook-inventory', method: 'codexScope/sessions', payload: { args: {} } }),
+      })
+      expect(await observed.json()).toMatchObject({ result: { ok: true, value: [{
+        sessionId: 'profile-hook-session', cwd: clientCwd, readRevision: 0,
+        clientId: entry.args[entry.args.indexOf('--participant-id') + 1],
+      }] } })
       const created = await client.callTool({ name: 'agentharness_task_create', arguments: {
         objective: 'Survive the local Host restart', scope: 'Authenticated MCP profile acceptance',
       } }, undefined, { timeout: 10_000 })

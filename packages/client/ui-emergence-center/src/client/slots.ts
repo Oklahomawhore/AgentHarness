@@ -3,6 +3,7 @@ import type {
   ClaudeScopeSessionKey, ClaudeScopeContributionDetail,
   ClaudeScopeLeaveRequest,
   ClaudeScopeSessionSummary,
+  CodexScopeSessionSummary,
   ClaudeScopeSetupRequest,
   ClaudeScopeSetupResult,
   ClaudeScopeProjectSetupResult,
@@ -36,6 +37,7 @@ export interface EmergenceCenterPanelFace extends ScopeAccessActions, SourceCont
     tasks: DevelopmentTaskDirectory
     mcpClients: McpClientSetupDirectory
     claudeScopes: ClaudeScopeDirectory
+    codexScopes: ContributionDirectory<'inventory', readonly CodexScopeSessionSummary[]>
     sourceContributions: ContributionDirectory<ClaudeScopeSessionKey, ClaudeScopeContributionDetail>
     ownerContributions: ContributionDirectory<DevelopmentTaskId, OwnerContributionValue>
     scopeAccess: ContributionDirectory<'inventory', ScopeAccessValue>
