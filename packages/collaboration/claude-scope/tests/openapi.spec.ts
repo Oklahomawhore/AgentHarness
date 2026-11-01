@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveOpenApiSources, sampleOpenApiSource } from '../src/openapi.ts'
+import { resolveContributionSource } from '../src/contribution-source.ts'
 import type { ClaudeScopeOpenApiSource } from '../src/types.ts'
 
 vi.mock('node:fs/promises', async (original) => {
@@ -72,6 +73,7 @@ describe('explicit OpenAPI file grants', () => {
   it('normalizes an exact existing file while preserving case-sensitive operation identity', async () => {
     const { source, root } = await fixture()
     expect(await resolveOpenApiSources([{ ...source, name: '  API  ' }], [root], signal)).toEqual([source])
+    expect(await resolveContributionSource({ ...source, name: '  API  ' }, [root], signal)).toEqual(source)
     expect(await resolveOpenApiSources([], [root], signal)).toEqual([])
   })
 
@@ -93,7 +95,8 @@ describe('explicit OpenAPI file grants', () => {
     await writeFile(second, '{}')
     await expect(resolveOpenApiSources([source, { ...source, filePath: second }], [root], signal)).rejects.toThrow('duplicate')
     await expect(resolveOpenApiSources([source, { ...source, name: 'Other API' }], [root], signal)).rejects.toThrow('duplicate')
-    expect(await resolveOpenApiSources([source, { ...source, method: 'put' }], [root], signal)).toHaveLength(2)
+    expect(await resolveOpenApiSources([source, { ...source, method: 'put' }], [root], signal))
+      .toEqual([source, { ...source, method: 'put' }])
   })
 
   it.skipIf(process.platform === 'win32')('resolves an in-root link at grant time and rejects an outside target', async () => {
@@ -145,6 +148,18 @@ describe('bounded OpenAPI declaration samples', () => {
     })
   })
 
+  it('accepts string annotations without interpreting them as additional request constraints', async () => {
+    const { source, bytes } = await fixture(document({ requestBody: body({ type: 'object',
+      title: 'Create request', description: 'Request description',
+      properties: { name: { type: 'string', title: 'Name', description: 'Display name' } }, required: ['name'],
+    }) }))
+    expect(await sampleOpenApiSource(source, bytes.length, signal)).toEqual({ state: 'valid',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      facts: { operationId: 'createItem', requestBodyRequired: false,
+        requiredRequestFields: ['name'], responseStatuses: ['200'], deprecated: false },
+    })
+  })
+
   it('uses schema defaults only when their values are omitted', async () => {
     const { source } = await fixture(document({ requestBody: body({ type: 'object' }) }))
     expect(await sampleOpenApiSource(source, 4096, signal)).toMatchObject({
@@ -167,6 +182,9 @@ describe('bounded OpenAPI declaration samples', () => {
     { type: 'object', properties: { a: { type: 'string', writeOnly: true } }, required: ['a'] },
     { type: 'object', properties: { a: { type: 'number', minimum: 1 } } },
     { type: 'object', properties: { a: { type: 'object', required: ['nested'] } } },
+    { type: 'object', properties: [] },
+    { type: 'object', title: false },
+    { type: 'object', description: [] },
     false,
   ])('refuses unsupported schema semantics without presenting partial fields: %j', async (schema) => {
     await expectInvalid(document({ requestBody: body(schema) }), 'unsupported-operation')
@@ -178,6 +196,13 @@ describe('bounded OpenAPI declaration samples', () => {
     await expectInvalid(document({ requestBody: { content: {
       'application/json': { schema: { type: 'object' } }, 'application/*': { schema: { type: 'object' } },
     } } }), 'unsupported-operation')
+    await expectInvalid(document({ requestBody: { content: {
+      'application/json': { schema: { type: 'object' }, encoding: { name: { contentType: 'text/plain' } } },
+    } } }), 'unsupported-operation')
+  })
+
+  it.each([undefined, [], {}, { 'x-owner': 'annotation only' }])('rejects an absent or empty response declaration: %j', async (responses) => {
+    await expectInvalid(document({ responses }), 'unsupported-operation')
   })
 
   it('distinguishes missing operations, unsupported documents and invalid bytes', async () => {
@@ -310,4 +335,18 @@ describe('bounded OpenAPI declaration samples', () => {
     vi.mocked(open).mockRejectedValueOnce(Object.assign(new Error(`EACCES ${source.filePath}`), { code: 'EACCES' }))
     expect(await sampleOpenApiSource(source, 4096, signal)).toEqual({ state: 'unavailable', reason: 'not-readable' })
   })
+
+  it('reports an opening-time no-follow failure as changed evidence without retaining its private path', async () => {
+    const { source } = await fixture()
+    vi.mocked(open).mockRejectedValueOnce(Object.assign(new Error(`ELOOP ${source.filePath}`), { code: 'ELOOP' }))
+    expect(await sampleOpenApiSource(source, 4096, signal)).toEqual({ state: 'unavailable', reason: 'changed-during-read' })
+  })
+
+  it.each([new Error('unclassified file opening failure'), 'file opening rejected without an Error'])(
+    'propagates an unclassified opening failure instead of fabricating an unavailable sample: %s', async (error) => {
+      const { source } = await fixture()
+      vi.mocked(open).mockRejectedValueOnce(error)
+      await expect(sampleOpenApiSource(source, 4096, signal)).rejects.toBe(error)
+    },
+  )
 })

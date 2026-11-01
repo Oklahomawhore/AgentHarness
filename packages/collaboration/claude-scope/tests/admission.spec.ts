@@ -115,6 +115,30 @@ const wrongResponses: readonly { readonly name: string; readonly change: (value:
 ]
 
 describe('remote observation receipt attribution', () => {
+  it('refuses a locally pending source approval before contacting its owner', async () => {
+    const test = await fixture()
+    const before = structuredClone(test.owner.developmentTasks.log())
+    test.network.respond = async () => { throw new Error('unexpected owner request') }
+    await expect(admitScopeObservation(test.ctx, test.session, {
+      ...test.grant, remote: { ownerNodeId: OWNER },
+    }, test.sample)).rejects.toThrow('remote source approval is pending')
+    expect(test.owner.developmentTasks.log()).toEqual(before)
+    expect(test.domain.table('leases').get('lease-one')).toEqual(test.lease)
+  })
+
+  it('rejects a revoked artifact as a tool completion before contacting its owner', async () => {
+    const test = await fixture()
+    const before = structuredClone(test.owner.developmentTasks.log())
+    test.network.respond = async () => { throw new Error('unexpected owner request') }
+    await expect(admitScopeObservation(test.ctx, test.session, test.grant, { ...test.sample, observation: {
+      kind: 'openapi-artifact', version: 1, artifactId: 'api-one' as DevelopmentTaskArtifactId,
+      sourceName: 'Orders API', grantId: 'grant-one' as DevelopmentTaskArtifactGrantId, sequence: 2,
+      operation: { method: 'post', path: '/orders' }, state: 'revoked', reason: 'grant-ended',
+    } })).rejects.toThrow('a tool sample cannot revoke a source grant')
+    expect(test.owner.developmentTasks.log()).toEqual(before)
+    expect(test.domain.table('leases').get('lease-one')).toEqual(test.lease)
+  })
+
   it.each(['terminal', 'text', 'source'] as const)('retains a corrupted pending %s without publishing it to the owner', async (field) => {
     const test = await fixture()
     const completion = { ...test.sample,

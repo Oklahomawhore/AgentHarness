@@ -40,7 +40,6 @@ export async function resolveContributionSource(
     return { kind: source.kind, tools: [...source.tools].sort() }
   }
   const [resolved] = await resolveOpenApiSources([source], roots, signal)
-  if (resolved === undefined) throw new Error('claude-scope: contribution source is missing')
   return resolved
 }
 

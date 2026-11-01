@@ -26,6 +26,8 @@ Exact responsibility labels select explicitly configured fields. Configuration c
 
 ## Alternatives considered
 
+**Recheck a same-process normalizer’s result count.** The normalizer returns one canonical grant per selector or rejects; its caller passes exactly one selector. An additional missing-result branch checks no independently changing input.
+
 **Interpret arbitrary publication JSON as sampled facts.** A parseable payload or observation-like id proves neither file access nor source authority. Only the Host admission method can attach the typed metadata.
 
 **Select the last arriving claim.** Independent grants have no shared sampling order. Choosing by arrival hides uncertainty; within one grant, durable sequence records observed order without claiming write causality.

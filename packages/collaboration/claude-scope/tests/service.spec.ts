@@ -1147,6 +1147,41 @@ describe('Claude scope service', () => {
     expect(second.ctx.developmentTasks.get({ taskId: task.id }).revision).toBe(3)
   })
 
+  it.each(['before-commit', 'after-commit'] as const)('restores exact local completions after a %s admission failure without another completion hook', async (failure) => {
+    const first = await boot()
+    const task = await first.createTask('Local outbox recovery')
+    const key = await first.observe('local-recovery-author')
+    await first.connect(key, task.id)
+    const input = first.tool('local-pending-write', 'original-local-completion')
+    await first.hook('local-recovery-author', 'PreToolUse', input)
+    const admit = first.ctx.developmentTasks.admitObservedContext.bind(first.ctx.developmentTasks)
+    vi.spyOn(first.ctx.developmentTasks, 'admitObservedContext').mockImplementationOnce(async (request) => {
+      if (failure === 'after-commit') await admit(request)
+      throw new Error('local admission interrupted')
+    })
+    await expect(first.hook('local-recovery-author', 'PostToolUse', input)).rejects.toThrow('local admission interrupted')
+    const pending = [...first.facility.get('claude_scope')!.table('leases').entries()][0]![1] as ScopeToolLease
+    expect(pending.completionAdmitted).toBeUndefined()
+    expect(pending.completion?.text).toContain('original-local-completion')
+    expect(first.ctx.developmentTasks.get({ taskId: task.id }).context).toHaveLength(failure === 'before-commit' ? 0 : 1)
+    await writeFile(input.tool_input.file_path, 'later-unreported-file-content')
+    await first.ctx.fiber.dispose()
+    const second = await boot(first.pool, first.directory)
+    const restored = [...second.facility.get('claude_scope')!.table('leases').entries()][0]![1] as ScopeToolLease
+    expect(restored).toEqual({ ...pending, completionAdmitted: true })
+    const context = second.ctx.developmentTasks.get({ taskId: task.id }).context
+    expect(context).toHaveLength(1)
+    expect(context[0]?.text).toBe(pending.completion?.text.trim())
+    expect(restored.completion?.receipt).toBeUndefined()
+    const events = structuredClone(second.ctx.developmentTasks.log())
+    expect((await second.hook('local-recovery-author', 'PostToolUse', input)).receipt.status).toBe('reused')
+    expect(second.ctx.developmentTasks.log()).toEqual(events)
+    await second.connect(await second.observe('local-recovery-receiver'), task.id)
+    const projection = (await second.hook('local-recovery-receiver', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+    expect(projection).toContain('original-local-completion')
+    expect(projection).not.toContain('later-unreported-file-content')
+  })
+
   it('rejects changed tool input, missing leases, and old A-to-B-to-A intervals', async () => {
     const host = await boot()
     const aTask = await host.createTask('Scope A')
