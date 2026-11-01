@@ -627,6 +627,42 @@ describe('Claude scope service', () => {
     expect(host.ctx.developmentTasks.assignmentLog().some(entry => entry.change.kind === 'context-acknowledged')).toBe(false)
   })
 
+  it('reserves the final artifact sequence before sampling so an exhausted source can still leave', async () => {
+    const host = await boot()
+    const scenario = await apiScenario(host)
+    await scenario.change('initial-artifact', apiDocument(['initial_field']))
+    const records = host.facility.get('claude_scope')!.table('artifacts')
+    const row = [...records.entries()][0]
+    if (row === undefined) throw new Error('Missing persisted artifact counter')
+    const chain = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(row[1])
+    await records.put(row[0], { ...chain, sequence: Number.MAX_SAFE_INTEGER - 2 })
+    await scenario.change('last-artifact', apiDocument(['last_field']))
+    const before = structuredClone(host.ctx.developmentTasks.log())
+    const retained = records.get(row[0])
+    await expect(scenario.change('exhausted-artifact', apiDocument(['unadmitted_field'])))
+      .rejects.toThrow('artifact sample sequence is exhausted')
+    expect(host.ctx.developmentTasks.log()).toEqual(before)
+    expect(records.get(row[0])).toEqual(retained)
+    const current = (await host.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+    expect(current).toContain('last_field')
+    expect(current).not.toContain('unadmitted_field')
+    vi.spyOn(host.ctx.developmentTasks, 'revokeObservedArtifact').mockRejectedValueOnce(new Error('retirement storage unavailable'))
+    await expect(host.scope.leave({ sessionKey: scenario.a })).rejects.toThrow('retirement storage unavailable')
+    const pending = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(records.get(row[0])).revocation
+    expect(pending?.observation.sequence).toBe(Number.MAX_SAFE_INTEGER)
+    await host.ctx.fiber.dispose()
+    const resumed = await boot(host.pool, host.directory)
+    await useFacts(resumed)
+    expect(resumed.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.at(-1)?.observation)
+      .toMatchObject({ state: 'revoked', sequence: Number.MAX_SAFE_INTEGER })
+    expect(resumed.ctx.developmentTasks.get({ taskId: scenario.task.id }).context.at(-1)?.observation?.sourceId)
+      .toBe(pending?.sourceId)
+    const withdrawn = (await resumed.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+    expect(withdrawn).toContain('"evidence":"revoked"')
+    expect(withdrawn).not.toContain('last_field')
+    expect([...resumed.facility.get('claude_scope')!.table('artifacts').entries()]).toEqual([])
+  })
+
   it('recovers every operation sampled by one completion without rereading post-crash bytes', async () => {
     const first = await boot()
     const scenario = await apiScenario(first)

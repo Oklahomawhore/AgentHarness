@@ -476,6 +476,34 @@ describe('DevelopmentTaskService', () => {
     expect(manual.context.at(-1)?.observation).toBeUndefined()
   })
 
+  it('reserves the final artifact sequence for local withdrawal and rejects an exhausted replay', async () => {
+    const { tasks } = await setup()
+    const task = await tasks.create(rootRequest('Artifact terminal sequence'))
+    const request = { ...await observationRequest(tasks, task.id), observation: artifactObservation(Number.MAX_SAFE_INTEGER - 1) }
+    await tasks.admitObservedContext(request)
+    const before = structuredClone(tasks.log())
+    const exhaustedObservation = artifactObservation(Number.MAX_SAFE_INTEGER)
+    expect(openApiObservationInputSchema.parse(exhaustedObservation)).toEqual(exhaustedObservation)
+    await expect(tasks.admitObservedContext({ ...request, sourceId: 'b'.repeat(64) as DevelopmentTaskObservedSourceId,
+      observation: exhaustedObservation,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(tasks.log()).toEqual(before)
+    const ended = await tasks.revokeObservedArtifact(revocation(request, Number.MAX_SAFE_INTEGER))
+    expect(ended.publication.observation).toMatchObject({ state: 'revoked', sequence: Number.MAX_SAFE_INTEGER })
+    const restored = await setup()
+    restored.tasks.restoreLog(tasks.log().map(entry => developmentTaskEventSchema.parse(entry)))
+    expect(restored.tasks.log()).toEqual(tasks.log())
+    expect(restored.tasks.get({ taskId: task.id }).context).toEqual(ended.task.context)
+    const exhausted = before.map(entry => developmentTaskEventSchema.parse(entry.change.kind === 'context-published'
+      ? { ...entry, change: { ...entry.change, publication: { ...entry.change.publication,
+        observation: { ...entry.change.publication.observation, sequence: Number.MAX_SAFE_INTEGER } } } }
+      : entry))
+    const rejected = await setup()
+    expect(() => { rejected.tasks.restoreLog(exhausted) }).toThrow('reserve its terminal successor')
+    expect(rejected.tasks.log()).toEqual(before.slice(0, 1))
+    expect(rejected.tasks.get({ taskId: task.id }).context).toEqual([])
+  })
+
   it('compares all artifact evidence before deduplication and rejects older new sources', async () => {
     const { tasks } = await setup()
     const task = await tasks.create(rootRequest('Artifact sequence'))

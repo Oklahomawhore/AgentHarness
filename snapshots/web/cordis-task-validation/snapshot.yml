@@ -1,0 +1,9 @@
+version: 1
+scenario: cordis-task-validation
+profile: web
+composition: web-cordis-native
+recording: authored
+platform: posix
+header:
+  class: web-cordis-native
+  pin: true

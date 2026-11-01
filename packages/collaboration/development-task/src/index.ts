@@ -1779,10 +1779,12 @@ export class DevelopmentTaskService extends TypertRemoteService {
       || publication.id !== `context-observation-${observation.sourceId}`) {
       throw new DevelopmentTaskError('artifact observation does not match its admitting node or source', code)
     }
+    if (observation.state !== 'revoked' && observation.sequence >= Number.MAX_SAFE_INTEGER) {
+      throw new DevelopmentTaskError('artifact sample sequence must reserve its terminal successor', code)
+    }
     if (interval !== undefined && (observation.binding.id !== interval.bindingId
-      || observation.binding.epoch.seq !== interval.expectedBindingEpoch.seq || observation.state === 'revoked'
-      || observation.sequence >= Number.MAX_SAFE_INTEGER)) {
-      throw new DevelopmentTaskError('remote artifact does not match its approved binding or reserved terminal sequence', code)
+      || observation.binding.epoch.seq !== interval.expectedBindingEpoch.seq || observation.state === 'revoked')) {
+      throw new DevelopmentTaskError('remote artifact does not match its approved binding', code)
     }
     const previous = observationHeads(task.context).get(observationChainKey(observation))
     const prior = previous?.observation

@@ -45,7 +45,7 @@ kind: "package-reference"
 
 调用方提供来源身份的小写 SHA-256 digest，其中包含 binding 区间。方法沿用显式 publication 的文本规则，去掉首尾空白并执行 `maxTextBytes` 限制。同一来源和有效内容重试返回 `reused`、原 publication，且不增加 revision；文本、发布者或观察元数据不同则以 `INVALID_REQUEST` 拒绝。新来源在既有持久化事件成功后返回 `published`。Task 日志重放即可恢复去重，不需要独立账本。即使文本相同，不同来源也保留为独立观察。[准入决策](../../../.agents/notes/implemented/architecture/2026-10-02-observed-task-context-admission.zh.md) 说明归属与重试规则。
 
-可选的版本化 OpenAPI observation 记录支持范围内的完整 operation 采样、无效文档、不可用文件或已结束授权。Task 准入填写来源 digest、观察节点和原 binding 区间。文件授权、字节 digest、工件身份与采样序号由读取器负责；序号表达同一观察节点、工件和授权内的观察顺序，不代表操作因果。新来源必须递增序号，且不能更改发布者、operation、来源名称或 binding 区间。即使已有更新采样，已准入内容的精确重试仍可复用。把 observation JSON 复制到显式 publication 中不会生成可信元数据，Remote publication 也不能提供该元数据。
+可选的版本化 OpenAPI observation 记录支持范围内的完整 operation 采样、无效文档、不可用文件或已结束授权。Task 准入填写来源 digest、观察节点和原 binding 区间。文件授权、字节 digest、工件身份与采样序号由读取器负责；序号表达同一观察节点、工件和授权内的观察顺序，不代表操作因果。非终止样本使用小于 `Number.MAX_SAFE_INTEGER` 的正安全整数序号；最后一个安全值保留给撤销。新来源必须递增序号，且不能更改发布者、operation、来源名称或 binding 区间。即使已有更新采样，已准入内容的精确重试仍可复用。把 observation JSON 复制到显式 publication 中不会生成可信元数据，Remote publication 也不能提供该元数据。
 
 `revokeObservedArtifact` 是独立的 Host-only 终止准入。它要求先前证据的发布者、工件、授权、operation、来源名称和 binding 区间均匹配，因此可以在 binding 清除或 Agent 离开后结束本地观察链。已撤销的链不再接受新采样；新的授权需要新的 grant 身份。每条活跃本地观察链在 `maxEventsPerTask` 内预留一个事件名额，普通写入不能使用该名额。撤销使用自身的预留名额，不超出事件上限。`maxTextBytes` 分别限制完整 observation JSON，包括准入填写的字段；继承 block 的既有完整预算和 digest 也包含该元数据。
 
