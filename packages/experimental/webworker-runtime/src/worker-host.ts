@@ -415,7 +415,7 @@ function bootPatches(
   }
   // Native client setup, peer networking, SQLite and their collaboration UI require a local Node process.
   for (const id of [
-    'mcp-client-setup', 'claude-scope', 'scope-transport-libp2p', 'scope-access', 'scope-agent-context', 'scope-agent-contribution',
+    'mcp-client-setup', 'claude-scope', 'codex-scope', 'scope-transport-libp2p', 'scope-access', 'scope-agent-context', 'scope-agent-contribution',
     'development-mesh-websocket', 'development-room-mesh', 'development-task-mesh',
     'storage-sqlite', 'ui-emergence-center',
   ]) {

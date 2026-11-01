@@ -75,7 +75,7 @@ Claude hook 的 stdout 只确认本地输出：其他 hook 或请求取消仍可
 
 ### Codex 接收实验
 
-优先使用现有连接上的 [MCP tool hooks](https://learn.chatgpt.com/docs/hooks#mcp-tool-hooks)，不另建 command transport。受控 Codex `0.166.0-alpha.5.1` 实验验证了 `UserPromptSubmit` 与 `PostToolUse` 的输出进入所捕获的 developer 消息。一次 prompt 和两次工具完成收到不同 hook 输出，无需用户再次发消息或模型主动 recall。必须正常信任精确的 hook 定义；未信任的反向用例不执行 hook。这些测试使用本地脚本响应端点，不使用模型账户。
+优先使用现有连接上的 [MCP tool hooks](https://learn.chatgpt.com/docs/hooks#mcp-tool-hooks)，不另建 command transport。受控 Codex `0.166.0-alpha.5.1` 实验使用 Host 实际安装的定义、MCP profile、Codex Consumer 和两个独立 Host。捕获的七次请求验证了未信任反向用例、一次接收选择、同一轮普通本地工作中的自动修订与撤销、本地停止，以及另一根对话的隔离。`UserPromptSubmit` 和 `PostToolUse` 将准备好的上下文交给 developer 消息，无需模型主动 recall。必须正常信任精确的 hook 定义；未信任反向用例不注册接收会话。端点返回本地脚本响应，不使用模型账户。
 
 该运行时从 MCP 文本内容读取 hook JSON，而不是采用同时提供的不同 `structuredContent` 值。第二次投递后，捕获的请求同时保留先前上下文及其撤回通知。20,000 字符的 MCP 上下文会写入磁盘并缩短；设置 command handler 的 `additionalContextLimit = 0` 在该受测运行时不能解除这一 MCP 限制。Consumer 必须限制完整的内联输出，并明确标记修订与撤回；这些通道证据不能证明历史内容已被抹除、空闲唤醒或模型正确采用。
 

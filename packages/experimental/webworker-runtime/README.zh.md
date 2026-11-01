@@ -11,7 +11,7 @@ kind: "package-library"
 
 在独立的浏览器 Web Worker 中运行已打包的 harness，用于预览部署与打包回归（[实验组](../README.zh.md)）。Worker 将打包好的 VFS 镜像下载到内存，加载模块，并通过 HTTP postMessage 隧道服务页面。
 
-预览不包含协作管理页面、外部 Claude Hook，以及需要 Node 的 scope 和 Mesh 服务。Task 数据存储在易失 VFS 中，替换 Worker 后这些数据会丢失。
+预览不包含协作管理页面、外部 Claude 和 Codex Hook，以及需要 Node 的 scope 和 Mesh 服务。Task 数据存储在易失 VFS 中，替换 Worker 后这些数据会丢失。
 
 ## 目录
 
@@ -51,10 +51,10 @@ kind: "package-library"
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **不支持协作管理页面**：启动时将 `ui-emergence-center` 与其依赖的 Node 专用 MCP、Claude Hook 和 scope 服务一同禁用。页面不会调用缺失的管理 API；普通 Worker 会话仍可使用。
+- **不支持协作管理页面**：启动时将 `ui-emergence-center` 与其依赖的 Node 专用 MCP、外部 Hook 和 scope 服务一同禁用。页面不会调用缺失的管理 API；普通 Worker 会话仍可使用。
 - **Task 存储使用易失 VFS**：启动时禁用 `storage-sqlite`，仅将 `storage-domain` 中已有的 `development_context_tasks: sqlite` 路由改为既有 JSON 后端。其他设置与路由保持不变，包括显式选择的其他后端；自定义 SQLite 路由仍不受支持。这项 Worker 专用配置不能在 Worker 替换后保留数据；Node Web profile 仍使用 SQLite。
 - **不支持配置本机 MCP 客户端**：启动时会禁用 `mcp-client-setup`。Worker 没有原生 Node 可执行文件或外部客户端配置文件，因此不会提供占位可执行文件路径。
-- **浏览器预览不支持本机 Claude 钩子**：启动时会禁用 `claude-scope` 条目。项目钩子需要本机 Node 启动器和操作系统文件锁，无法把外部 Claude 进程连接到内存中的 Worker。
+- **浏览器预览不支持外部 Claude 和 Codex 钩子**：启动时禁用 `claude-scope` 和 `codex-scope`。外部客户端需要本机 Node Host 和 scope peer 服务；内存中的 Worker 均不提供。
 - **worker 组合写明文会话日志**（`compression: 'none'` boot patch）：不带 Zstandard 编解码器，导出日志是 `.jsonl`，不会是 `.jsonl.zstd`。
 - **不支持 UDP 与局域网发现**：`node:dgram.createSocket` 会报告不支持的 API，并在获取资源前抛错。默认 Mesh 条目在插件树挂载前禁用；导入未激活的模块不会授予 UDP 能力。
 - **`node:dns/promises`、`node:vm`、`node:net`、`node:sqlite`、`node:worker_threads` 是结构化 stub**：每次调用在 console 报告拒绝并抛出。需要原生 DNS、真进程或真 realm 隔离的行在此无法运行。

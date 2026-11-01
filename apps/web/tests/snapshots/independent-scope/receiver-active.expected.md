@@ -13,6 +13,9 @@
     - option "browser-independent-receiver" [selected]
     - option "browser-independent-other"
   - paragraph: 只接收上下文，不授权采集工具或读取项目文件。连接后在下一次支持的 Hook 处自动更新；空闲会话不会被唤醒。
+  - paragraph: Codex 根对话及其后代共享同一个接收范围。
+  - paragraph: 尚未观测到 Codex 会话。配置 Hook 后，在 Codex 中继续对话，再刷新会话。
+  - button "刷新 Codex 会话"
   - button "连接所选会话" [disabled]
   - code: browser-independent-receiver
   - text: 最近一次上下文已准备

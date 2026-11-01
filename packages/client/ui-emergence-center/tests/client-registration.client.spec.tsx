@@ -857,36 +857,93 @@ describe('Collaboration client registration lifecycle', () => {
     } finally { await subject.runtime.dispose() }
   })
 
-  it('connects the original native Session to an owned Task and separately authorizes and stops local file collection', async () => {
+  it.each(['confirmed', 'lost-reply'] as const)(
+    'connects the original native Session, separately authorizes local collection, and reconciles a %s stop', async (outcome) => {
+      const subject = await mountPanel([], true)
+      const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+        const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+        fireEvent.click(controls.getByRole('radio', { name: zh['native.target.local'] }))
+        const choose = await controls.findByLabelText<HTMLSelectElement>(zh['native.local.task'])
+        fireEvent.change(choose, { target: { value: task.id } })
+        fireEvent.click(controls.getByRole('button', { name: zh['native.local.connect'] }))
+        await controls.findByText(zh['native.local.connected'].replace('{task}', task.objective))
+        expect(subject.checkout).toHaveBeenCalledExactlyOnceWith({ taskId: task.id, participantId: localCapture.grant.participantId })
+        expect(subject.requestLocal).not.toHaveBeenCalled()
+        for (const [key, value] of [['contribution.roots', '/project'], ['contribution.hours', '1'],
+          ['contribution.maxSamples', '8'], ['contribution.maxBytes', '4096']] as const) {
+          fireEvent.change(controls.getByLabelText(zh[key]), { target: { value } })
+        }
+        fireEvent.click(controls.getByRole('checkbox', { name: zh['native.share.write'] }))
+        const enable = controls.getByRole<HTMLButtonElement>('button', { name: zh['native.local.enable'] })
+        expect(enable.disabled).toBe(true)
+        fireEvent.click(controls.getByRole('checkbox', { name: zh['native.local.consent'] }))
+        fireEvent.click(enable)
+        await controls.findByRole('button', { name: zh['native.share.stop'] })
+        expect(subject.requestLocal).toHaveBeenCalledExactlyOnceWith({ ...binding, agentId, expectedCapture: null,
+          roots: ['/project'], tools: ['write'], limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 8, maxSampleBytes: 4096 } })
+        if (outcome === 'lost-reply') {
+          const commit = subject.stopLocal.getMockImplementation()
+          if (commit === undefined) throw new Error('Local stop fixture missing')
+          subject.stopLocal.mockImplementationOnce(async (request) => {
+            await commit(request)
+            throw new Error('private stop diagnostic /private/owner-project')
+          })
+        }
+        fireEvent.click(controls.getByRole('button', { name: zh['native.share.stop'] }))
+        await controls.findByRole('button', { name: zh['native.local.enable'] })
+        await waitFor(() => { expect(controls.getByRole('button', { name: zh['native.share.refresh'] })).toHaveProperty('disabled', false) })
+        expect(subject.stopLocal).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: localCapture.selection })
+        if (outcome === 'lost-reply') {
+          await controls.findByText(zh['contribution.error.unknown'])
+          expect(controls.queryByText(/private stop diagnostic/u)).toBeNull()
+          expect(diagnostics).toHaveBeenCalledOnce()
+          fireEvent.click(controls.getByRole('button', { name: zh['native.close'] }))
+          fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
+          const reopened = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
+          await reopened.findByRole('button', { name: zh['native.local.enable'] })
+          expect(reopened.queryByRole('button', { name: zh['native.share.stop'] })).toBeNull()
+          const reads = subject.localStatus.mock.calls.length
+          fireEvent.click(reopened.getByRole('button', { name: zh['native.share.refresh'] }))
+          await waitFor(() => { expect(subject.localStatus.mock.calls.length).toBeGreaterThan(reads) })
+          await waitFor(() => { expect(reopened.queryByRole('alert')).toBeNull() })
+          expect(subject.stopLocal).toHaveBeenCalledOnce()
+          expect(subject.requestLocal).toHaveBeenCalledOnce()
+        } else expect(diagnostics).not.toHaveBeenCalled()
+        expect(subject.bind).not.toHaveBeenCalled()
+        expect(subject.requestNative).not.toHaveBeenCalled()
+      } finally { diagnostics.mockRestore(); await subject.runtime.dispose() }
+    },
+  )
+
+  it('recovers an unavailable local native inventory through explicit refresh without requesting permission', async () => {
     const subject = await mountPanel([], true)
+    const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
+      const read = subject.localStatus.getMockImplementation()
+      if (read === undefined) throw new Error('Local status fixture missing')
+      subject.localStatus.mockRejectedValue(new Error('private local status /private/workspace'))
       fireEvent.click(screen.getByRole('button', { name: zh['native.trigger'] }))
       const controls = within(await screen.findByRole('dialog', { name: zh['native.title'] }))
       fireEvent.click(controls.getByRole('radio', { name: zh['native.target.local'] }))
-      const choose = await controls.findByLabelText<HTMLSelectElement>(zh['native.local.task'])
-      fireEvent.change(choose, { target: { value: task.id } })
-      fireEvent.click(controls.getByRole('button', { name: zh['native.local.connect'] }))
-      await controls.findByText(zh['native.local.connected'].replace('{task}', task.objective))
-      expect(subject.checkout).toHaveBeenCalledExactlyOnceWith({ taskId: task.id, participantId: localCapture.grant.participantId })
+      await controls.findByText(zh['contribution.error.unknown'])
+      expect(controls.queryByText(/private local status/u)).toBeNull()
+      expect(controls.queryByRole('button', { name: zh['native.local.connect'] })).toBeNull()
+      expect(subject.checkout).not.toHaveBeenCalled()
       expect(subject.requestLocal).not.toHaveBeenCalled()
-      for (const [key, value] of [['contribution.roots', '/project'], ['contribution.hours', '1'],
-        ['contribution.maxSamples', '8'], ['contribution.maxBytes', '4096']] as const) {
-        fireEvent.change(controls.getByLabelText(zh[key]), { target: { value } })
-      }
-      fireEvent.click(controls.getByRole('checkbox', { name: zh['native.share.write'] }))
-      const enable = controls.getByRole<HTMLButtonElement>('button', { name: zh['native.local.enable'] })
-      expect(enable.disabled).toBe(true)
-      fireEvent.click(controls.getByRole('checkbox', { name: zh['native.local.consent'] }))
-      fireEvent.click(enable)
-      await controls.findByRole('button', { name: zh['native.share.stop'] })
-      expect(subject.requestLocal).toHaveBeenCalledExactlyOnceWith({ ...binding, agentId, expectedCapture: null,
-        roots: ['/project'], tools: ['write'], limits: { expiresAt: expect.any(Number) as unknown, maxSamples: 8, maxSampleBytes: 4096 } })
-      fireEvent.click(controls.getByRole('button', { name: zh['native.share.stop'] }))
-      await controls.findByRole('button', { name: zh['native.local.enable'] })
-      expect(subject.stopLocal).toHaveBeenCalledExactlyOnceWith({ agentId, expectedCapture: localCapture.selection })
-      expect(subject.bind).not.toHaveBeenCalled()
-      expect(subject.requestNative).not.toHaveBeenCalled()
-    } finally { await subject.runtime.dispose() }
+      expect(subject.stopLocal).not.toHaveBeenCalled()
+      expect(diagnostics).toHaveBeenCalled()
+      subject.localStatus.mockImplementation(read)
+      const reads = subject.localStatus.mock.calls.length
+      fireEvent.click(controls.getByRole('button', { name: zh['native.share.refresh'] }))
+      await controls.findByLabelText(zh['native.local.task'])
+      await waitFor(() => { expect(controls.queryByRole('alert')).toBeNull() })
+      expect(subject.localStatus.mock.calls.length).toBeGreaterThan(reads)
+      expect(subject.checkout).not.toHaveBeenCalled()
+      expect(subject.requestLocal).not.toHaveBeenCalled()
+      expect(subject.stopLocal).not.toHaveBeenCalled()
+    } finally { diagnostics.mockRestore(); await subject.runtime.dispose() }
   })
 
   it('creates and selects the returned Root Task through the registered creation action', async () => {

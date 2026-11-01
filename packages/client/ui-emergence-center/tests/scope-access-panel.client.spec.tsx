@@ -115,7 +115,7 @@ it('pins a read invitation to the selected owner Task and keeps invalid input av
   fireEvent.change(screen.getByLabelText(zh['access.paste']), { target: { value: 'invalid invitation' } })
   fireEvent.change(screen.getByLabelText(zh['claude.chooseSession']), { target: { value: `claude:${session.sessionKey}` } })
   fireEvent.click(screen.getByRole('button', { name: zh['access.receive'] }))
-  await screen.findByRole('alert')
+  expect((await screen.findByRole('alert')).textContent).toBe(zh['access.failed'])
   expect(screen.getByDisplayValue('invalid invitation')).toBeTruthy()
   expect(props.receiveClaudeScope).not.toHaveBeenCalled()
 })

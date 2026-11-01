@@ -72,10 +72,9 @@ export function ScopeAccessPanel({ taskId, entry, sessions, codexScopes, codexCl
   useEffect(() => { readCodexScopes() }, [readCodexScopes])
   useEffect(() => { taskGeneration.current += 1; setCreated(undefined) }, [taskId])
   const act = async (operation: () => Promise<void>): Promise<void> => {
-    const current = generation.current
     setError(false)
     try { await operation() }
-    catch { if (current === generation.current) setError(true) }
+    catch { setError(true) }
   }
   const data = entry?.value
   const currentAddress = resolveOwnerAddress(data?.identity.addresses ?? [], address)
@@ -156,10 +155,10 @@ export function ScopeAccessPanel({ taskId, entry, sessions, codexScopes, codexCl
       void act(async () => {
         // The generated Remote validator checks the complete invitation before the Host acts.
         const parsed = JSON.parse(invitation) as ScopeInvitation
-        const received = chosen.runtime === 'claude'
-          ? await receiveClaudeScope({ sessionKey: chosen.session.sessionKey, invitation: parsed })
-          : await receiveCodexScope({ sessionKey: chosen.session.sessionKey,
-            expectedReadRevision: chosen.session.readRevision, invitation: parsed })
+        const received = await (chosen.runtime === 'claude'
+          ? receiveClaudeScope({ sessionKey: chosen.session.sessionKey, invitation: parsed })
+          : receiveCodexScope({ sessionKey: chosen.session.sessionKey,
+            expectedReadRevision: chosen.session.readRevision, invitation: parsed }))
         if (received !== undefined) setInvitation('')
       })
     }}>

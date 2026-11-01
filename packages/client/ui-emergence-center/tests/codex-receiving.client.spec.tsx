@@ -100,26 +100,38 @@ it('receives and stops through the mounted Codex Remote with no local Task or ex
   } finally { await subject.runtime.dispose() }
 })
 
-it('reconciles a lost receive reply before retrying only inventory discovery', async () => {
-  const subject = await mount()
-  const report = vi.spyOn(console, 'error').mockImplementation(() => {})
-  try {
-    subject.receive.mockImplementationOnce(async () => {
-      subject.observe([{ ...session, readRevision: 3, receiveState: 'pending', receiveTaskId: invitation.taskId,
-        receiveSubscriptionId: 'subscription' as NonNullable<CodexScopeSessionSummary['receiveSubscriptionId']> }])
-      throw new Error('Reply lost after subscription commit')
-    })
-    receiveInvitation()
-    await screen.findByText(zh['access.codexFailed'])
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(true)
-    expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
-    expect(screen.getByRole('button', { name: zh['access.stop'] })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: zh['access.refreshCodex'] }))
-    await waitFor(() => { expect(screen.queryByText(zh['access.codexFailed'])).toBeNull() })
-    expect(subject.receive).toHaveBeenCalledOnce()
-    expect(report).toHaveBeenCalledOnce()
-  } finally { report.mockRestore(); await subject.runtime.dispose() }
-})
+it.each(['ready', 'unavailable'] as const)(
+  'retains a lost receive invitation with %s confirmation and retries only inventory discovery', async (confirmation) => {
+    const subject = await mount()
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const read = subject.sessions.getMockImplementation()
+      if (read === undefined) throw new Error('Codex inventory fixture missing')
+      subject.receive.mockImplementationOnce(async () => {
+        subject.observe([{ ...session, readRevision: 3, receiveState: 'pending', receiveTaskId: invitation.taskId,
+          receiveSubscriptionId: 'subscription' as NonNullable<CodexScopeSessionSummary['receiveSubscriptionId']> }])
+        if (confirmation === 'unavailable') subject.sessions.mockRejectedValue(new Error('Inventory unavailable after receiving'))
+        throw new Error('Reply lost after subscription commit')
+      })
+      receiveInvitation()
+      await screen.findByText(zh['access.codexFailed'])
+      await waitFor(() => { expect(subject.face.hooks.codexScopes.getSnapshot().inventory?.pending).toBe(false) })
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: zh['access.receive'] }).disabled).toBe(true)
+      expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
+      if (confirmation === 'unavailable') {
+        expect(subject.face.hooks.codexScopes.getSnapshot().inventory?.status).toBe('error')
+        expect(screen.queryByRole('button', { name: zh['access.stop'] })).toBeNull()
+        subject.sessions.mockImplementation(read)
+      } else expect(screen.getByRole('button', { name: zh['access.stop'] })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: zh['access.refreshCodex'] }))
+      await waitFor(() => { expect(screen.queryByText(zh['access.codexFailed'])).toBeNull() })
+      expect(screen.getByRole('button', { name: zh['access.stop'] })).toBeTruthy()
+      expect(screen.getByLabelText<HTMLTextAreaElement>(zh['access.paste']).value).toBe(JSON.stringify(invitation))
+      expect(subject.receive).toHaveBeenCalledOnce()
+      expect(report).toHaveBeenCalledTimes(confirmation === 'unavailable' ? 2 : 1)
+    } finally { report.mockRestore(); await subject.runtime.dispose() }
+  },
+)
 
 it('discovers the first observed root from a change event and preserves read revision across hook observations', async () => {
   const subject = await mount([])

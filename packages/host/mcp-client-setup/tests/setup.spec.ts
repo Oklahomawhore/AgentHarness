@@ -568,6 +568,22 @@ describe('MCP client setup', () => {
     expect(results).toHaveLength(7)
   })
 
+  it.skipIf(process.platform === 'win32').each(['default', 'relative'] as const)(
+    'inspects receiving hooks with a %s Codex home without writing configuration', async (home) => {
+      const { root, options } = await fixture()
+      await fakeExecutable(join(root, 'bin', 'codex'), '#!/bin/sh\nprintf "[]"\n')
+      const { CODEX_HOME: _codexHome, ...environment } = options.environment
+      const result = await listMcpClients({ ...options, environment: {
+        ...environment, ...(home === 'relative' ? { CODEX_HOME: 'relative-codex-home' } : {}),
+      } })
+      const client = result.clients.find(item => item.id === 'codex')
+      if (home === 'default') expect(client).toMatchObject({ state: 'not-configured', canSetup: true,
+        automaticContext: { state: 'not-configured', configPath: join(root, 'home', '.codex/hooks.json') } })
+      else expect(client).toMatchObject({ state: 'failed', canSetup: false, detail: 'CODEX_HOME must be absolute' })
+      await expect(lstat(join(root, 'home', '.codex'))).rejects.toMatchObject({ code: 'ENOENT' })
+    },
+  )
+
   // Official Codex list output includes the user's independent server-enabled policy.
   it.skipIf(process.platform === 'win32')('adds receiving hooks to a matching Codex MCP registration without registering it again', async () => {
     const { root, options } = await fixture()
