@@ -230,11 +230,15 @@ describe('Claude scope service', () => {
     const source = await bootRemote(link)
     const key = await source.observe('remote-author')
     const filePath = join(source.directory, 'openapi.json')
-    await writeFile(filePath, apiDocument(['source_field']))
-    const input = { tool_use_id: 'remote-write', tool_name: 'Write', tool_input: { file_path: filePath, content: apiDocument(['source_field']) } }
+    const document = JSON.parse(apiDocument(['source_field'])) as { paths: { '/orders': { post: object; put?: object } } }
+    document.paths['/orders'].put = { ...document.paths['/orders'].post, operationId: 'replaceOrder' }
+    const content = JSON.stringify(document)
+    await writeFile(filePath, content)
+    const input = { tool_use_id: 'remote-write', tool_name: 'Write', tool_input: { file_path: filePath, content } }
     expect(await source.scope.join({
       sessionKey: key, taskId: task.id, responsibility: 'backend', roots: [source.directory], bashCommands: [],
-      openApiSources: [{ name: 'orders-api', filePath, method: 'post', path: '/orders' }],
+      openApiSources: [{ name: 'orders-api', filePath, method: 'post', path: '/orders' },
+        { name: 'replace-orders', filePath, method: 'put', path: '/orders' }],
     })).toMatchObject({ sharingState: 'awaiting-approval' })
     const sample = vi.spyOn(OpenApi, 'sampleOpenApiSource')
     expect((await source.hook('remote-author', 'PreToolUse', input)).receipt.reason).toBe('owner-approval-pending')
@@ -245,15 +249,19 @@ describe('Claude scope service', () => {
     const approval = await owner.ctx.developmentTasks.approveObservedInterval(identity)
     expect((await source.hook('remote-author', 'PreToolUse', input)).receipt.status).toBe('leased')
     await source.hook('remote-author', 'PostToolUse', input)
-    expect(sample).toHaveBeenCalledTimes(1)
+    expect(sample).toHaveBeenCalledTimes(2)
     const publications = owner.ctx.developmentTasks.get({ taskId: task.id }).context
-    expect(publications).toHaveLength(2)
-    expect(publications.find(item => item.observation !== undefined)?.observation).toMatchObject({
-      observerNodeId: 'source-node', state: 'valid', facts: { requiredRequestFields: ['source_field'] },
-    })
+    expect(publications).toHaveLength(3)
+    expect(publications.flatMap(item => item.observation ?? [])).toMatchObject(['post', 'put'].map(method => ({
+      observerNodeId: 'source-node', state: 'valid', operation: { method, path: '/orders' },
+      facts: { requiredRequestFields: ['source_field'] },
+    })))
     expect(source.ctx.developmentTasks.get({ taskId: task.id }).context).toHaveLength(0)
     const lease = [...source.facility.get('claude_scope')!.table('leases').entries()][0]![1] as ScopeToolLease
     expect(lease.artifactSamples?.[0]?.receipt).toMatchObject({ ownerNodeId: 'test-host', intervalId: approval.id, event: { nodeId: 'test-host' } })
+    expect(lease.artifactSamples).toHaveLength(2)
+    expect(lease.artifactSamples?.map(item => [item.observation.sourceName, item.receipt?.sourceId]))
+      .toEqual(lease.artifactSamples?.map(item => [item.observation.sourceName, item.sourceId]))
     expect(lease.completion?.receipt).toMatchObject({ ownerNodeId: 'test-host', intervalId: approval.id })
     expect((await source.scope.sessions())[0]).toMatchObject({ sharingState: 'active' })
   })
@@ -627,6 +635,36 @@ describe('Claude scope service', () => {
     expect(host.ctx.developmentTasks.assignmentLog().some(entry => entry.change.kind === 'context-acknowledged')).toBe(false)
   })
 
+  it.each([128, 512])('bounds sampled declarations and attribution to %i bytes before admission', async (maxObservationBytes) => {
+    const host = await boot(undefined, undefined, { maxObservationBytes })
+    const scenario = await apiScenario(host)
+    const input = scenario.tool('bounded-declaration', apiDocument(['字段'.repeat(1024)]))
+    await host.hook('api-author', 'PreToolUse', input)
+    await writeFile(scenario.source.filePath, input.tool_input.content)
+    const log = structuredClone(host.ctx.developmentTasks.log())
+    const completion = host.hook('api-author', 'PostToolUse', input)
+    const artifacts = host.facility.get('claude_scope')!.table('artifacts')
+    if (maxObservationBytes === 128) {
+      await expect(completion).rejects.toThrow('artifact attribution exceeds maxObservationBytes')
+      expect(host.ctx.developmentTasks.log()).toEqual(log)
+      expect(artifacts.size).toBe(0)
+      expect([...host.facility.get('claude_scope')!.table('leases').entries()]
+        .every(([, lease]) => (lease as ScopeToolLease).artifactSamples === undefined)).toBe(true)
+    } else {
+      await completion
+      const samples = [...host.facility.get('claude_scope')!.table('leases').entries()]
+        .flatMap(([, lease]) => (lease as ScopeToolLease).artifactSamples ?? [])
+      expect(samples).toHaveLength(1)
+      for (const { observation } of samples) {
+        expect(observation).toMatchObject({ state: 'unavailable', reason: 'too-large' })
+        expect(Buffer.byteLength(JSON.stringify(observation), 'utf8')).toBeLessThanOrEqual(maxObservationBytes)
+      }
+      const context = (await host.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+      expect(context).toContain('"state":"unavailable"')
+      expect(context).not.toContain('字段')
+    }
+  })
+
   it('reserves the final artifact sequence before sampling so an exhausted source can still leave', async () => {
     const host = await boot()
     const scenario = await apiScenario(host)
@@ -722,7 +760,7 @@ describe('Claude scope service', () => {
     expect(retired).not.toContain('before_failure')
   })
 
-  it('rejects a restored pending lease from a different Task interval instead of restamping its evidence', async () => {
+  it.each(['lease', 'artifact'] as const)('rejects restored pending %s evidence from a different source without restamping it', async (record) => {
     const first = await boot()
     const scenario = await apiScenario(first)
     const input = scenario.tool('stored-mismatch', apiDocument())
@@ -734,10 +772,19 @@ describe('Claude scope service', () => {
     const [entry] = [...records.entries()]
     if (entry === undefined) throw new Error('missing durable fixture lease')
     const lease = entry[1] as ScopeToolLease
-    records.set(entry[0], { ...lease, epoch: { ...lease.epoch, seq: lease.epoch.seq + 1 } })
+    if (record === 'lease') {
+      records.set(entry[0], { ...lease, epoch: { ...lease.epoch, seq: lease.epoch.seq + 1 } })
+    } else {
+      const artifacts = first.pool.media.get('claude_scope')!.tables.get('artifacts')!
+      const row = [...artifacts.entries()][0]!
+      const chain = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(row[1])
+      artifacts.set(row[0], { ...chain, artifactId: 'f'.repeat(64) })
+    }
     const taskTables = first.pool.media.get('development_context_tasks')!.tables
     const before = structuredClone([...taskTables].map(([name, rows]) => [name, [...rows]]))
-    await expect(boot(first.pool, first.directory)).rejects.toThrow('pending artifact lease does not match its original Task interval')
+    await expect(boot(first.pool, first.directory)).rejects.toThrow(record === 'lease'
+      ? 'pending artifact lease does not match its original Task interval'
+      : 'pending artifact evidence does not match its original read grant')
     expect([...taskTables].map(([name, rows]) => [name, [...rows]])).toEqual(before)
   })
 
@@ -756,6 +803,59 @@ describe('Claude scope service', () => {
     expect(evidence).toContain('"evidence":"revoked"')
     expect(evidence).not.toContain('retired_field')
     expect(second.pool.media.get('claude_scope')!.tables.get('artifacts')?.size ?? 0).toBe(0)
+  })
+
+  it('clears a retained artifact after restart without repeating an already committed retirement', async () => {
+    const first = await boot()
+    const scenario = await apiScenario(first)
+    await scenario.change('first-declaration', apiDocument(['earlier_field']))
+    await scenario.change('second-declaration', apiDocument(['latest_field']))
+    const artifacts = first.facility.get('claude_scope')!.table('artifacts')
+    vi.spyOn(artifacts, 'delete').mockRejectedValueOnce(new Error('artifact cleanup unavailable'))
+    await expect(first.scope.leave({ sessionKey: scenario.a })).rejects.toThrow('artifact cleanup unavailable')
+    const log = structuredClone(first.ctx.developmentTasks.log())
+    const observations = first.ctx.developmentTasks.get({ taskId: scenario.task.id }).context
+      .flatMap(publication => publication.observation ?? [])
+    expect(observations.map(observation => [observation.sequence, observation.state]))
+      .toEqual([[1, 'valid'], [2, 'valid'], [3, 'revoked']])
+    expect(artifacts.size).toBe(1)
+    await first.ctx.fiber.dispose()
+    const retirements = vi.fn(async () => { throw new Error('committed retirement must not be submitted again') })
+    const second = await boot(first.pool, first.directory, {}, 'test-host', async (ctx) => {
+      vi.spyOn(ctx.developmentTasks, 'revokeObservedArtifact').mockImplementation(retirements)
+    })
+    expect(retirements).not.toHaveBeenCalled()
+    expect(second.ctx.developmentTasks.log()).toEqual(log)
+    expect(second.facility.get('claude_scope')!.table('artifacts').size).toBe(0)
+    await useFacts(second)
+    const context = (await second.hook('api-frontend', 'UserPromptSubmit')).output.hookSpecificOutput!.additionalContext
+    expect(context).toContain('"evidence":"revoked"')
+    expect(context).not.toContain('earlier_field')
+    expect(context).not.toContain('latest_field')
+  })
+
+  it.each(['sequence', 'sample'] as const)('rejects an invalid restored retirement %s without changing Task history', async (record) => {
+    const first = await boot()
+    const scenario = await apiScenario(first)
+    await scenario.change('before-retirement', apiDocument(['retained_field']))
+    const sample = [...first.facility.get('claude_scope')!.table('leases').entries()]
+      .flatMap(([, lease]) => (lease as ScopeToolLease).artifactSamples ?? [])[0]!
+    vi.spyOn(first.ctx.developmentTasks, 'revokeObservedArtifact').mockRejectedValueOnce(new Error('defer retirement'))
+    await expect(first.scope.leave({ sessionKey: scenario.a })).rejects.toThrow('defer retirement')
+    await first.ctx.fiber.dispose()
+    const artifacts = first.pool.media.get('claude_scope')!.tables.get('artifacts')!
+    const row = [...artifacts.entries()][0]!
+    const chain = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(row[1])
+    const restored = claudeScopeDomainSpec.tables.artifacts.valueSchema.parse(record === 'sequence'
+      ? { ...chain, sequence: Number.MAX_SAFE_INTEGER, revocation: undefined }
+      : { ...chain, revocation: sample })
+    artifacts.set(row[0], restored)
+    const taskTables = first.pool.media.get('development_context_tasks')!.tables
+    const before = structuredClone([...taskTables].map(([name, rows]) => [name, [...rows]]))
+    await expect(boot(first.pool, first.directory)).rejects.toThrow(record === 'sequence'
+      ? 'artifact sample sequence is exhausted' : 'stored artifact retirement is not revoked')
+    expect(artifacts.get(row[0])).toEqual(restored)
+    expect([...taskTables].map(([name, rows]) => [name, [...rows]])).toEqual(before)
   })
 
   it.skipIf(process.platform === 'win32')('invalidates an API source replaced by an outside symlink without reading its target', async () => {
