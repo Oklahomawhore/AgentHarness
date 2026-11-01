@@ -3832,6 +3832,7 @@ restoreContextBlocks(blocks: readonly DevelopmentTaskContextBlock[]): void
 /**
  * Restore a durable mixed-origin Task log without rewriting it.
  * Parent dependencies are resolved before child events.
+ * Restoring more than maxTasks rejects without rewriting persisted events.
  * Configured capacity must retain every local live artifact grant's revocation reservation.
  * @param candidates - validated persisted events.
  */

@@ -1445,7 +1445,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'restoreLog(candidates: readonly DevelopmentTaskLogEntry[]): void',
-        description: 'Restore a durable mixed-origin Task log without rewriting it. Parent dependencies are resolved before child events. Configured capacity must retain every local live artifact grant\'s revocation reservation.',
+        description: 'Restore a durable mixed-origin Task log without rewriting it. Parent dependencies are resolved before child events. Restoring more than maxTasks rejects without rewriting persisted events. Configured capacity must retain every local live artifact grant\'s revocation reservation.',
         parameters: [{ name: 'candidates', description: 'validated persisted events.' }],
       },
       {
