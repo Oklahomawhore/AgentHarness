@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { chromium, type Browser, type Page } from 'playwright'
+import { chromium, type Browser, type Page, type Request } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { ClaudeScopeHookRequest, ClaudeScopeHookResult } from '@deepseek-ai/dsh-claude-scope'
 import type { DevelopmentTaskId } from '@deepseek-ai/dsh-development-task/types'
@@ -69,16 +69,17 @@ async function openView(browser: Browser, scaffold: WebScaffold, collaboration: 
   const injectedFailures = new Set<string>()
   const rpcTrace: string[] = []
   const openedAt = Date.now()
-  const trace = (phase: string, url: string): void => {
-    const path = new URL(url).pathname
+  const trace = (phase: string, request: Request): void => {
+    const path = new URL(request.url()).pathname
     if (!path.startsWith('/api/claudeScope/') && !path.startsWith('/api/scopeAccess/')) return
-    rpcTrace.push(`${String(Date.now() - openedAt)}ms ${phase} ${path}`)
+    const { rpcId } = request.postDataJSON() as { readonly rpcId: string }
+    rpcTrace.push(`${String(Date.now() - openedAt)}ms ${rpcId} ${phase} ${path}`)
     if (rpcTrace.length > 64) rpcTrace.shift()
   }
-  page.on('request', (request) => { trace('request', request.url()) })
-  page.on('response', (response) => { trace(`headers:${String(response.status())}`, response.url()) })
-  page.on('requestfinished', (request) => { trace('finished', request.url()) })
-  page.on('requestfailed', (request) => { trace('failed', request.url()) })
+  page.on('request', (request) => { trace('request', request) })
+  page.on('response', (response) => { trace(`headers:${String(response.status())}`, response.request()) })
+  page.on('requestfinished', (request) => { trace('finished', request) })
+  page.on('requestfailed', (request) => { trace('failed', request) })
   page.on('console', (message) => {
     if (message.type() !== 'error') return
     if (message.text().includes('net::ERR_FAILED') && injectedFailures.has(new URL(message.location().url, scaffold.baseUrl).pathname)) return

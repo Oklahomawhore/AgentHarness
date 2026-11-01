@@ -27,6 +27,7 @@ function code(error: unknown): string {
 
 /**
  * Serialize UI mutations per selection and reread authority even after a lost reply.
+ * Superseded and disposed observations settle UI waiters; their late transport completions cannot publish.
  * @param read - read-only Host inventory or capture detail.
  * @param onError - local diagnostic observer, isolated from subscribers.
  * @returns stable observable management directory owned by the Client plugin.
@@ -39,7 +40,7 @@ export function createContributionDirectory<K extends string, T>(
     revision: number
     pending: boolean
     mutationError?: string
-    read?: { revision: number; append: boolean; promise: Promise<void> }
+    read?: { revision: number; append: boolean; promise: Promise<void>; settle: () => void }
   }>()
   // The generic mapped keys are all optional; TypeScript cannot infer that for {}.
   const empty = (): Readonly<Partial<Record<K, ContributionEntry<T>>>> => ({}) as Readonly<Partial<Record<K, ContributionEntry<T>>>>
@@ -74,9 +75,13 @@ export function createContributionDirectory<K extends string, T>(
     const current = (): boolean => active && generation === issued && state.revision === revision
     const prior: ContributionEntry<T> | undefined = snapshot[key]
     const { error: _error, ...retained } = prior ?? { status: 'loading' as const, pending: state.pending }
+    const completion = Promise.withResolvers<undefined>()
+    const observation = { revision, append, promise: completion.promise, settle: () => { completion.resolve(undefined) } }
+    state.read?.settle()
+    state.read = observation
     publish(key, { ...retained, status: 'loading', pending: state.pending,
       ...(state.mutationError === undefined ? {} : { error: state.mutationError }) })
-    const promise = (async () => {
+    void (async () => {
       try {
         const value = await Promise.resolve().then(() => read(key, append ? snapshot[key]?.value : undefined))
         if (current()) publish(key, { value, status: 'ready', pending: state.pending,
@@ -84,11 +89,11 @@ export function createContributionDirectory<K extends string, T>(
       } catch (error) {
         if (current()) { report(error); publish(key, { ...snapshot[key], status: 'error', pending: state.pending, error: code(error) }) }
       } finally {
-        if (state.read?.revision === revision) delete state.read
+        if (state.read === observation) delete state.read
+        observation.settle()
       }
     })()
-    state.read = { revision, append, promise }
-    return promise
+    return observation.promise
   }
   return {
     getSnapshot: () => snapshot,
@@ -108,6 +113,7 @@ export function createContributionDirectory<K extends string, T>(
       const current = (): boolean => active && generation === issued
       state.pending = true
       state.revision += 1
+      state.read?.settle()
       delete state.mutationError
       const prior: ContributionEntry<T> | undefined = snapshot[key]
       const { error: _error, ...retained } = prior ?? { status: 'loading' as const, pending: true }
@@ -151,6 +157,10 @@ export function createContributionDirectory<K extends string, T>(
         void load(key, true)
       }
     },
-    dispose() { active = false; generation += 1; records.clear(); listeners.clear() },
+    dispose() {
+      active = false; generation += 1
+      for (const state of records.values()) state.read?.settle()
+      records.clear(); listeners.clear()
+    },
   }
 }

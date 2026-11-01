@@ -136,6 +136,39 @@ describe('source contribution onboarding', () => {
     expect(read).toHaveBeenCalledTimes(3)
   })
 
+  it('shows lost-stop recovery after fresh confirmation while an obsolete status response is held', async () => {
+    const obsolete = Promise.withResolvers<ClaudeScopeContributionDetail>()
+    const entered = Promise.withResolvers<undefined>()
+    const stopped: ClaudeScopeContributionDetail = { session, capture: null }
+    const read = vi.fn().mockResolvedValueOnce(captured).mockImplementationOnce(() => {
+      entered.resolve(undefined)
+      return obsolete.promise
+    }).mockResolvedValue(stopped)
+    const directory = createContributionDirectory(read, vi.fn())
+    disposers.push(() => { obsolete.resolve(captured); directory.dispose() })
+    const operation = vi.fn(async () => { throw new Error('stop reply lost') })
+    let pending: Promise<unknown> | undefined
+    const actions = sourceActions({ readContribution: (key) => { void directory.refresh(key) },
+      stopContribution: async ({ sessionKey }) => { pending = directory.mutate(sessionKey, operation); await pending } })
+    render(<SourceHarness directory={directory} actions={actions} />)
+    try {
+      const stop = await screen.findByRole('button', { name: zh['contribution.stop'] })
+      await waitFor(() => { expect(stop).toHaveProperty('disabled', false) })
+      await act(async () => { fireEvent.click(stop); await entered.promise })
+      expect(screen.getByRole('button', { name: zh['contribution.refresh'] })).toHaveProperty('disabled', true)
+      act(() => { directory.invalidate(session.sessionKey) })
+      await screen.findByText(zh['contribution.stopped'])
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: zh['contribution.refresh'] })).toHaveProperty('disabled', false)
+      })
+      expect(screen.getByRole('alert').textContent).toBe(zh['contribution.error.unknown'])
+      expect(operation).toHaveBeenCalledOnce()
+      expect(read).toHaveBeenCalledTimes(3)
+    } finally {
+      await act(async () => { obsolete.resolve(captured); if (pending !== undefined) await pending })
+    }
+  })
+
   it('uses one directory permission for tool observations without asking for an API file or operation', async () => {
     const toolEntry: ScopeContributionEntry = { ...applicationEntry, kind: 'contribution-entry', sourceKind: 'tool-observations' }
     const actions = sourceActions({ previewContributionText: vi.fn(async () => toolEntry) })

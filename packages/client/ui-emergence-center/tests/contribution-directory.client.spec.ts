@@ -215,14 +215,16 @@ describe('contribution management directory', () => {
     const directory = createContributionDirectory<string, string>(read, vi.fn())
     try {
       await directory.refresh('s')
-      const mutation = directory.mutate('s', async () => 'acknowledged')
+      let finished = false
+      const mutation = directory.mutate('s', async () => 'acknowledged').then((value) => { finished = true; return value })
       await entered.promise
       const listener = vi.fn()
       directory.subscribe(listener)
       directory.dispose()
       const snapshot = directory.getSnapshot()
-      confirmation.resolve('committed')
+      await vi.waitFor(() => { expect(finished).toBe(true) })
       expect(await mutation).toBeUndefined()
+      confirmation.resolve('committed')
       expect(directory.getSnapshot()).toBe(snapshot)
       expect(listener).not.toHaveBeenCalled()
       expect(read).toHaveBeenCalledTimes(2)
@@ -248,6 +250,107 @@ describe('contribution management directory', () => {
     expect(directory.getSnapshot().s).toMatchObject({ value: 'committed', status: 'ready', pending: false })
     expect(read).toHaveBeenCalledTimes(3)
     directory.dispose()
+  })
+
+  it.each(['reply', 'lost-reply'] as const)('settles a mutation after a newer confirmation without waiting for the obsolete %s read', async (outcome) => {
+    const obsolete = Promise.withResolvers<string>()
+    const entered = Promise.withResolvers<undefined>()
+    let obsoleteFinished = false
+    const report = vi.fn()
+    const read = vi.fn().mockResolvedValueOnce('before').mockImplementationOnce(async () => {
+      entered.resolve(undefined)
+      try { return await obsolete.promise }
+      finally { obsoleteFinished = true }
+    }).mockResolvedValue('current authority')
+    const directory = createContributionDirectory<string, string>(read, report)
+    let mutation: Promise<string | undefined> | undefined
+    try {
+      await directory.refresh('s')
+      mutation = directory.mutate('s', async () => {
+        if (outcome === 'lost-reply') throw new Error('reply lost')
+        return 'acknowledged'
+      })
+      await entered.promise
+      directory.invalidate('s')
+      await vi.waitFor(() => { expect(directory.getSnapshot().s?.value).toBe('current authority') })
+      expect(directory.getSnapshot().s?.pending).toBe(false)
+      expect(directory.getSnapshot().s?.error).toBe(outcome === 'lost-reply' ? 'contribution/unknown-outcome' : undefined)
+      expect(await mutation).toBe(outcome === 'lost-reply' ? undefined : 'acknowledged')
+      const confirmed = directory.getSnapshot()
+      if (outcome === 'lost-reply') obsolete.reject(new Error('obsolete read failed'))
+      else obsolete.resolve('obsolete authority')
+      await vi.waitFor(() => { expect(obsoleteFinished).toBe(true) })
+      expect(directory.getSnapshot()).toBe(confirmed)
+      expect(report).toHaveBeenCalledTimes(outcome === 'lost-reply' ? 1 : 0)
+      expect(read).toHaveBeenCalledTimes(3)
+    } finally {
+      obsolete.resolve('obsolete authority')
+      if (mutation !== undefined) await mutation
+      directory.dispose()
+    }
+  })
+
+  it('keeps a newer in-flight observation shared after an obsolete transport completes', async () => {
+    const obsolete = Promise.withResolvers<string>()
+    const current = Promise.withResolvers<string>()
+    const firstEntered = Promise.withResolvers<undefined>()
+    const nextEntered = Promise.withResolvers<undefined>()
+    let obsoleteFinished = false
+    const read = vi.fn().mockImplementationOnce(async () => {
+      firstEntered.resolve(undefined)
+      try { return await obsolete.promise }
+      finally { obsoleteFinished = true }
+    }).mockImplementationOnce(() => { nextEntered.resolve(undefined); return current.promise }).mockResolvedValue('unexpected extra authority')
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    const initial = directory.refresh('s')
+    let confirmation: Promise<void> | undefined
+    try {
+      await firstEntered.promise
+      directory.invalidate('s')
+      confirmation = directory.refresh('s')
+      await nextEntered.promise
+      obsolete.resolve('obsolete authority')
+      await vi.waitFor(() => { expect(obsoleteFinished).toBe(true) })
+      expect(directory.getSnapshot().s?.status).toBe('loading')
+      const joined = directory.refresh('s')
+      expect(joined).toBe(confirmation)
+      current.resolve('current authority')
+      await joined
+      expect(directory.getSnapshot().s?.value).toBe('current authority')
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      obsolete.resolve('obsolete authority'); current.resolve('current authority')
+      await Promise.all([initial, confirmation])
+      directory.dispose()
+    }
+  })
+
+  it('owns a loading observation before its subscriber starts a replacement', async () => {
+    const current = Promise.withResolvers<string>()
+    const obsolete = Promise.withResolvers<string>()
+    // The loading subscriber starts its replacement before the outer read reaches the transport.
+    const read = vi.fn().mockReturnValueOnce(current.promise).mockReturnValueOnce(obsolete.promise)
+    const directory = createContributionDirectory<string, string>(read, vi.fn())
+    let replaced = false
+    directory.subscribe(() => {
+      if (!replaced && directory.getSnapshot().s?.status === 'loading') {
+        replaced = true
+        directory.invalidate('s')
+      }
+    })
+    let finished = false
+    const initial = directory.refresh('s').then(() => { finished = true })
+    try {
+      await vi.waitFor(() => { expect(read).toHaveBeenCalledTimes(2) })
+      current.resolve('current authority')
+      await vi.waitFor(() => { expect(directory.getSnapshot().s?.value).toBe('current authority') })
+      expect(finished).toBe(true)
+      expect(directory.getSnapshot().s?.pending).toBe(false)
+    } finally {
+      current.resolve('current authority'); obsolete.resolve('obsolete authority')
+      await initial
+      directory.dispose()
+    }
   })
 
   it('keeps mutation ownership until a replacement confirmation read settles after reset', async () => {
