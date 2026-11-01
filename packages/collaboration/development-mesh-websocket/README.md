@@ -20,7 +20,7 @@ English | [中文](README.zh.md)
 
 ## Behavior
 
-Configured peers and authenticated IPv4 multicast discovery can coexist. The lower node id owns dialing, reconnect uses bounded backoff, and channel heads resume missing deltas after reconnect. A reused event identity with different content isolates and disconnects the peer; channels still receive its offline notification. An isolated peer cannot open another incoming connection. Frames arriving on a closing socket cannot dispatch new commands. Commands time out independently of replication.
+Configured peers and authenticated IPv4 multicast discovery can coexist. The lower node id owns dialing, reconnect uses bounded backoff, and channel heads resume missing deltas after reconnect. A reused event identity with different content isolates and disconnects the peer; channels still receive its offline notification. An isolated peer cannot open another incoming connection. Frames arriving on a closing socket cannot dispatch new commands. Commands time out independently of replication. A response must match both the pending command id and its selected owner node. A known command id received from another authenticated node closes that connection and leaves the original command waiting for its owner.
 
 Reconnect delays, command timeouts, and discovery announcement intervals must fit Node's 2,147,483,647 millisecond timer ceiling; configuration above it fails before startup. Discovery peer TTL compares elapsed time and retains its positive-safe-integer range.
 

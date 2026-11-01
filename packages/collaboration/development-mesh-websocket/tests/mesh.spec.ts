@@ -703,6 +703,45 @@ describe('authenticated generic development Mesh', () => {
     }
   })
 
+  it.each([true, false])('retains the owner command after another authenticated peer sends ok=%s', async (ok) => {
+    const source = await baseNode('command-source')
+    const owner = await baseNode('command-owner')
+    await startMesh(source, [peer(owner, false), { nodeId: 'attacker-node', url: 'ws://127.0.0.1', connect: false }],
+      { commandTimeoutMs: 30_000 })
+    const ownerSocket = await rawConnect(source, owner.nodeId)
+    const otherSocket = await rawConnect(source)
+    const received = Promise.withResolvers<string>()
+    ownerSocket.on('message', (data: Buffer) => {
+      const outer = JSON.parse(data.toString('utf8')) as { payload: string }
+      const frame = JSON.parse(Buffer.from(outer.payload, 'base64url').toString('utf8')) as {
+        body: { type: string; commandId: string }
+      }
+      if (frame.body.type === 'command') received.resolve(frame.body.commandId)
+    })
+    ownerSocket.send(envelope(source, 1, { type: 'hello' }, owner.nodeId))
+    otherSocket.send(envelope(source, 1, { type: 'hello' }))
+    await waitFor(() => source.ctx.developmentMesh.list().peers.every(item => item.state === 'online'))
+    const request = source.ctx.developmentMesh.command(owner.nodeId, 'owner-command/v1', 'work')
+    const settled = request.then(value => ({ value }), (error: unknown) => ({ error }))
+    const commandId = await received.promise
+    let ownerSequence = 1
+    const closed = new Promise<'closed'>((resolve) => { otherSocket.once('close', () => { resolve('closed') }) })
+    try {
+      otherSocket.send(envelope(source, 2, ok
+        ? { type: 'result', commandId, ok: true, value: 'other peer result' }
+        : { type: 'result', commandId, ok: false, code: 'OTHER_PEER', message: 'other peer failure' }))
+      expect(await Promise.race([closed, settled])).toBe('closed')
+      expect(source.ctx.developmentMesh.list().peers.find(item => item.nodeId === 'attacker-node'))
+        .toMatchObject({ lastError: 'development Mesh command response came from another node' })
+      ownerSocket.send(envelope(source, ++ownerSequence, { type: 'result', commandId, ok: true, value: 'owner result' }, owner.nodeId))
+      await expect(request).resolves.toBe('owner result')
+      expect(source.ctx.developmentMesh.list().peers.find(item => item.nodeId === owner.nodeId)?.state).toBe('online')
+    } finally {
+      ownerSocket.send(envelope(source, ++ownerSequence, { type: 'result', commandId, ok: true, value: 'owner cleanup' }, owner.nodeId))
+      await settled
+    }
+  })
+
   it('returns remote handler failures without closing the authenticated connection', async () => {
     const source = await baseNode('rejected-source')
     const owner = await baseNode('rejected-owner')

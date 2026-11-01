@@ -22,7 +22,7 @@ kind: "package-reference"
 
 ## 行为
 
-显式 peer 与经过认证的 IPv4 multicast 发现可以并存。较小 node id 负责拨号，重连采用有界退避，channel heads 在重连后续传缺失增量。相同事件标识出现不同内容时，该 peer 会被隔离并断开连接，channel 仍会收到其离线通知。隔离中的 peer 不能再次建立入站连接。正在关闭的 socket 收到的帧不能再派发新 command。Command timeout 与复制相互独立。
+显式 peer 与经过认证的 IPv4 multicast 发现可以并存。较小 node id 负责拨号，重连采用有界退避，channel heads 在重连后续传缺失增量。相同事件标识出现不同内容时，该 peer 会被隔离并断开连接，channel 仍会收到其离线通知。隔离中的 peer 不能再次建立入站连接。正在关闭的 socket 收到的帧不能再派发新 command。Command timeout 与复制相互独立。响应必须同时匹配等待中的 command id 和所选 owner 节点。其他已认证节点发送已知 command id 时，该连接会被关闭，原命令继续等待其 owner。
 
 重连延迟、命令超时与发现公告间隔须符合 Node 的 2,147,483,647 毫秒计时上限；超过该值的配置在启动前失败。发现 peer TTL 比较已流逝时间，保留正安全整数范围。
 

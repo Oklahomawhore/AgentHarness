@@ -117,6 +117,7 @@ interface PeerRuntime {
 }
 
 interface PendingCommand {
+  readonly ownerNodeId: DevelopmentNodeId
   readonly resolve: (value: unknown) => void
   readonly reject: (error: Error) => void
   readonly timer: ReturnType<typeof setTimeout>
@@ -277,7 +278,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
         this.pending.delete(commandId)
         reject(Object.assign(new Error('development Mesh command timed out'), { code: 'RUNTIME_UNAVAILABLE' }))
       }, this.config.commandTimeoutMs)
-      this.pending.set(commandId, { resolve, reject, timer })
+      this.pending.set(commandId, { ownerNodeId, resolve, reject, timer })
       void this.send(peer, { type: 'command', commandId, channel: channelName, payload }).catch((error: unknown) => {
         clearTimeout(timer)
         this.pending.delete(commandId)
@@ -489,6 +490,7 @@ export class DevelopmentMeshWebSocketService extends DevelopmentMeshService {
     if (body.type === 'result') {
       const pending = this.pending.get(body.commandId)
       if (pending === undefined) return
+      if (pending.ownerNodeId !== peer.config.nodeId) throw new Error('development Mesh command response came from another node')
       clearTimeout(pending.timer)
       this.pending.delete(body.commandId)
       if (body.ok) pending.resolve(body.value)
