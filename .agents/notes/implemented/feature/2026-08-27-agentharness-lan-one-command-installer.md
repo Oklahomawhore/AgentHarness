@@ -10,13 +10,13 @@ A source-free archive still made an ordinary user locate the correct artifact, i
 
 ## Decision
 
-The release owner's machine can stage a checksummed release set and serve it read-only from a private IPv4 address under a random URL path. The publisher prints one `curl -fsSL … | sh` command. The generated installer is pinned to one version and the SHA-256 of every available target; it detects the caller's macOS or Linux architecture before selecting an artifact.
+The release owner's machine can stage a checksummed release set and serve it read-only from a private IPv4 address under a random URL path. The publisher prints shell or PowerShell installation commands for the staged targets. Each generated installer is pinned to one version and the SHA-256 of every available target; the shell installer selects the caller's macOS or Linux architecture, while the PowerShell installer accepts Windows x64.
 
-Portable artifacts contain the Node.js executable and its license. Installation uses a content-addressed version directory, changes the `current` symbolic link only after download, checksum, archive-path, manifest, and runtime checks pass, and leaves Harness user data outside version directories. Activation uses the bundled Node runtime's atomic rename semantics so an existing symlink is replaced instead of followed on macOS. The installed `agentharness` command owns background start, status, logs, stop, and MCP guide output.
+Portable artifacts contain the Node.js executable and its license. Installation uses a content-addressed version directory, changes the `current` symlink or Windows junction only after download, checksum, archive-path, manifest, and runtime checks pass, and leaves Harness user data outside version directories. Activation uses the bundled Node runtime's atomic rename semantics so an existing symlink is replaced instead of followed on macOS. The installed `agentharness` command owns background start, status, logs, stop, and MCP guide output.
 
 ## Process ownership
 
-The management command records the spawned PID, exact `start.mjs` path, version, port, URL, and log path in an owner-only state directory. A stop or upgrade signal is sent only when `ps` still reports the recorded entry path for that PID. Startup refuses a responding HTTP endpoint that is not represented by live owned state, then waits for the loopback Web endpoint; a process exit or readiness timeout returns an error with the log path.
+The management command records the spawned PID, exact `start.mjs` path, version, port, URL, and log path in an owner-only state directory. A stop or upgrade signal is sent only when the operating system's process command still contains the recorded entry path for that PID. Readiness follows the [startup decision](../bug-fix/2026-10-24-local-descriptor-startup-readiness.md); a process exit or readiness timeout returns an error with the log path.
 
 ## Durable node identity
 
@@ -26,9 +26,11 @@ Source and portable launchers use one identity resolver before loading room or m
 
 The static server exposes only regular files below one random path and rejects other methods, directory access, and traversal. The random path reduces accidental discovery but is not authentication. Both publisher and installer state that plain LAN HTTP permits interception or replacement by a LAN attacker. The workflow is limited to a trusted LAN and instructs the owner to stop the server after distribution; the installed Web runtime remains loopback-only.
 
+The PowerShell installer accepts tar's `./` root entry and relative member paths, but rejects absolute paths, drive prefixes, and `..` components after normalizing separators. Its generated regular expression uses literal-dot character classes so JavaScript string escaping cannot turn the parent-component check into an arbitrary-character match.
+
 ## Verification
 
-Focused tests execute the literal curl pipeline through a local HTTP server, cover paths containing spaces, replay the same version, activate a different content-addressed version over an existing `current` symlink, corrupt the archive after one successful install, reject unsafe origins and traversal, reject an unowned responding port, and exercise detached start, status, idempotent start, and stop. Built-artifact acceptance runs the installed bundled Node, completes the 11-tool governed MCP lifecycle, restarts the Web process without an identity override, reinstalls from the same source-free LAN archive, and confirms room and mission restoration after both operations.
+Focused tests execute the literal curl pipeline through a local HTTP server, cover paths containing spaces, replay the same version, activate a different content-addressed version over an existing `current` symlink, corrupt the archive after one successful install, reject unsafe origins and traversal, reject an unowned responding port, and exercise detached start, status, idempotent start, and stop. Built-artifact acceptance uses the bundled Node for Task/context MCP operations and verifies persistence across Web restart. Native Windows CI owns execution of the generated archive-path guard and the PowerShell installation, restart, unsupported-MCP guidance, and Cursor-configuration preservation checks.
 
 ## Alternatives considered
 
@@ -42,4 +44,4 @@ Focused tests execute the literal curl pipeline through a local HTTP server, cov
 
 ## Consequences
 
-An Apple Silicon release is about 103 MB compressed because it includes Node.js. Each target must be built on a compatible build host and added to the staged release before users on that target can install. The current shell route covers macOS and Linux; Windows needs a separately designed PowerShell or signed-installer path. LAN publication ends when the release-owner process stops, which is intentional for this temporary distribution mode.
+Bundling Node.js increases archive size but removes a version-sensitive prerequisite from the installed path. Each staged target requires a matching runtime and native dependencies. The shell route covers macOS and Linux; `install.ps1` is the Windows x64 route, where private local MCP authentication remains unsupported. LAN publication ends when the release-owner process stops, which is intentional for this temporary distribution mode.

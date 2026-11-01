@@ -29,6 +29,8 @@ Creation starts with no participants. An announced participant may explicitly jo
 
 `restoreLocalLog()` replays locally authored durable entries without writing them again. `acceptLogReplica()` appends authenticated peers' entries without persisting them locally. `@deepseek-ai/dsh-development-room-storage-domain` and `@deepseek-ai/dsh-development-room-mesh` supply those Consumers.
 
+The `./schema` export supplies `developmentRoomChangeSchema` to Mesh and durable-log Consumers. Before dispatch or recovery, Consumers validate the closed three-kind change union and each entry envelope. The Room service retains identifier, text-limit, timestamp, and sequence checks; normalization failures report the replica or restore error code with their validation cause.
+
 ## Configuration
 
 | Key | Meaning |

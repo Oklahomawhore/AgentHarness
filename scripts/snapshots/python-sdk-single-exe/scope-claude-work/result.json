@@ -1,0 +1,52 @@
+{
+  "turns": 4,
+  "receiverSessions": 1,
+  "externalCliExecutions": 0,
+  "source": {
+    "kind": "claude-work",
+    "version": 7,
+    "name": "session-work",
+    "tools": [
+      "Write"
+    ],
+    "commands": [
+      {
+        "command": "pnpm test",
+        "rootIndex": 0
+      }
+    ],
+    "stopReports": true
+  },
+  "sampleSequences": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "selectedPublications": [
+    0,
+    3,
+    4,
+    1
+  ],
+  "contextBytes": [
+    777,
+    5078,
+    6212,
+    1873
+  ],
+  "maxContextBytes": 12000,
+  "completeStopReports": 2,
+  "stopHookActive": [
+    false,
+    true
+  ],
+  "nativeTurnCompletionClaimed": false,
+  "nativeCommandExitCodeInferred": false,
+  "failedCommandSupersedesSuccess": true,
+  "allCategoriesWithdrawn": true,
+  "wirePreservesContext": true,
+  "originalReceiverHistoryRetained": true,
+  "noRecall": true
+}

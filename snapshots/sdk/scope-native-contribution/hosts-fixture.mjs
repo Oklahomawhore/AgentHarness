@@ -25,10 +25,22 @@ class SourceAdapter extends LlmAdapter {
 }
 
 /** Create a private Loader tree with real disk storage and native tools. */
-export async function host(root, role) {
+export async function host(root, role, overrides = {}) {
   const ctx = new Context()
+  try {
+    return await initializeHost(ctx, root, role, overrides)
+  } catch (error) {
+    try { await ctx.fiber.dispose() } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Native fixture initialization and cleanup failed', { cause: error })
+    }
+    throw error
+  }
+}
+
+async function initializeHost(ctx, root, role, overrides) {
   ctx.provide('appReady', { onReady(listener) { listener(); return () => {} } })
   ctx.provide('appExit', code => { if (code !== 0) throw new Error(`fixture ${role} failed to initialize`) })
+  const identityRole = overrides.identityRole ?? role
   const workspace = join(root, 'workspace')
   await mkdir(workspace, { recursive: true })
   const adapter = new SourceAdapter()
@@ -39,17 +51,18 @@ export async function host(root, role) {
   await add('storage-domain', '@deepseek-ai/dsh-storage-domain', '*')
   await add('rooms', '@deepseek-ai/dsh-development-room')
   await add('tasks', '@deepseek-ai/dsh-development-task')
-  await add('text', '@deepseek-ai/dsh-development-task-context/text')
+  await add('text', overrides.backend ?? '@deepseek-ai/dsh-development-task-context/text')
   await add('access', '@deepseek-ai/dsh-scope-access')
   await add('llm', '@deepseek-ai/dsh-llm')
   modules.set('transport', FixtureTransport)
   const rows = [
     { name: 'storage' }, { name: 'storage-json', config: { root: join(root, 'domains') } },
     { name: 'storage-domain', config: { backend: 'json' } },
-    { name: 'rooms', config: { nodeId: `snapshot-native-${role}`, presenceTtlMs: 60000, maxParticipants: 32, maxRooms: 32, maxTextBytes: 65536 } },
+    { name: 'rooms', config: { nodeId: `snapshot-native-${identityRole}`, presenceTtlMs: 60000, maxParticipants: 32, maxRooms: 32, maxTextBytes: 65536 } },
     { name: 'tasks', config: { maxTasks: 32, maxEventsPerTask: 128, maxMergeParents: 8, maxContextBlockBytes: 65536,
-      maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000 } },
-    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${role}-peer` } }, { name: 'access', config: accessConfig },
+      maxLineageTasks: 64, maxTextBytes: 65536, roomRetryIntervalMs: 10000, ...overrides.task } },
+    { name: 'text' }, { name: 'transport', config: { peerId: `snapshot-native-${identityRole}-peer` } },
+    { name: 'access', config: { ...accessConfig, ...overrides.access } },
   ]
   if (role === 'source') {
     await add('agents', '@deepseek-ai/dsh-agent')
@@ -59,9 +72,12 @@ export async function host(root, role) {
     await add('system', '@deepseek-ai/dsh-system-prompt')
     await add('tools', '@deepseek-ai/dsh-tools')
     await add('loop', '@deepseek-ai/dsh-agent-loop')
-    await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
-    await add('fs-policy', '@deepseek-ai/dsh-fs-observation-policy', '*')
-    await add('tool-fs', '@deepseek-ai/dsh-tool-fs', '*')
+    if (overrides.fileTools !== false) {
+      if (overrides.filesystemProvider === undefined) await add('fs', '@deepseek-ai/dsh-fs-local', 'LocalFileSystem')
+      else modules.set('fs', overrides.filesystemProvider)
+      await add('fs-policy', '@deepseek-ai/dsh-fs-observation-policy', '*')
+      await add('tool-fs', '@deepseek-ai/dsh-tool-fs', '*')
+    }
     await add('contribution', '@deepseek-ai/dsh-scope-agent-contribution')
     modules.set('adapter', { name: 'controlled-native-source-model', inject: ['llm'], apply(inner) {
       inner.effect(() => inner.llm.registerAdapter(['native-fixture'], adapter))
@@ -69,8 +85,10 @@ export async function host(root, role) {
     rows.push({ name: 'llm' }, { name: 'adapter' }, { name: 'sessions' }, { name: 'projections' },
       { name: 'persistence', config: { root: join(root, 'sessions'), compression: 'none' } },
       { name: 'system' }, { name: 'tools' }, { name: 'agents' }, { name: 'loop', config: { agents: [] } },
-      { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
-      { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25 } })
+      ...overrides.fileTools === false ? [] : [
+        { name: 'fs', config: { cwd: workspace } }, { name: 'fs-policy' }, { name: 'tool-fs' },
+      ],
+      { name: 'contribution', config: { maxSessions: 16, maxLeases: 64, maxObservationBytes: 65536, contributionPollIntervalMs: 25, ...overrides.contribution } })
   }
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
@@ -88,7 +106,7 @@ export async function host(root, role) {
 
 /** Explicit test-only transport and source retention budgets, not product defaults. */
 export const accessConfig = {
-  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768,
+  maxGrants: 16, maxSubscriptions: 16, maxProjections: 64, maxContextBytes: 12000, maxResponseBytes: 32768, maxDecodedResponseBytes: 2097152,
   requestTimeoutMs: 5000, maxInvitationLifetimeMs: 60000, maxConcurrentReads: 8,
   waitTimeoutMs: 3000, maxConcurrentWaits: 2, maxConcurrentContributions: 2, maxContributionRequestBytes: 65536,
   maxContributionApplications: 16, maxApplicationRequestBytes: 16384, maxApplicationLifetimeMs: 60000,

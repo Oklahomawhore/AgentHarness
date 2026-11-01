@@ -23,7 +23,7 @@ kind: "package-reference"
 
 ## 行为
 
-运行时通过 `ctx.subprocess` 解析裸命令，在不经过 shell 插值的情况下 spawn argv，按上限收集 stdout 与 stderr，并在进程退出后保留尾部输出。启动与停止操作按条目串行执行。启动一个实时条目会返回其当前状态；重新启动已结算条目会替换保留的输出。停止操作会终止完整进程树并等待其完全停稳，Harness dispose（资源释放）时也以相同所有权处理所有实时条目。环境中的凭证特征变量与 `DSH_*` 变量遵循 subprocess seam 的清理策略；本包不增加显式环境覆盖。
+运行时通过 `ctx.subprocess` 解析裸命令，在不经过 shell 插值的情况下 spawn argv，按上限收集 stdout 与 stderr，并在进程退出后保留尾部输出。启动与停止操作按条目串行执行。启动一个实时条目会返回其当前状态。重新启动会先等待保留句柄管理的进程范围完全停稳，再替换输出。停止与 Harness dispose（资源释放）会终止并等待每个保留范围，包括直接命令退出或失败后仍存活的子进程。环境中的凭证特征变量与 `DSH_*` 变量遵循 subprocess seam 的清理策略；本包不增加显式环境覆盖。
 
 当 chat 页面与 local-debug 页面等路由共用同一服务器时，一个进程条目可以拥有多个视图。配置就绪策略后，运行时会向部署配置的 URL 发送有界 GET 请求且不跟随重定向。进程阶段与 HTTP 可用性保持独立：运行中的进程可报告 `checking`、`delayed` 或 `ready`，延迟探测会持续到配置的状态码出现或进程停止。停止任务或 Harness dispose（资源释放）会先取消并等待探测完全结束，再终止进程树。该受信任的 localhost 控制不使用面向模型的 Web fetch 提供方，也不会把响应字节代理到浏览器。
 
@@ -40,11 +40,11 @@ kind: "package-reference"
 | `entries.<id>.views` | 可选且 id 唯一的 `{ id, label, url }` HTTP(S) 浏览器目标；URL 不得包含凭证。 |
 | `entries.<id>.readiness.url` | 可选、由部署配置且不跟随重定向的 HTTP(S) 探测 URL；URL 不得包含凭证。 |
 | `entries.<id>.readiness.acceptedStatusCodes` | 表示就绪的非空、无重复状态码列表。 |
-| `entries.<id>.readiness.intervalMs` | 两次就绪探测之间的等待时间。 |
-| `entries.<id>.readiness.requestTimeoutMs` | 单次探测超时。 |
+| `entries.<id>.readiness.intervalMs` | 两次就绪探测之间的等待时间；正整数，最多 2,147,483,647 毫秒。 |
+| `entries.<id>.readiness.requestTimeoutMs` | 单次探测超时；正整数，最多 2,147,483,647 毫秒。 |
 | `entries.<id>.readiness.warnAfterMs` | 未就绪状态从 `checking` 变为 `delayed` 前的累计时间。 |
 | `maxOutputBytes` | 每个流保留的尾部字节数。 |
-| `graceMs` | 优雅终止与强制终止进程树之间的等待时间。 |
+| `graceMs` | 优雅终止与强制终止进程树之间的等待时间；正整数，最多 2,147,483,647 毫秒。 |
 
 项目路径、命令与端口属于 profile 配置，而不属于这个通用插件。随附 Web 组合包以空条目挂载该服务；后续 profile patch 再提供本地任务。
 

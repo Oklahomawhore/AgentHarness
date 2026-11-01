@@ -11,7 +11,7 @@ import {
   type Sandbox,
 } from '@deepseek-ai/dsh-e2b'
 import type E2BRuntime from '@deepseek-ai/dsh-e2b'
-import type { SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessTerminalCleanupError, type SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import E2BSubprocessRuntime from '@deepseek-ai/dsh-subprocess-e2b'
 import { spawnE2BTerminal } from '../src/terminal.ts'
 
@@ -435,7 +435,11 @@ describe('E2B terminal allocation', () => {
     } catch (error: unknown) {
       uninspectableFailure = error
     }
-    expect(uninspectableFailure).toBeInstanceOf(AggregateError)
+    expect(uninspectableFailure).toBeInstanceOf(SubprocessTerminalCleanupError)
+    expect(uninspectableFailure).toMatchObject({
+      message: 'Terminal initialization and cleanup failed', spawnError: uninspectable.sendError,
+      cleanupError: { message: 'subprocess-e2b: terminal setup cleanup did not complete' },
+    })
     expect(uninspectable.handle.sdkKills).toBe(1)
 
     const survivingGroups = new FakeTerminalSandbox()
@@ -443,21 +447,27 @@ describe('E2B terminal allocation', () => {
     survivingGroups.clearOnTerm = false
     survivingGroups.clearOnKill = false
     await expect(testSpawn(runtime(survivingGroups), spec({ graceMs: 1 }), '/runtime/surviving-groups'))
-      .rejects.toThrow('bootstrap failed')
+      .rejects.toMatchObject({ spawnError: survivingGroups.sendError,
+        cleanupError: { message: 'subprocess-e2b: terminal setup cleanup did not complete' } })
+    expect(survivingGroups.groups).toEqual([123])
+    expect(survivingGroups.commands).toContain('kill -KILL -- -123')
 
     const survivingPid = new FakeTerminalSandbox()
     survivingPid.sendError = new Error('bootstrap failed')
     survivingPid.groups = []
     survivingPid.handle.settleOnSdkKill = false
     await expect(testSpawn(runtime(survivingPid), spec({ graceMs: 1 }), '/runtime/surviving-pid'))
-      .rejects.toThrow('bootstrap failed')
+      .rejects.toMatchObject({ spawnError: survivingPid.sendError,
+        cleanupError: { message: 'subprocess-e2b: terminal setup cleanup did not complete' } })
+    expect(survivingPid.handle.sdkKills).toBe(1)
 
     const waitFailed = new FakeTerminalSandbox()
     waitFailed.handle.waitError = new Error('wait failed')
     waitFailed.handle.settleOnSdkKill = false
     waitFailed.handle.sdkKillError = new Error('kill failed')
     await expect(testSpawn(runtime(waitFailed), spec(), '/runtime/wait-failed'))
-      .rejects.toThrow('wait failed')
+      .rejects.toMatchObject({ spawnError: waitFailed.handle.waitError,
+        cleanupError: { errors: [waitFailed.handle.sdkKillError] } })
     expect(waitFailed.handle.sdkKills).toBe(1)
 
     const cleanupFailed = new FakeTerminalSandbox()
@@ -465,7 +475,9 @@ describe('E2B terminal allocation', () => {
     cleanupFailed.handle.sdkKillError = new Error('kill transport failed')
     cleanupFailed.removeError = new Error('remove transport failed')
     await expect(testSpawn(runtime(cleanupFailed), spec(), '/runtime/cleanup-failed'))
-      .rejects.toThrow('invalid terminal pid 0')
+      .rejects.toMatchObject({ spawnError: { message: 'subprocess-e2b: E2B returned invalid terminal pid 0' },
+        cleanupError: { errors: [cleanupFailed.removeError] } })
+    expect(cleanupFailed.removed).toContain('/runtime/cleanup-failed')
 
     const expiredDuringRollback = new FakeTerminalSandbox()
     expiredDuringRollback.sendError = new Error('bootstrap failed before timeout')
@@ -494,7 +506,9 @@ describe('E2B terminal allocation', () => {
     failedDisconnect.sendError = new Error('bootstrap failed with disconnect failure')
     failedDisconnect.handle.disconnectError = new Error('disconnect transport failed')
     await expect(testSpawn(runtime(failedDisconnect), spec(), '/runtime/failed-disconnect'))
-      .rejects.toThrow('bootstrap failed with disconnect failure')
+      .rejects.toMatchObject({ spawnError: failedDisconnect.sendError,
+        cleanupError: { errors: [failedDisconnect.handle.disconnectError] } })
+    expect(failedDisconnect.handle.disconnects).toBe(1)
   })
 
   it('propagates setup cancellation and provider failures', async () => {
@@ -830,9 +844,18 @@ describe('E2B subprocess terminal service', () => {
     expect(fake.handle.disconnects).toBe(1)
   })
 
-  it('joins and rejects terminal setup that completes during service disposal', async () => {
+  it.each([false, true])('joins and rejects terminal setup that completes during service disposal (cleanup fails once: %s)', async (cleanupFails) => {
     const fake = new FakeTerminalSandbox()
     const { ctx, fiber } = await service(fake)
+    const cleanupError = new Error('SDK disconnect could not complete')
+    const disconnect = fake.handle.disconnect.bind(fake.handle)
+    const disconnects = vi.spyOn(fake.handle, 'disconnect')
+    if (cleanupFails) {
+      fake.handle.disconnectError = cleanupError
+      disconnects.mockImplementationOnce(async () => {
+        try { await disconnect() } finally { fake.handle.disconnectError = undefined }
+      })
+    }
     let disposing: Promise<void> | undefined
     fake.afterSessionLookup = () => {
       fake.afterSessionLookup = undefined
@@ -842,15 +865,24 @@ describe('E2B subprocess terminal service', () => {
     }
     const subprocess = ctx.subprocess
     const spawning = ctx.subprocess.spawnTerminal(spec())
-    const rejected = expect(spawning).rejects.toThrow('service disposed during terminal setup')
-    await vi.waitFor(() => { expect(disposing).toBeDefined() })
-    await expect(subprocess.spawnTerminal(spec())).rejects.toThrow('service is disposing')
-
-    await rejected
-    await disposing
-    expect(fake.groups).toEqual([])
-    expect(fake.handle.disconnects).toBe(1)
-    expect(fake.removed.some(path => path.includes('/terminals/'))).toBe(true)
+    const observed = spawning.catch((error: unknown) => error)
+    try {
+      await vi.waitFor(() => { expect(disposing).toBeDefined() })
+      await expect(subprocess.spawnTerminal(spec())).rejects.toThrow('service is disposing')
+      const failure = await observed
+      if (cleanupFails) {
+        expect(failure).toBeInstanceOf(SubprocessTerminalCleanupError)
+        expect(failure).toMatchObject({ spawnError: { message: 'subprocess-e2b: service disposed during terminal setup' }, cleanupError })
+      } else expect(failure).toMatchObject({ message: 'subprocess-e2b: service disposed during terminal setup' })
+      await disposing
+      expect(fake.groups).toEqual([])
+      expect(fake.handle.disconnects).toBe(cleanupFails ? 2 : 1)
+      expect(fake.removed.some(path => path.includes('/terminals/'))).toBe(true)
+    } finally {
+      await Promise.allSettled([spawning, disposing])
+      await ctx.fiber.dispose()
+      disconnects.mockRestore()
+    }
   })
 
   it('aborts and rolls back terminal setup that cannot publish its output boundary during disposal', async () => {

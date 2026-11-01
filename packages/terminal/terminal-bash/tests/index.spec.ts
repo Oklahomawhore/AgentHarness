@@ -16,7 +16,7 @@ import { ENCODING_PREAMBLE } from '@deepseek-ai/dsh-pwsh-local'
 import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
 import type { ResolvedConfig } from '@deepseek-ai/dsh-terminal-bash/src/config.ts'
 import type { LocalPtySession } from '@deepseek-ai/dsh-terminal-bash/src/session.ts'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessRuntime, SubprocessTerminalCleanupError } from '@deepseek-ai/dsh-subprocess'
 import type {
   SubprocessHandle,
   SubprocessSpawnSpec,
@@ -374,7 +374,7 @@ describe('BashTerminalBackend startup rollback', () => {
           cancel: () => false,
         }
       },
-      read: () => ({ text: '', totalLines: 0, lineBegin: 0, lineEnd: 0, truncated: false }),
+      read: () => ({ text: 'setup-echo dsh> ', totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: false }),
     } as unknown as LocalPtySession
     const backend = new BashTerminalBackend(
       ctx,
@@ -413,7 +413,7 @@ describe('BashTerminalBackend startup rollback', () => {
           cancel: () => false,
         }
       },
-      read: () => ({ text: '', totalLines: 0, lineBegin: 0, lineEnd: 0, truncated: false }),
+      read: () => ({ text: 'dsh> ', totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: false }),
     } as unknown as LocalPtySession
     const backend = new BashTerminalBackend(
       ctx,
@@ -425,6 +425,44 @@ describe('BashTerminalBackend startup rollback', () => {
     expect(sends).toHaveLength(2)
     expect(sends[1]).toMatchObject({ text: '', submit: false })
     expect(session.motd).toBe('dsh> ')
+  })
+
+  it.each(['setup-echo dsh> ', ''])('retains pwsh startup scrollback when readiness returns an empty viewport after %j', async (firstViewport) => {
+    const ctx = new Context()
+    await ctx.plugin(EmptySandbox)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/workspace' })
+    const sends: TerminalSendRequest[] = []
+    const read = vi.fn(() => ({ text: 'setup-echo dsh> ', totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: false }))
+    const session = {
+      motd: '',
+      startSend: (request: TerminalSendRequest) => {
+        sends.push(request)
+        return {
+          done: Promise.resolve({
+            viewport: sends.length === 1 ? firstViewport : '',
+            waitReason: sends.length === 1 ? 'inferred_idle' as const : 'stdin_read' as const,
+            sessionStatus: { kind: 'running' as const }, truncated: false,
+          }),
+          readOutput: () => ({ delta: '', truncated: false }),
+          cancel: () => false,
+        }
+      },
+      read,
+    } as unknown as LocalPtySession
+    const backend = new BashTerminalBackend(
+      ctx,
+      { ...config(), shellDialect: 'pwsh', shellPath: 'pwsh' },
+      async () => terminalHandle(),
+      () => session,
+    )
+    await backend.spawn(spec(agent(ctx)))
+    expect(session.motd).toBe('setup-echo dsh> ')
+    expect(read).toHaveBeenCalledWith({})
+    expect(sends).toEqual([
+      { text: ENCODING_PREAMBLE + PWSH_PROMPT_SETUP, submit: true },
+      { text: '', submit: false },
+    ])
   })
 
   it('rejects a pwsh bootstrap whose shell exits or times out', async () => {
@@ -524,7 +562,7 @@ describe('BashTerminalBackend startup rollback', () => {
           cancel: () => false,
         }
       },
-      read: () => ({ text: '', totalLines: 0, lineBegin: 0, lineEnd: 0, truncated: false }),
+      read: () => ({ text: 'dsh> ', totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: false }),
     } as unknown as LocalPtySession
     const backend = new BashTerminalBackend(
       ctx,
@@ -629,6 +667,47 @@ describe('terminal-bash plugin shape', () => {
     await ctx.terminals.kill(owner, second.sessionId)
     expect(() => { setSandboxMode(session, 'read-only') }).not.toThrow()
     expect(session.snapshotEvents().filter(event => event.type === 'sandbox/mode')).toHaveLength(2)
+  })
+
+  it('retains the sandbox fence when lower-provider initialization cleanup is unconfirmed', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(AgentRegistry)
+    const serviceFiber = await ctx.plugin(TerminalSessionService)
+    await ctx.plugin(RecordingSandbox)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
+    const ownerFiber = await ctx.plugin(() => {})
+    const session = ctx.sessions.create(SessionId('unconfirmed-cleanup-owner'))
+    const owner: Agent = {
+      id: session.id, options: {}, session, inbox: unsupportedInbox(), status: 'idle', ctx: ownerFiber.ctx,
+      send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
+      runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
+    }
+    const unregister = ctx.agents.register(owner)
+    const spawnError = new Error('initial process inspection failed')
+    const cleanupError = new Error('native exit could not be confirmed')
+    const lowerFailure = new SubprocessTerminalCleanupError(spawnError, cleanupError)
+    const backend = new BashTerminalBackend(ctx, config(), async () => { throw lowerFailure })
+    const unregisterBackend = ctx.terminals.registerBackend(backend)
+    try {
+      const failure = await ctx.terminals.spawn(owner, { type: 'shell' }).then(
+        () => { throw new Error('Provider initialization unexpectedly succeeded') },
+        (error: unknown) => error,
+      )
+      expect.soft(ctx.terminals.hasOwnerActivity(owner)).toBe(true)
+      expect.soft(() => { setSandboxMode(owner.session, 'read-only') }).toThrow('open or being created')
+      expect(failure).toBeInstanceOf(TerminalBackendCleanupError)
+      if (!(failure instanceof TerminalBackendCleanupError)) throw new Error('Missing backend cleanup failure')
+      expect(failure.spawnError).toBe(spawnError)
+      expect(failure.cleanupError).toBe(cleanupError)
+      expect(owner.session.snapshotEvents().filter(event => event.type === 'sandbox/mode')).toHaveLength(0)
+    } finally {
+      unregisterBackend()
+      await ownerFiber.dispose()
+      unregister()
+      await serviceFiber.dispose()
+    }
   })
 
   it('also fences sandbox-mode changes across unpublished PTY creation', async () => {

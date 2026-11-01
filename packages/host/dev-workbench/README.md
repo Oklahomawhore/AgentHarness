@@ -21,7 +21,7 @@ Configurable Host runtime for local development tasks shown in the Web GUI. Each
 
 ## Behavior
 
-The runtime resolves bare commands through `ctx.subprocess`, spawns argv without shell interpolation, collects bounded stdout and stderr, and retains their tails after exit. Start and stop operations serialize per entry. Starting a live entry returns its current state; restarting a settled entry replaces its retained output. Stop terminates the complete process tree, waits for quiescence, and Harness disposal applies the same ownership to every live entry. Ambient credential-shaped and `DSH_*` environment variables follow the subprocess seam's scrub policy; this package does not add explicit environment overrides.
+The runtime resolves bare commands through `ctx.subprocess`, spawns argv without shell interpolation, collects bounded stdout and stderr, and retains their tails after exit. Start and stop operations serialize per entry. Starting a live entry returns its current state. Restart drains the retained handle's managed process range before replacing its output. Stop and Harness disposal terminate and await every retained range, including children surviving the direct command's exit or failure. Ambient credential-shaped and `DSH_*` environment variables follow the subprocess seam's scrub policy; this package does not add explicit environment overrides.
 
 One process entry may own several views when routes such as a chat page and local-debug page share one server. A configured readiness policy sends bounded GET attempts to its deployment-owned URL without following redirects. Process phase and HTTP availability remain independent: a running process reports `checking`, `delayed`, or `ready`, and delayed probes continue until the configured status appears or the process stops. Probe cancellation reaches quiescence before stop or Harness disposal terminates the process tree. This trusted localhost control does not use the model-facing Web fetch provider and does not proxy response bytes to the browser.
 
@@ -36,11 +36,11 @@ One process entry may own several views when routes such as a chat page and loca
 | `entries.<id>.views` | Optional unique `{ id, label, url }` browser destinations using HTTP(S); URLs cannot contain credentials. |
 | `entries.<id>.readiness.url` | Optional deployment-owned HTTP(S) URL probed without redirects; the URL cannot contain credentials. |
 | `entries.<id>.readiness.acceptedStatusCodes` | Non-empty unique status-code list that establishes readiness. |
-| `entries.<id>.readiness.intervalMs` | Delay between readiness attempts. |
-| `entries.<id>.readiness.requestTimeoutMs` | Per-attempt timeout. |
+| `entries.<id>.readiness.intervalMs` | Delay between readiness attempts; positive integer, at most 2,147,483,647 milliseconds. |
+| `entries.<id>.readiness.requestTimeoutMs` | Per-attempt timeout; positive integer, at most 2,147,483,647 milliseconds. |
 | `entries.<id>.readiness.warnAfterMs` | Elapsed time before unresolved readiness changes from `checking` to `delayed`. |
 | `maxOutputBytes` | Per-stream retained tail size in bytes. |
-| `graceMs` | Delay between graceful and forced process-tree termination. |
+| `graceMs` | Delay between graceful and forced process-tree termination; positive integer, at most 2,147,483,647 milliseconds. |
 
 Project paths, commands, and ports belong in profile configuration rather than this generic plugin. The shipped Web bundle mounts the service with no entries; a later profile patch supplies local tasks.
 

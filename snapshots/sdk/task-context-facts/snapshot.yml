@@ -9,3 +9,5 @@ header:
   systemPromptSource: sdk/task-context-disconnect
 replay:
   override: true
+writer: separate
+writerRevision: 2

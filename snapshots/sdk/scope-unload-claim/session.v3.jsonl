@@ -1,0 +1,16 @@
+{"type":"session","version":3,"id":"{{session:1}}","createdAt":1790899200000,"cwd":"{{cwd}}","isSeeded":false,"delegationDepth":0}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"role":"user","id":"{{message:1}}","source":{"kind":"user"},"content":[{"type":"text","text":"Keep this original ordinary request when Scope unloads."}]}]}}
+{"type":"turn/start","data":{"turn":1}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"role":"user","id":"{{message:1}}","source":{"kind":"user"},"content":[{"type":"text","text":"Keep this original ordinary request when Scope unloads."}]}]}}
+{"type":"turn/end","data":{"turn":1,"reason":{"kind":"blocked"}}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":1,"inserted":[{"role":"user","id":"{{message:2}}","source":{"kind":"user"},"content":[{"type":"text","text":"Continue the retained ordinary request explicitly."}]}]}}
+{"type":"turn/start","data":{"turn":2}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}
+{"type":"user/message","data":{"role":"user","id":"{{message:1}}","source":{"kind":"user"},"content":[{"type":"text","text":"Keep this original ordinary request when Scope unloads."}]},"surfaceOp":"append"}
+{"type":"request/header","data":{"header":{"config":{"provider":"deepseek-official","model":"deepseek-v4-flash"},"tools":"{{tools}}"},"reason":"initial"}}
+{"type":"turn/end","data":{"turn":2,"reason":{"kind":"completed"}}}
+{"type":"turn/start","data":{"turn":3}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}
+{"type":"user/message","data":{"role":"user","id":"{{message:2}}","source":{"kind":"user"},"content":[{"type":"text","text":"Continue the retained ordinary request explicitly."}]},"surfaceOp":"append"}
+{"type":"turn/end","data":{"turn":3,"reason":{"kind":"completed"}}}

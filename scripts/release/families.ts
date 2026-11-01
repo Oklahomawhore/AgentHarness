@@ -1,12 +1,7 @@
 /**
- * The three independent publish sequences this repository releases from
- * (`packages/` + `apps/`, `vendor/`, and `native/`) and the two this module
- * owns: `dsh` and `vendor`. Each family carries its own version baseline, tag
- * naming, and publish set, so releasing one never republishes another
+ * Membership, versions, tags and packed payloads for the retained dsh and vendor
+ * npm release families. Native packages own separate release tooling
  * ([rationale](../../.agents/notes/implemented/process/2026-08-10-npm-release-sequences.md)).
- *
- * The family dimension lives here only. A new sequence adds a subclass and a
- * `releaseFamilies()` entry; nothing else in the release scripts branches on it.
  */
 
 import { globSync, readFileSync } from 'node:fs'
@@ -26,11 +21,10 @@ import { validateTarballPayload } from '../publication-payload.ts'
 const INSTALL_SECTIONS = ['dependencies', 'optionalDependencies'] as const
 
 /**
- * Peer declarations also order the publication, but they cannot constrain it.
- * npm never installs a peer on the package's behalf — an unmet peer is a
- * warning, not a resolution failure — and sibling packages legitimately declare
- * each other as peers, which makes these edges the ones that close cycles. They
- * order what they can and are dropped where they would deadlock.
+ * Peer declarations guide publication where they do not contradict an install
+ * dependency or close a cycle. Dropping an ordering edge does not relax peer
+ * compatibility; intermediate registry states can remain unresolvable until
+ * the complete family is published.
  */
 const PEER_SECTIONS = ['peerDependencies'] as const
 
@@ -118,11 +112,10 @@ export abstract class ReleaseFamily {
   /**
    * Discover this family's members.
    * @param root - repository root.
-   * @returns Publishable members sorted by directory, with names validated and deduplicated.
+   * @returns Nonempty publishable members sorted by directory, with names validated and deduplicated.
    */
   members(root: string): ReleaseMember[] {
     const manifestPaths = globSync([...this.patterns], { cwd: root }).sort()
-    if (manifestPaths.length === 0) throw new Error(`release family ${this.id} matched no manifests`)
 
     const members: ReleaseMember[] = []
     const seen = new Set<string>()
@@ -143,22 +136,18 @@ export abstract class ReleaseFamily {
         manifest,
       })
     }
+    if (members.length === 0) throw new Error(`release family ${this.id} matched no publishable manifests`)
     return members
   }
 
   /**
-   * Order members so every package publishes after the family members it
-   * depends on, which is what makes a partial publication self-consistent: an
-   * interrupted run leaves a prefix whose packages never point at something
-   * absent from the registry.
+   * Order intra-family runtime dependencies before their consumers.
    *
-   * Install edges are honoured absolutely — a cycle among them is a defect this
-   * reports rather than works around. Peer edges order what they can and are
-   * dropped where honouring one would deadlock: sibling packages declare each
-   * other as peers, and npm treats an unmet peer as a warning rather than a
-   * resolution failure ([rationale](../../.agents/notes/implemented/process/2026-08-10-npm-release-sequences.md)).
-   * Every dropped edge is reported, because dropping one is a decision about a
-   * real release rather than an implementation detail.
+   * Install-edge cycles fail. Peer edges guide ordering where possible and are
+   * reported when a cycle prevents it; dropping an edge preserves the peer
+   * compatibility requirement. The order does not prove that an intermediate
+   * registry state is installable
+   * ([rationale](../../.agents/notes/implemented/process/2026-08-10-npm-release-sequences.md)).
    * @param members - this family's members.
    * @returns The order, ties broken by name for determinism, and the peer edges it left unordered.
    */
@@ -281,7 +270,7 @@ export abstract class ReleaseFamily {
 
   /**
    * The tag prefix a member's versions are tagged under. Every tag for that
-   * member starts with it, which is how the last published version is found.
+   * member starts with it, which identifies versions reserved by Git tags.
    * @param member - the member being published.
    * @returns The prefix, ending in `-v`.
    */

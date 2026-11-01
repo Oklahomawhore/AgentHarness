@@ -24,6 +24,34 @@ async function joined(overrides: Partial<Config> = {}) {
 const signal = (): AbortSignal => new AbortController().signal
 const projections = (pool: MemoryMediaPool) => pool.media.get('scope_access')!.tables.get('projections') ?? new Map<string, unknown>()
 
+it('notifies owner inventories only after read grants durably change', async () => {
+  const a = await host('grant-owner')
+  const task = await a.createTask()
+  const identity = await a.access.identity()
+  const observed: unknown[] = []
+  const changed = vi.fn((selection: { readonly taskId: DevelopmentTaskId }) => {
+    expect(selection.taskId).toBe(task.id)
+    observed.push([...a.pool.media.get('scope_access')!.tables.get('grants')!.values()])
+  })
+  a.ctx.on('scope-access/contribution-application-changed', changed)
+  const request = { taskId: task.id, recipientPeerId: peer('grant-recipient'),
+    ownerAddress: identity.addresses[0]!, expiresAt: Date.now() + 50_000, responsibility: 'frontend' }
+  a.pool.failNextWrites = 1
+  await expect(a.access.invite(request)).rejects.toThrow('injected write failure')
+  expect(changed).not.toHaveBeenCalled()
+
+  const invitation = await a.access.invite(request)
+  expect(changed).toHaveBeenCalledTimes(1)
+  expect(observed).toEqual([[{ invitation, state: 'active' }]])
+  a.pool.failNextWrites = 1
+  await expect(a.access.revoke({ grantId: invitation.grantId })).rejects.toThrow('injected write failure')
+  expect(changed).toHaveBeenCalledTimes(1)
+  await a.access.revoke({ grantId: invitation.grantId })
+  await a.access.revoke({ grantId: invitation.grantId })
+  expect(changed).toHaveBeenCalledTimes(2)
+  expect(observed).toEqual([[{ invitation, state: 'active' }], [{ invitation, state: 'revoked' }]])
+})
+
 it('reads only an invited Root Task and persists exact text on both Hosts before returning', async () => {
   const { a, b, task, invitation, subscription } = await joined()
   await a.createTask('PRIVATE-CANARY')
@@ -177,6 +205,35 @@ it('retains revocation and receiving withdrawal across restart and rejects trans
   expect(changed.exit).toHaveBeenCalledWith(1)
 })
 
+it.each(['grant owner', 'recipient', 'owner projection', 'recipient projection'] as const)(
+  'rejects a restored %s mismatch without discarding durable evidence', async (damage) => {
+    const { a, b, invitation, subscription } = await joined()
+    expect((await b.access.retrieve(subscription.id, signal())).status).toBe('active')
+    const owner = damage === 'grant owner' || damage === 'owner projection'
+    const selected = owner ? a : b
+    const events = selected.tasks.log()
+    await a.ctx.fiber.dispose()
+    await b.ctx.fiber.dispose()
+    const medium = selected.pool.media.get('scope_access')
+    if (medium === undefined) throw new Error('Scope medium is absent')
+    if (damage === 'grant owner') {
+      medium.tables.get('grants')!.set(invitation.grantId, {
+        invitation: { ...invitation, ownerPeerId: peer('another-owner') }, state: 'active',
+      })
+    } else if (damage === 'recipient') {
+      medium.tables.get('subscriptions')!.set(subscription.id, {
+        ...subscription, invitation: { ...invitation, recipientPeerId: peer('another-recipient') },
+      })
+    } else medium.tables.get(owner ? 'grants' : 'subscriptions')!.clear()
+    const retained = structuredClone(medium)
+    const restored = await host(owner ? 'peer-a' : 'peer-b', selected.pool, {}, events)
+    await expect(restored.access.identity()).rejects.toThrow(damage === 'grant owner'
+      ? 'invalid stored grant owner' : damage === 'recipient' ? 'invalid stored recipient' : 'orphaned stored projection')
+    expect(restored.exit).toHaveBeenCalledWith(1)
+    expect(selected.pool.media.get('scope_access')).toEqual(retained)
+  },
+)
+
 it('keeps grant and projection state unchanged when durability fails, while revocation needs no spare slot', async () => {
   const { a, b, invitation, subscription } = await joined({ maxGrants: 1 })
   a.pool.failNextWrites = 1
@@ -198,6 +255,54 @@ it('distinguishes expiration from revocation and refuses a parent-bearing Task',
   vi.spyOn(Date, 'now').mockReturnValue(invitation.expiresAt)
   await expect(b.access.retrieve(subscription.id, signal())).resolves.toEqual({ status: 'expired' })
   expect((await b.access.list()).subscriptions[0]?.state).toBe('expired')
+})
+
+it.each([false, true])('retains expiry crossed during a projection write, including terminal-write failure=%s', async (failExpiryWrite) => {
+  const { b, invitation, subscription } = await joined()
+  const domain = b.ctx.storageDomain.get('scope_access')
+  if (domain === undefined) throw new Error('Receiving domain missing')
+  const records = domain.table('projections')
+  const put = records.put.bind(records)
+  const written = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const delayed = vi.spyOn(records, 'put').mockImplementationOnce(async (key, value) => {
+    await put(key, value)
+    written.resolve(undefined)
+    await release.promise
+  })
+  const clock = vi.spyOn(Date, 'now')
+  const request = vi.spyOn(b.transport, 'request')
+  const pending = b.access.retrieve(subscription.id, signal()).catch((error: unknown) => error)
+  try {
+    await written.promise
+    expect(projections(b.pool).size).toBe(1)
+    clock.mockReturnValue(invitation.expiresAt)
+    if (failExpiryWrite) b.pool.failNextWrites = 1
+    release.resolve(undefined)
+    const outcome = await pending
+    if (failExpiryWrite) {
+      expect(outcome).toBeInstanceOf(Error)
+      expect(outcome).toMatchObject({ message: 'injected write failure' })
+      expect((await b.access.list()).subscriptions).toEqual([subscription])
+      expect(await b.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    } else expect(outcome).toEqual({ status: 'expired' })
+    expect((await b.access.list()).subscriptions).toEqual([{ ...subscription, state: 'expired' }])
+    clock.mockRestore()
+    expect(await b.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(request).toHaveBeenCalledOnce()
+    await b.ctx.fiber.dispose()
+    const restored = await host('peer-b', b.pool)
+    const restoredRequest = vi.spyOn(restored.transport, 'request')
+    expect((await restored.access.list()).subscriptions).toEqual([{ ...subscription, state: 'expired' }])
+    expect(await restored.access.retrieve(subscription.id, signal())).toEqual({ status: 'expired' })
+    expect(restoredRequest).not.toHaveBeenCalled()
+    expect(projections(b.pool).size).toBe(1)
+  } finally {
+    release.resolve(undefined)
+    await Promise.allSettled([pending])
+    delayed.mockRestore()
+    clock.mockRestore()
+  }
 })
 
 it('requires explicit receiver identity when accepting local intent', async () => {
@@ -322,17 +427,39 @@ it('wakes for its committed Task while unrelated commits and retrieval persisten
   expect(JSON.stringify(result)).not.toMatch(/PRIVATE|shared update|taskId|revision/)
 })
 
-it('rechecks current state after listener registration instead of losing an intervening update', async () => {
+it('observes a Task commit while its initial aligned view is still returning', async () => {
   const { a, b, task, subscription } = await joined()
   const cursor = await cursorOf(b.access, subscription.id)
-  const earlier = a.tasks.contextView(task.id)
-  await a.tasks.publishContext({ taskId: task.id, participantId: a.participantId, text: 'committed before listener registration' })
-  const latest = a.tasks.contextView(task.id)
-  // The first read captures old state; the next read sees the commit without another event.
-  const read = vi.spyOn(a.tasks, 'contextView').mockReturnValueOnce(earlier).mockReturnValue(latest)
-  const result = await b.access.waitForChange(subscription.id, cursor, signal())
-  expect(result.status).toBe('changed')
-  expect(read).toHaveBeenCalledTimes(3)
+  // Only the commit can wake this wait while its owner deadline is frozen.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const current = a.tasks.currentContextView.bind(a.tasks)
+  let held = false
+  const viewed = vi.spyOn(a.tasks, 'currentContextView').mockImplementation(async (id) => {
+    const view = await current(id)
+    if (!held) {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return view
+  })
+  const pending = b.access.waitForChange(subscription.id, cursor, signal())
+  const settled = Promise.allSettled([pending])
+  try {
+    await entered.promise
+    await a.tasks.publishContext({ taskId: task.id, participantId: a.participantId, text: 'Committed while cursor alignment was pending.' })
+    release.resolve(undefined)
+    const result = await pending
+    expect(result.status).toBe('changed')
+    if (result.status === 'changed') expect(result.cursor).not.toBe(cursor)
+  } finally {
+    release.resolve(undefined)
+    await settled
+    viewed.mockRestore()
+  }
+  expect(a.transport.inbound).toBe(0)
 })
 
 it('publishes revocation hints only after durability succeeds and stores the receiver terminal state', async () => {

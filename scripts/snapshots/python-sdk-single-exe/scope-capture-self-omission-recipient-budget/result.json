@@ -1,0 +1,45 @@
+{
+  "turns": 5,
+  "finalResponse": "B left the shared goal; its original local work and the other members remain.",
+  "requestCounts": {
+    "b": 8,
+    "c1": 7,
+    "c2": 7
+  },
+  "contextBytes": {
+    "b": [
+      734,
+      734,
+      5062,
+      5062,
+      5062,
+      6196,
+      886,
+      886
+    ],
+    "c1": [
+      736,
+      736,
+      1614,
+      1614,
+      6983,
+      4475,
+      6205
+    ],
+    "c2": [
+      736,
+      736,
+      3336,
+      3336,
+      6978,
+      4470,
+      4470
+    ]
+  },
+  "exactOwnCaptureOmitted": true,
+  "samePeerOtherSessionVisible": true,
+  "ownerSourceRetained": true,
+  "withdrawalRetained": true,
+  "otherMembersContinue": true,
+  "bOwnerReadState": "active"
+}

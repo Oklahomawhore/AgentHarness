@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { addHarnessSourceSection } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import type {} from '@deepseek-ai/dsh-cmdline'
 import * as FrontendStatic from '@deepseek-ai/dsh-host-frontend-static'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -42,9 +43,9 @@ export const inject = ['webServer']
 
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
 export interface Config {
-  /** Permit default-browser handoff after the Loader tree settles; an SSH launch suppresses it. */
+  /** Permit default-browser handoff after successful startup; an SSH launch suppresses it. */
   openBrowser: boolean
-  /** Print the URL line on activation; a non-interactive layer can turn it off. */
+  /** Print the URL line after successful startup; a non-interactive layer can turn it off. */
   printUrl: boolean
   /**
    * Register the model-visible surface context (the `app:web-surface` prompt
@@ -251,11 +252,6 @@ export function apply(ctx: Context, config: Config): void {
   }
   if (config.printUrl || handoffBrowser) {
     ctx.inject(['connection'], (connectionCtx) => {
-      // The URL line and browser handoff are readiness signals: supervisors RPC
-      // as soon as they observe the line, while a browser requests the page as
-      // soon as it opens. Neither may run while sibling rows such as the /api
-      // route owner are still mounting. Await Loader settlement first; a
-      // hand-built tree without a Loader is already the complete tree.
       const announceReady = (): void => {
         if (ANNOUNCED_ROOTS.has(connectionCtx.root)) return
         const webUrl = localWebUrl(connectionCtx)
@@ -278,9 +274,13 @@ export function apply(ctx: Context, config: Config): void {
           })
         }
       }
-      // This row's own activation can precede a sibling failure. The app owns
-      // readiness by waiting for its Loader tree, or announces at once in a
-      // hand-built tree without Loader.
+      const ready = connectionCtx.get('appReady')
+      if (ready !== undefined) {
+        // Loader settlement precedes the launcher's watcher setup, which can fail.
+        connectionCtx.effect(() => ready.onReady(announceReady), 'web-app: startup announcement')
+        return
+      }
+      // Embedding hosts without the launcher retain Loader-based readiness.
       const settled = connectionCtx.get('loader')?.await()
       if (settled === undefined) announceReady()
       else {

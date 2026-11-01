@@ -40,7 +40,7 @@ export interface McpServerRegistration {
 
 /** Bound on live MCP transport registrations. */
 export interface Config {
-  /** Maximum MCP servers registered in this Host process. */
+  /** Maximum MCP servers registered in this service instance. */
   readonly maxServers: number
 }
 
@@ -85,7 +85,7 @@ export class McpService extends Service {
   private readonly providers = new Map<McpServerId, McpServerProvider>()
   private readonly maxServers: number
 
-  /** Validate the process-wide server bound. */
+  /** Validate the registry’s server bound. */
   constructor(ctx: Context, config: Config) {
     super(ctx, 'mcp')
     if (!Number.isSafeInteger(config.maxServers) || config.maxServers < 1) {
@@ -116,10 +116,10 @@ export class McpService extends Service {
     const registration = Object.freeze({ id: provider.id })
     const dispose = this.ctx.effect(function* (this: McpService) {
       this.providers.set(provider.id, normalized)
-      this.ctx.emit('mcp/server-changed', registration, 'registered')
+      this.ctx.emit(this, 'mcp/server-changed', registration, 'registered')
       yield () => {
         this.providers.delete(provider.id)
-        this.ctx.emit('mcp/server-changed', registration, 'unregistered')
+        this.ctx.emit(this, 'mcp/server-changed', registration, 'unregistered')
       }
     }.bind(this), 'mcp.registerServer()')
     return () => { void dispose() }

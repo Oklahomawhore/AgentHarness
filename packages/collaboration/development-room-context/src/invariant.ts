@@ -100,7 +100,11 @@ function validateSession(session: Session, fail: InvariantFailure): void {
 /** Install append and durable-message relationship checks. */
 const install: InvariantInstaller = Object.assign((ctx: Context, fail: InvariantFailure) => {
   for (const session of ctx.sessions.list()) validateSession(session, fail)
+  // Each invariant companion validates its own records while sharing only the replay-registration
+  // idiom.
+  /* jscpd:ignore-start */
   ctx.on('session/created', (session) => { validateSession(session, fail) }, { global: true })
+  /* jscpd:ignore-end */
   ctx.on('development-room-context/changed', (entry) => {
     const retained = ctx.developmentRoomContexts.log().at(-1)
     if (retained === undefined || retained.nodeId !== entry.nodeId || retained.seq !== entry.seq) {

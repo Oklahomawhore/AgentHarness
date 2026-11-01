@@ -620,7 +620,7 @@ export class ReactLoopAgent implements Agent {
       ...header.tools !== undefined ? { tools: header.tools } : {},
       sessionId: this.session.id,
       signal,
-    }))
+    }), this.session)
     return request
   }
 }

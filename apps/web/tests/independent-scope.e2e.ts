@@ -171,8 +171,14 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent scope read i
     const invitationText = await ownerAccess.getByRole('textbox', { name: '将此邀请交给接收人', exact: true }).inputValue()
     const invitation = JSON.parse(invitationText) as ScopeInvitation
     expect(invitation).toMatchObject({ ownerPeerId, recipientPeerId, taskId: task.id, responsibility: 'frontend' })
+    expect(await ownerAccess.getByRole('combobox', { name: '邀请使用的本机地址', exact: true }).inputValue())
+      .toBe(invitation.ownerAddress)
+    const portMatch = invitation.ownerAddress.match(/^\/ip4\/127\.0\.0\.1\/tcp\/([1-9]\d*)\/p2p\//u)
+    if (portMatch?.[1] === undefined) throw new Error('Invitation owner did not provide an allocated loopback address')
+    const ownerEndpoint = `127.0.0.1:${portMatch[1]}`
     const replacements = [
       [String(invitation.expiresAt), '{{expiresAt}}'], [invitation.ownerAddress, '{{ownerAddress}}'],
+      [ownerEndpoint, '{{ownerEndpoint}}'],
       [ownerPeerId, '{{ownerPeerId}}'], [recipientPeerId, '{{recipientPeerId}}'], [task.id, '{{taskId}}'],
     ] as const
     await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'owner-invited.expected.md'),
@@ -198,7 +204,9 @@ describe.skipIf(process.platform === 'win32')('web e2e: independent scope read i
     expect(initial.output.hookSpecificOutput?.additionalContext).not.toContain(PUBLICATION)
     await ownerPanel.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。').fill(PUBLICATION)
     await ownerPanel.getByRole('button', { name: '发布上下文', exact: true }).click()
-    await ownerPanel.getByText(PUBLICATION, { exact: true }).waitFor()
+    const publication = ownerPanel.getByRole('paragraph').filter({ hasText: PUBLICATION })
+    await publication.waitFor()
+    expect(await publication.innerText()).toBe(PUBLICATION)
     const updated = await hook(receiver.scaffold, receiverGeneration, SESSION_CHOSEN, 'PostToolBatch')
     expect(updated.receipt.status).toBe('projected')
     expect(updated.receipt.projectionId).not.toBe(initial.receipt.projectionId)

@@ -15,8 +15,10 @@ import type { ScopeContribution, ScopeContributionLease } from './contribution-s
 import { sampleOpenApiSource } from './openapi.ts'
 import { contributionProposalSource, resolveContributionSource, contributionEntryMatches, contributionSourceSchema } from './contribution-source.ts'
 import { scopeDigest } from './projection.ts'
-import { ContributionController, type ContributionStore } from '@deepseek-ai/dsh-scope-access/contribution'
+import { ownsJointCapture, ownsJointRead, validateJointRequest, prepareJoint, selectJointApproval } from './joint.ts'
+import { ContributionController, type ContributionControllerErrorCode, type ContributionStore } from '@deepseek-ai/dsh-scope-access/contribution'
 import type { ScopeDomain, ScopeSession } from './state.ts'
+import { captureClaudeWork, retainedLeaseCount, validateWorkLease } from './work-capture.ts'
 import type {
   ClaudeScopeActivateContributionRequest, ClaudeScopeContributionProposal, ClaudeScopeHookInput, ClaudeScopeHookResult,
   ClaudeScopePrepareContributionRequest, ClaudeScopeContributionSource, ClaudeScopeSessionKey,
@@ -32,18 +34,13 @@ export interface ContributionLimits {
 
 function omitted(reason: string): ClaudeScopeHookResult { return { output: {}, receipt: { status: 'omitted', reason } } }
 
-function sameProposal(proposal: ClaudeScopeContributionProposal, invitation: ScopeContributionInvitation): boolean {
-  const grant = invitation.grant
-  return proposal.contributorPeerId === grant.contributorPeerId && proposal.captureId === grant.captureId
-    && proposal.captureGeneration === grant.captureGeneration && isDeepStrictEqual(proposal.source, grant.source)
-}
-
 /**
  * Own cancellation of independently granted capture; callers serialize all record mutations.
  * Network failure preserves samples and pending termination instead of authorizing retries from changed bytes.
  */
 export class IndependentContribution {
   private readonly controls = new Map<ClaudeScopeSessionKey, AbortController>()
+  private readonly prompts = new Map<ClaudeScopeSessionKey, { id: string | undefined; control: AbortController }>()
 
   /**
    * @param ctx - optional independent scope authority.
@@ -58,10 +55,16 @@ export class IndependentContribution {
    * @returns the new operation generation's cancellation signal.
    */
   invalidate(key: ClaudeScopeSessionKey): AbortSignal {
+    this.invalidatePrompt(key)
     this.controls.get(key)?.abort(new Error('claude-scope: contribution selection changed'))
     const control = new AbortController()
     this.controls.set(key, control)
     return AbortSignal.any([this.lifetime, control.signal])
+  }
+
+  private invalidatePrompt(key: ClaudeScopeSessionKey): void {
+    this.prompts.get(key)?.control.abort(new Error('claude-scope: source prompt changed'))
+    this.prompts.delete(key)
   }
 
   private signal(key: ClaudeScopeSessionKey): AbortSignal {
@@ -72,9 +75,29 @@ export class IndependentContribution {
   /**
    * Capture the current permission generation before a Hook waits in the mutation queue.
    * @param key - an observed session with an existing contribution permit.
+   * @param stopReport - bind Stop sampling or prompt acquisition to the current prompt lifetime.
    * @returns a signal invalidated by prepare, activation, leave, or SessionEnd.
    */
-  captureSignal(key: ClaudeScopeSessionKey): AbortSignal { return this.signal(key) }
+  captureSignal(key: ClaudeScopeSessionKey, stopReport = false): AbortSignal {
+    const prompt = stopReport ? this.prompts.get(key) : undefined
+    return prompt === undefined ? this.signal(key) : AbortSignal.any([this.signal(key), prompt.control.signal])
+  }
+
+  /** Invalidate queued Stop work at prompt arrival, before waiting for the mutation queue.
+   * @param key - observed source session.
+   * @param input - original UserPromptSubmit or StopFailure input.
+   * @param capture - current local permission; unjoined sessions retain no prompt handle.
+   * @returns after updating the process-local cancellation handle; durable consent is handled in capture.
+   */
+  noticePrompt(key: ClaudeScopeSessionKey, input: ClaudeScopeHookInput, capture: ScopeContribution | undefined): void {
+    if (capture?.state !== 'active' || !('kind' in capture.source)
+      || capture.source.kind !== 'claude-work' || !capture.source.stopReports) return
+    const previous = this.prompts.get(key)
+    if (input.event === 'StopFailure' && previous?.id !== input.promptId) return
+    if (input.event !== 'UserPromptSubmit' && input.event !== 'StopFailure') return
+    this.invalidatePrompt(key)
+    if (input.event === 'UserPromptSubmit') this.prompts.set(key, { id: input.promptId, control: new AbortController() })
+  }
 
   private access(key: ClaudeScopeSessionKey) {
     const access = this.ctx.get('scopeAccess')
@@ -98,19 +121,49 @@ export class IndependentContribution {
   assertExpected(domain: ScopeDomain, key: ClaudeScopeSessionKey, expected: ClaudeScopeContributionSelection | null): ScopeSession {
     const session = this.session(domain, key)
     const proposal = session.contribution?.proposal
-    const actual = proposal === undefined ? null : { captureId: proposal.captureId, captureGeneration: proposal.captureGeneration }
-    if (actual?.captureId !== expected?.captureId || actual?.captureGeneration !== expected?.captureGeneration) {
-      throw new RemoteError('claude-scope/stale-capture', 'The selected local capture has changed',
-        { sessionKey: key, expectedCapture: expected, actualCapture: actual })
+    if (proposal?.captureId !== expected?.captureId || proposal?.captureGeneration !== expected?.captureGeneration) {
+      throw this.managementError(domain, key, 'stale-capture', 'The selected local capture has changed', expected)
     }
     return session
+  }
+
+  private managementError(domain: ScopeDomain, key: ClaudeScopeSessionKey, code: ContributionControllerErrorCode,
+    message: string, expected: ClaudeScopeContributionSelection | null = null): RemoteError {
+    if (code === 'stale-capture') {
+      const actual = this.session(domain, key).contribution?.proposal
+      return new RemoteError('claude-scope/stale-capture', message, { sessionKey: key,
+        expectedCapture: expected === null ? null
+          : { captureId: expected.captureId, captureGeneration: expected.captureGeneration },
+        actualCapture: actual === undefined ? null : { captureId: actual.captureId, captureGeneration: actual.captureGeneration } })
+    }
+    return new RemoteError(code === 'grant-ended' ? 'claude-scope/grant-ended' : 'claude-scope/invitation-mismatch', message, { sessionKey: key })
   }
 
   private async save(domain: ScopeDomain, key: ClaudeScopeSessionKey, contribution: ScopeContribution): Promise<ScopeSession> {
     const current = this.session(domain, key)
     if (isDeepStrictEqual(current.contribution, contribution)) return current
-    const session = { ...current, contribution }
+    const version = 'kind' in contribution.source && contribution.source.kind === 'claude-work'
+      ? { version: 3 as const, readRevision: current.readRevision ?? 0 } : {}
+    let session: ScopeSession = { ...current, ...version, contribution }
+    if (current.joint !== undefined && ownsJointCapture(contribution, current.joint)) {
+      const joint = current.joint
+      const selected = contribution.invitation === undefined ? contribution
+        : { ...contribution, invitation: { ...contribution.invitation, ownerAddress: joint.entry.ownerAddress } }
+      session = { ...current, ...version, contribution: selected, joint: { ...joint,
+        ready: joint.subscription !== undefined && (joint.ready || selected.state === 'active' || selected.endReceipt !== undefined),
+        ...(selected.state !== 'ending' || selected.endReceipt !== undefined || ownsJointRead(current, joint) || joint.intent !== 'adopt' ? {} : {
+          intent: 'cancel-pending' as const, cleanupPending: joint.subscription !== undefined,
+          state: joint.subscription === undefined ? 'ended' as const : joint.state,
+        }),
+      } }
+    }
     await domain.table('sessions').put(key, session)
+    if (contribution.state !== 'active') {
+      this.invalidatePrompt(key)
+      for (const [id, lease] of domain.table('work_leases').entries()) {
+        if (lease.sessionKey === key && lease.kind === 'prompt') await domain.table('work_leases').delete(id)
+      }
+    }
     this.ctx.emit('claude-scope/session-changed', key)
     return session
   }
@@ -134,13 +187,17 @@ export class IndependentContribution {
     const roots: string[] = []
     let source: ClaudeScopeContributionSource
     try {
-      if (request.roots.length === 0) throw new Error('Contribution roots are required')
+      if (request.roots.length === 0 && (!('kind' in request.source) || request.source.kind !== 'claude-work'
+        || request.source.tools.length > 0 || request.source.commands.length > 0)) throw new Error('Contribution roots are required')
       for (const root of request.roots) {
         if (!isAbsolute(root)) throw new Error('Contribution roots must be absolute directories')
         const canonical = await realpath(root)
         signal.throwIfAborted()
         if (!(await stat(canonical)).isDirectory()) throw new Error('Contribution root is not a directory')
         signal.throwIfAborted()
+        if (roots.includes(canonical) && 'kind' in request.source && request.source.kind === 'claude-work') {
+          throw new Error('Claude-work roots must be distinct canonical directories')
+        }
         if (!roots.includes(canonical)) roots.push(canonical)
       }
       source = await resolveContributionSource(request.source, roots, signal)
@@ -195,6 +252,7 @@ export class IndependentContribution {
         { sessionKey: request.sessionKey })
     }
     let session = this.session(domain, request.sessionKey)
+    validateJointRequest(session, request)
     const existing = session.contribution
     if (existing?.application !== undefined) {
       const { ownerAddress: _oldAddress, ...oldEntry } = existing.application.entry
@@ -210,7 +268,12 @@ export class IndependentContribution {
       if (!isDeepStrictEqual(oldEntry, newEntry) || !isDeepStrictEqual(existing.application.limits, limits) || !sameFiles) {
         throw new RemoteError('claude-scope/source-conflict', 'An application retry may change only the owner address', { sessionKey: request.sessionKey })
       }
-      return this.save(domain, request.sessionKey, { ...existing, application: { ...existing.application, entry } })
+      const retained = prepareJoint({ ...session, contribution: existing }, request)
+      const updated = { ...retained, contribution: { ...retained.contribution,
+        application: { ...existing.application, entry } } }
+      await domain.table('sessions').put(request.sessionKey, updated)
+      this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+      return updated
     }
     if (session.ended || entry.expiresAt <= Date.now() || limits.expiresAt <= Date.now()) {
       throw new RemoteError('claude-scope/local-permission-invalid', 'The selected application or permission has expired', { sessionKey: request.sessionKey })
@@ -227,7 +290,11 @@ export class IndependentContribution {
     if (Buffer.byteLength(JSON.stringify({ entry, proposal: capture.proposal, limits }), 'utf8') > this.limits.maxObservationBytes) {
       throw new RemoteError('claude-scope/local-permission-invalid', 'The online application exceeds the configured byte limit', { sessionKey: request.sessionKey })
     }
-    return this.save(domain, request.sessionKey, { ...capture, application: { entry, limits, state: 'applying' } })
+    const selected: ScopeSession = { ...prepareJoint({ ...session, contribution: capture }, request),
+      contribution: { ...capture, application: { entry, limits, state: 'applying' } } }
+    await domain.table('sessions').put(request.sessionKey, selected)
+    this.ctx.emit('claude-scope/session-changed', request.sessionKey)
+    return selected
   }
 
   private controller(key: ClaudeScopeSessionKey): ContributionController<ScopeContribution> {
@@ -239,30 +306,37 @@ export class IndependentContribution {
       current: () => { const session = this.session(domain, key); return { capture: session.contribution, ended: session.ended } },
       save: async (capture) => { await this.save(domain, key, capture) },
       clear: capture => this.clear(domain, key, capture).then(() => undefined),
-      outbox: () => [...domain.table('contribution_leases').entries()]
-        .filter(([, lease]) => lease.sessionKey === key).map(([id, lease]) => ({ id, sample: lease.sample, receipt: lease.receipt })),
+      outbox: () => [
+        ...[...domain.table('contribution_leases').entries()]
+          .filter(([, lease]) => lease.sessionKey === key).map(([id, lease]) => ({ id, sample: lease.sample, receipt: lease.receipt })),
+        ...[...domain.table('work_leases').entries()].flatMap(([id, lease]) => lease.sessionKey !== key || lease.kind === 'prompt'
+          ? [] : [{ id, sample: lease.sample, receipt: lease.receipt }]),
+      ],
+      // The controller selects current outbox items within the serialized source operation.
       validateOutbox: (item, capture) => {
-        const lease = domain.table('contribution_leases').get(item.id)
-        if (lease === undefined) throw new Error('claude-scope: selected contribution lease is missing')
+        const work = domain.table('work_leases').get(item.id)
+        if (work !== undefined) { validateWorkLease(item.id, work, capture); return }
+        const lease = domain.table('contribution_leases').get(item.id) as ScopeContributionLease
         this.validateLease(item.id, lease, capture)
       },
       saveReceipt: async (item, receipt) => {
+        const work = domain.table('work_leases').get(item.id)
+        if (work !== undefined && work.kind !== 'prompt') { await domain.table('work_leases').put(item.id, { ...work, receipt }); return }
         const leases = domain.table('contribution_leases')
-        const lease = leases.get(item.id)
-        if (lease === undefined) throw new Error('claude-scope: selected contribution lease is missing')
+        const lease = leases.get(item.id) as ScopeContributionLease
         await leases.put(item.id, { ...lease, receipt })
       },
       requireCompatible: (invitation) => { this.requireCompatibleRead(this.session(domain, key), invitation) },
-      error: (code, message, expected) => {
-        if (code === 'stale-capture') {
-          const actual = this.session(domain, key).contribution?.proposal
-          return new RemoteError('claude-scope/stale-capture', message, { sessionKey: key,
-            expectedCapture: expected === undefined ? null
-              : { captureId: expected.captureId, captureGeneration: expected.captureGeneration },
-            actualCapture: actual === undefined ? null : { captureId: actual.captureId, captureGeneration: actual.captureGeneration } })
+      selectApproval: async (capture, approval) => {
+        const session = this.session(domain, key)
+        const selected = selectJointApproval(session, capture, approval)
+        if (selected !== session) {
+          await domain.table('sessions').put(key, selected)
+          this.ctx.emit('claude-scope/session-changed', key)
         }
-        return new RemoteError(code === 'grant-ended' ? 'claude-scope/grant-ended' : 'claude-scope/invitation-mismatch', message, { sessionKey: key })
+        return capture
       },
+      error: (code, message, expected) => this.managementError(domain, key, code, message, expected),
     }
   }
 
@@ -298,6 +372,16 @@ export class IndependentContribution {
    */
   async activate(domain: ScopeDomain, request: ClaudeScopeActivateContributionRequest, signal: AbortSignal): Promise<ScopeSession> {
     this.assertExpected(domain, request.sessionKey, request.expectedCapture)
+    if (request.invitation.grant.source.kind === 'native-work') {
+      throw new RemoteError('claude-scope/invitation-mismatch', 'Combined native work permissions are not supported by Claude Hooks',
+        { sessionKey: request.sessionKey })
+    }
+    if (request.invitation.grant.source.kind === 'completed-turn-outcomes'
+      || (request.invitation.grant.source.kind === 'tool-observations'
+        && (request.invitation.grant.source.version === 3 || request.invitation.grant.source.version === 4))) {
+      throw new RemoteError('claude-scope/invitation-mismatch', 'Native completed-file, command and completed-turn contribution permissions are not supported by Claude Hooks',
+        { sessionKey: request.sessionKey })
+    }
     const controller = this.controller(request.sessionKey)
     const store = this.store(domain, request.sessionKey)
     const selected = await controller.selectActivation(store, request.invitation, signal)
@@ -322,12 +406,19 @@ export class IndependentContribution {
    * @returns local stop state, retaining pending withdrawal until owner confirmation.
    */
   async stop(domain: ScopeDomain, key: ClaudeScopeSessionKey, invitation?: ScopeContributionInvitation): Promise<ScopeSession> {
+    for (const [id, lease] of domain.table('work_leases').entries()) {
+      if (lease.sessionKey === key && lease.kind === 'prompt') await domain.table('work_leases').delete(id)
+    }
     await this.controller(key).markEnding(this.store(domain, key), invitation)
     await this.pollRecovery(key, operation => operation(domain), this.lifetime)
     return this.session(domain, key)
   }
 
   private async clear(domain: ScopeDomain, key: ClaudeScopeSessionKey, capture: ScopeContribution): Promise<ScopeSession> {
+    for (const [id, lease] of domain.table('work_leases').entries()) {
+      if (lease.sessionKey === key && lease.captureId === capture.proposal.captureId
+        && lease.captureGeneration === capture.proposal.captureGeneration) await domain.table('work_leases').delete(id)
+    }
     for (const [id, lease] of domain.table('contribution_leases').entries()) {
       if (lease.sessionKey === key && lease.captureId === capture.proposal.captureId
         && lease.captureGeneration === capture.proposal.captureGeneration) await domain.table('contribution_leases').delete(id)
@@ -339,8 +430,8 @@ export class IndependentContribution {
   }
 
   /**
-   * Validate restored local identity and exact outbox associations, then settle pending work.
-   * @param domain - parsed durable adapter records, before accepting Hook traffic.
+   * Validate restored identity, shared invitation selection, and outbox ownership before retrying.
+   * @param domain - parsed durable adapter records whose work rows already belong to generation-3 sessions, before accepting Hook traffic.
    * @param session - the restored observed session.
    * @returns after exact samples or pending termination are retried; unavailable owners remain visible.
    */
@@ -349,8 +440,7 @@ export class IndependentContribution {
     if (capture === undefined) return
     const peer = await this.access(session.sessionKey).identity()
     this.lifetime.throwIfAborted()
-    if (peer.peerId !== capture.proposal.contributorPeerId
-      || (capture.invitation !== undefined && !sameProposal(capture.proposal, capture.invitation))) {
+    if (peer.peerId !== capture.proposal.contributorPeerId) {
       throw new Error('claude-scope: stored contribution does not match its local identity')
     }
     if (session.grant !== undefined || session.pendingEnd !== undefined) throw new Error('claude-scope: independent and Task capture grants overlap')
@@ -359,6 +449,16 @@ export class IndependentContribution {
       this.requireCompatibleRead(session, capture.invitation)
     }
     const sequences = new Set<number>()
+    for (const [key, lease] of domain.table('work_leases').entries()) {
+      if (lease.sessionKey !== session.sessionKey) continue
+      validateWorkLease(key, lease, capture)
+      const sample = lease.kind === 'prompt' ? undefined : lease.sample
+      if (sample === undefined) await domain.table('work_leases').delete(key)
+      else {
+        if (sequences.has(sample.sequence)) throw new Error('claude-scope: stored contribution sample sequence is duplicated')
+        sequences.add(sample.sequence)
+      }
+    }
     for (const [key, lease] of domain.table('contribution_leases').entries()) {
       if (lease.sessionKey !== session.sessionKey) continue
       this.validateLease(key, lease, capture)
@@ -405,6 +505,7 @@ export class IndependentContribution {
   }
 
   private validateLease(key: string, lease: ScopeContributionLease, capture: ScopeContribution): void {
+    if ('kind' in capture.source && capture.source.kind === 'claude-work') throw new Error('claude-scope: legacy tool lease cannot acquire Claude-work consent')
     if (lease.captureId !== capture.proposal.captureId || lease.captureGeneration !== capture.proposal.captureGeneration
       || key !== scopeDigest([lease.sessionKey, lease.captureId, lease.captureGeneration, lease.toolUseId])) {
       throw new Error('claude-scope: stored contribution lease has a different capture identity')
@@ -420,7 +521,7 @@ export class IndependentContribution {
     }
     const report = lease.sample?.result
     if (report !== undefined && (('kind' in capture.source) !== ('kind' in report)
-      || ('kind' in report && (report.tool !== lease.toolName
+      || ('kind' in report && (report.kind !== 'tool-observation' || report.tool !== lease.toolName
         || report.reportedStatus !== (lease.terminal === 'PostToolUseFailure' ? 'failure' : 'success'))))) {
       throw new Error('claude-scope: stored sample does not match its source and tool completion')
     }
@@ -431,7 +532,7 @@ export class IndependentContribution {
   }
 
   /**
-   * Admit only exact leased Write/Edit completions to the independent owner.
+   * Admit explicitly permitted tool completions and current-prompt Stop reports to the independent owner.
    * @param domain - adapter records under its mutation queue.
    * @param input - supported main-session Hook with original tool arguments.
    * @param key - observed session with independent local collection permission.
@@ -440,7 +541,7 @@ export class IndependentContribution {
    */
   async capture(
     domain: ScopeDomain,
-    input: ClaudeScopeHookInput,
+    input: Parameters<typeof captureClaudeWork>[1],
     key: ClaudeScopeSessionKey,
     hookSignal: AbortSignal,
   ): Promise<ClaudeScopeHookResult> {
@@ -451,6 +552,10 @@ export class IndependentContribution {
       return omitted('contribution-not-active')
     }
     const invitation = capture.invitation
+    if ('kind' in capture.source && capture.source.kind === 'claude-work') {
+      return captureClaudeWork(domain, input, key, { ...capture, source: capture.source, invitation }, this.limits, signal,
+        selected => this.save(domain, key, selected), () => this.recover(domain, key, signal))
+    }
     if (!await this.recover(domain, key, signal)) return omitted('contribution-awaiting-owner')
     if (input.tool === undefined || (input.tool.name !== 'Write' && input.tool.name !== 'Edit')) return omitted('unsupported-contribution-tool')
     if ('kind' in capture.source && !capture.source.tools.includes(input.tool.name)) return omitted('tool-outside-contribution')
@@ -463,16 +568,15 @@ export class IndependentContribution {
       const prepared = await authorizeClaudeScopeTool(input.tool, input.cwd, capture.policy)
       signal.throwIfAborted()
       if (prepared.kind === 'omitted') return omitted(prepared.reason)
-      const root = typeof prepared.fields.rootIndex === 'number' ? capture.policy.roots[prepared.fields.rootIndex] : undefined
-      if (!('kind' in capture.source) && (root === undefined || typeof prepared.fields.path !== 'string'
-        || resolve(root, prepared.fields.path) !== capture.source.filePath)) {
+      const root = capture.policy.roots[prepared.fields.rootIndex]
+      if (!('kind' in capture.source) && (root === undefined || resolve(root, prepared.fields.path) !== capture.source.filePath)) {
         return omitted('file-outside-contribution')
       }
       if (lease !== undefined && (lease.argumentDigest !== digest || lease.toolName !== input.tool.name)) {
         return omitted('tool-lease-conflict')
       }
       if (lease === undefined) {
-        if (leases.size + domain.table('leases').size >= this.limits.maxLeases) return omitted('tool-lease-limit')
+        if (retainedLeaseCount(domain) >= this.limits.maxLeases) return omitted('tool-lease-limit')
         await leases.put(leaseKey, { sessionKey: key, captureId: capture.proposal.captureId,
           captureGeneration: capture.proposal.captureGeneration, toolUseId: input.tool.id,
           toolName: input.tool.name, argumentDigest: digest,
@@ -481,7 +585,6 @@ export class IndependentContribution {
       signal.throwIfAborted()
       return { output: {}, receipt: { status: 'leased' } }
     }
-    if (input.event !== 'PostToolUse' && input.event !== 'PostToolUseFailure') return omitted('not-tool-completion')
     if (lease === undefined) return omitted('missing-pre-tool-lease')
     if (lease.argumentDigest !== digest || lease.toolName !== input.tool.name) return omitted('tool-lease-changed')
     if (lease.terminal !== undefined && lease.terminal !== input.event) return omitted('tool-completion-conflict')

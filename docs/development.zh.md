@@ -70,7 +70,7 @@ git tag -a v1.2.3 <verified-main-commit-sha> -m "AgentHarness v1.2.3"
 git push origin v1.2.3
 ```
 
-祖先关系检查命令成功后才能打 tag。推送 tag 会在 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)中启动新版本发布；分支推送和 Pull Request 不会。不要移动或复用已发布 tag。工作流保留现有 Release 附件的手动修复入口。产物和 npm 发布细节见[发行指南](public-release.zh.md)。上游 CI 工作流保留各自配置的触发条件；本分支策略不为分支推送或 Pull Request 增加发布矩阵 CI。
+祖先关系检查命令成功后才能打 tag。推送 tag 会在 [AgentHarness 发布工作流](../.github/workflows/agentharness-release.yml)中启动新版本发布；分支推送和 Pull Request 不会。不要移动或复用已发布 tag。工作流保留现有 Release 附件的手动修复入口。产物和 npm 发布细节见[发行指南](public-release.zh.md)。无密钥 CI 验证 Pull Request 和 main 推送；发布仍由 tag 或手动发布工作流负责。
 
 AgentHarness 当前维护一条开发主线。若要独立维护旧版本，需要另行制定维护策略并修改发布校验：当前校验会拒绝不在 `main` 上的提交。[单 main 决策](../.agents/notes/implemented/process/2026-09-26-agentharness-single-main-development.zh.md)记录了这一范围及取舍。
 
@@ -93,6 +93,8 @@ Host 与 Client 保持两个 aggregate program，是因为两侧在相同键下�
 - `tsconfig.base.json` 永不添加 `include` 或 `files`：它们会泄漏进每个 extends 它的包项目，并收窄门面的全匹配范围。
 - 构造全仓 `ts.Program` 的脚本显式以 `tsconfig.host.json` 或 `tsconfig.client.json` 为种子——根 solution 永不作为种子，因为把两个 aggregate 展平进一个 program 会撞上 `Context` 合并冲突。
 - 新包只登记进一个 aggregate；只有上述拆分包同时携带两个 leaf 配置，共享 leaf 因两侧需要对同一份源码做类型检查而登记进两个 aggregate。包同时具有 Node loader 入口和 browser 入口并不构成拆分理由；普通 Client 插件的两份运行时产物都在 Client 构建阶段生成。
+
+Web 测试按文件名选择编译 program：原生 `.e2e.ts`、`.snapshot.ts` 和 `.perf.ts` 场景归 Host aggregate；在浏览器中组装的 `*.expected.e2e.ts`、`submission-echo.e2e.ts` 和 `*.client.spec.ts(x)` 测试归 Web Client project。共享辅助文件随其调用方参与编译。新增测试使用与执行环境对应的文件名类别。
 
 拆分 Host/Client tsconfig 的包有六个：`api/remotes`、`api/gateway`、`api/session-controller`、`api/workspace-controller`、`client/connection` 与 `session-query/session-log-export`。`api/remotes` 的 Host 入口进入 Host Typert 图，而 Client 入口导入生成的 `/remote` 声明；`session-log-export` 则让 Node archive 生产代码不进入浏览器 controller。每个拆分包根 `tsconfig.json` 因此只作为 solution，两个 aggregate 和直接消费方分别引用 `tsconfig.host.json` 或 `tsconfig.client.json`。workspace `constraints` 门禁遍历可达的 Project Reference 图，并按各引用 project 自身的 compiler face 检查：只有单一配置的目标可由任一 face 引用，拆分配置的目标则必须引用匹配的 leaf，不得引用 solution 根或另一侧 leaf；该门禁按「两个 leaf 配置同时存在」自动发现拆分包，所以新拆分的包会自动纳入管辖。[`api-remotes` README](../packages/api/remotes/README.zh.md) 与 [`session-log-export` README](../packages/session-query/session-log-export/README.zh.md)分别说明其拆分。
 
@@ -157,7 +159,7 @@ vendor manifest 守卫检查 `vendor/*/src` 下的改动是否连同对应的 `v
 
 keyless [CI 工作流](../.github/workflows/ci.yml) 将独立门禁分组到若干宽粒度 lane，并在受支持的 Node 版本上运行一组较小的兼容性检查。产物消费方在各自 lane 内等待一次 build。必需 benchmark 在标准 GitHub 托管 Linux 上独立运行；[benchmark 运行器决策](../.agents/notes/implemented/testing/2026-09-06-standard-hosted-benchmark-runner.zh.md)拥有路由及 job 超时。单独的真实 API 工作流按其配置的 worker 上限运行 `pnpm run test:e2e`。当前门禁和 job 清单以 [scripts/run-gates.ts](../scripts/run-gates.ts) 和工作流文件为准。
 
-不带凭据的 dsh 依赖布局检查与 dsh/vendor 打包演练仅在 `DSH_CI_FAILOVER_LINUX=selfhosted`，且事件为受信任的 master 推送或同仓库、非 fork、非 Dependabot 拉取请求时使用现有 Linux 自托管池。其余情况（包括手动触发）均使用 `ubuntu-24.04`；手动发布仍使用托管运行器。持久化存储隔离与回退限制见[发布演练运行器决策](../.agents/notes/implemented/process/2026-09-06-release-rehearsal-selfhosted.zh.md)。
+AgentHarness 使用标准 GitHub 托管运行器进行自动验收。原生 Windows 和五个独立运行时目标参与必需汇总判定；模型账户调用和发布不进入 CI。[托管 CI 决策](../.agents/notes/implemented/process/2026-10-25-agentharness-hosted-ci.zh.md)负责这一部署选择。独立发布工作流保留各自的产物和 wheel 校验要求。
 
 ### 日常命令
 

@@ -39,6 +39,7 @@ export function apply(ctx: Context): void {
     },
   }, (error) => { console.error('[ui-dev-workbench] refresh failed:', error) })
   const preferences = createDevWorkbenchPreferences()
+  ctx.effect(() => () => { inventory.reset() }, 'ui-dev-workbench: inventory')
 
   ctx.on('connection/reset', () => { inventory.reset(); inventory.refresh() })
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({

@@ -2,7 +2,6 @@ import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -34,30 +33,9 @@ export interface CommandHost {
   dispose(): Promise<void>
 }
 
-async function descriptorWhenPublished(path: string, start: () => void, failed: Promise<never>): Promise<ClaudeScopeDescriptor> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => { controller.abort(new Error('Host did not publish its descriptor')) }, 20_000)
-  async function inspect(): Promise<ClaudeScopeDescriptor> {
-    while (true) {
-      controller.signal.throwIfAborted()
-      try { return JSON.parse(await readFile(path, 'utf8')) as ClaudeScopeDescriptor } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      }
-      await delay(25, undefined, { signal: controller.signal })
-    }
-  }
-  const pending = inspect()
-  try {
-    start()
-    return await Promise.race([pending, failed])
-  } finally {
-    clearTimeout(timer)
-    controller.abort()
-    await pending.catch(() => {}) // The raced outcome above owns failure reporting.
-  }
-}
-
-export async function commandHost(invalidDomainVersion = false, backend: 'text' | 'facts' = 'text'): Promise<CommandHost> {
+export async function commandHost(
+  invalidDomainVersion = false, backend: 'text' | 'facts' = 'text', onLoaderSettled?: () => void,
+): Promise<CommandHost> {
   const directory = await mkdtemp(join(tmpdir(), 'claude-scope-command-'))
   await chmod(directory, 0o700)
   const descriptorPath = join(directory, 'connection.json')
@@ -159,6 +137,7 @@ export async function commandHost(invalidDomainVersion = false, backend: 'text' 
     await writeFile(configPath, JSON.stringify(entries))
     await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
     await ctx.loader.await()
+    onLoaderSettled?.()
     const missing = [...ctx.loader.entries()].filter(entry => entry.fiber === undefined && !entry.disabled)
     if (missing.length !== 0) throw new Error('Claude scope command Host did not load every configured entry')
     // The product helper reuses the composing frontend's route; this fixture owns that seat.
@@ -166,11 +145,11 @@ export async function commandHost(invalidDomainVersion = false, backend: 'text' 
       if (!ctx.connection.authorizeIndex(request, response)) return
       response.end('fixture frontend')
     } }), 'command fixture: frontend authorization')
-    const descriptor = await descriptorWhenPublished(descriptorPath, () => {
-      ready = true
-      for (const listener of [...listeners]) listener()
-      listeners.clear()
-    }, failed.promise)
+    const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as ClaudeScopeDescriptor
+    ready = true
+    for (const listener of [...listeners]) listener()
+    listeners.clear()
+    await Promise.race([failed.promise, ctx.claudeScope.sessions()])
     return { ctx, directory, descriptorPath, descriptor, exitCodes, dispose }
   } catch (error) {
     await dispose()

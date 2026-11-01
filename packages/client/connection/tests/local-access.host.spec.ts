@@ -1,6 +1,7 @@
 /** Private local capabilities use the real Connection token and cookie verifier. */
 import { Context } from '@deepseek-ai/cordis'
-import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { tryLockExclusive } from '@deepseek-ai/node-addon-system/flock'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -14,9 +15,39 @@ import {
 import type { LocalConnectionDescriptor } from '../src/local-access.ts'
 import { provideBrowserCredentials } from './browser-credentials.ts'
 
+const boundary = vi.hoisted(() => ({
+  beforeLstat: undefined as ((path: string) => Promise<void>) | undefined,
+  afterLstat: undefined as ((path: string) => Promise<void>) | undefined,
+  afterRename: undefined as ((source: string, destination: string) => Promise<void>) | undefined,
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      if (typeof args[0] === 'string') await boundary.beforeLstat?.(args[0])
+      const value = await actual.lstat(...args)
+      if (typeof args[0] === 'string') await boundary.afterLstat?.(args[0])
+      return value
+    },
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      await actual.rename(...args)
+      if (typeof args[0] === 'string' && typeof args[1] === 'string') await boundary.afterRename?.(args[0], args[1])
+    },
+  }
+})
+
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  const failures: unknown[] = []
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    try { await cleanup() } catch (error) { failures.push(error) }
+  }
+  boundary.beforeLstat = undefined
+  boundary.afterLstat = undefined
+  boundary.afterRename = undefined
+  vi.restoreAllMocks()
+  if (failures.length !== 0) throw new AggregateError(failures, 'local capability fixture cleanup failed')
 })
 
 async function fixture() {
@@ -29,10 +60,6 @@ async function fixture() {
   provideBrowserCredentials(ctx)
   const connection = ctx.plugin({ inject: [...inject], apply })
   await connection.await()
-  const ready = new Set<() => void>()
-  const exit = vi.fn<(code: number) => void>()
-  ctx.provide('appReady', { onReady: (listener) => { ready.add(listener); return () => { ready.delete(listener) } } })
-  ctx.provide('appExit', exit)
   const received: string[] = []
   let redirect: string | undefined
   const server = createServer((request, response) => {
@@ -74,17 +101,16 @@ async function fixture() {
     let generation = ''
     const fiber = ctx.plugin({
       inject: ['connection', 'webServer'],
-      apply(owner: Context) { generation = publishLocalConnectionDescriptor(owner, { descriptorPath: path }, 'local-access-test').generation },
+      async apply(owner: Context) {
+        const descriptor = publishLocalConnectionDescriptor(owner, { descriptorPath: path }, 'local-access-test')
+        generation = descriptor.generation
+        await descriptor.ready
+      },
     })
-    await fiber.await()
+    await fiber
     return { generation, dispose: () => fiber.dispose() }
   }
-  function fireReady() {
-    const callbacks = [...ready]
-    ready.clear()
-    for (const callback of callbacks) callback()
-  }
-  return { directory, config, ctx, descriptor, origin, received, exit, write, publish, fireReady,
+  return { directory, config, ctx, descriptor, origin, received, write, publish,
     redirectTo: (target: string) => { redirect = target } }
 }
 
@@ -140,6 +166,76 @@ describe.skipIf(process.platform === 'win32')('same-user local Connection capabi
     expect(f.received).toHaveLength(1)
   })
 
+  it.each(['json', 'object', 'version', 'generation', 'launch-type', 'launch-url'] as const)
+  ('refuses malformed descriptor %s before contacting the Host', async (changed) => {
+    const f = await fixture()
+    const value: unknown = changed === 'object' ? [] : {
+      ...f.descriptor,
+      ...(changed === 'version' ? { version: 2 } : {}),
+      ...(changed === 'generation' ? { generation: '' } : {}),
+      ...(changed === 'launch-type' ? { launchUrl: 1 } : {}),
+      ...(changed === 'launch-url' ? { launchUrl: 'not a URL' } : {}),
+    }
+    await writeFile(f.config.descriptorPath, changed === 'json' ? '{' : JSON.stringify(value), { mode: 0o600 })
+    await expect(authenticateLocalConnection(f.config, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'descriptor-invalid' })
+    expect(f.received).toEqual([])
+  })
+
+  it('refuses relative descriptor configuration and reports a missing descriptor without login', async () => {
+    const f = await fixture()
+    const relative = { ...f.config, descriptorPath: 'connection.json' }
+    expect(() => publishLocalConnectionDescriptor(f.ctx, relative, 'fixture')).toThrow('descriptorPath must be absolute')
+    await expect(authenticateLocalConnection(relative, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'descriptor-invalid' })
+    await expect(authenticateLocalConnection(f.config, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'descriptor-unavailable' })
+    expect(f.received).toEqual([])
+  })
+
+  it.each(['mode', 'symlink'] as const)('rejects a descriptor parent with unsafe %s for publication and authentication', async (changed) => {
+    const f = await fixture()
+    await f.write()
+    let descriptorPath = f.config.descriptorPath
+    if (changed === 'mode') await chmod(f.directory, 0o755)
+    else {
+      const alias = join(f.directory, 'alias')
+      await symlink(f.directory, alias, 'dir')
+      descriptorPath = join(alias, 'connection.json')
+    }
+    await expect(f.publish(descriptorPath)).rejects.toThrow('descriptor-invalid')
+    await expect(authenticateLocalConnection({ ...f.config, descriptorPath }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'descriptor-invalid' })
+    expect(f.received).toEqual([])
+  })
+
+  it('refuses a file replaced between metadata inspection and opening', async () => {
+    const f = await fixture()
+    await f.write()
+    const replacement = join(f.directory, 'replacement.json')
+    await writeFile(replacement, JSON.stringify(f.descriptor), { mode: 0o600 })
+    boundary.afterLstat = async (path) => {
+      if (path !== f.config.descriptorPath) return
+      boundary.afterLstat = undefined
+      await rename(replacement, path)
+    }
+    await expect(authenticateLocalConnection(f.config, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'descriptor-invalid' })
+    expect(f.received).toEqual([])
+  })
+
+  it('preserves cancellation during descriptor inspection before authentication', async () => {
+    const f = await fixture()
+    await f.write()
+    const controller = new AbortController()
+    const reason = new Error('cancelled descriptor read')
+    boundary.afterLstat = async (path) => {
+      if (path === f.config.descriptorPath) controller.abort(reason)
+    }
+    await expect(authenticateLocalConnection(f.config, controller.signal)).rejects.toBe(reason)
+    expect(f.received).toEqual([])
+  })
+
   it.each(['directory', 'file', 'symlink'])('rejects unsafe capability %s before login', async (kind) => {
     const f = await fixture()
     await f.write()
@@ -193,15 +289,11 @@ describe.skipIf(process.platform === 'win32')('same-user local Connection capabi
     expect(f.received).toEqual([])
   })
 
-  it('publishes only after readiness and deletes its owned generation on dispose', async () => {
+  it('publishes before activation completes and deletes its owned generation on dispose', async () => {
     const f = await fixture()
     const owner = await f.publish()
-    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    f.fireReady()
-    await vi.waitFor(async () => {
-      const value: unknown = JSON.parse(await readFile(f.config.descriptorPath, 'utf8'))
-      expect(value).toMatchObject({ version: 1, generation: owner.generation })
-    })
+    const value: unknown = JSON.parse(await readFile(f.config.descriptorPath, 'utf8'))
+    expect(value).toMatchObject({ version: 1, generation: owner.generation })
     expect((await lstat(f.config.descriptorPath)).mode & 0o777).toBe(0o600)
     expect((await lstat(`${f.config.descriptorPath}.lock`)).mode & 0o777).toBe(0o600)
     await expect(authenticateLocalConnection(f.config, new AbortController().signal))
@@ -209,21 +301,86 @@ describe.skipIf(process.platform === 'win32')('same-user local Connection capabi
     await owner.dispose()
     await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await lstat(`${f.config.descriptorPath}.lock`)).isFile()).toBe(true)
-    expect(f.exit).not.toHaveBeenCalled()
   })
 
-  it('cancels pending readiness and leaves a replacement generation intact', async () => {
+  it('leaves a replacement generation intact on disposal', async () => {
     const f = await fixture()
-    const cancelled = await f.publish()
-    await cancelled.dispose()
-    f.fireReady()
-    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
     const owner = await f.publish()
-    f.fireReady()
-    await vi.waitFor(async () => { expect((await lstat(f.config.descriptorPath)).isFile()).toBe(true) })
     await f.write({ ...f.descriptor, generation: 'replacement' })
     await owner.dispose()
     expect(JSON.parse(await readFile(f.config.descriptorPath, 'utf8'))).toMatchObject({ generation: 'replacement' })
+  })
+
+  it('settles cancellation during publication before disposal returns', async () => {
+    const f = await fixture()
+    const descriptor = publishLocalConnectionDescriptor(f.ctx, f.config, 'cancelled-local-access')
+    const publication = expect(descriptor.ready).rejects.toThrow('publication-failed')
+    const disposal = f.ctx.fiber.dispose()
+    await Promise.all([publication, disposal])
+    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a concurrent publisher and releases the lease for a successor after disposal', async () => {
+    const f = await fixture()
+    const owner = await f.publish()
+    const original = await readFile(f.config.descriptorPath, 'utf8')
+    await expect(f.publish()).rejects.toThrow('publication-failed')
+    expect(await readFile(f.config.descriptorPath, 'utf8')).toBe(original)
+    await owner.dispose()
+    const successor = await f.publish()
+    expect(successor.generation).not.toBe(owner.generation)
+    expect(JSON.parse(await readFile(f.config.descriptorPath, 'utf8'))).toMatchObject({ generation: successor.generation })
+    await successor.dispose()
+  })
+
+  it.each(['missing', 'corrupt'] as const)('releases its lease when its descriptor is %s at disposal', async (changed) => {
+    const f = await fixture()
+    const owner = await f.publish()
+    const errors = vi.spyOn(f.ctx.logger, 'error')
+    if (changed === 'missing') await unlink(f.config.descriptorPath)
+    else await writeFile(f.config.descriptorPath, '{')
+    await owner.dispose()
+    if (changed === 'corrupt') {
+      expect(errors).toHaveBeenCalledWith(expect.objectContaining({ code: 'descriptor-invalid' }))
+      expect(await readFile(f.config.descriptorPath, 'utf8')).toBe('{')
+    } else expect(errors).not.toHaveBeenCalled()
+    const successor = await f.publish()
+    await successor.dispose()
+    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects a replaced lease inode and closes the displaced locked descriptor', async () => {
+    const f = await fixture()
+    const lock = `${f.config.descriptorPath}.lock`
+    const displaced = join(f.directory, 'displaced.lock')
+    boundary.beforeLstat = async (path) => {
+      if (path !== lock) return
+      boundary.beforeLstat = undefined
+      await rename(lock, displaced)
+      await writeFile(lock, '', { mode: 0o600 })
+    }
+    await expect(f.publish()).rejects.toThrow('publication-failed')
+    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    const file = await open(displaced, 'r+')
+    try { await tryLockExclusive(file.fd) } finally { await file.close() }
+    const successor = await f.publish()
+    await successor.dispose()
+  })
+
+  it('rejects a temporary-file cleanup failure and rolls back its committed descriptor', async () => {
+    const f = await fixture()
+    let replacedTemporary: string | undefined
+    boundary.afterRename = async (temporary, destination) => {
+      if (destination !== f.config.descriptorPath) return
+      boundary.afterRename = undefined
+      replacedTemporary = temporary
+      await mkdir(temporary, { mode: 0o700 })
+    }
+    await expect(f.publish()).rejects.toThrow('publication-failed')
+    expect(replacedTemporary).toBeDefined()
+    await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    const successor = await f.publish()
+    await successor.dispose()
   })
 
   it('rejects a symlink lock without changing its target', async () => {
@@ -231,10 +388,7 @@ describe.skipIf(process.platform === 'win32')('same-user local Connection capabi
     const target = join(f.directory, 'unrelated')
     await writeFile(target, 'preserve', { mode: 0o600 })
     await symlink(target, `${f.config.descriptorPath}.lock`)
-    const owner = await f.publish()
-    f.fireReady()
-    await vi.waitFor(() => { expect(f.exit).toHaveBeenCalledWith(1) })
-    await owner.dispose()
+    await expect(f.publish()).rejects.toThrow('local-access-test could not publish its private connection descriptor: publication-failed')
     expect(await readFile(target, 'utf8')).toBe('preserve')
     await expect(lstat(f.config.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })

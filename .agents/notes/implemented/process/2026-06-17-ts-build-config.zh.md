@@ -40,6 +40,8 @@ Status: implemented
 
 `pnpm run typecheck` 先执行 Host lib 阶段，以生成 Client 类型检查所需的 Remote 声明，再对 `tsconfig.client.json` 执行 `tsc -b`。两个 aggregate 本身以 `noEmit` 方式检查各自的示例、测试与脚本；被引用的包项目和 vendor 项目保持与构建相同的发射行为。
 
+Web 测试通过文件名类别确定编译归属，不再同时维护逐文件纳入与排除清单。原生场景进入 Host aggregate；在浏览器中组装的期望测试和 Client 单元测试进入 Web Client project。显式列出 Client 例外可避免不兼容的 Cordis `Context` 声明进入同一 program，而原生文件通配符使新增场景无需再次登记。[项目布局参考](../../../../docs/development.zh.md#typescript-project-layout)列出这些类别。
+
 复合项目将增量构建信息保存在各项目本地的 `lib/` 输出中。`pnpm run clean` 会根据根 TypeScript project-reference 图确定当前有效的输出目录，删除遗留的根目录构建信息，并删除已删除包留下且仅包含已知生成残留的 `packages/*/*` 目录。在删除现有目标前，该命令会解析目标父目录的真实路径；如果解析后的父目录位于仓库之外，则拒绝删除，防止使用符号链接的 project reference 将清理操作重定向到工作副本之外。对于仍有 `package.json` 的每个包，该命令都会保留 `node_modules`；如果不含 `package.json` 的目录中存在未知文件，则拒绝删除。构建不会自动调用 clean，因此常规构建会保留增量状态。
 
 命令编排结构如下：

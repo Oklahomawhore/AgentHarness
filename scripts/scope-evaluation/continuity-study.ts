@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import {
-  DataArtifactError, executePayment, parsePolicy, paymentPolicyJsonSchema, sealDataArtifact,
+  DataArtifactError, executePayment, parseArtifact, parsePolicy, paymentPolicyJsonSchema, sealDataArtifact,
   type DataArtifactErrorCode, type DataGradeStatus, type PaymentPolicy, type PaymentPolicyGrade, type SealedDataArtifact,
 } from './data-artifacts.ts'
 import { createDataStudy, type DataStudyConfig, type DataStudyOracle, type NativeDataStudy } from './data-study.ts'
@@ -48,15 +48,9 @@ export const continuityDecisionJsonSchema = z.toJSONSchema(decisionSchema)
  * @returns A closed ready or blocked decision. Neither variant is a self-reported grade.
  */
 export function parseContinuityDecision(artifact: SealedDataArtifact): ContinuityDecision {
-  if (Buffer.byteLength(artifact.text, 'utf8') > 65_536) throw new DataArtifactError('byte-limit')
-  const actual = sealDataArtifact(artifact.text)
-  if (actual.bytes !== artifact.bytes || actual.sha256 !== artifact.sha256) throw new DataArtifactError('integrity')
-  let input: unknown
-  try { input = JSON.parse(artifact.text) } catch { throw new DataArtifactError('json') }
-  const result = decisionSchema.safeParse(input)
-  if (!result.success || !isDeepStrictEqual(result.data, input)) throw new DataArtifactError('schema')
-  if (result.data.status === 'blocked') return result.data
-  return { version: 1, status: 'ready', policy: parsePolicy(sealDataArtifact(JSON.stringify(result.data.policy))) }
+  const result = parseArtifact(artifact, decisionSchema)
+  if (result.status === 'blocked') return result
+  return { version: 1, status: 'ready', policy: parsePolicy(sealDataArtifact(JSON.stringify(result.policy))) }
 }
 
 function json(value: unknown): string { return JSON.stringify(value, null, 2) + '\n' }

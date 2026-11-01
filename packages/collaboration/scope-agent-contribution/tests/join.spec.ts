@@ -1,13 +1,19 @@
 /** Joint source consent preserves independent reading and optional finite local automatic work. */
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from '@deepseek-ai/dsh-session'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import type { ScopeSubscriptionId } from '@deepseek-ai/dsh-scope-access/types'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ScopePeerId } from '@deepseek-ai/dsh-scope-transport/types'
 import { nativeContributionDomain } from '../src/state.ts'
 import type { ScopeAgentContributionRequest } from '../src/types.ts'
 import { developmentAgentParticipantId } from '@deepseek-ai/dsh-development-room-agent-presence'
+import { readLocalTaskContext } from '@deepseek-ai/dsh-development-task-context/local'
+import { contributionApplicationResultSchema } from '@deepseek-ai/dsh-scope-access/schema'
 import type { ScopeAgentAutomaticPolicy, ScopeAgentStatusResult } from '@deepseek-ai/dsh-scope-agent-context/types'
 import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { createHost, requestText, rootTask, run, TestNetwork, type TestHost } from './fixtures/hosts.ts'
@@ -148,8 +154,8 @@ describe('joint native receiving and contribution consent', () => {
     const disk = await source.readEvents(b)
     expect(disk).toEqual(b.session.snapshotEvents())
     expect(disk.filter(event => event.type === 'scope-agent-context/join-read'))
-      .toMatchObject([{ data: { version: 2, phase: 'planned', plan: { automatic: automaticPolicy } } },
-        { data: { version: 2, phase: 'adopted', plan: { automatic: automaticPolicy } } }])
+      .toMatchObject([{ data: { version: 4, phase: 'planned', plan: { automatic: automaticPolicy } } },
+        { data: { version: 4, phase: 'adopted', plan: { automatic: automaticPolicy } } }])
     const ownerAfter = await readFile(join(owner.root, 'domains/scope_access.json'), 'utf8')
     expect(ownerAfter).not.toContain(automaticPolicy.goal)
     expect(ownerAfter).not.toContain('"automatic"')
@@ -393,6 +399,40 @@ describe('joint native receiving and contribution consent', () => {
     expect(source.adapter.requests).toEqual([])
   })
 
+  it('waits for an adopted receiving reply during source unload and retains independent read authority', async () => {
+    const { source, b, approve, status } = await fixture(automaticPolicy)
+    const held = barrier()
+    const original = source.ctx.scopeAgentContext.adoptJoinRead.bind(source.ctx.scopeAgentContext)
+    vi.spyOn(source.ctx.scopeAgentContext, 'adoptJoinRead').mockImplementation(async (...args) => {
+      const result = await original(...args)
+      await held.wait()
+      return result
+    })
+    source.script.push(textResponse('Complete the independently authorized activation.'))
+    await approve()
+    await held.entered
+    await expect.poll(() => source.adapter.requests.length).toBe(1)
+    await b.whenIdle()
+    const before = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    const entry = [...source.ctx.loader.entries()].find(item => item.options.name === 'contribution')
+    if (entry === undefined) throw new Error('Missing contribution Loader entry')
+    let unloaded = false
+    const unloading = Promise.allSettled([entry.update({ disabled: true }).then(() => { unloaded = true })])
+    try {
+      await expect.poll(() => source.ctx.get('scopeAgentContributions')).toBeUndefined()
+      expect(unloaded).toBe(false)
+      held.release()
+      expect(await unloading).toEqual([{ status: 'fulfilled', value: undefined }])
+      await entry.update({ disabled: false })
+      await source.ctx.loader.await()
+      await expect.poll(async () => (await status()).capture).toBeNull()
+      await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
+      const after = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+      expect(after).toMatchObject({ binding: before.binding, automatic: automaticPolicy, usedBudget: before.usedBudget })
+      expect(source.adapter.requests).toHaveLength(1)
+    } finally { held.release(); await unloading }
+  })
+
   it.each(['stop', 'leave'] as const)('preserves or ends adopted automatic permission through explicit %s', async (action) => {
     const { source, b, capture, approve, status } = await fixture(automaticPolicy)
     source.script.push(textResponse('One adopted activation completed.'))
@@ -456,19 +496,58 @@ describe('joint native receiving and contribution consent', () => {
   })
 
   it.each([false, true])('restores automatic source consent without reauthorizing a new live Agent; adopted=%s', async (adopted) => {
-    const { network, source, b, approve, status } = await fixture(automaticPolicy)
+    const { network, owner, source, a, b, approve, status } = await fixture(automaticPolicy)
     if (adopted) {
       source.script.push(textResponse('Finish before the real Host restart.'))
       await approve()
       await expect.poll(() => source.adapter.requests.length).toBe(1)
       await b.whenIdle()
       await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+      expect(await source.ctx.sessions.flush(b.session)).toBe(true)
+      const disk = await source.readEvents(b)
+      // Adoption names the original Session, so each recovery uses its id in a separate Host.
+      const history = await createHost(network, 'receiver')
+      hosts.push(history)
+      const restored = await history.ctx.agents.create({ sessionId: b.id, seed: disk,
+        agentOptions: { provider: 'mock', model: 'mock' } })
+      expect(live(await history.ctx.scopeAgentContext.status({ agentId: restored.agent.id })).state.mode).toBe('paused')
+      const pulse = disk.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-pulse')
+      const request = disk.find(event => event.type === 'scope-agent-context/request' && event.data.version === 4)
+      const context = disk.find(event => event.type === 'user/message' && event.data.source.kind === 'scope-agent-context'
+        && event.data.source.form === 'snapshot' && event.data.source.version === 2)
+      if (pulse === undefined || request?.type !== 'scope-agent-context/request' || context === undefined) {
+        throw new Error('missing actual capture request evidence')
+      }
+      const invalidAnchor = disk.map(event => event === request ? { ...request, data: { ...request.data, contextSeq: pulse.seq } } : event)
+      if (context.type !== 'user/message') throw new Error('expected actual capture message')
+      const invalidSubscription = disk.map(event => event === context ? { ...context, data: { ...context.data,
+        source: { ...context.data.source, subscriptionId: brandString<ScopeSubscriptionId>(randomUUID()) } } } : event)
+      const evaluation = disk.find(event => event.type === 'scope-agent-context/evaluation' && event.data.version === 4
+        && event.data.decision === 'activate')
+      const assignment = (await owner.ctx.scopeAgentContributions.localStatus({ agentId: a.id })).assignment
+      if (evaluation?.type !== 'scope-agent-context/evaluation' || assignment === null) throw new Error('missing actual evaluated capture or local assignment')
+      const local = await readLocalTaskContext(owner.ctx, { taskId: assignment.taskId, taskBindingId: assignment.bindingId,
+        bindingEpoch: assignment.expectedBindingEpoch, participantId: developmentAgentParticipantId(a.id) },
+      evaluation.data.maxContextBytes, new AbortController().signal)
+      if (local.status !== 'active') throw new Error('expected actual owner-local projection')
+      const invalidEvaluation = disk.map(event => event === evaluation
+        ? { ...evaluation, data: { ...evaluation.data, version: 2 as const, projection: local.projection } } : event)
+      for (const [seed, failure] of [
+        [invalidAnchor, 'capture request lacks its exact adopted context'],
+        [invalidSubscription, 'capture snapshot lacks its current adopted binding'],
+        [invalidEvaluation, 'capture evaluation lacks its remote projection'],
+      ] as const) {
+        const corrupt = await createHost(network, 'receiver')
+        hosts.push(corrupt)
+        await expect(corrupt.ctx.agents.create({ sessionId: b.id, seed,
+          agentOptions: { provider: 'mock', model: 'mock' } })).rejects.toThrow(failure)
+      }
     }
     expect(await source.ctx.sessions.flush(b.session)).toBe(true)
     expect((await storedSource(source, b.id)).capture?.receiving?.automatic).toEqual(automaticPolicy)
     await source.ctx.fiber.dispose()
     const restarted = await createHost(network, 'source', 'native', { receive: true, root: source.root, peerId: source.peerId })
-    hosts.push(restarted)
+    hosts.splice(hosts.indexOf(source), 1, restarted)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).capture).toBeNull()
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).receivingContinuation)
       .toBeUndefined()
@@ -511,6 +590,55 @@ describe('joint native receiving and contribution consent', () => {
     expect(replay.deriveMessages().filter(message => message.source.kind === 'scope-agent-context'))
       .toEqual(source.adapter.requests.at(-1)!.messages.filter(message => message.source.kind === 'scope-agent-context'))
     expect(disk.filter(event => event.type === 'scope-agent-context/request')).toEqual([])
+  })
+
+
+  it('omits only the adopted Session capture while preserving same-peer manual reads and terminal withdrawal', async () => {
+    const { owner, source, task, b, bystander, capture, approve, status } = await fixture()
+    await approve()
+    await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+    const joined = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    if (joined.binding === null || joined.binding.kind === 'local-task') throw new Error('Missing joint binding')
+    const origin = { captureId: capture.proposal.captureId, captureGeneration: capture.proposal.captureGeneration }
+    expect(joined).toMatchObject({ version: 4, binding: { originalCapture: origin } })
+    expect((await storedSource(source, b.id)).capture?.receiving?.version).toBe(2)
+    const read = joined.binding.invitation
+    await run(source, b, [toolCallResponse('capture-original-write', 'write', { file_path: 'origin.txt', content: 'ORIGINAL_CAPTURE_REPORT' })])
+    await expect.poll(() => owner.ctx.developmentTasks.get({ taskId: task.id })
+      .context.filter(item => item.peerToolObservation !== undefined).length).toBe(1)
+    await run(source, b)
+    const ownRequest = source.adapter.requests.at(-1)!
+    const own = ownRequest.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(JSON.stringify(own)).not.toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(JSON.stringify(ownRequest.messages)).toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(own).toMatchObject([{ source: { version: 2, form: 'snapshot', projection: { version: 3,
+      peerCapture: origin, omittedSources: [{ reason: 'self-published' }] } } }])
+    const other = await source.ctx.scopeAgentContext.bind({ agentId: bystander.id,
+      expectedBindingId: null, invitation: read, automatic: null })
+    expect(other.version).toBe(1)
+    expect(other.binding).not.toHaveProperty('originalCapture')
+    await run(source, bystander)
+    const otherContext = source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(JSON.stringify(otherContext)).toContain('ORIGINAL_CAPTURE_REPORT')
+    expect(otherContext).toMatchObject([{ source: { version: 1, projection: { version: 2 } } }])
+    await source.ctx.scopeAgentContributions.stop({ agentId: b.id, expectedCapture: capture.selection })
+    await expect.poll(async () => (await status()).capture).toBeNull()
+    await run(source, b)
+    const stopped = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state
+    expect(stopped).toMatchObject({ version: 4, binding: { id: joined.binding.id, originalCapture: origin } })
+    const stoppedContext = source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context')
+    expect(stoppedContext).toMatchObject([{ source: { version: 2, projection: { version: 3 } } }])
+    expect(JSON.stringify(stoppedContext)).toContain('withdrawn')
+    await source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: joined.binding.id })
+    const manual = await source.ctx.scopeAgentContext.bind({ agentId: b.id, expectedBindingId: null, invitation: read, automatic: null })
+    expect(manual).toMatchObject({ version: 1, mode: 'passive' })
+    expect(manual.binding).not.toHaveProperty('originalCapture')
+    await run(source, b)
+    expect(source.adapter.requests.at(-1)!.messages.filter(message => message.role === 'user' && message.source.kind === 'scope-agent-context'))
+      .toMatchObject([{ source: { version: 1, projection: { version: 2 } } }])
+    expect(await source.ctx.sessions.flush(b.session)).toBe(true)
+    const disk = await source.readEvents(b)
+    expect(Session.create(b.id, disk, b.session.header).deriveMessages()).toEqual(b.session.deriveMessages())
   })
 
   it('retains a failed receiving adoption while independently approved contribution remains active', async () => {
@@ -645,8 +773,25 @@ describe('joint native receiving and contribution consent', () => {
     await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
     const current = live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding
     if (current === null) throw new Error('Missing adopted reading')
-    if (action === 'leave') await source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: current.id })
-    else {
+    if (action === 'leave') {
+      if (current.kind === 'local-task') throw new Error('Expected the adopted remote reading')
+      const withdrawn = barrier()
+      const original = source.ctx.scopeAccess.leave.bind(source.ctx.scopeAccess)
+      vi.spyOn(source.ctx.scopeAccess, 'leave').mockImplementationOnce(async (request) => {
+        await original(request)
+        await withdrawn.wait()
+      })
+      let returned = false
+      const leaving = source.ctx.scopeAgentContext.leave({ agentId: b.id, expectedBindingId: current.id })
+        .then((value) => { returned = true; return value })
+      await withdrawn.entered
+      expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).toBeNull()
+      expect((await source.ctx.scopeAccess.list()).subscriptions.find(item => item.id === current.subscriptionId)?.state).toBe('left')
+      await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('ended')
+      expect(returned).toBe(false)
+      withdrawn.release()
+      expect(await leaving).toMatchObject({ mode: 'left', binding: null })
+    } else {
       const invitation = await owner.ctx.scopeAccess.invite({ taskId: task.id, recipientPeerId: source.peerId, ownerAddress,
         expiresAt: Date.now() + 30000, responsibility: 'Later manual reading.' })
       await source.ctx.scopeAgentContext.bind({ agentId: b.id, expectedBindingId: current.id, invitation, automatic: null })
@@ -656,31 +801,86 @@ describe('joint native receiving and contribution consent', () => {
     expect((await status()).capture?.collecting).toBe(true)
   })
 
+  it('rejects an authenticated owner approval that exceeds the retained sample permission', async () => {
+    const { source, owner, task, b, approve, status } = await fixture()
+    const request = source.transport.request.bind(source.transport)
+    vi.spyOn(source.transport, 'request').mockImplementation(async (...args) => {
+      const response = await request(...args)
+      if (typeof response !== 'object' || response === null || !('result' in response)) return response
+      const parsed = contributionApplicationResultSchema.safeParse(response.result)
+      if (!parsed.success || parsed.data.status !== 'approved') return response
+      return { ...response, result: { ...parsed.data, invitation: { ...parsed.data.invitation,
+        grant: { ...parsed.data.invitation.grant, maxSamples: parsed.data.invitation.grant.maxSamples + 1 } } } }
+    })
+    const warnings = vi.spyOn(source.ctx.logger, 'warn').mockImplementation(() => {})
+    const approval = await approve()
+    await expect.poll(() => warnings.mock.calls.some(args => args.map(String).join(' ')
+      .includes('Approval exceeds the locally accepted contribution limits'))).toBe(true)
+    expect((await status()).capture).toMatchObject({ collecting: false, application: 'waiting' })
+    expect((await status()).capture?.invitation).toBeNull()
+    expect((await storedSource(source, b.id)).capture?.application?.limits.maxSamples).toBe(approval.invitation.grant.maxSamples)
+    await run(source, b, [toolCallResponse('unapproved-limit', 'write', { file_path: 'private-limit.txt', content: 'PRIVATE_LIMIT_FACT' })])
+    expect(await readFile(join(source.workspace, 'private-limit.txt'), 'utf8')).toBe('PRIVATE_LIMIT_FACT')
+    expect(owner.ctx.developmentTasks.get({ taskId: task.id }).context).toEqual([])
+    expect((await storedSource(source, b.id)).samples).toEqual([])
+  })
+
   it('persists another Session stop while the original receiving cancellation is still held', async () => {
     const { source, owner, task, b, bystander, capture, approve, status, ownerAddress, request } = await fixture()
     await approve()
     await expect.poll(async () => (await status()).capture?.receiving?.state).toBe('active')
+    const selected = (await status()).capture
+    if (selected?.invitation == null || selected.receiving === null) throw new Error('Missing exact active joint selection')
+    const invitation = selected.invitation
+    const receiving = selected.receiving
     const nextEntry = await owner.ctx.scopeAccess.createContributionEntry({ sourceKind: 'tool-observations', taskId: task.id,
       ownerAddress, expiresAt: request.limits.expiresAt })
     const second = await source.ctx.scopeAgentContributions.request({ agentId: bystander.id, expectedCapture: null,
       entry: nextEntry.entry, roots: [source.workspace], tools: ['write'], limits: request.limits })
     if (second.capture === null) throw new Error('Missing second capture')
     const held = barrier()
+    const endEntered = barrier()
+    const endReturned = barrier()
+    let cancellationReturned = false
     const original = source.ctx.scopeAgentContext.cancelJoinRead.bind(source.ctx.scopeAgentContext)
     vi.spyOn(source.ctx.scopeAgentContext, 'cancelJoinRead').mockImplementation(async (...args) => {
+      if (args[0].agentId !== b.id || args[0].adoptionId !== receiving.adoptionId) return await original(...args)
+      expect(args[0].leaveAdopted).toBe(true)
       await held.wait()
-      return await original(...args)
+      const result = await original(...args)
+      cancellationReturned = true
+      return result
+    })
+    const originalEnd = source.ctx.scopeAccess.endContribution.bind(source.ctx.scopeAccess)
+    vi.spyOn(source.ctx.scopeAccess, 'endContribution').mockImplementation(async (...args) => {
+      if (!isDeepStrictEqual(args[0].invitation, invitation)) return await originalEnd(...args)
+      await endEntered.wait()
+      const result = await originalEnd(...args)
+      expect(result.status).toBe('ended')
+      await endReturned.wait()
+      return result
     })
     await source.ctx.scopeAgentContributions.leaveJoin({ agentId: b.id, expectedCapture: capture.selection })
-    await held.entered
+    await Promise.all([held.entered, endEntered.entered])
+    expect((await status()).capture?.state).toBe('ending')
+    expect(cancellationReturned).toBe(false)
+    endEntered.release()
+    await endReturned.entered
+    expect((await status()).capture?.state).toBe('ending')
+    expect(cancellationReturned).toBe(false)
+    endReturned.release()
     await expect.poll(async () => (await status()).capture).toBeNull()
     expect((await status()).receivingContinuation?.intent).toBe('leave')
+    expect((await status()).receivingContinuation?.receiving.adoptionId).toBe(receiving.adoptionId)
+    expect(cancellationReturned).toBe(false)
     await source.ctx.scopeAgentContributions.stop({ agentId: bystander.id, expectedCapture: second.capture.selection })
     await expect.poll(async () => (await source.ctx.scopeAgentContributions.status({ agentId: bystander.id })).capture).toBeNull()
     expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).not.toBeNull()
+    expect(cancellationReturned).toBe(false)
     held.release()
     await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
     expect(live(await source.ctx.scopeAgentContext.status({ agentId: b.id })).state.binding).toBeNull()
+    expect(cancellationReturned).toBe(true)
   })
 
   it('cancels pending detached reading before a late adoption can execute and rejects replacement permission', async () => {
@@ -699,6 +899,9 @@ describe('joint native receiving and contribution consent', () => {
     await expect.poll(async () => (await status()).receivingContinuation?.intent).toBe('adopt')
     await expect(source.ctx.scopeAgentContributions.request({ ...request, expectedCapture: null }))
       .rejects.toMatchObject({ code: 'scope-agent-contribution/stale-capture' })
+    await expect(source.ctx.scopeAgentContributions.request({ ...request, expectedCapture: capture.selection }))
+      .rejects.toMatchObject({ code: 'scope-agent-contribution/invalid-permission',
+        message: 'Finish the retained receiving operation before requesting another capture' })
     await source.ctx.scopeAgentContributions.stop({ agentId: b.id, expectedCapture: capture.selection })
     await expect.poll(async () => (await status()).receivingContinuation).toBeUndefined()
     held.release()
@@ -743,7 +946,7 @@ describe('joint native receiving and contribution consent', () => {
     expect(stored.receivingContinuation?.receiving.adoptionId).toBe(before.receivingContinuation?.receiving.adoptionId)
     await source.ctx.fiber.dispose()
     const restarted = await createHost(network, 'source', 'native', { receive: true, root: source.root, peerId: source.peerId })
-    hosts.push(restarted)
+    hosts.splice(hosts.indexOf(source), 1, restarted)
     await expect.poll(async () => (await restarted.ctx.scopeAgentContributions.status({ agentId: b.id })).receivingContinuation)
       .toBeUndefined()
     const replacement = await restarted.ctx.agents.resume({ resumeSessionId: b.id,

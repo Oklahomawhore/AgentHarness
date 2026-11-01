@@ -2,9 +2,8 @@
 # packages under vendor/, each on its own version line. This sequence releases
 # independently of dsh and of the native packages.
 #
-# Pack runs without credentials on every pull request and master push.
-# Publication is a manual dispatch from a vendor-* tag; a vendor release can
-# carry several versions, so each package has its own tag.
+# Manual rehearsal packs without credentials. Publication runs from a vendor-*
+# tag; a vendor release can carry several versions, so each package has its own tag.
 name: Release (vendor)
 
 'on':
@@ -20,8 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Pack runs per ref so concurrent pull requests never displace each
-  # other; the publish job below serializes the shared dist-tag state.
+  # Rehearsals stay per ref; publication serializes the shared dist-tag state.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 

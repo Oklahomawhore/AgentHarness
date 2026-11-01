@@ -76,7 +76,7 @@ dsh --profile web --no-open --port 8080
 
 每个浏览器会话都从随发行版交付的 preset（默认 `standard`）组合自己的 agent（智能体），而不是共享一套进程级工具集。你可以更改默认 preset，或在 `$DSH_HOME/.agent-presets` 下添加自己的 preset。
 
-在 macOS 和 Linux 上，组合包还会挂载 [Claude scope 适配器](../../collaboration/claude-scope/README.zh.md)。安装 Hook 和加入 Task 仍须显式操作；仅启动 Web 不会授予对 Claude 会话或其文件的访问权限。共享上下文后端默认仍为 `/text`。Claude 适配器在 Windows 上禁用，因为其私有连接描述文件需要尚不支持的操作系统锁；Web 的其他部分仍可启动。
+在 macOS 和 Linux 上，组合包还会挂载 [Claude scope 适配器](../../collaboration/claude-scope/README.zh.md)。安装 Hook 和加入 Task 仍须显式操作；仅启动 Web 不会授予对 Claude 会话或其文件的访问权限。共享上下文后端默认使用 [`/reported`](../../collaboration/development-task-context/README.zh.md#behavior)，可依据完整且获授权的实时 Write/Edit 报告重建文件文本，无须调用模型。Claude 适配器在 Windows 上禁用，因为其私有连接描述文件需要尚不支持的操作系统锁；Web 的其他部分仍可启动。
 
 -----
 
@@ -86,7 +86,7 @@ dsh --profile web --no-open --port 8080
 <details>
 <summary>实现细节——点击展开</summary>
 
-本组合包是一份 patch 加一个运行时粘合插件。patch 重述 base 刻意省略的表层专属值，插入仅 Web 使用的宿主行与浏览器名录，然后把 agent 层移到 preset 之后；粘合插件负责 dist 服务、信任采样、提示词段落、bash 变量与就绪宣告。
+本组合包是一份 patch 加一个运行时粘合插件。存储栈与投影缓存来自 `dsh-base`；Web overlay 的 workspace 与 message-feedback 行消费共享的 `storageDomain` 服务。patch 重述 base 刻意省略的表层专属值，插入仅 Web 使用的宿主行与浏览器名录，然后把 agent 层移到 preset 之后；粘合插件负责 dist 服务、信任采样、提示词段落、bash 变量与就绪宣告。 Task 持久化与升级见 [Task 存储适配器](../../collaboration/development-task-storage-domain/README.zh.md)。
 
 ### patch 语义
 
@@ -94,7 +94,7 @@ patch 会替换目标行的整个 `config`，因此每个 Web 行都重述自己
 
 ### 就绪宣告
 
-URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发起 RPC，浏览器一打开就请求页面，因此两者只在 Loader 配置树结算且 Connection 认证可用后运行——在没有 Loader 的手工构建树中则立即运行。启动中途被释放的树不会宣告任何内容。
+URL 行与浏览器交接等待启动器的 `appReady` 信号，该信号在 Loader 配置树与启动器设置成功后提交。未提供 `appReady` 的嵌入宿主使用 Loader 结算；若也没有 Loader，则立即宣告。释放会取消待处理的宣告。此信号确认 HTTP/RPC 启动成功，不等待其他就绪监听器启动的异步工作。
 
 ### LAN 信任采样
 

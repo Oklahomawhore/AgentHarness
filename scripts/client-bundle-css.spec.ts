@@ -27,6 +27,15 @@ function cssPlugin(name: 'dsh-css-modules-inline' | 'dsh-css-global-inline' | 'd
   return plugin
 }
 
+async function loadCss(name: Parameters<typeof cssPlugin>[0], source: string, importer: string) {
+  const plugin = cssPlugin(name)
+  const virtualId = plugin.resolveId?.(source, importer)
+  if (typeof virtualId !== 'string' || plugin.load === undefined) throw new Error(`${name} plugin hooks are incomplete`)
+  const watched: string[] = []
+  const output = await plugin.load.call({ addWatchFile: id => watched.push(id) }, virtualId)
+  return { watched, output }
+}
+
 describe('client bundle CSS Modules', () => {
   it('registers the source stylesheet as a watch dependency', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-client-css-watch-'))
@@ -34,14 +43,7 @@ describe('client bundle CSS Modules', () => {
       const stylesheet = join(root, 'Fixture.module.css')
       const importer = join(root, 'index.ts')
       await writeFile(stylesheet, '.root { color: red; }\n')
-      const plugin = cssPlugin('dsh-css-modules-inline')
-      const virtualId = plugin.resolveId?.('./Fixture.module.css', importer)
-      if (typeof virtualId !== 'string' || plugin.load === undefined) {
-        throw new Error('CSS Modules plugin hooks are incomplete')
-      }
-      const watched: string[] = []
-
-      const output = await plugin.load.call({ addWatchFile: id => watched.push(id) }, virtualId)
+      const { watched, output } = await loadCss('dsh-css-modules-inline', './Fixture.module.css', importer)
 
       expect(watched).toEqual([stylesheet])
       expect(output).toContain('data-plugin-css')
@@ -54,15 +56,9 @@ describe('client bundle CSS Modules', () => {
 describe('client bundle global CSS', () => {
   it('resolves a package stylesheet from the importing client package', async () => {
     const importer = resolve(import.meta.dirname, '../packages/client/ui-emergence-center/lib/types/client/index.js')
-    const plugin = cssPlugin('dsh-css-global-inline')
-    const virtualId = plugin.resolveId?.('@xyflow/react/dist/style.css', importer)
-    if (typeof virtualId !== 'string' || plugin.load === undefined) {
-      throw new Error('global CSS plugin hooks are incomplete')
-    }
-    const watched: string[] = []
-    const output = await plugin.load.call({ addWatchFile: id => watched.push(id) }, virtualId)
+    const { watched, output } = await loadCss('dsh-css-global-inline', '@xyflow/react/dist/style.css', importer)
     expect(watched).toHaveLength(1)
-    expect(watched[0]).toContain('@xyflow/react/dist/style.css')
+    expect(watched[0]?.replaceAll('\\', '/')).toContain('@xyflow/react/dist/style.css')
     expect(output).toContain('data-plugin-css')
   })
 
@@ -72,14 +68,7 @@ describe('client bundle global CSS', () => {
       const stylesheet = join(root, 'base.css')
       const importer = join(root, 'index.ts')
       await writeFile(stylesheet, 'body { color: red; }\n')
-      const plugin = cssPlugin('dsh-css-global-inline')
-      const virtualId = plugin.resolveId?.('./base.css', importer)
-      if (typeof virtualId !== 'string' || plugin.load === undefined) {
-        throw new Error('global CSS plugin hooks are incomplete')
-      }
-      const watched: string[] = []
-
-      const output = await plugin.load.call({ addWatchFile: id => watched.push(id) }, virtualId)
+      const { watched, output } = await loadCss('dsh-css-global-inline', './base.css', importer)
 
       expect(watched).toEqual([stylesheet])
       expect(output).toContain('data-plugin-css')
@@ -95,14 +84,7 @@ describe('client bundle global CSS', () => {
       const stylesheet = join(root, 'base.css')
       const importer = join(root, 'index.ts')
       await writeFile(stylesheet, 'body { color: red; }\n')
-      const plugin = cssPlugin('dsh-css-text-inline')
-      const virtualId = plugin.resolveId?.('./base.css?inline', importer)
-      if (typeof virtualId !== 'string' || plugin.load === undefined) {
-        throw new Error('inline CSS plugin hooks are incomplete')
-      }
-      const watched: string[] = []
-
-      const output = await plugin.load.call({ addWatchFile: id => watched.push(id) }, virtualId)
+      const { watched, output } = await loadCss('dsh-css-text-inline', './base.css?inline', importer)
 
       expect(watched).toEqual([stylesheet])
       expect(output).toContain('export default "body{color:red}"')

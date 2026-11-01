@@ -11,7 +11,7 @@ English | [中文](README.zh.md)
 
 Run the packaged harness in a dedicated browser Web Worker for preview deployments and packaging regressions ([experimental group](../README.md)). The Worker downloads a packed VFS image into memory, loads its modules, and serves the page over an HTTP postMessage tunnel.
 
-The preview excludes the collaboration management page, external Claude hooks, and Node-only scope and Mesh services. Task storage uses the volatile VFS; replacing the Worker loses that data.
+The preview excludes the collaboration management page, external Claude and Codex hooks, and Node-only scope and Mesh services. Task storage uses the volatile VFS; replacing the Worker loses that data.
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ Three artifacts from one tsdown pipeline:
 
 Acceptance lives in `apps/web/tests/preview-boot.e2e.ts`, which serves the real built pages and drives the pre-boot chooser plus Worker activation in headless Chromium. The empty selection exercises first-run startup. The `vfs-example` overlay supplies ordinary workspace files and plaintext persistence artifacts for cold Workspace/Session discovery, tool presentation, subagent navigation, and history paging without a model request. The fixture generator owns current-generation logs and the projection cache; committed predecessor logs remain byte-identical alongside them. The chooser reserves WebFS as a separate user-authorized source; that provider does not read the built-in fixture.
 
-The [built-bundle import sweep](tests/compile/transform-corpus-check.ts) checks bare Node imports after the library build. Its Dockkit exception accepts only Node’s unknown-extension error for the expected stylesheet; other failures and unexpectedly successful exempt imports remain errors. See the [CI observation decision](../../../.agents/notes/implemented/testing/2026-09-08-ci-completion-observations.md).
+The [built-bundle import sweep](tests/compile/transform-corpus-check.ts) launches plain Node after the library build, so transitive imports use built package exports rather than source aliases. Its three Client exceptions accept only Node’s unknown-extension error for an existing stylesheet inside a Client package’s built `lib/` directory. The first failing stylesheet can belong to a transitive dependency; source paths, missing files, other errors, and unexpectedly successful exempt imports remain errors. See the [CI observation decision](../../../.agents/notes/implemented/testing/2026-09-08-ci-completion-observations.md).
 
 -----
 
@@ -51,10 +51,10 @@ None; this package neither assembles nor sends a provider request.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **The collaboration management page is unavailable**: boot disables `ui-emergence-center` together with its Node-only MCP, Claude hook, and scope services. The page does not call absent management APIs; ordinary Worker sessions remain available.
-- **Task storage uses the volatile VFS**: boot disables `storage-sqlite` and changes an existing `storage-domain` route for `development_tasks` from `sqlite` to the existing JSON backend. It preserves other settings and routes, including an explicitly selected different backend; custom SQLite routes remain unsupported. This Worker-only choice provides no persistence across Worker replacement; the Node Web profile retains SQLite.
+- **The collaboration management page is unavailable**: boot disables `ui-emergence-center` together with its Node-only MCP, external hook, and scope services. The page does not call absent management APIs; ordinary Worker sessions remain available.
+- **Task storage uses the volatile VFS**: boot disables `storage-sqlite` and changes an existing `storage-domain` route for `development_context_tasks` from `sqlite` to the existing JSON backend. It preserves other settings and routes, including an explicitly selected different backend; custom SQLite routes remain unsupported. This Worker-only choice provides no persistence across Worker replacement; the Node Web profile retains SQLite.
 - **Local MCP client configuration is unavailable**: boot disables `mcp-client-setup`. The Worker has no native Node executable or external client configuration files; it does not supply a placeholder executable path.
-- **Local Claude hooks are unavailable in the browser preview**: boot disables the `claude-scope` entry. Project hooks require a local Node launcher and OS file locks; they cannot connect an external Claude process to the in-memory Worker.
+- **External Claude and Codex hooks are unavailable in the browser preview**: boot disables `claude-scope` and `codex-scope`. External clients require a local Node Host and scope peer services; the in-memory Worker provides neither.
 - **The worker composition writes plaintext session logs** (`compression: 'none'` boot patch): it carries no Zstandard codec, so exported logs are `.jsonl`, never `.jsonl.zstd`.
 - **UDP and LAN discovery are unavailable**: `node:dgram.createSocket` reports the unsupported API and throws before acquiring a resource. The default Mesh rows are disabled before the plugin tree mounts; importing a dormant module does not grant UDP capability.
 - **`node:dns/promises`, `node:vm`, `node:net`, `node:sqlite`, `node:worker_threads` are structural stubs**: every call reports its refusal on the console and throws. Rows needing native DNS, a real process, or realm isolation cannot run here.

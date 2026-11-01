@@ -1,0 +1,12 @@
+version: 1
+scenario: scope-reentrant-consent
+profile: sdk
+composition: sdk-scope-reentrant-consent
+recording: authored
+header:
+  class: scope-reentrant-consent
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+  toolSchemasSource: sdk/task-context-facts
+replay:
+  override: true

@@ -12,7 +12,8 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-async function wireFixture(result: unknown, loginStatus = 303) {
+async function wireFixture(result: unknown, loginStatus = 303,
+  rpc?: { readonly status: number; readonly body: (rpcId: string) => string }) {
   const directory = await mkdtemp(join(tmpdir(), 'claude-scope-wire-'))
   cleanups.push(() => rm(directory, { recursive: true, force: true }))
   const privateDirectory = join(directory, 'private')
@@ -30,8 +31,9 @@ async function wireFixture(result: unknown, loginStatus = 303) {
     request.on('end', () => {
       rpcCalls += 1
       const input = JSON.parse(body) as { rpcId: string }
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: { ok: true, value: result } }))
+      response.writeHead(rpc?.status ?? 200, { 'content-type': 'application/json' })
+      response.end(rpc === undefined
+        ? JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: { ok: true, value: result } }) : rpc.body(input.rpcId))
     })
   })
   cleanups.push(() => new Promise<void>((resolve, reject) => {
@@ -63,6 +65,9 @@ describe.skipIf(process.platform === 'win32')('Claude command wire parsing', () 
   })
 
   it.each([
+    { output: {}, receipt: { status: 'unknown' } },
+    { output: {}, receipt: { status: 'observed', reason: 1 } },
+    { output: {}, receipt: { status: 'projected', projectionId: 1 } },
     { output: {}, receipt: { status: ['projected'] } },
     { output: { hookSpecificOutput: { hookEventName: ['UserPromptSubmit'], additionalContext: 'fact' } }, receipt: { status: 'projected' } },
     { output: { decision: 'block' }, receipt: { status: 'omitted' } },
@@ -71,6 +76,26 @@ describe.skipIf(process.platform === 'win32')('Claude command wire parsing', () 
     const fixture = await wireFixture(result)
     await expect(callClaudeScopeHook(fixture.config, { hook_event_name: 'UserPromptSubmit' }, new AbortController().signal))
       .rejects.toMatchObject({ code: 'rpc-response-invalid' })
+  })
+
+  it.each([
+    { label: 'invalid JSON', status: 200, body: (_rpcId: string) => '{"PRIVATE_CAPABILITY":', code: 'rpc-response-invalid' },
+    { label: 'wrong request identity', status: 200,
+      body: (_rpcId: string) => JSON.stringify({ type: 'server-response', rpcId: 'another-request', result: { ok: true } }),
+      code: 'rpc-response-invalid' },
+    { label: 'wrong envelope type', status: 200,
+      body: (rpcId: string) => JSON.stringify({ type: 'client-request', rpcId, result: { ok: true } }), code: 'rpc-response-invalid' },
+    { label: 'missing result', status: 200,
+      body: (rpcId: string) => JSON.stringify({ type: 'server-response', rpcId }), code: 'rpc-response-invalid' },
+    { label: 'remote rejection', status: 200,
+      body: (rpcId: string) => JSON.stringify({ type: 'server-response', rpcId,
+        result: { ok: false, error: { message: 'PRIVATE_CAPABILITY' } } }), code: 'rpc-rejected' },
+    { label: 'HTTP rejection', status: 503, body: (_rpcId: string) => 'PRIVATE_CAPABILITY', code: 'rpc-transport-rejected' },
+  ])('classifies $label without copying the remote diagnostic', async ({ status, body, code }) => {
+    const fixture = await wireFixture(undefined, 303, { status, body })
+    await expect(callClaudeScopeHook(fixture.config, {}, new AbortController().signal))
+      .rejects.toMatchObject({ code, message: code })
+    expect(fixture.rpcCalls()).toBe(1)
   })
 
   it('enforces the complete response byte budget at an exact multibyte limit', async () => {

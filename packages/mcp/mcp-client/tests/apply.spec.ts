@@ -206,6 +206,59 @@ describe('apply (plugin lifecycle)', () => {
     expect(registry.listServers()).toEqual([])
   })
 
+  it.each([
+    [{ toolResult: { count: 2 }, structuredContent: { total: 2 } },
+      { content: [{ type: 'text', text: '{"count":2}' }], structuredContent: { total: 2 } }],
+    [{}, { content: [{ type: 'text', text: '(no output)' }] }],
+  ])('normalizes a direct Host compatibility response without entering model execution: %j', async (response, expected) => {
+    mockCallTool.mockResolvedValue(response)
+    try {
+      await apply(ctx, stdioConfig)
+      const execute = vi.spyOn(ctx.tools, 'execute')
+      const result = await ctx.mcp.call({ serverId: 'srv' as McpServerId, toolName: 'remote', arguments: {} },
+        new AbortController().signal)
+      expect(result).toEqual(expected)
+      expect(Object.isFrozen(result)).toBe(true)
+      expect(Object.isFrozen(result.content)).toBe(true)
+      expect(execute).not.toHaveBeenCalled()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('preserves direct Host protocol blocks without native image or resource projection', async () => {
+    const response = { content: [
+      { type: 'text', text: 'Owner evidence' },
+      { type: 'image', mimeType: 'image/png', data: 'AQ==' },
+      { type: 'resource', resource: { uri: 'memo://owner', text: 'Embedded evidence' } },
+    ], structuredContent: { references: ['memo://owner'] } }
+    mockCallTool.mockResolvedValue(response)
+    try {
+      await apply(ctx, stdioConfig)
+      const execute = vi.spyOn(ctx.tools, 'execute')
+      const result = await ctx.mcp.call({ serverId: 'srv' as McpServerId, toolName: 'remote', arguments: {} },
+        new AbortController().signal)
+      expect(result).toEqual(response)
+      expect(result.content).toBe(response.content)
+      expect(result.structuredContent).toBe(response.structuredContent)
+      expect(Object.isFrozen(result)).toBe(true)
+      expect(Object.isFrozen(result.content)).toBe(true)
+      expect(Object.isFrozen(response.content[0])).toBe(false)
+      expect(execute).not.toHaveBeenCalled()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it.each([
+    [{ content: [{ type: 'text', text: 'Remote refused' }], isError: true }, 'Remote refused'],
+    [{ toolResult: { reason: 'refused' }, isError: true }, '{"reason":"refused"}'],
+  ])('rejects a direct Host MCP error before publishing a result: %j', async (response, message) => {
+    mockCallTool.mockResolvedValue(response)
+    try {
+      await apply(ctx, stdioConfig)
+      await expect(ctx.mcp.call({ serverId: 'srv' as McpServerId, toolName: 'remote', arguments: {} },
+        new AbortController().signal)).rejects.toThrow(message)
+      if ('content' in response) expect(Object.isFrozen(response.content)).toBe(false)
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it('keeps the Cordis plugin loading until initial discovery publishes its tools', async () => {
     const connection: PromiseWithResolvers<void> = Promise.withResolvers()
     mockConnect.mockImplementation(async () => {

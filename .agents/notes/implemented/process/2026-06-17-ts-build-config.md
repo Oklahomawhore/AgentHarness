@@ -40,6 +40,8 @@ In-package relative imports use explicit `.ts` specifiers.
 
 `pnpm run typecheck` first runs the Host lib phase to generate the Remote declarations required by Client typechecking, then runs `tsc -b` against `tsconfig.client.json`. The two aggregates themselves check their respective examples, tests, and scripts with `noEmit`; referenced package/vendor projects retain the same emit behavior as the build.
 
+Web test ownership uses filename categories instead of parallel per-file admission and exclusion lists. Native scenarios enter the Host aggregate; browser-assembled expectations and Client units enter the Web Client project. Keeping the Client exceptions explicit prevents incompatible Cordis `Context` declarations from entering one program, while native globs admit new scenarios without a second registration step. The [project-layout reference](../../../../docs/development.md#typescript-project-layout) names the categories.
+
 Composite projects keep their incremental build information inside their project-local `lib/` output. `pnpm run clean` derives live output directories from the root TypeScript project-reference graph, removes legacy root build information, and removes deleted `packages/*/*` directories that contain only known generated residue. Before removing an existing target, it resolves the target's parent and refuses it if that resolved parent is outside the repository, so a symlinked project reference cannot redirect cleanup outside the checkout. It preserves `node_modules` for every package that still has a `package.json`, and refuses to remove a manifest-less directory containing unknown files. Build does not invoke clean automatically, so ordinary builds retain incremental state.
 
 The command orchestration shape is:

@@ -1,6 +1,6 @@
 /** Owner-local capture management with observed binding and capture checks. */
 import type {
-  DevelopmentTaskCheckoutRequest, DevelopmentTaskId, ScopeAgentContributionSelection,
+  DevelopmentParticipantId, DevelopmentTaskCheckoutRequest, DevelopmentTaskId, ScopeAgentContributionSelection,
   ScopeAgentContributionStopRequest, ScopeAgentLocalContributionRequest, ScopeAgentLocalContributionStatus,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -11,7 +11,7 @@ export interface NativeLocalContributionPort {
   readonly status: (request: { agentId: SessionId }) => Promise<ScopeAgentLocalContributionStatus>
   readonly checkout: (request: DevelopmentTaskCheckoutRequest) => Promise<unknown>
   readonly request: (request: ScopeAgentLocalContributionRequest) => Promise<unknown>
-  readonly stop: (request: ScopeAgentContributionStopRequest) => Promise<unknown>
+  readonly stopLocal: (request: ScopeAgentContributionStopRequest) => Promise<ScopeAgentLocalContributionStatus>
 }
 
 /** Owned local observations and commands using the last confirmed capture and binding. */
@@ -21,7 +21,10 @@ export interface NativeLocalContributionDirectory {
   request(request: ScopeAgentLocalContributionRequest): Promise<void>
   stop(request: ScopeAgentContributionStopRequest): Promise<void>
   changed(agentId: SessionId, revision?: number): void
-  assignmentsChanged(): void
+  /** Refresh matching Sessions and those whose participant identity is not yet known.
+   * @param participantId - participant whose Task binding changed.
+   */
+  assignmentsChanged(participantId: DevelopmentParticipantId): void
   reset(): void
   dispose(): void
 }
@@ -79,15 +82,19 @@ export function createNativeLocalContributionDirectory(
         directory.invalidate(request.agentId)
         return
       }
-      await directory.mutate(request.agentId, () => port.stop(request))
+      await directory.mutate(request.agentId, () => port.stopLocal(request))
     },
     changed(agentId: SessionId, revision?: number): void {
       if (directory.getSnapshot()[agentId] === undefined) return
       if (revision !== undefined) revisions.set(agentId, Math.max(revisions.get(agentId) ?? 0, revision))
       directory.invalidate(agentId)
     },
-    assignmentsChanged(): void {
-      for (const agentId of Object.keys(directory.getSnapshot()) as SessionId[]) directory.invalidate(agentId)
+    assignmentsChanged(participantId): void {
+      const snapshot = directory.getSnapshot()
+      for (const agentId of Object.keys(snapshot) as SessionId[]) {
+        const known = snapshot[agentId]?.value?.participantId
+        if (known == null || known === participantId) directory.invalidate(agentId)
+      }
     },
     reset(): void { revisions.clear(); directory.reset() },
     dispose(): void { revisions.clear(); directory.dispose() },

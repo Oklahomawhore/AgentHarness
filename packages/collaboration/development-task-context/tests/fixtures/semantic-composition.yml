@@ -50,6 +50,7 @@
         auditSessionId: semantic-composition-audit
         provider: semantic-composition
         model: controlled-summary
+        maxCapturedInputBytes: 1048576
         maxInputBytes: 32768
         maxOutputTokens: 1024
         maxOutputBytes: 16384

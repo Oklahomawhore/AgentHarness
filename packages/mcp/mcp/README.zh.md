@@ -25,7 +25,7 @@ kind: "package-reference"
 
 ## 配置
 
-`maxServers` 是一个 Host 进程中允许的最大实时传输注册数。该字段必填并在加载时校验。服务器 id 必须匹配 `[A-Za-z0-9_-]{1,32}`；重复和超限注册会明确失败。
+`maxServers` 是一个服务实例中允许的最大实时传输注册数。该字段必填并在加载时校验。服务器 id 必须匹配 `[A-Za-z0-9_-]{1,32}`；重复和超限注册会明确失败。
 
 <a id="extension-points"></a>
 
@@ -34,7 +34,7 @@ kind: "package-reference"
 - `ctx.mcp.registerServer(provider)` 注册一个实时 generation，并返回其 disposer。
 - `ctx.mcp.listServers()` 返回确定顺序的分离身份列表。
 - `ctx.mcp.call(request, signal)` 把一条原始 `tools/call` 请求路由到确切实时 Provider。
-- `mcp/server-changed` 为诊断和 invariant 报告 Provider 生命周期。
+- `mcp/server-changed` 在同一 Cordis 服务隔离域内为诊断和 invariant 报告 Provider 生命周期。
 
 `@deepseek-ai/dsh-mcp-client` 是随附的 Service Provider。外部 Consumer 依赖本包，而不是依赖该具体传输。
 

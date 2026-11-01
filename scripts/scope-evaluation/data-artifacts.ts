@@ -115,7 +115,13 @@ export function sealDataArtifact(text: string): SealedDataArtifact {
   return Object.freeze({ text, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
 }
 
-function parseArtifact<T>(artifact: SealedDataArtifact, schema: z.ZodType<T>): T {
+/**
+ * Validate complete artifact bytes, the retained seal and a closed JSON schema in that order.
+ * @param artifact - Original UTF-8 text with its retained byte count and digest.
+ * @param schema - Owner schema; parsed output must preserve every submitted field.
+ * @returns Validated data; invalid bytes, identity, JSON or schema throw DataArtifactError.
+ */
+export function parseArtifact<T>(artifact: SealedDataArtifact, schema: z.ZodType<T>): T {
   if (Buffer.byteLength(artifact.text, 'utf8') > MAX_ARTIFACT_BYTES) throw new DataArtifactError('byte-limit')
   const actual = sealDataArtifact(artifact.text)
   if (actual.bytes !== artifact.bytes || actual.sha256 !== artifact.sha256) throw new DataArtifactError('integrity')

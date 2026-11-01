@@ -49,6 +49,8 @@ The agent can run a command in the sandbox with a working directory and environm
 
 The agent can open an interactive terminal in the sandbox, send input, read output, and signal programs running in it — prompts, interactive tools, and full-screen programs behave as they do locally. Terminal features like scrollback and readiness detection are provided by the terminal tooling, which works unchanged.
 
+If terminal initialization and rollback both fail, the provider reports both errors as [`SubprocessTerminalCleanupError`](../../../docs/subsystems/subprocess.md#terminal-process-primitive). A terminal returned during disposal remains tracked when its cleanup fails.
+
 ### Keeping the environment clean
 
 Commands run with a clean, sandbox-native environment: host variables and values that look like credentials are not passed in implicitly, and only entries the agent explicitly requests are set. This keeps secrets out of the sandbox.

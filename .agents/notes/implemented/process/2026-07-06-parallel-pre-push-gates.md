@@ -4,7 +4,7 @@ Status: implemented
 
 English | [中文](2026-07-06-parallel-pre-push-gates.zh.md)
 
-The local-hook portion of this record is superseded by [Fast local Git hooks](../../archived/process/2026-07-22-fast-local-git-hooks.md). The bounded gate scheduler and package-level `publint` parallelism remain in force for CI, `doc-sync`, and explicit local commands. The scheduler's fail-fast option is recorded in [Gate-runner fail-fast](../../archived/process/2026-08-27-gate-runner-fail-fast.md).
+The local-hook portion of this record is superseded by [Fast local Git hooks](../../archived/process/2026-07-22-fast-local-git-hooks.md). The bounded gate scheduler and package-level `publint` parallelism remain in force for CI, `doc-sync`, and explicit local commands. Independent completion and interruption limits are recorded in [Complete independent validation gates](2026-10-26-complete-independent-gates.md).
 
 ## Problem
 
@@ -16,11 +16,11 @@ Aggregate jobs such as documentation synchronization hide long sequential chains
 
 Long coordinator gates whose own subprocesses preserve useful attribution may opt into `streamOutput`. Their stdout and stderr reach the parent immediately without being buffered or printed again at completion. Partitioned coverage and parallel Web snapshots use this mode so a mid-run failure is visible without waiting for sibling work.
 
-The Node 24 consumer job is one ten-gate mode rather than a shell-owned process pool. Its default worker count equals its gate count, while pull-request CI caps active gates at eight and dependencies control readiness. Build and source compatibility start immediately; after build, `publint` and built-package invariant validation run in parallel. Lint, both snapshot suites, documentation typechecking, NodeNext type checks, and built-bin smokes wait for the invariant validator to remove its temporary package views.
+The consumer aggregate starts build and source compatibility independently under its configured worker bound. After build, `publint` and built-package invariant validation may run in parallel. Lint, both snapshot suites, documentation typechecking, NodeNext type checks, and built-bin smokes wait for the invariant validator to remove its temporary package views.
 
 [scripts/publint-all.ts](../../../../scripts/publint-all.ts) discovers packages from `packages/<group>/<pkg>` and runs `publint` with a worker pool sized from `availableParallelism()`. `DSH_PUBLINT_CONCURRENCY` can cap or raise the worker count for local machines and CI runners with different resource profiles. Results are buffered per package and printed in deterministic package order, so parallel execution does not scramble each package's log block.
 
-The per-gate package scripts remain the vocabulary for ad hoc local runs. `hygiene` invokes a scheduler mode containing the same thirteen checks with the local four-worker cap, while `doc-sync` owns its member list in the scheduler ([doc-sync through the gate scheduler](../../archived/process/2026-07-21-doc-sync-through-gate-scheduler.md)).
+The per-gate package scripts remain the vocabulary for ad hoc local runs. `hygiene` and `doc-sync` select their leaf inventories and worker defaults from the scheduler ([doc-sync through the gate scheduler](../../archived/process/2026-07-21-doc-sync-through-gate-scheduler.md)).
 
 ## Verification
 
@@ -30,7 +30,7 @@ The per-gate package scripts remain the vocabulary for ad hoc local runs. `hygie
 
 - **Keep aggregate jobs serial** — simpler execution but makes wall clock equal the sum of independent checks and repeats command-wrapper startup.
 - **Declare one CI job per leaf gate** — exposes maximum workflow parallelism but repeats checkout, setup, and install overhead and duplicates the scheduler inventory in YAML.
-- **Background subcommands inside shell scripts** — parallelizes work but loses per-gate timing, deterministic failure grouping, and straightforward signal handling.
+- **Background subcommands inside shell scripts** — parallelizes work but loses per-gate timing, deterministic failure grouping, and independent process outcomes.
 - **Inherit stdio for every gate** — exposes progress immediately but interleaves ordinary independent gates and discards the scheduler's attributable output record. Streaming remains an explicit gate property.
 - **Declare one `publint` job per package** — exposes maximum package parallelism but creates a hand-maintained package inventory that drifts when packages change.
 - **Run `publint` with unbounded concurrency** — minimizes elapsed time on small repositories only by gambling with process count, memory pressure, package tarball creation, and readable logs.

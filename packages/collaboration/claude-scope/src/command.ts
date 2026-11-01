@@ -73,6 +73,6 @@ export function apply(ctx: Context, config: Config): void {
     const serialized = `${JSON.stringify(output)}\n`
     if (Buffer.byteLength(serialized) > config.maxResponseBytes) throw new ClaudeScopeCommandFailure('output-too-large')
     lifetime.signal.throwIfAborted()
-    await streamPromises.pipeline(Readable.from([serialized]), process.stdout, { signal: lifetime.signal, end: false })
+    await streamPromises.pipeline(Readable.from([serialized]), process.stdout, { signal: lifetime.signal })
   }
 }

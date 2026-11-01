@@ -489,7 +489,9 @@ it.skipIf(process.platform === 'win32')('automatically carries independent Claud
       && event.data.projection.taskRevision === audited.revision)
     if (evaluation?.type !== 'scope-agent-context/evaluation') throw new Error('native evaluation was not recorded')
     expect(evaluation.data.decision).toBe('suppress-unchanged')
-    expect(evaluation.data.projection.activation).toEqual(firstProjection?.activation)
+    const projection = evaluation.data.projection
+    if ('kind' in projection) throw new Error('Expected an independent remote scope projection')
+    expect(projection.activation).toEqual(firstProjection?.activation)
     expect(evaluation.data.baseline).not.toBeNull()
     expect(await recipient.rpc('scopeAgentContext/status', { request: { agentId: initial.agentId } }))
       .toMatchObject({ state: { mode: 'enabled', usedBudget: 1, pendingActivation: null } })

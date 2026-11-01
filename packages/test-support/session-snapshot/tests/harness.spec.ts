@@ -114,6 +114,20 @@ function environmentEcho(rawStdout: string): Record<string, unknown> {
 }
 
 describe('runScenario', () => {
+  it('sends workspace Node MCP fixtures as standard session declarations', { timeout: 20_000 }, async () => {
+    const { fixtureFile } = await scenario({ echoMcpServers: true })
+    const result = await runScenario({ steps: [
+      { op: 'initialize' },
+      { op: 'newSession', nodeMcpServers: [{ name: 'fixture', script: 'tools/server.mjs' }] },
+    ] }, { agent: AGENT, mode: 'replay', fixtureFile })
+    const frames = result.rawStdout.split('\n').filter(Boolean)
+      .map(line => JSON.parse(line) as { params?: { update?: { content?: { text?: string } } } })
+    const text = frames.map(frame => frame.params?.update?.content?.text).find(value => value?.startsWith('mcp:'))
+    expect(JSON.parse(text!.slice(4))).toEqual([{
+      name: 'fixture', command: process.execPath, args: [join(result.cwd, 'tools/server.mjs')], env: [],
+    }])
+  })
+
   it('surfaces an asynchronous child spawn failure through startup and close', async () => {
     const { dir } = await scenario({})
     const launched = launchAcpTestAgent({ agent: AGENT, cwd: join(dir, 'missing') })

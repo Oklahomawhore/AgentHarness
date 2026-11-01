@@ -8,7 +8,7 @@ kind: "package-reference"
 
 ## 概述
 
-`@deepseek-ai/dsh-development-task-mesh` 在通用 Mesh 上注册 `development-task/v1`。它先发送 context block，再发送依赖这些 block 的 Task 创建事件，随后按每个来源 head 增量发送 Task 与 Session binding。接收队列会在持久化前解析乱序的父 Task、block、revision 和 binding 依赖。
+`@deepseek-ai/dsh-development-task-mesh` 在通用 Mesh 上注册 `development-task/v1`。它先发送 context block，再发送依赖这些 block 的 Task 创建事件，随后按每个来源 head 增量发送 Task 与 Session binding。接收队列会在持久化前解析乱序的父 Task、block、revision 和 binding 依赖。绑定等待目标 Task 到达；确认等待已交付的 Task revision 到达，包括来自不同 peer 的情况。
 
 上下文 publication、已批准观察、区间查询和终止请求会路由到 Task owner。Owner 离线时，缓存的远端 Task 仍可读取；owner 请求返回 `RUNTIME_UNAVAILABLE`。冲突的事件身份产生 `REPLICA_CONFLICT`，provider 据此隔离 peer。
 
@@ -52,4 +52,4 @@ Adapter 校验入站命令及远端区间、准入和终止返回值。只有列
 
 ### 开发备注
 
-维护说明以本包源码、测试与上级架构文档为准。
+分配依赖检查会推迟 `TASK_NOT_FOUND`，并传播其他失败。入站 schema 与类型化 owner command 决定分发所用的封闭判别字段。

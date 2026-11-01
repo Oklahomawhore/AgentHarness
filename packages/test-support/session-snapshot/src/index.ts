@@ -56,6 +56,7 @@ export {
 export {
   parseSnapshotManifest,
   writesCurrentSessionFixtures,
+  usesSeparateWriterSnapshot,
   type SnapshotHeaderManifest,
   type SnapshotInputAttachment,
   type SnapshotInputManifest,

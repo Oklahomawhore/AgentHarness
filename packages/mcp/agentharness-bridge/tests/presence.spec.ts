@@ -24,6 +24,76 @@ function requestBody(init: RequestInit | undefined): { method: string; rpcId: st
 }
 
 describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence lease', () => {
+  it('disposes before startup without announcing or withdrawing and never starts afterward', async () => {
+    const calls: string[] = []
+    const lease = new AgentHarnessBridgePresenceLease({
+      ...await connectionOptions(async (_input, init) => {
+        const body = requestBody(init)
+        calls.push(body.method)
+        return response(body.rpcId, {})
+      }), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30000,
+      participantId: 'never-started', displayName: 'Never started',
+    })
+    await lease.dispose()
+    await lease.start()
+    expect(calls).toEqual([])
+  })
+
+  it.each([
+    ['short TTL', '{"presenceTtlMs":3}', 500],
+    ['large TTL', '{"presenceTtlMs":300000}', 30000],
+  ] as const)('renews using bounded scheduling for %s', async (_name, value, expectedDelay) => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const lease = new AgentHarnessBridgePresenceLease({
+      ...await connectionOptions(async (_input, init) => {
+        const body = requestBody(init)
+        calls.push(body.method)
+        return new Response(`{"type":"server-response","rpcId":${JSON.stringify(body.rpcId)},"result":{"ok":true,"value":${value}}}`)
+      }), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30000,
+      participantId: 'bounded-lease', displayName: 'Bounded lease',
+    })
+    try {
+      await lease.start()
+      await vi.advanceTimersByTimeAsync(expectedDelay - 1)
+      expect(calls).toEqual(['developmentRooms/announce'])
+      await vi.advanceTimersByTimeAsync(1)
+      await lease.start()
+      expect(calls).toEqual(['developmentRooms/announce', 'developmentRooms/heartbeat'])
+    } finally { await lease.dispose() }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['{}', '{"presenceTtlMs":0}', '{"presenceTtlMs":-3}', '{"presenceTtlMs":"1500"}',
+    '{"presenceTtlMs":1e999}', '{"presenceTtlMs":1.5}', 'null'])
+  ('re-announces after invalid Host lease metadata instead of renewing it: %s', async (invalid) => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    let available = false
+    const lease = new AgentHarnessBridgePresenceLease({
+      ...await connectionOptions(async (_input, init) => {
+        const body = requestBody(init)
+        calls.push(body.method)
+        return new Response(`{"type":"server-response","rpcId":${JSON.stringify(body.rpcId)},"result":{"ok":true,"value":${available ? '{"presenceTtlMs":1500}' : invalid}}}`)
+      }), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30000,
+      participantId: 'invalid-lease', displayName: 'Invalid lease',
+    })
+    try {
+      await lease.start()
+      await vi.advanceTimersByTimeAsync(249)
+      expect(calls).toEqual(['developmentRooms/announce'])
+      available = true
+      await vi.advanceTimersByTimeAsync(1)
+      await lease.start()
+      expect(calls).toEqual(['developmentRooms/announce', 'developmentRooms/announce'])
+      await vi.advanceTimersByTimeAsync(500)
+      await lease.start()
+      expect(calls.at(-1)).toBe('developmentRooms/heartbeat')
+    } finally { await lease.dispose() }
+    expect(calls.at(-1)).toBe('developmentRooms/withdraw')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('announces at startup, heartbeats by the Host TTL, and withdraws on disposal', async () => {
     vi.useFakeTimers()
     const calls: string[] = []
@@ -33,7 +103,7 @@ describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence leas
       return response(body.rpcId, { presenceTtlMs: 3_000 })
     }
     const lease = new AgentHarnessBridgePresenceLease({
-      ...await connectionOptions(fetchImpl), retryMs: 250, fallbackTtlMs: 15_000, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
+      ...await connectionOptions(fetchImpl), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
       participantId: 'cursor-agent', displayName: 'Cursor Agent',
     })
 
@@ -61,7 +131,7 @@ describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence leas
       return response(body.rpcId, { presenceTtlMs: 1_500 })
     }
     const lease = new AgentHarnessBridgePresenceLease({
-      ...await connectionOptions(fetchImpl), retryMs: 250, fallbackTtlMs: 15_000, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
+      ...await connectionOptions(fetchImpl), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
       participantId: 'codex-agent', displayName: 'Codex Agent',
     })
 
@@ -89,7 +159,7 @@ describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence leas
       return response(body.rpcId, { presenceTtlMs: 1_500 })
     }
     const lease = new AgentHarnessBridgePresenceLease({
-      ...await connectionOptions(fetchImpl), retryMs: 250, fallbackTtlMs: 15_000, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
+      ...await connectionOptions(fetchImpl), retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
       participantId: 'late-agent', displayName: 'Late Agent',
     })
 
@@ -117,7 +187,7 @@ describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence leas
     })
     const lease = new AgentHarnessBridgePresenceLease({
       ...options, participantId: 'pending-agent', displayName: 'Pending Agent',
-      retryMs: 250, fallbackTtlMs: 15_000, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
+      retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
     })
     const start = lease.start()
     await entered.promise
@@ -145,7 +215,7 @@ describe.skipIf(process.platform === 'win32')('AgentHarness bridge presence leas
     })
     const lease = new AgentHarnessBridgePresenceLease({
       ...options, participantId: 'blocked-agent', displayName: 'Blocked Agent',
-      retryMs: 250, fallbackTtlMs: 15_000, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
+      retryMs: 250, minHeartbeatMs: 500, maxHeartbeatMs: 30_000,
     })
     await lease.start()
     await vi.advanceTimersByTimeAsync(500)

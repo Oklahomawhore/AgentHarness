@@ -31,11 +31,11 @@ function unavailable(reason: Unavailable['reason']): Unavailable { return { stat
  * @param sources - exact local files and operation selectors authorized by the caller.
  * @param canonicalRoots - already resolved collection roots; every file must be a descendant.
  * @param signal - cancellation checked after each filesystem operation.
- * @returns normalized grants to existing regular files; throws for ambiguous or inaccessible grants.
+ * @returns one normalized existing-file grant per selector in input order; throws for ambiguous or inaccessible grants.
  */
-export async function resolveOpenApiSources(
-  sources: readonly ClaudeScopeOpenApiSource[], canonicalRoots: readonly string[], signal: AbortSignal,
-): Promise<readonly ClaudeScopeOpenApiSource[]> {
+export async function resolveOpenApiSources<const Sources extends readonly ClaudeScopeOpenApiSource[]>(
+  sources: Sources, canonicalRoots: readonly string[], signal: AbortSignal,
+): Promise<{ readonly [Index in keyof Sources]: ClaudeScopeOpenApiSource }> {
   const resolved: ClaudeScopeOpenApiSource[] = []
   const names = new Set<string>()
   const targets = new Set<string>()
@@ -67,7 +67,7 @@ export async function resolveOpenApiSources(
     resolved.push({ name, filePath: path, method: source.method, path: source.path })
   }
   signal.throwIfAborted()
-  return resolved
+  return resolved as { readonly [Index in keyof Sources]: ClaudeScopeOpenApiSource }
 }
 
 function sameFile(left: BigIntStats, right: BigIntStats): boolean {

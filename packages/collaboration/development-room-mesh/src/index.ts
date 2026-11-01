@@ -4,6 +4,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import type { DevelopmentMeshHeads } from '@deepseek-ai/dsh-development-mesh'
 import type {} from '@deepseek-ai/dsh-development-mesh'
 import DevelopmentRoomService from '@deepseek-ai/dsh-development-room'
+import { developmentRoomChangeSchema } from '@deepseek-ai/dsh-development-room/schema'
 import type {
   DevelopmentNodeId,
   DevelopmentParticipantSnapshot,
@@ -18,17 +19,12 @@ const participantSchema = z.strictObject({
   id: z.string(), nodeId: z.string(), kind: z.enum(['human', 'agent']), displayName: z.string(),
   presence: z.enum(['online', 'offline']), lastSeenAt: z.number(),
 })
-const changeSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('room-created'), objective: z.string() }),
-  z.strictObject({ kind: z.literal('participant-joined'), participantId: z.string() }),
-  z.strictObject({ kind: z.literal('participant-left'), participantId: z.string() }),
-])
 const entrySchema = z.strictObject({
   nodeId: z.string(),
   seq: z.number().int().positive(),
   at: z.number(),
   roomId: z.string(),
-  change: changeSchema,
+  change: developmentRoomChangeSchema,
 })
 const itemSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('presence'), participant: participantSchema }),

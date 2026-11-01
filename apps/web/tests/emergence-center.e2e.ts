@@ -2,7 +2,7 @@
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { mkdir, readFile } from 'node:fs/promises'
-import type { Browser, ConsoleMessage, Page } from 'playwright'
+import type { Browser, ConsoleMessage, Page, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { DevelopmentNodeId, DevelopmentParticipantId, DevelopmentTaskBindingId } from '@deepseek-ai/dsh-development-task'
@@ -108,7 +108,7 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     const publication = '后续 Task 必须继承这个显式结论。'
     await panel.getByPlaceholder('发布可被后续派生或汇合任务继承的上下文；不要填写私聊或内部推理。').fill(publication)
     await panel.getByRole('button', { name: '发布上下文' }).click()
-    await panel.getByText(publication, { exact: true }).waitFor({ timeout: 10_000 })
+    await panel.getByRole('paragraph').filter({ hasText: /^后续 Task 必须继承这个显式结论。$/u }).waitFor({ timeout: 10_000 })
     if (process.env.AGENTHARNESS_CAPTURE_README_SCREENSHOT === '1') {
       await page.screenshot({ path: join(process.cwd(), 'assets/agentharness-collaboration.png'), fullPage: true })
     }
@@ -167,6 +167,62 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     expect(tripwire.warnings).toEqual([])
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
+
+  it('paints opaque, readable collaboration surfaces in both themes and viewport sizes', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-emergence-center-theme'))
+    const panel = page.locator('[data-emergence-center]')
+    const shots = process.env.DSH_EMERGENCE_THEME_SHOTS
+    if (shots !== undefined) await mkdir(shots, { recursive: true })
+    const originalDark = await page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))
+    const originalViewport = page.viewportSize()!
+    try {
+      for (const viewport of [{ width: 1680, height: 1000 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport)
+        const backgrounds: string[] = []
+        for (const dark of [false, true]) {
+          await page.evaluate(value => document.body.toggleAttribute('data-ds-dark-theme', value), dark)
+          const paint = await panel.evaluate((element) => {
+            const selectors = ['header', 'main', 'aside', '.react-flow__node', '.react-flow__controls-button', '.react-flow__minimap']
+            const surfaces = [element, ...selectors.map(selector => element.querySelector(selector)!)]
+            const backgrounds = surfaces.map(surface => getComputedStyle(surface).backgroundColor)
+            const title = element.querySelector('.react-flow__node strong')!
+            const canvas = document.createElement('canvas').getContext('2d')!
+            const channels = (color: string): number[] => {
+              canvas.fillStyle = color
+              canvas.fillRect(0, 0, 1, 1)
+              return [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
+            }
+            const titleColor = channels(getComputedStyle(title).color)
+            const nodeColor = channels(getComputedStyle(title.parentElement!).backgroundColor)
+            return { backgrounds, titleColor, nodeColor }
+          })
+          expect(paint.backgrounds.every(color => color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent')).toBe(true)
+          const luminance = (color: number[]): number => {
+            const channels = color.map((value) => {
+              const channel = value / 255
+              return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+            })
+            return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+          }
+          const foreground = luminance(paint.titleColor)
+          const background = luminance(paint.nodeColor)
+          expect((Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)).toBeGreaterThanOrEqual(4.5)
+          backgrounds.push(paint.backgrounds[0]!)
+          const bounds = await panel.boundingBox()
+          expect(bounds!.x).toBeGreaterThanOrEqual(0)
+          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+          if (shots !== undefined) {
+            await page.screenshot({ path: join(shots, `${dark ? 'dark' : 'light'}-${viewport.width}.png`), fullPage: true })
+          }
+        }
+        expect(backgrounds[0]).not.toBe(backgrounds[1])
+      }
+    } finally {
+      await page.evaluate(value => document.body.toggleAttribute('data-ds-dark-theme', value), originalDark)
+      await page.setViewportSize(originalViewport)
+    }
+    expect(tripwire.pageErrors).toEqual([])
+  })
 
   it.skipIf(process.platform === 'win32')('configures a project and joins only the selected Claude session through the live UI', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-claude-scope-setup'))
@@ -274,6 +330,57 @@ describe('web e2e: Emergence Center shared-context journey', () => {
     expect(await authorization.getByRole('button', { name: '允许此绑定共享工作观察', exact: true }).count()).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 30_000)
+
+  it('restores the selected Task and ended observation after transport reconnects', async () => {
+    const recoveryPage = await browser.newPage({ locale: ZH_BROWSER_LOCALE, storageState: await page.context().storageState() })
+    try {
+      const recoveryTripwire = watchConsole(recoveryPage)
+      const sockets: WebSocketRoute[] = []
+      let allowRecovery = false
+      await recoveryPage.routeWebSocket('**/api/remote.mux', (route) => {
+        sockets.push(route)
+        if (sockets.length === 1 || allowRecovery) route.connectToServer()
+      })
+      const url = new URL(scaffold.authenticatedUrl)
+      url.hash = 'agentharness=collaboration'
+      await recoveryPage.goto(url.href, { waitUntil: 'load' })
+      const panel = recoveryPage.locator('[data-emergence-center]')
+      const task = scaffold.ctx.developmentTasks.list({ limit: 200 }).find(item => item.objective === '网页汇合任务')
+      if (task === undefined) throw new Error('Expected the retained Merge Task')
+      await panel.locator('button', { hasText: task.objective }).first().click()
+      await panel.getByRole('heading', { name: task.objective, exact: true }).waitFor()
+      const observations = panel.getByRole('region', { name: '远程工作观察授权', exact: true })
+      await observations.getByText('已终止此绑定的共享；重新加入需创建新的绑定。', { exact: true }).waitFor()
+      const intervals = await scaffold.ctx.developmentTasks.observedIntervals({ taskId: task.id })
+      for (const marker of ['重连前的实时更新', '重连后的实时更新']) {
+        await scaffold.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: task.createdBy, text: marker })
+        await panel.getByRole('paragraph').filter({ hasText: new RegExp(`^${marker}$`, 'u') }).waitFor()
+        if (marker === '重连前的实时更新') {
+          expect(sockets).toHaveLength(1)
+          await sockets[0]!.close({ code: 4001, reason: 'collaboration recovery acceptance' })
+          await expect.poll(() => sockets.length).toBe(2)
+          await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor()
+          allowRecovery = true
+          // A fresh attempt forwards its opening frames; a previously held socket has already lost them.
+          await sockets[1]!.close({ code: 4001, reason: 'collaboration endpoint restored' })
+          await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor({ state: 'hidden' })
+          await panel.getByRole('heading', { name: task.objective, exact: true }).waitFor()
+          await observations.getByText('已终止此绑定的共享；重新加入需创建新的绑定。', { exact: true }).waitFor()
+        }
+      }
+      await recoveryPage.getByRole('button', { name: '连接中断，正在自动重试，点击立即重连', exact: true }).waitFor({ state: 'hidden' })
+      expect(await observations.getByRole('button', { name: '允许此绑定共享工作观察', exact: true }).count()).toBe(0)
+      expect(await scaffold.ctx.developmentTasks.observedIntervals({ taskId: task.id })).toEqual(intervals)
+      expect(sockets).toHaveLength(3)
+      expect(recoveryTripwire.pageErrors).toEqual([])
+      expect(recoveryTripwire.warnings.some(warning => /gap repair|discontinuous/iu.test(warning))).toBe(false)
+    } catch (error) {
+      await saveFailureShot(recoveryPage, 'web-e2e-emergence-center-reconnect')
+      throw error
+    } finally {
+      await recoveryPage.close()
+    }
+  })
 
   it('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, ['created.expected.md'])

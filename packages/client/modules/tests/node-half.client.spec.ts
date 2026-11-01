@@ -560,6 +560,30 @@ describe('client bundle activation', () => {
     expect(service.artifactBaseline('@fixture/unknown')).toBeUndefined()
   })
 
+  it('keeps the advertised revision when a rebuild writes identical artifact bytes', () => {
+    const packageName = '@fixture/unchanged-rebuild'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    const original = 'module.exports = { generation: 1 }\n'
+    writeFileSync(clientPath, original)
+    const service = construct([packageName])
+    const graph = service.graph()
+    const rebuilt = vi.fn()
+    service.onRebuilt(rebuilt)
+    writeFileSync(clientPath, original)
+    expect(service.rebuilt(packageName)).toBe(graph.entries[0]!.rev)
+    expect(service.graph()).toBe(graph)
+    expect(rebuilt).not.toHaveBeenCalled()
+    expect(service.artifactBaseline(packageName)).toMatchObject({ mtimeMs: statSync(clientPath).mtimeMs })
+    writeFileSync(clientPath, 'module.exports = { generation: 2 }\n')
+    expect(service.rebuilt(packageName)).not.toBe(graph.entries[0]!.rev)
+    expect(rebuilt).toHaveBeenCalledOnce()
+    const changed = service.graph()
+    service.rebuilt(packageName)
+    expect(service.graph()).toBe(changed)
+    expect(rebuilt).toHaveBeenCalledOnce()
+  })
+
   it('splits startup combos before the map-form URL exceeds 3 KiB', async () => {
     const packageNames = Array.from({ length: 48 }, (_, index) => (
       `@fixture/combo-url-${String(index).padStart(3, '0')}-${'x'.repeat(40)}`

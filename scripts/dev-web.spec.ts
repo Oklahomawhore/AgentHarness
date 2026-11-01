@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execa } from 'execa'
 import { expect, it } from 'vitest'
 import type { TsdownBundle } from 'tsdown'
 import { writeClientBuildRecord } from './client-build-environment.ts'
@@ -84,6 +85,85 @@ it('discovers client-preset packages the shell links, excluding loader-delivered
     expect(discoverLibraryDirs(root)).toEqual(['packages/client/linked'])
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('loads TypeScript root and workspace configs with CommonJS dependencies in the Node dev process', async ({ signal, onTestFinished }) => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-dev-web-loader-'))
+  const resources: { closeChild?: () => Promise<void> } = {}
+  onTestFinished(async () => {
+    await resources.closeChild?.()
+    await rm(root, { recursive: true, force: true })
+  })
+  const repositoryRoot = join(import.meta.dirname, '..')
+  await symlink(join(repositoryRoot, 'node_modules'), join(root, 'node_modules'), 'dir')
+  await writeFile(join(root, 'package.json'), JSON.stringify({ private: true, type: 'module' }))
+  await writeFile(join(root, 'tsdown.config.ts'), `
+import { defineConfig } from 'tsdown'
+import type { UserConfig } from 'tsdown'
+import ts from 'typescript'
+const config: UserConfig = { define: { ROOT_CONFIG: JSON.stringify('root-' + ts.version) } }
+export default defineConfig(config)
+`)
+  await writeFile(join(root, 'shared.ts'), `
+import type { UserConfig } from 'tsdown'
+export function packageConfig(version: string): Pick<UserConfig, 'define'> {
+  return { define: { SHARED_CONFIG: JSON.stringify('shared-' + version) } }
+}
+`)
+  const plugins = ['plugin-one', 'plugin-two']
+  for (const plugin of plugins) {
+    await mkdir(join(root, plugin))
+    await writeFile(join(root, plugin, 'package.json'), JSON.stringify({ private: true, type: 'module' }))
+    await writeFile(join(root, plugin, 'tsdown.config.ts'), `
+import { defineConfig } from 'tsdown'
+import { createRequire } from 'node:module'
+import type { UserConfig } from 'tsdown'
+import ts from 'typescript'
+import { packageConfig } from '../shared.ts'
+const require = createRequire(import.meta.url)
+const version: string = require('typescript/package.json').version
+export default defineConfig({
+  entry: { client: 'src.ts' }, outDir: 'lib', format: 'cjs', platform: 'browser', dts: false, clean: false,
+  define: { ...packageConfig(version).define, PACKAGE_CONFIG: JSON.stringify('${plugin}-' + ts.version) },
+  outputOptions: { entryFileNames: 'client.js' },
+} satisfies UserConfig)
+`)
+    await writeFile(join(root, plugin, 'src.ts'), 'export const configs = [ROOT_CONFIG, PACKAGE_CONFIG, SHARED_CONFIG]\n')
+  }
+  await writeFile(join(root, 'driver.mjs'), `
+import { watchClientPlugins } from ${JSON.stringify(new URL('./dev-web.ts', import.meta.url).href)}
+const bundles = await watchClientPlugins(${JSON.stringify(root)}, ${JSON.stringify(plugins)}, 50)
+try {
+  if (bundles.length !== 2) throw new Error('Expected two workspace bundles')
+} finally {
+  for (const bundle of bundles) await bundle[Symbol.asyncDispose]()
+}
+console.log('watchers-disposed')
+`)
+  // Match dev:web: Node strips types without an additional module hook.
+  const child = execa(process.execPath, [join(root, 'driver.mjs')], {
+    cwd: repositoryRoot,
+    cancelSignal: signal,
+    killSignal: 'SIGKILL',
+    reject: false,
+    stdin: 'ignore',
+  })
+  const closed = new Promise<void>(resolve => child.nodeChildProcess.once('close', () => { resolve() }))
+  const settled = Promise.all([child, closed]).then(([result]) => result)
+  resources.closeChild = async () => { child.kill('SIGKILL'); await settled }
+  const result = await settled
+  const diagnostic = [result.shortMessage, result.stdout, result.stderr].join('\n')
+  expect(result.isCanceled, diagnostic).toBe(false)
+  expect(result.timedOut, diagnostic).toBe(false)
+  expect(result.signal, diagnostic).toBeUndefined()
+  expect(result.exitCode, diagnostic).toBe(0)
+  expect(result.stdout).toContain('watchers-disposed')
+  for (const plugin of plugins) {
+    const bundle = await readFile(join(root, plugin, 'lib/client.js'), 'utf8')
+    expect(bundle).toMatch(/root-\d+\.\d+\.\d+/)
+    expect(bundle).toContain(`${plugin}-`)
+    expect(bundle).toMatch(/shared-\d+\.\d+\.\d+/)
   }
 })
 

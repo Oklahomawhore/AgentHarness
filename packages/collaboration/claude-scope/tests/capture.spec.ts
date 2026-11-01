@@ -1,14 +1,21 @@
-import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { join, parse } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DevelopmentTaskObservedSourceId } from '@deepseek-ai/dsh-development-task/types'
 import { authorizeClaudeScopeTool, parseClaudeScopeHook, renderClaudeScopeObservation, renderClaudeScopeToolContribution } from '../src/capture.ts'
 import type { ClaudeScopeHookInput, ClaudeScopePolicy, ClaudeScopePreparedInput } from '../src/types.ts'
 
+vi.mock('node:fs/promises', async (original) => {
+  const actual = await original<typeof import('node:fs/promises')>()
+  return { ...actual, realpath: vi.fn(actual.realpath) }
+})
+
 const directories: string[] = []
 const sourceId = 'a'.repeat(64) as DevelopmentTaskObservedSourceId
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
 })
 
@@ -47,6 +54,14 @@ describe('authorized original Claude tool observations', () => {
     expect(() => parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'PreToolUse', tool_name: 'Write' })).toThrow('requires')
   })
 
+  it('retains native prompt association and complete Stop text without reading or keeping transcript paths', () => {
+    expect(parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'Stop', prompt_id: 'prompt-native',
+      stop_hook_active: true, last_assistant_message: '  完整答复🙂\n', transcript_path: '/forbidden/transcript' }))
+      .toEqual({ sessionId: 'one', event: 'Stop', promptId: 'prompt-native', stop: { text: '  完整答复🙂\n', active: true } })
+    expect(parseClaudeScopeHook({ session_id: 'one', hook_event_name: 'StopFailure', prompt_id: 'prompt-native',
+      last_assistant_message: 'API error', error: 'invalid_request' })).toEqual({ sessionId: 'one', event: 'StopFailure', promptId: 'prompt-native' })
+  })
+
   it('allows new descendants and rejects prefix siblings, relative paths, and unsupported input fields', async () => {
     const { root, outside, policy } = await fixture()
     const accepted = await writeInput(root, policy, 'original source')
@@ -81,6 +96,83 @@ describe('authorized original Claude tool observations', () => {
     expect(await authorizeClaudeScopeTool(tool, root, policy)).toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
   })
 
+  it.each(['Write', 'Edit'])('omits a %s target whose existing ancestor is a regular file instead of a directory', async (tool) => {
+    const { root, policy } = await fixture()
+    const file = join(root, 'regular-file')
+    await writeFile(file, 'existing file')
+    expect(await authorizeClaudeScopeTool({ id: 'blocked-target', name: tool,
+      input: tool === 'Write' ? { file_path: join(file, 'child.txt'), content: 'PRIVATE_INPUT' }
+        : { file_path: join(file, 'child.txt'), old_string: 'before', new_string: 'after' } }, root, policy))
+      .toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+  })
+
+  it.each(['Write', 'Edit'])('refuses a %s file-parent target when the operating system reports ENOENT', async (tool) => {
+    const { root, policy } = await fixture()
+    const file = join(root, 'regular-file')
+    await writeFile(file, 'existing file')
+    const target = join(file, 'child.txt')
+    const { realpath: original } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let missing = false
+    const paths = vi.spyOn(fs, 'realpath').mockImplementation(async (path, options) => {
+      try { return await original(path, options) }
+      catch (error) {
+        if (path === target && error instanceof Error && 'code' in error && (error.code === 'ENOTDIR' || error.code === 'ENOENT')) {
+          missing = true
+          // Windows reports ENOENT for this actual file-as-parent path.
+          throw Object.assign(error, { code: 'ENOENT' })
+        }
+        throw error
+      }
+    })
+    try {
+      const result = await authorizeClaudeScopeTool({ id: 'missing-file-parent', name: tool,
+        input: tool === 'Write' ? { file_path: target, content: 'PRIVATE_INPUT' }
+          : { file_path: target, old_string: 'before', new_string: 'after' } }, root, policy)
+      expect(missing).toBe(true)
+      expect(result).toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+    } finally { paths.mockRestore() }
+  })
+
+  it.each(['Write', 'Edit'])('authorizes a %s existing leaf and an arbitrarily missing directory suffix', async (tool) => {
+    const { root, policy } = await fixture()
+    const existing = join(root, 'existing.txt')
+    await writeFile(existing, 'existing file')
+    for (const target of [existing, join(root, 'not-created', 'also-not-created', 'new.txt')]) {
+      const result = await authorizeClaudeScopeTool({ id: 'valid-target', name: tool,
+        input: tool === 'Write' ? { file_path: target, content: 'new content' }
+          : { file_path: target, old_string: 'before', new_string: 'after' } }, root, policy)
+      expect(result).toMatchObject({ kind: 'eligible', toolName: tool })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('omits a target whose live ancestor contains a symlink loop', async () => {
+    const { root, policy } = await fixture()
+    const loop = join(root, 'loop')
+    await symlink(loop, loop)
+    expect(await authorizeClaudeScopeTool({ id: 'loop-target', name: 'Edit',
+      input: { file_path: join(loop, 'child.txt'), old_string: 'before', new_string: 'after' } }, root, policy))
+      .toEqual({ kind: 'omitted', reason: 'path-outside-grant' })
+  })
+
+  it('reports a missing filesystem root instead of resolving past it', async () => {
+    const { root, policy } = await fixture()
+    vi.spyOn(fs, 'realpath').mockRejectedValueOnce(Object.assign(new Error('root unavailable'), { code: 'ENOENT' }))
+    await expect(authorizeClaudeScopeTool({ id: 'missing-root', name: 'Write',
+      input: { file_path: parse(root).root, content: 'private input' } }, root, policy))
+      .rejects.toThrow('file target has no existing ancestor')
+  })
+
+  it.each([
+    { name: 'I/O error', error: Object.assign(new Error('disk read failed'), { code: 'EIO' }) },
+    { name: 'unclassified error', error: new Error('unexpected resolver failure') },
+    { name: 'non-Error rejection', error: 'resolver rejected without an Error' },
+  ])('propagates a path resolver $name without misreporting a permission omission', async ({ error }) => {
+    const { root, policy } = await fixture()
+    vi.spyOn(fs, 'realpath').mockRejectedValueOnce(error)
+    await expect(authorizeClaudeScopeTool({ id: 'failed-resolution', name: 'Write',
+      input: { file_path: join(root, 'result.txt'), content: 'private input' } }, root, policy)).rejects.toBe(error)
+  })
+
   it('includes changed tool arguments in the starting digest', async () => {
     const { root, policy } = await fixture()
     const before = await writeInput(root, policy, 'one')
@@ -107,6 +199,16 @@ describe('authorized original Claude tool observations', () => {
       .toEqual({ kind: 'omitted', reason: 'unsupported-tool' })
   })
 
+  it.each(['Edit', 'Bash'])('refuses malformed external %s arguments before retaining original fields', async (tool) => {
+    const { root, policy } = await fixture()
+    const input = parseClaudeScopeHook({ session_id: 'external', hook_event_name: 'PreToolUse', cwd: root,
+      tool_use_id: 'malformed-tool', tool_name: tool, tool_input: tool === 'Edit'
+        ? { file_path: join(root, 'source.txt'), old_string: 'before' } : { command: 'pnpm test', timeout: '1000' } })
+    if (input.event !== 'PreToolUse') throw new Error('Tool hook was not parsed')
+    expect(await authorizeClaudeScopeTool(input.tool, input.cwd, policy))
+      .toEqual({ kind: 'omitted', reason: 'unsupported-tool-input' })
+  })
+
   it('attributes reported success without copying tool response extras or absolute paths', async () => {
     const { root, policy } = await fixture()
     const input = await writeInput(root, policy, 'syncNonce=123')
@@ -130,6 +232,21 @@ describe('authorized original Claude tool observations', () => {
       fields: { rootIndex: 0, path: join('new', 'api.txt'), error: 'permission denied' }, omissions: [],
     })
     expect(result.text).not.toContain('unapplied content')
+  })
+
+  it('keeps a failure without an error string explicit while omitting the unreported output', async () => {
+    const { root, policy } = await fixture()
+    const authorized = await writeInput(root, policy, 'UNAPPLIED_PRIVATE_CONTENT')
+    const input = parseClaudeScopeHook({ session_id: 'external', hook_event_name: 'PostToolUseFailure',
+      tool_use_id: 'tool-1', tool_name: 'Write', tool_input: { file_path: join(root, 'new', 'api.txt'), content: 'UNAPPLIED_PRIVATE_CONTENT' } })
+    const result = renderClaudeScopeObservation(input, authorized, sourceId, 2048)
+    if (result.kind !== 'observation') throw new Error(result.reason)
+    expect(JSON.parse(result.text)).toMatchObject({ reportedStatus: 'failure',
+      fields: { rootIndex: 0, path: join('new', 'api.txt') }, omissions: ['unsupported-error-output'] })
+    expect(result.text).not.toContain('UNAPPLIED_PRIVATE_CONTENT')
+    expect(renderClaudeScopeToolContribution(input, authorized, () => true))
+      .toEqual({ kind: 'tool-observation', version: 1, tool: 'Write', reportedStatus: 'failure',
+        fields: { rootIndex: 0, path: 'new/api.txt' }, omissions: ['content'] })
   })
 
   it('counts complete UTF-8 output and omits whole fields instead of truncating source text', async () => {
@@ -165,6 +282,49 @@ describe('authorized original Claude tool observations', () => {
 
 
 describe('independent typed tool reports', () => {
+  it('omits non-completion Hooks before rendering or checking the byte budget', async () => {
+    const { root, policy } = await fixture()
+    const authorized = await writeInput(root, policy, 'private requested content')
+    const input = parseClaudeScopeHook({ session_id: 'external', hook_event_name: 'Stop',
+      last_assistant_message: 'private answer', stop_hook_active: false })
+    const fits = vi.fn(() => true)
+    expect(renderClaudeScopeObservation(input, authorized, sourceId, 4096))
+      .toEqual({ kind: 'omitted', reason: 'not-tool-completion' })
+    expect(renderClaudeScopeToolContribution(input, authorized, fits))
+      .toEqual({ kind: 'omitted', reason: 'not-tool-completion' })
+    expect(fits).not.toHaveBeenCalled()
+  })
+
+  it('keeps authorized Bash observations outside the Write and Edit contribution encoder', async () => {
+    const { root, policy } = await fixture()
+    const tool = { id: 'bash-report', name: 'Bash', input: { command: 'pnpm test' } }
+    const authorized = await authorizeClaudeScopeTool(tool, root, policy)
+    if (authorized.kind !== 'eligible') throw new Error(authorized.reason)
+    const fits = vi.fn(() => true)
+    expect(renderClaudeScopeToolContribution({ event: 'PostToolUse', sessionId: 'external', tool }, authorized, fits))
+      .toEqual({ kind: 'omitted', reason: 'unsupported-contribution-tool' })
+    expect(fits).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { tool: 'Write', change: { content: false } },
+    { tool: 'Edit', change: { replaceAll: 'everywhere' } },
+    { tool: 'Edit', change: { oldString: 1 } },
+    { tool: 'Edit', change: { newString: true } },
+  ] as const)('omits unrepresentable $tool report fields before checking the byte budget: $change', async ({ tool, change }) => {
+    const { root, policy } = await fixture()
+    const input = { id: 'unrepresentable-report', name: tool, input: tool === 'Write'
+      ? { file_path: join(root, 'result.txt'), content: 'private content' }
+      : { file_path: join(root, 'result.txt'), old_string: 'private before', new_string: 'private after' } }
+    const authorized = await authorizeClaudeScopeTool(input, root, policy)
+    if (authorized.kind !== 'eligible') throw new Error(authorized.reason)
+    const fits = vi.fn(() => true)
+    expect(renderClaudeScopeToolContribution({ event: 'PostToolUse', sessionId: 'external', tool: input },
+      { ...authorized, fields: { ...authorized.fields, ...change } }, fits))
+      .toEqual({ kind: 'omitted', reason: 'unsupported-tool-input' })
+    expect(fits).not.toHaveBeenCalled()
+  })
+
   it('preserves complete Unicode fields and reports omissions against the caller complete-byte budget', async () => {
     const { root, policy } = await fixture()
     const authorized = await writeInput(root, policy, '变化🦊'.repeat(10))

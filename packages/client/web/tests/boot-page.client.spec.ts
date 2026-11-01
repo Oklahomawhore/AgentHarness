@@ -58,4 +58,17 @@ describe('BootPage', () => {
     page.dispose()
     expect(el.childNodes).toHaveLength(0)
   })
+
+  it('reattaches its failure view after the application replaces it', () => {
+    const { el, page } = mount()
+    const root = el.firstChild
+    el.replaceChildren()
+    page.setState('replacement', 'failed')
+    page.show()
+    expect(el.firstChild).toBe(root)
+    expect(el.textContent).toContain('Failed to load plugins')
+    page.setState('replacement', 'active')
+    expect(el.textContent).toContain('Loading plugins…')
+    expect(el.textContent).not.toContain('Failed to load plugins')
+  })
 })

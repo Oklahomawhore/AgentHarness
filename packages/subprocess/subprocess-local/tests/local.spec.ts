@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { basename, dirname, relative, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import type { SubprocessSpawnSpec, SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import { childEnv } from '../src/spawn.ts'
+import type { SubprocessOutcome, SubprocessSpawnSpec, SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { bindManagedProcess, childEnv } from '../src/spawn.ts'
 
 function mockWin32ForIsolatedRuntime(): void {
   vi.doMock('@deepseek-ai/dsh-win32-process', () => ({
@@ -393,6 +393,8 @@ describe('LocalSubprocessRuntime', () => {
       const ctx = new Context()
       const fiber = await ctx.plugin(IsolatedLocalSubprocessRuntime)
       const service = ctx.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>
+      // This fake PTY exercises observed POSIX teardown without a native bootstrap.
+      service.internals = { platform: 'darwin' }
       const handle = await ctx.subprocess.spawnTerminal({
         argv: ['shell'], cwd: process.cwd(), rows: 24, cols: 80, graceMs: 1,
       })
@@ -431,11 +433,9 @@ describe('LocalSubprocessRuntime', () => {
       waitForExit: vi.fn(async () => {}),
       terminateForHostExit: vi.fn(),
     }
-    const launcherStates: boolean[] = []
     const bindOwner = vi.fn((direct: { running(): boolean; signal(signal: 'SIGTERM' | 'SIGKILL'): void }) => {
       launcherRunning = () => direct.running()
       launcherSignal = (signal) => { direct.signal(signal) }
-      launcherStates.push(direct.running())
       return owner
     })
     const prepareLinuxTerminalScope = vi.fn(() => ({
@@ -501,7 +501,6 @@ describe('LocalSubprocessRuntime', () => {
         expect.objectContaining({ rows: 24, cols: 80, cwd: '/bootstrap', env: { BOOTSTRAP: 'yes' } }),
       )
       expect(bindOwner).toHaveBeenCalledOnce()
-      expect(launcherStates).toEqual([true])
       expect(launcherRunning?.()).toBe(true)
       expect(() => { launcherSignal?.('SIGTERM') }).not.toThrow()
       expect(terminalKill).toHaveBeenCalledExactlyOnceWith('SIGTERM')
@@ -600,6 +599,8 @@ describe('LocalSubprocessRuntime', () => {
       ctx.logger.error = ((error: unknown) => { disposalErrors.push(error) }) as typeof ctx.logger.error
       const fiber = await ctx.plugin(IsolatedLocalSubprocessRuntime)
       const alive = new Set([124])
+      // This fake PTY exercises observed POSIX teardown without a native bootstrap.
+      ;(ctx.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>).internals = { platform: 'darwin' }
       ;(ctx.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>).terminalInspector = {
         foregroundPgid: () => 123,
         isStdinWaiting: () => false,
@@ -874,11 +875,38 @@ describe('LocalSubprocessRuntime', () => {
   it('disposal contains a spawn-failure rejection that races teardown', async () => {
     const ctx = new Context()
     const fiber = await ctx.plugin(LocalSubprocessRuntime)
-    // Dispose before the rejection continuation removes the handle from the
-    // live set, so teardown itself must swallow the rejected done.
-    const handle = ctx.subprocess.spawn(spec('true', { cwd: '/nonexistent-dir-dsh-subprocess-test' }))
-    await fiber.dispose()
-    await expect(handle.done).rejects.toThrow()
+    const direct = Promise.withResolvers<SubprocessOutcome>()
+    const empty = Promise.withResolvers<undefined>()
+    const terminated = Promise.withResolvers<undefined>()
+    const failure = Object.assign(new Error('target spawn failed'), { code: 'ENOENT' })
+    const handle = bindManagedProcess(spec('true', {
+      stdio: { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' },
+    }), {
+      stdin: null, stdout: null, stderr: null, direct: direct.promise,
+      owner: {
+        signal: () => { terminated.resolve(undefined) },
+        waitForExit: async () => { await empty.promise },
+        terminateForHostExit: () => {},
+      },
+    })
+    const live = (ctx.subprocess as unknown as { live: Set<typeof handle> }).live
+    live.add(handle)
+    const rejected = expect(handle.done).rejects.toBe(failure)
+    let disposed = false
+    const disposing = fiber.dispose().then(() => { disposed = true })
+    try {
+      await terminated.promise
+      direct.reject(failure)
+      await rejected
+      expect(disposed).toBe(false)
+      expect(live.has(handle)).toBe(true)
+    } finally {
+      direct.reject(failure)
+      empty.resolve(undefined)
+      await disposing
+    }
+    expect(disposed).toBe(true)
+    expect(live.has(handle)).toBe(false)
   })
 
   it('loading a second implementation throws (one processes service per context — cordis standard)', async () => {

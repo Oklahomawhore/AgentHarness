@@ -1,0 +1,43 @@
+{
+  "patches": [
+    {
+      "at": 1,
+      "entry": {
+        "kind": "chunks",
+        "chunks": [
+          {
+            "type": "block-start",
+            "index": 0,
+            "blockType": "text"
+          },
+          {
+            "type": "text-delta",
+            "index": 0,
+            "text": "TASK_ASSIGNMENT_RETRY_API_OK: {{fromRequest:exact committed retries return the current assignment.}}"
+          },
+          {
+            "type": "block-end",
+            "index": 0,
+            "block": {
+              "type": "text",
+              "text": "TASK_ASSIGNMENT_RETRY_API_OK: {{fromRequest:exact committed retries return the current assignment.}}"
+            }
+          },
+          {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 3
+            }
+          },
+          {
+            "type": "finish",
+            "reason": {
+              "kind": "stop"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

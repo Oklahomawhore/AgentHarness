@@ -95,6 +95,10 @@ This section explains the design decisions behind the tool and points at the cod
 
 The tool resolves the workdir before `ctx.shell.resolve()` runs: an explicit relative `workdir` is resolved against the session cwd, and a sandbox policy's canonical workspace root wins so confinement and launch use the same identity. Sandbox policy resolves per call through `ctx.sandboxPolicy`; an escalation request goes through `ctx.approval` before anything executes, and the tool fails at load if the executor confines but no policy service is mounted.
 
+### Foreground observations
+
+In-process consumers can observe actual foreground invocation and provider completion through the [typed events](src/index.ts). Both observations retain the same tool execution and executor identity. A start observation does not prove process startup; completion carries returned provider facts before post-execute policy or final tool settlement. Background acknowledgements and provider rejections produce no completion observation. Observers own their asynchronous work, and observer failures are reported without changing the tool result or suppressing other observers. Sharing these facts requires separate permission and correlation with the durable final tool result; these events neither publish context nor read spill files.
+
 ### Rendering story
 
 The result text is stdout, then a marked `[stderr]` section, then conditional markers: truncation notice, sandbox denial (plus the same-turn escalation hint when the composition advertises escalation), timeout, signal, and exit code — each on its own line. The exit marker doubles as the UI card's exit-status pill: the shared `parseExitStatus` from `dsh-shell` consumes it from the output body, so replay shows the pill without duplicating the marker.

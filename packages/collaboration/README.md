@@ -22,8 +22,6 @@ See the [collaboration subsystem](../../docs/subsystems/development-room.md) for
 | Package | Role |
 |---|---|
 | `development-room` | Collaborator roster plus one append-only create/join/leave log and its room projections. |
-| `development-evidence` | Bounded provider registry with explicit available, empty, denied, and failed outcomes. |
-| `development-evidence-reviewed-file` | Strict reviewed JSON knowledge provider for keyless and project-local use. |
 | `development-room-agent-presence` | Projects live Harness Agents into participant leases. |
 | `development-room-storage-domain` | Persists one node's append-only room log and restores it on cold start. |
 | `development-mesh` | Defines the versioned channel registry, peer status, publication, and owner-command operations. |

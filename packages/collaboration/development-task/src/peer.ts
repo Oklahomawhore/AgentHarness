@@ -1,10 +1,14 @@
 /** Deterministic independent-peer evidence, receipt identity, and terminal publications. */
 
 import { createHash } from 'node:crypto'
+import { commandResultValues, freezeCommandResult } from './command.ts'
+import { freezeNativeWorkSource, nativeWorkSourceValues } from './native-work.ts'
+import { claudeCommandResultValues, claudeWorkSourceValues, freezeClaudeCommandResult, freezeClaudeWorkSource } from './claude-work.ts'
 import type {
   DevelopmentTaskArtifactId, DevelopmentTaskContextPublication, DevelopmentTaskObservedSourceId,
   DevelopmentTaskPeerContributionGrant, DevelopmentTaskPeerContributionRequest, DevelopmentTaskPeerOpenApiObservation,
-  DevelopmentTaskContributionEndReason, DevelopmentTaskPeerToolObservation,
+  DevelopmentTaskContributionEndReason, DevelopmentTaskPeerToolObservation, DevelopmentTaskPeerTurnOutcome,
+  DevelopmentTaskPeerStopReport,
 } from './types.ts'
 
 function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
@@ -15,9 +19,13 @@ function digest(value: unknown): string { return createHash('sha256').update(JSO
  * @returns detached immutable authorization.
  */
 export function freezePeerGrant(grant: DevelopmentTaskPeerContributionGrant): DevelopmentTaskPeerContributionGrant {
-  return Object.freeze({ ...grant, source: Object.freeze({ ...grant.source,
-    ...grant.source.kind === 'tool-observations' ? { tools: Object.freeze([...grant.source.tools]) } : {},
-  }) })
+  return Object.freeze({ ...grant, source: grant.source.kind === 'claude-work' ? freezeClaudeWorkSource(grant.source)
+    : grant.source.kind === 'native-work' ? freezeNativeWorkSource(grant.source) : Object.freeze({ ...grant.source,
+      ...grant.source.kind === 'tool-observations' ? { tools: Object.freeze([...grant.source.tools]),
+        ...grant.source.version === 4
+          ? { commands: Object.freeze(grant.source.commands.map(selector => Object.freeze({ ...selector }))) } : {},
+      } : {},
+    }) })
 }
 
 /**
@@ -27,7 +35,7 @@ export function freezePeerGrant(grant: DevelopmentTaskPeerContributionGrant): De
  * @throws If the grant permits tool events rather than an OpenAPI artifact.
  */
 export function peerContributionArtifactId(grant: DevelopmentTaskPeerContributionGrant): DevelopmentTaskArtifactId {
-  if (grant.source.kind === 'tool-observations') throw new Error('tool observations do not identify a replaceable artifact')
+  if (grant.source.kind !== undefined) throw new Error('observation reports do not identify a replaceable artifact')
   return digest([grant.taskId, grant.source.name, grant.source.method, grant.source.path]) as DevelopmentTaskArtifactId
 }
 
@@ -48,17 +56,30 @@ export function peerContributionPublicationId(request: DevelopmentTaskPeerContri
 export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContributionRequest): string {
   const { grant, result } = request
   const values = 'kind' in result
-    ? [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
-      ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
-      result.fields.error ?? null, result.omissions]
+    ? result.kind === 'claude-stop-report' ? [result.kind, result.version, result.text, result.sha256, result.stopHookActive]
+      : result.kind === 'claude-command-observation' ? claudeCommandResultValues(result)
+        : result.kind === 'completed-turn-outcome' ? [result.kind, result.version, result.text, result.sha256]
+          : result.kind === 'command-observation' ? commandResultValues(result) : [result.kind, result.version, result.tool, result.reportedStatus, result.fields.rootIndex, result.fields.path,
+            ...result.tool === 'Write' ? [result.fields.content ?? null] : [result.fields.oldString ?? null, result.fields.newString ?? null, result.fields.replaceAll],
+            result.fields.error ?? null, result.omissions,
+            ...result.version === 2 ? [result.origin.kind, result.origin.planDigest, result.origin.executionDigest] : [],
+            ...result.version === 3 ? [result.completedFile.state, ...result.completedFile.state === 'included'
+              ? [result.completedFile.content, result.completedFile.sha256] : [result.completedFile.reason]] : []]
     : result.state === 'valid'
       ? [result.state, result.sha256, result.facts.operationId ?? null, result.facts.requestBodyRequired,
         result.facts.requiredRequestFields, result.facts.responseStatuses, result.facts.deprecated]
       : result.state === 'invalid' ? [result.state, result.sha256, result.reason] : [result.state, result.reason]
   return digest([grant.version, grant.taskId, grant.grantId, grant.generation, grant.ownerPeerId, grant.contributorPeerId,
     grant.captureId, grant.captureGeneration,
-    ...grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools]
-      : [grant.source.name, grant.source.method, grant.source.path],
+    ...grant.source.kind === 'claude-work' ? claudeWorkSourceValues(grant.source)
+      : grant.source.kind === 'native-work' ? nativeWorkSourceValues(grant.source)
+        : grant.source.kind === 'tool-observations' ? [grant.source.kind, grant.source.name, grant.source.tools,
+          ...grant.source.version === 2 ? [grant.source.version, grant.source.initialization] : [],
+          ...grant.source.version === 3 ? [grant.source.version, grant.source.fileContent] : [],
+          ...grant.source.version === 4 ? [grant.source.version,
+            grant.source.commands.map(selector => [selector.command, selector.rootIndex]), grant.source.fileContent ?? null] : []]
+          : grant.source.kind === 'completed-turn-outcomes' ? [grant.source.kind, grant.source.version, grant.source.name]
+            : [grant.source.name, grant.source.method, grant.source.path],
     grant.expiresAt, grant.maxSamples, grant.maxSampleBytes, request.sourceId, request.sequence, values])
 }
 
@@ -70,8 +91,55 @@ export function peerContributionPayloadDigest(request: DevelopmentTaskPeerContri
  */
 export function peerPublication(request: DevelopmentTaskPeerContributionRequest, at: number): DevelopmentTaskContextPublication {
   const { grant } = request
+  if ('kind' in request.result && request.result.kind === 'claude-stop-report') {
+    if (grant.source.kind !== 'claude-work' || !grant.source.stopReports) throw new Error('Stop report requires explicit Claude authorization')
+    const observation: DevelopmentTaskPeerStopReport = {
+      kind: request.result.kind, version: request.result.version, text: request.result.text, sha256: request.result.sha256,
+      stopHookActive: request.result.stopHookActive,
+      // Stop and turn reports retain the same peer attribution beside their distinct category authorization and report text.
+      /* jscpd:ignore-start */
+      sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
+      /* jscpd:ignore-end */
+      observerPeerId: grant.contributorPeerId, sourceId: request.sourceId,
+      capture: { id: grant.captureId, generation: grant.captureGeneration },
+    }
+    return { id: peerContributionPublicationId(request), publishedAt: at, peerContribution: { version: 1, grant },
+      peerStopReport: observation,
+      text: `Authenticated peer Claude Stop report. This is the complete reported last assistant message, not proof that the turn ended or owner-approved facts.\n${JSON.stringify(observation)}` }
+  }
+  if ('kind' in request.result && request.result.kind === 'completed-turn-outcome') {
+    if (grant.source.kind !== 'completed-turn-outcomes' && !(grant.source.kind === 'native-work' && grant.source.completedTurns)) {
+      throw new Error('turn report requires completed-turn authorization')
+    }
+    const observation: DevelopmentTaskPeerTurnOutcome = {
+      kind: request.result.kind, version: request.result.version, text: request.result.text, sha256: request.result.sha256,
+      // Each report category retains peer attribution after its own authorization check.
+      /* jscpd:ignore-start */
+      sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
+      /* jscpd:ignore-end */
+      observerPeerId: grant.contributorPeerId, sourceId: request.sourceId,
+      capture: { id: grant.captureId, generation: grant.captureGeneration },
+    }
+    return { id: peerContributionPublicationId(request), publishedAt: at, peerContribution: { version: 1, grant },
+      peerTurnOutcome: observation,
+      text: `Authenticated peer completed-turn report. This is Agent-reported text, not owner-approved facts.\n${JSON.stringify(observation)}` }
+  }
   if ('kind' in request.result) {
-    if (grant.source.kind !== 'tool-observations') throw new Error('tool report requires tool observation authorization')
+    const result = request.result
+    const claudeAllowed = grant.source.kind === 'claude-work' && (result.kind === 'claude-command-observation'
+      ? grant.source.commands.some(selector => selector.command === result.fields.command && selector.rootIndex === result.fields.rootIndex)
+      : result.kind === 'tool-observation' && result.version === 1 && grant.source.tools.includes(result.tool))
+    if (!claudeAllowed && (result.kind === 'claude-command-observation'
+      || (grant.source.kind !== 'tool-observations' && grant.source.kind !== 'native-work')
+      || ((grant.source.version === 4 || grant.source.version === 6)
+        ? result.kind === 'command-observation'
+          ? !grant.source.commands.some(selector => selector.command === result.fields.command
+          && selector.rootIndex === result.fields.rootIndex)
+          : result.version !== (grant.source.fileContent === undefined ? 1 : 3)
+        : result.version === 4 || (grant.source.version === 3 ? result.version !== 3
+          : result.version === 3 || (result.version === 2 && grant.source.version !== 2))))) {
+      throw new Error('tool report requires its matching live or recorded observation authorization')
+    }
     const observation: DevelopmentTaskPeerToolObservation = {
       ...request.result, sourceName: grant.source.name, grantId: grant.grantId, sequence: request.sequence,
       observerPeerId: grant.contributorPeerId, sourceId: request.sourceId,
@@ -79,10 +147,14 @@ export function peerPublication(request: DevelopmentTaskPeerContributionRequest,
     }
     return { id: peerContributionPublicationId(request), publishedAt: at, peerContribution: { version: 1, grant },
       peerToolObservation: observation,
-      text: `Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
+      text: request.result.kind === 'claude-command-observation'
+        ? `Authenticated peer Claude Bash Hook report. Original fields do not establish a process exit code or verification of current code. The Task owner has not independently verified this execution.\n${JSON.stringify(observation)}`
+        : request.result.kind === 'command-observation'
+          ? `Authenticated peer foreground command outcome. This records one execution, not verification of current code. The Task owner has not independently verified this execution.\n${JSON.stringify(observation)}`
+          : `${request.result.version === 2 ? 'Previously recorded tool attempt shared with this scope. It was not re-executed or checked against the current file. Only selected completed records are shared; omitted or unfinished work is not included. ' : ''}Authenticated peer tool observation. This is a reported event, not a current file snapshot. The Task owner has not independently verified the tool execution or file contents.\n${JSON.stringify(observation)}`,
     }
   }
-  if (grant.source.kind === 'tool-observations') throw new Error('artifact report requires OpenAPI authorization')
+  if (grant.source.kind !== undefined) throw new Error('artifact report requires OpenAPI authorization')
   const observation: DevelopmentTaskPeerOpenApiObservation = {
     kind: 'openapi-artifact', version: 1, artifactId: peerContributionArtifactId(grant), sourceName: grant.source.name,
     grantId: grant.grantId, sequence: request.sequence, operation: { method: grant.source.method, path: grant.source.path },
@@ -104,10 +176,25 @@ export function peerPublication(request: DevelopmentTaskPeerContributionRequest,
 export function peerPublicationRequest(publication: DevelopmentTaskContextPublication): DevelopmentTaskPeerContributionRequest {
   const observation = publication.peerObservation
   const grant = publication.peerContribution?.grant
+  const stop = publication.peerStopReport
+  if (grant !== undefined && stop !== undefined) return { grant, sourceId: stop.sourceId, sequence: stop.sequence,
+    result: { kind: stop.kind, version: stop.version, text: stop.text, sha256: stop.sha256, stopHookActive: stop.stopHookActive } }
+  const outcome = publication.peerTurnOutcome
+  if (grant !== undefined && outcome !== undefined) {
+    return { grant, sourceId: outcome.sourceId, sequence: outcome.sequence,
+      result: { kind: outcome.kind, version: outcome.version, text: outcome.text, sha256: outcome.sha256 } }
+  }
   const tool = publication.peerToolObservation
   if (grant !== undefined && tool !== undefined) {
+    if (tool.kind === 'claude-command-observation') return { grant, sourceId: tool.sourceId, sequence: tool.sequence,
+      result: freezeClaudeCommandResult(tool) }
+    if (tool.kind === 'command-observation') {
+      return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: freezeCommandResult(tool) }
+    }
     return { grant, sourceId: tool.sourceId, sequence: tool.sequence, result: {
-      kind: tool.kind, version: tool.version, reportedStatus: tool.reportedStatus, omissions: tool.omissions,
+      kind: tool.kind, ...(tool.version === 2 ? { version: 2, origin: tool.origin }
+        : tool.version === 3 ? { version: 3, completedFile: tool.completedFile } : { version: 1 }),
+      reportedStatus: tool.reportedStatus, omissions: tool.omissions,
       ...tool.tool === 'Write' ? { tool: 'Write', fields: tool.fields } : { tool: 'Edit', fields: tool.fields },
     } }
   }

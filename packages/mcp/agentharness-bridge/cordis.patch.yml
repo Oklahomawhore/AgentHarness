@@ -9,6 +9,5 @@
         maxRequestBytes: 1048576
         maxResponseBytes: 4194304
         leaseRetryMs: 2000
-        leaseFallbackTtlMs: 15000
         leaseMinHeartbeatMs: 500
         leaseMaxHeartbeatMs: 30000

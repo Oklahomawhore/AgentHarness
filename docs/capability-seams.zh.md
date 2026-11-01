@@ -218,9 +218,6 @@ flowchart LR
   pkg_dev_workbench["dev-workbench"]
   svc_devWorkbench["ctx.devWorkbench<br/>Profile-configured development task control"]
   pkg_api_remotes["api-remotes"]
-  pkg_development_evidence["development-evidence"]
-  svc_developmentEvidence["ctx.developmentEvidence<br/>Bounded development evidence retrieval"]
-  pkg_development_evidence_reviewed_file["development-evidence-reviewed-file"]
   pkg_mcp["mcp"]
   svc_mcp["ctx.mcp<br/>Host-side MCP call seam"]
   pkg_mcp_client["mcp-client"]
@@ -244,9 +241,12 @@ flowchart LR
   pkg_scope_transport["scope-transport"]
   svc_scopeTransport["ctx.scopeTransport<br/>Authenticated independent peer requests"]
   svc_scopeAccess["ctx.scopeAccess<br/>Independent Task read invitations"]
+  pkg_codex_scope["codex-scope"]
   svc_scopeAgentContext["ctx.scopeAgentContext<br/>Authorized native scope context"]
   svc_scopeAgentContributions["ctx.scopeAgentContributions<br/>Authorized native file-tool contribution"]
   svc_claudeScope["ctx.claudeScope<br/>Authorized external Claude scope context"]
+  svc_codexScope["ctx.codexScope<br/>Authorized external Codex receiving context"]
+  pkg_agentharness_bridge["agentharness-bridge"]
   svc_developmentTaskAssignments["ctx.developmentTaskAssignments<br/>Active Task assignment Remote facade"]
   pkg_development_room_context["development-room-context"]
   svc_developmentRoomContexts["ctx.developmentRoomContexts<br/>Explicit shared-room context"]
@@ -293,6 +293,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_code_runtime --> svc_codeRuntime
   pkg_code_runtime_worker_thread --> svc_codeRuntime
+  pkg_codex_scope --> svc_codexScope
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -304,8 +305,6 @@ flowchart LR
   pkg_credentials_local --> svc_credentials
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
   pkg_dev_workbench --> svc_devWorkbench
-  pkg_development_evidence --> svc_developmentEvidence
-  pkg_development_evidence_reviewed_file --> svc_developmentEvidence
   pkg_development_mesh --> svc_developmentMesh
   pkg_development_mesh_websocket --> svc_developmentMesh
   pkg_development_room --> svc_developmentRooms
@@ -433,6 +432,8 @@ flowchart LR
   svc_claudeScope --> pkg_claude_scope
   svc_clientModules --> pkg_client_hmr
   svc_codeRuntime --> pkg_tools
+  svc_codexScope --> pkg_agentharness_bridge
+  svc_codexScope --> pkg_api_remotes
   svc_compaction --> pkg_compaction_basic
   svc_cordisInspect --> pkg_tool_cordis
   svc_credentials --> pkg_api_settings_controller
@@ -494,6 +495,7 @@ flowchart LR
   svc_sandboxPolicy --> pkg_terminal_bash
   svc_scopeAccess --> pkg_api_remotes
   svc_scopeAccess --> pkg_claude_scope
+  svc_scopeAccess --> pkg_codex_scope
   svc_scopeAccess --> pkg_scope_agent_context
   svc_scopeAccess --> pkg_scope_agent_contribution
   svc_scopeAgentContext --> pkg_api_remotes
@@ -652,7 +654,6 @@ flowchart LR
 | `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse) | [`api-workspace-controller`](../packages/api/workspace-controller) | - | 带判别标记的交互能力：原生后端在 Host 显示设备上打开一个操作系统选择器，浏览后端为应用内浏览器提供列表与创建原语；双端后端通过其浏览器侧填充 ui-workspace 目录流程的 slot（不通过协议发布）。 |
 | `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`client-hmr`](../packages/client/hmr) | - | 普通的 node:http 载体：具名路由注册表、索引转换 tap，以及静态 dist 回退；Web 传输插件注册自己的路由。 |
 | `ctx.devWorkbench` | `core` | `dev-workbench` | - | [`api-remotes`](../packages/api/remotes) | - | Owns configured local process trees, bounded output snapshots, and browser-view metadata; deployment profiles provide repository commands and URLs. |
-| `ctx.developmentEvidence` | `seam` | [`development-evidence`](../packages/collaboration/development-evidence) | [`development-evidence-reviewed-file`](../packages/collaboration/development-evidence-reviewed-file) | - | - | Queries independent enterprise, project, and operational providers while preserving available, empty, denied, and failed outcomes; retrieval alone changes no room or Session state. |
 | `ctx.mcp` | `seam` | [`mcp`](../packages/mcp/mcp) | [`mcp-client`](../packages/mcp/mcp-client) | `agentharness-evidence-gitee-issue` | - | Publishes only connected MCP client generations for trusted Host Consumers; direct calls retain JSON protocol content and bypass model ToolRuntime presentation and approval behavior. |
 | `ctx.mcpClientSetup` | `core` | `mcp-client-setup` | - | [`api-remotes`](../packages/api/remotes) | - | Detects supported local AI clients, performs conflict-safe registration where a stable unattended mechanism exists, and reports each independent setup outcome. |
 | `ctx.developmentRooms` | `core` | [`development-room`](../packages/collaboration/development-room) | - | [`development-room-agent-presence`](../packages/collaboration/development-room-agent-presence), [`development-room-storage-domain`](../packages/collaboration/development-room-storage-domain), [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task`](../packages/collaboration/development-task), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | 拥有 Task 分配使用的协作者名册和仅追加 Room 成员关系；独立插件投影 Agent 在线状态、持久化本地日志，并通过通用 Mesh 复制日志。 |
@@ -661,10 +662,11 @@ flowchart LR
 | `ctx.developmentTaskContextAdmission` | `core` | [`development-task-context`](../packages/collaboration/development-task-context) | - | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | 已安装的 Task 消费者公开其生命周期 signal。受管理的本地调度要求这一准入点处于可用状态；卸载会使其自动执行权限失效。 |
 | `ctx.developmentTaskContextBackend` | `seam` | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context) | [`development-task-context`](../packages/collaboration/development-task-context), [`claude-scope`](../packages/collaboration/claude-scope), [`scope-access`](../packages/collaboration/scope-access), [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | /backend 服务接收已授权的 Task 上下文和接收方路由输入；消费方将有界的提供方输出持久化到原生 Session 或外部接收方投影记录中。 |
 | `ctx.scopeTransport` | `seam` | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-transport`](../packages/collaboration/scope-transport) | [`scope-access`](../packages/collaboration/scope-access) | - | /libp2p 提供方认证持久化的对等节点身份，并通过显式直连地址承载有界的逐请求流。 |
-| `ctx.scopeAccess` | `core` | [`scope-access`](../packages/collaboration/scope-access) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | 所有者授权将一个 Root Task 绑定到一个接收方对等节点。每次读取都先验证授权，再由所有者计算并持久化接收方上下文的确切内容；接收意图不复制 Task 或 Room 日志。 |
+| `ctx.scopeAccess` | `core` | [`scope-access`](../packages/collaboration/scope-access) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`codex-scope`](../packages/collaboration/codex-scope), [`scope-agent-context`](../packages/collaboration/scope-agent-context), [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution), [`api-remotes`](../packages/api/remotes) | - | 所有者授权将一个 Root Task 绑定到一个接收方对等节点。每次读取都先验证授权，再由所有者计算并持久化接收方上下文的确切内容；接收意图不复制 Task 或 Room 日志。 |
 | `ctx.scopeAgentContext` | `core` | [`scope-agent-context`](../packages/collaboration/scope-agent-context) | - | [`api-remotes`](../packages/api/remotes) | - | 本地 Session 绑定授权被动请求刷新或有额度的自动工作。变更通知触发对所有者的当前读取；Session 事件保留已采用上下文的确切内容及执行额度。 |
 | `ctx.scopeAgentContributions` | `core` | [`scope-agent-contribution`](../packages/collaboration/scope-agent-contribution) | - | [`api-remotes`](../packages/api/remotes) | - | 显式选择一个 Session 后，只有来源日志已持久化的真实文件工具报告才获准贡献。本地采集绑定精确的 owner Task 代际；独立来源使用所有者批准与共用的 scope 贡献控制器。两者均保留来源身份与终结撤回。 |
 | `ctx.claudeScope` | `core` | [`claude-scope`](../packages/collaboration/claude-scope) | - | [`claude-scope`](../packages/collaboration/claude-scope), [`api-remotes`](../packages/api/remotes) | - | 浏览器 Remote 装配提供项目 Hook 安装、检查与移除。本地授权允许采集；远端 Task 所有者单独批准来源绑定区间。Hook 在所有者准入前将观察内容加入持久队列，并保留已停止的区间，直到取得持久化的撤回确认。 |
+| `ctx.codexScope` | `core` | [`codex-scope`](../packages/collaboration/codex-scope) | - | [`api-remotes`](../packages/api/remotes), [`agentharness-bridge`](../packages/mcp/agentharness-bridge) | - | 显式外部会话选择复用 ScopeAccess 权限。经过审阅的 MCP Hook 在提示提交和工具完成时准备确切上下文，不采集工作，也不启动 Agent。 |
 | `ctx.developmentTaskAssignments` | `core` | [`development-task`](../packages/collaboration/development-task) | - | [`api-remotes`](../packages/api/remotes) | - | Exposes assignment list, checkout, clear, and context acknowledgement as a namespace distinct from Task projection and mutation methods. |
 | `ctx.developmentRoomContexts` | `core` | [`development-room-context`](../packages/collaboration/development-room-context) | - | [`development-room-context-storage-domain`](../packages/collaboration/development-room-context-storage-domain), [`api-remotes`](../packages/api/remotes) | - | Owns current members’ explicit plain-text publications in a separate append-only log and admits unseen joined-room entries to Agent requests through durable source references; it never copies private Session history automatically. |
 | `ctx.developmentMesh` | `seam` | [`development-mesh`](../packages/collaboration/development-mesh) | [`development-mesh-websocket`](../packages/collaboration/development-mesh-websocket) | [`development-room-mesh`](../packages/collaboration/development-room-mesh), [`development-task-mesh`](../packages/collaboration/development-task-mesh) | - | Registers versioned delta and owner-command channels; the WebSocket provider authenticates discovery, handshakes, and envelopes with a shared credential. |

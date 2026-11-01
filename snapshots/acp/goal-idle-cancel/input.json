@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "op": "initialize"
+    },
+    {
+      "op": "newSession"
+    },
+    {
+      "op": "prompt",
+      "text": "Create a two-round goal, inspect it, and report readiness. Cancellation must prevent the first automatic round."
+    },
+    {
+      "op": "waitForGoalPhase",
+      "phase": "paused"
+    }
+  ]
+}

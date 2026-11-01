@@ -109,6 +109,9 @@
     },
     {
       "path": "../../collaboration/scope-agent-contribution"
+    },
+    {
+      "path": "../../collaboration/codex-scope"
     }
   ]
 }

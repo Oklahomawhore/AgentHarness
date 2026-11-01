@@ -1,0 +1,22 @@
+- id: development-task
+  config:
+    maxTasks: 16
+    maxEventsPerTask: 64
+    maxMergeParents: 4
+    maxContextBlockBytes: 65536
+    maxLineageTasks: 2
+    maxTextBytes: 8192
+    roomRetryIntervalMs: 5000
+- id: scope-agent-contribution
+  config:
+    maxSessions: 1
+    maxLeases: 4096
+    maxObservationBytes: 16384
+    contributionPollIntervalMs: 25
+- id: storage-domain
+  config:
+    backend: json
+    routes:
+      development_context_tasks: sqlite
+      scope_agent_contributions: sqlite
+      scope_agent_local_contributions: sqlite

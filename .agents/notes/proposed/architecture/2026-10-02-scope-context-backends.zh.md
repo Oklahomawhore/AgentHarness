@@ -12,7 +12,7 @@ Status: proposed
 
 ## 提案
 
-本地外部会话部分由 [Claude 适配器决策](../../implemented/architecture/2026-10-02-claude-scope-adapter.zh.md) 拥有；支持的文件声明子集由 [API 采样决策](../../implemented/architecture/2026-10-03-sampled-api-context.zh.md) 拥有。[独立读取](../../implemented/architecture/2026-10-03-independent-scope-read-grants.zh.md)、[独立贡献](../../implemented/architecture/2026-10-03-independent-scope-contributions.zh.md)和[原生 Session 控制](../../implemented/architecture/2026-10-03-native-scope-session-controls.zh.md)分别拥有已实现的授权与投递机制。[接收方证据决策](../../implemented/architecture/2026-10-03-recipient-evidence-activation.zh.md)拥有受支持声明的自动启动比较。通用工作采集、跨机器加入、外部空闲投递与可测量的协作收益仍是产品验收义务。
+本地外部会话部分由 [Claude 适配器决策](../../implemented/architecture/2026-10-02-claude-scope-adapter.zh.md) 拥有；支持的文件声明子集由 [API 采样决策](../../implemented/architecture/2026-10-03-sampled-api-context.zh.md) 拥有。[独立读取](../../implemented/architecture/2026-10-03-independent-scope-read-grants.zh.md)、[独立贡献](../../implemented/architecture/2026-10-03-independent-scope-contributions.zh.md)和[原生 Session 控制](../../implemented/architecture/2026-10-03-native-scope-session-controls.zh.md)分别拥有已实现的授权与投递机制。[接收方证据决策](../../implemented/architecture/2026-10-03-recipient-evidence-activation.zh.md)拥有受支持声明的自动启动比较。[原生命令决策](../../implemented/feature/2026-10-07-native-command-context.zh.md)增加另行获准的前台执行结果自动分享。更广泛的工作采集、跨机器加入、外部空闲投递与可测量的协作收益仍是产品验收义务。
 
 协作 scope 定义共同目标与参与会话的绑定。其内部事件不要求以对话界面呈现。产品自动把相关工作变化转成各参与会话所需的上下文；用户可以在排查行为时检查来源和投递状态，而无需维护信息交换。
 
@@ -72,6 +72,16 @@ Consumer 在 Session 中记录实际选中的输出，并按配置上限检查�
 初始白名单涵盖明确获准的 Edit、Write 和受限制的 Bash 观察。prompt 正文、assistant 自由文本、Read 结果、MCP 结果和子 agent 事件不自动成为来源。UserPromptSubmit 与 PostToolBatch 请求上下文，不发布自身载荷。耐久的外部投影记录保存准确文本与覆盖范围；适配器不伪造原生 Session 来声称采用。
 
 Claude hook 的 stdout 只确认本地输出：其他 hook 或请求取消仍可能阻止内容进入模型。没有宿主采用回执时，每次受支持的注入事件都重送当前准确投影；缓存节省计算，不省略投递。外部 additionalContext 会追加到历史，因此新投影标明其前序投影，撤回内容将其标为失效，而不声称擦除先前上下文。下一请求投递工作后，空闲唤醒还需要单独验证路径。官方集成细节以 [Claude Hooks](https://code.claude.com/docs/en/hooks) 为准。
+
+### Codex 接收实验
+
+优先使用现有连接上的 [MCP tool hooks](https://learn.chatgpt.com/docs/hooks#mcp-tool-hooks)，不另建 command transport。受控 Codex `0.166.0-alpha.5.1` 实验使用 Host 实际安装的定义、MCP profile、Codex Consumer 和两个独立 Host。捕获的七次请求验证了未信任反向用例、一次接收选择、同一轮普通本地工作中的自动修订与撤销、本地停止，以及另一根对话的隔离。`UserPromptSubmit` 和 `PostToolUse` 将准备好的上下文交给 developer 消息，无需模型主动 recall。必须正常信任精确的 hook 定义；未信任反向用例不注册接收会话。端点返回本地脚本响应，不使用模型账户。
+
+该运行时从 MCP 文本内容读取 hook JSON，而不是采用同时提供的不同 `structuredContent` 值。第二次投递后，捕获的请求同时保留先前上下文及其撤回通知。20,000 字符的 MCP 上下文会写入磁盘并缩短；设置 command handler 的 `additionalContextLimit = 0` 在该受测运行时不能解除这一 MCP 限制。Consumer 必须限制完整的内联输出，并明确标记修订与撤回；这些通道证据不能证明历史内容已被抹除、空闲唤醒或模型正确采用。
+
+MCP 正反对照实验在成功的 PostToolUse 投递中保留了小型 JSON 输入／结果值以及工具／轮次身份。`isError:true` 响应作为失败的工具结果到达模型，但受测运行时没有发出 PostToolUse 回调，其 HookEventName 也没有 PostToolUseFailure。这不能证明内置 shell 或 patch 工具失败时的行为。普通工作贡献和每次工具结果后的投递仍未验证。
+
+[Codex Consumer](../../../../packages/collaboration/codex-scope/README.zh.md)保存独立的外部会话关联与确切准备输出，读取权限仍由 ScopeAccess 管理。它先持久化原订阅计划再采用订阅，先持久化停止意图再终止订阅，避免不确定回复导致创建替代订阅。单个耐久写入者与取消机制拒绝已被取代的读取；管理操作使用显式接收版本。UI 选择 Claude 或 Codex，但不共用两者的会话身份。Hook 安装写入定义，不替用户批准。Codex 子 Agent 共用父会话的接收身份；不授予工作采集或自主执行权限。真实模型采用和依赖工作验收仍独立于通道与授权证据。
 
 ### 表示形式
 

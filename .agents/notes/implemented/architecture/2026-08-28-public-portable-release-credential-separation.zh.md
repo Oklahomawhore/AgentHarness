@@ -12,7 +12,7 @@ Status: implemented
 
 静态发行暂存未显式接收集群 secret 时，会生成不含凭据的各平台安装器，以及带有 `credential.mode: prompt` 的格式版本 3 清单。首次 Unix 安装会为 `curl | sh` 保留标准输入，通过 `/dev/tty` 在关闭终端回显后读取 join secret，并用 `cluster join --secret-stdin` 持久化。首次 Windows x64 安装使用 `Read-Host -AsSecureString`，只通过重定向进程输入传入恢复后的值，并清零非托管缓冲区。自动化可以提供 `AGENTHARNESS_MESH_SECRET`；join 子进程接收空的继承值，使提供的 secret 写入 owner-only 凭据文件，而不是只存在于进程环境。已有托管凭据会直接保留，不再提示输入。
 
-静态暂存只有在存在 macOS 或 Linux 产物时才生成 `install.sh`，只有存在 Windows x64 产物时才生成 `install.ps1`。两种安装器都会固定发行 URL、目标文件名与 SHA-256，拒绝不安全的 archive member，激活一个不可变版本，启动 loopback 运行时，并执行有冲突保护的 MCP 设置。PowerShell 路径使用 Windows junction 指向 `current`，并通过用户 PATH 中的命令 shim 暴露管理命令。Windows 原生 CI lane 负责打包、安装、后台进程管理、MCP、重启、状态与停止的执行验收；跨宿主组装可用于公网暂存，但不能替代该原生信号。
+静态暂存只有在存在 macOS 或 Linux 产物时才生成 `install.sh`，只有存在 Windows x64 产物时才生成 `install.ps1`。两种安装器都会固定发行 URL、目标文件名与 SHA-256，拒绝不安全的 archive member，激活一个不可变版本，启动 loopback 运行时，并执行有冲突保护的 MCP 设置。PowerShell 路径使用 Windows junction 指向 `current`，并通过用户 PATH 中的命令 shim 暴露管理命令。Windows 原生 CI lane 负责打包、安装、后台进程管理、MCP、重启、状态与停止的执行验收；跨宿主组装可用于公网暂存，但不能替代该原生信号。 运行时启动会一次解析所选不可变 release，供 manifest、进程入口、工作目录和入口记录共同使用。健康进程的复用除版本和端口外，还要求入口记录精确匹配；入口记录为可变 `current/start.mjs` 时，必须重启以建立固定入口。复用或结束进程之前均检查进程归属。MCP 设置和运行时 MCP 路径继续经过稳定的 `current`，使客户端配置跟随后续安装。
 
 受信任局域网发布器仍与集群绑定。它会显式提供发行负责人当前的 secret，生成 `credential.mode: embedded`，并且只从私有网络中的随机路径提供安装器。公网托管只暴露不含凭据的安装器、清单和带校验值的运行时 archive；运维人员通过单独获批的私密渠道分发 join secret。
 

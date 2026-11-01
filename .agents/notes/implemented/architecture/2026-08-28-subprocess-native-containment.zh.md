@@ -16,13 +16,17 @@ detached POSIX 进程组、Windows direct-parent 遍历与 PTY 后代扫描只�
 
 普通 `SubprocessHandle` 没有 PID 或公共 startup 状态。`.done` 报告 direct target result 或 startup／provider failure，`terminate()` 向所选 range 发送信号，`waitForExit()` 只有在同一 range 被证明为空后才成功。`SubprocessTerminalHandle.pid` 继续属于终端约定，因为 PTY identity 与前台检查需要它。
 
+新分配的 PTY 会在可能失败的进程检查之前建立既有提供方记录与原生退出监听器。JavaScript 引用消失后，原生句柄仍可能保留进程，因此垃圾回收不能替代拆卸。检查失败会等待与已发布会话相同的句柄终止；清理失败时仍保留提供方所有权，供 dispose 与宿主退出处理，而不是释放该分配。
+
+原生退出与 scope 为空是独立事实。scope 不存在且 launch request 尚未消费时，判断依赖直接进程的存活状态，因此在缺少原生退出通知时先等待该 scope 会无法结算。终端清理先在既有 TERM/KILL 等待内确认原生退出，再启动范围观察；退出缺失时保留失败所有权，不启动观察器。原生退出已确认后，仍须等待整个范围为空。
+
 ### Linux scope 与 one-shot bootstrap
 
 同一 runtime 第一次符合条件的 Linux 普通或 PTY 调用会深入检查准确 runner 入口、libc `execve` 与 `fcntl` bindings、可读的 user manager 与保留 literal argv 的 transient-scope 支持。失败的深度 probe 会重试，第一次成功则会缓存。之后每次符合条件的调用仍会在 target 执行前轻量检查 user manager 是否可达。native 路径一旦选定，scope、协议、状态查询或 pre-exec failure 都由本次启动报告，绝不切换到 fallback。
 
-parent 创建一个 0700 目录，其中的完整 0600 `launch-request.json` 保存最终 target cwd 与环境。私有 `DSH_SUBPROCESS_RUNNER` 值负责定位该 request，runner 则从 provider cwd 与 bootstrap-safe 环境启动。`systemd-run --user --scope --quiet --collect --expand-environment=no` 先把自身进程注册到 scope，再由 one-shot bootstrap 删除并校验 request、切换到 target cwd、恢复完整 target 环境、按 target PATH 规则解析裸可执行文件、清除 fd 0 至 fd 2 的 `FD_CLOEXEC`，并使用原始 argv 调用 libc `execve()`。bootstrap 会原地成为 target 并保留继承的 stdio，不作为常驻 supervisor。
+parent 创建一个 0700 目录，其中的完整 0600 `launch-request.json` 保存最终 target cwd 与环境。私有 `DSH_SUBPROCESS_RUNNER` 值负责定位该 request，runner 则从 provider cwd 与 bootstrap-safe 环境启动。`systemd-run --user --scope --quiet --collect --expand-environment=no` 先把自身进程注册到 scope，再由 one-shot bootstrap 删除并校验 request、切换到 target cwd、恢复完整 target 环境、按 target PATH 规则解析裸可执行文件、清除 fd 0 至 fd 2 的 `FD_CLOEXEC` 和 `O_NONBLOCK`，同时保留其他 descriptor flag 与 status flag，并使用原始 argv 调用 libc `execve()`。bootstrap 会原地成为 target 并保留继承的 stdio，不作为常驻 supervisor。
 
-request 被消费或 manager 已观察到 loaded unit 都能建立 scope ownership。在这两项事实出现前，只要 direct launcher 仍在运行，unit absence 就保持未决。如果 launcher 退出时 request 仍未消费，direct result 会以 startup failure reject，而 range observation 会记录 scope 从未存在，并成功结算 empty-range wait。parent 每 50 毫秒检查一次这段未决区间；建立后，状态查询按指数增长间隔退避，最多达到既有的 5 秒 systemctl 上限。每次查询同时读取 `LoadState` 与 `ActiveState`：loaded `inactive` 或 `failed`，以及已经建立的 unit 变为 `not-found`/`inactive` 或被 collect 卸载，都能证明 range 为空。`active`、`activating`、`reloading` 与 `deactivating` 仍是非终态。未知或 malformed 组合以及不可读的 manager 结果会使 `waitForExit()` reject，而不是宣称完全停稳。`terminate()` 会唤醒正在休眠的 observer 立即复查，结算时会取消未胜出的退避 sleep。严格的同目录 `startup-error.json` 只承载 request／bootstrap 或 target pre-exec failure，parent 会在可观察生命周期完成时移除本次 spawn 的私有路径。
+request 被消费或 manager 已观察到 loaded unit 都能建立 scope ownership。在这两项事实出现前，只要 direct launcher 仍在运行，unit absence 就保持未决。如果 launcher 退出时 request 仍未消费，且 owner 未请求终止，direct result 会以 startup failure reject。owner 会在发送信号前记录对仍存活且尚未消费 request 的启动所请求的终止，同步宿主退出清理也使用这一记录；普通进程与 PTY 结果随后保留实际观察到的退出码与信号。child error、显式或损坏的 startup-error 记录仍具有权威性。range observation 独立证明所选 scope 是否为空。在 request 消费前开始的 unit absence 查询不能证明新建 scope 为空；现有观察循环必须读取当前状态后，才能禁用信号或升级终止。parent 每 50 毫秒检查一次这段未决区间；建立后，状态查询按指数增长间隔退避，最多达到既有的 5 秒 systemctl 上限。每次查询读取 `LoadState`、`ActiveState` 与 `TasksCurrent`。loaded `inactive` 或 `failed`，以及已经建立的 unit 变为 `not-found`/`inactive` 或被 collect 卸载，都能证明 range 为空。即使 manager 仍报告 `active`、`activating`、`reloading` 或 `deactivating`，新的零任务计数也能证明为空；在建立前发起的查询必须重新执行。loaded 回复必须有任务计数，并明确解析无符号 64 位计数与 manager 的 `[not set]` 标记。不可用的计数不能解释为零。未知或 malformed 组合以及不可读的 manager 结果会使 `waitForExit()` reject，而不是宣称完全停稳。`terminate()` 会唤醒正在休眠的 observer 立即复查，结算时会取消未胜出的退避 sleep。严格的同目录 `startup-error.json` 只承载 request／bootstrap 或 target pre-exec failure，parent 会在可观察生命周期完成时移除本次 spawn 的私有路径。
 
 普通 target result 仍来自同一个 child process。PTY 路径复用同一 request 与 bootstrap，但不增加常驻 runner，因此 `node-pty` PID、进程组、session leader、控制终端、前台 `inputWaiting`、`/dev/tty`、readiness 与 direct terminal outcome 保留既有含义，同时 scope membership 覆盖 `setsid` 与 reparent 后代。
 
@@ -54,7 +58,7 @@ selector 是 per-spawn locator 或 sentinel，不是凭据或持久格式。Linu
 
 ## Verification
 
-- provider 与 Linux 协议测试套件固定同步 NUL 拒绝发生在启动副作用之前、严格 request／error 解码、target cwd 与完整环境恢复、私有变量碰撞、保留 argv 且对 symlink 敏感的 PATH 遍历、为继承 stdio 清除 close-on-exec、pre-exec error ownership、失败深度 probe 重试与成功深度 probe 缓存及逐调用 manager 检查、三种 scope 建立状态（包括 launcher 退出且 request 未消费）、`LoadState`／`ActiveState` 解析、`reloading`、带未胜出 delay 取消的 terminate wake-up、建立后有上限的退避，以及 PTY managed-owner 恰好一次 cleanup。
+- provider 与 Linux 协议测试套件固定同步 NUL 拒绝发生在启动副作用之前、严格 request／error 解码、target cwd 与完整环境恢复、私有变量碰撞、保留 argv 且对 symlink 敏感的 PATH 遍历、为继承 stdio 清除 close-on-exec 和 nonblocking、pre-exec error ownership、失败深度 probe 重试与成功深度 probe 缓存及逐调用 manager 检查、三种 scope 建立状态（包括 launcher 退出且 request 未消费）、`LoadState`／`ActiveState`／`TasksCurrent` 解析、仍为 active 的空 scope、建立前零计数的重新查询、`reloading`、带未胜出 delay 取消的 terminate wake-up、建立后有上限的退避，以及 PTY managed-owner 恰好一次 cleanup。
 - Windows 协议与 Win32 测试套件固定恰好两个 result 分支、只含数字的 target exit、使用普通 error 的 start cancellation 与 parent 原样保留的本地 reason、缩减到 `name`／`message`／`code`／`syscall`／`path` 的 error record、固定的 `2`／`3`／`267` 到 `ENOENT`、`740` 到 `EACCES`、`5` 到 `EPERM`、`193` 到 `EFTYPE` 及其余 code 到 `UNKNOWN` 的映射、runner spawn 后才发送 start、spawn 前 failure 的 empty-range settlement、按序数显式排序的 target 环境块及 `=C:` 保留和双 NUL 结尾、`uv_get_osfhandle()` carrier 映射与 unsigned invalid sentinel 拒绝、null-device ignored-stdin carrier 与非 ignore stdin pipe、result-send 与 IPC-disconnect failure、stdio settlement 前的 direct-result 锁存、active-process 完全停稳，以及唯一 handle cleanup。
 - 真实 Linux user-systemd 测试会分别通过生产入口运行一条普通命令与一条 `node-pty` `setsid`／reparent 场景。它们证明 scope signalling 与 collection、裸可执行文件查找、逃逸后代终止、range settlement，以及不变的 PTY PID、session、控制终端、前台输入、`/dev/tty`、readiness 与 startup-failure 语义。
 - native Windows 测试证明 suspended creation、resume 前 Job assignment、继承 stdio、默认后代继承、direct result、termination、active-process zero、异常／disconnected runner cleanup、kill-on-close 与同步 host-exit termination。source、built 与 Python packaged 冒烟测试进入同一 runner core。
@@ -73,6 +77,8 @@ selector 是 per-spawn locator 或 sentinel，不是凭据或持久格式。Linu
 **在公共 CLI 中解析隐藏 runner 参数，或发布另一个 Node 可执行程序。**不予采用，因为前者扩张公共应用语法，后者扩张分发面。packaging-only bootstrap 保留一个物理可执行程序与两个私有逻辑入口。
 
 **缓存完整的 Linux native 选择结果且不再检查可达性。**不予采用，因为 user-manager availability 可以在两次 spawn 之间变化。runtime 只缓存第一次成功的 bootstrap／scope 深度 probe，并在之后每次符合条件的调用中轻量复查 manager reachability。
+
+**从调用方 signal 已 abort 推断取消，或丢弃未消费 request 的失败。**不予采用，因为两者都可能隐藏无关的启动失败。只有所选 owner 记录其自身在 request 消费前请求的终止；显式 startup error 保留优先级。
 
 **在 native launch 失败后重放命令。**不予采用，因为含糊 failure 可能发生在 target 已经执行之后，重放因此可能把命令执行两次。
 

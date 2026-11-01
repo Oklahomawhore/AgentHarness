@@ -1,0 +1,10 @@
+version: 1
+scenario: pty-startup-cleanup-failure
+profile: headless
+composition: pty-startup-cleanup-failure
+recording: authored
+header:
+  class: pty-sandbox-backend
+  pin: true
+  systemPromptSource: pty-tools-sandbox-backend
+  toolSchemasSource: pty-tools-sandbox-backend

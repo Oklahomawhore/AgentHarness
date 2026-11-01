@@ -41,7 +41,7 @@ class AgentHarnessMcpServer extends McpServer {
       { name: 'agentharness', version: '0.1.0' },
       {
         capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-        instructions: 'A Task stores shared context and immutable parent revisions, not a workflow. Call agentharness_task_connect only in the Codex or editor session that should join. Keep the returned bindingId in that conversation and never reuse it in another session. These tools return stored Task context, not a live summary computed for the recipient. contextDelta is the full stored view, not an incremental delta. Reads do not revalidate current peer contribution grants or automatically filter expired, withdrawn, revoked, or superseded observations from stored history. No stage, evidence, approval, or completion actions exist.',
+        instructions: 'A Task stores shared context and immutable parent revisions, not a workflow. Call agentharness_task_connect only in the Codex or editor session that should join. Keep the returned bindingId in that conversation and never reuse it in another session. The task tools return stored Task context, not a live summary computed for the recipient. The dedicated agentharness_codex_hook tool is invoked by reviewed Codex lifecycle hooks and returns freshly authorized receiving context. contextDelta is the full stored view, not an incremental delta. Reads do not revalidate current peer contribution grants or automatically filter expired, withdrawn, revoked, or superseded observations from stored history. No stage, evidence, approval, or completion actions exist.',
       },
     )
   }
@@ -60,6 +60,20 @@ class AgentHarnessMcpServer extends McpServer {
 export function createAgentHarnessBridge(options: AgentHarnessBridgeOptions): McpServer {
   const rpc = new AgentHarnessRpcClient(options)
   const server = new AgentHarnessMcpServer(rpc)
+
+  server.registerTool('agentharness_codex_hook', {
+    title: 'Prepare Codex receiving context',
+    description: 'Called by reviewed Codex hooks at UserPromptSubmit and PostToolUse. Observe this logical session and return only its explicitly selected, freshly authorized scope context. This neither publishes work nor starts another Agent.',
+    inputSchema: {
+      sessionId: z.string().min(1).max(256), cwd: z.string().min(1),
+      event: z.enum(['UserPromptSubmit', 'PostToolUse']),
+    },
+  }, async (request, { signal }) => {
+    const prepared = await rpc.call<{ readonly output: object }>('codexScope/hook', {
+      request: { ...request, clientId: options.participantId },
+    }, signal)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(prepared.output) }] }
+  })
 
   const announce = async (signal: AbortSignal): Promise<void> => {
     await rpc.call('developmentRooms/announce', {

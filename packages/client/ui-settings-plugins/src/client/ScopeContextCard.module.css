@@ -1,0 +1,19 @@
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+
+.content > div {
+  min-width: 0;
+}
+
+.content select,
+.content input {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}

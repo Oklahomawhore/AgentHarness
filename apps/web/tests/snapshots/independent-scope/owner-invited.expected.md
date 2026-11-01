@@ -6,11 +6,16 @@
   - paragraph: 将这段公开身份交给邀请人。它不包含密钥或会话内容。
   - text: 接收设备身份
   - textbox "接收设备身份": {{recipientPeerId}}
-  - text: 对方可达的本机地址
-  - textbox "对方可达的本机地址": {{ownerAddress}}
-  - paragraph: 当前支持直接连接。默认地址仅供本机使用；跨设备需先配置可达的监听地址。
+  - text: 邀请使用的本机地址
+  - combobox "邀请使用的本机地址":
+    - option "选择邀请地址"
+    - option "仅本机 · {{ownerEndpoint}}" [selected]
+  - paragraph: 仅列出 Host 当前公布的地址。请选择对方能直连的地址；列在这里不代表已经验证跨设备可达。
+  - status: 此地址只能用于同一设备上的另一个 Host。
+  - paragraph: 跨设备连接：在本机页面的“设置 → 插件 → 协作网络”中配置，保存后重启 Host，再刷新这里的地址。
   - text: 此会话的职责
   - textbox "此会话的职责": frontend
+  - paragraph: 职责用于整理相关上下文，不限制读取权限。只读邀请授予该 Task 的全部共享上下文；私有内容请放在另一个未共享的 Task。
   - text: 有效小时数
   - spinbutton "有效小时数": "24"
   - button "生成只读邀请"
@@ -25,4 +30,7 @@
   - combobox "选择一个会话":
     - option "请选择一个会话" [selected]
   - paragraph: 只接收上下文，不授权采集工具或读取项目文件。连接后在下一次支持的 Hook 处自动更新；空闲会话不会被唤醒。
+  - paragraph: Codex 根对话及其后代共享同一个接收范围。
+  - paragraph: 尚未观测到 Codex 会话。配置 Hook 后，在 Codex 中继续对话，再刷新会话。
+  - button "刷新 Codex 会话"
   - button "连接所选会话" [disabled]

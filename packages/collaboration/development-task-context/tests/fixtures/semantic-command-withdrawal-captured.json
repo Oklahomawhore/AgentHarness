@@ -1,0 +1,535 @@
+{
+  "sourceArtifact": "iteration-67-evidence/command-continuity-repaired-artifact.json",
+  "sourceSha256": "3e841fd4245cab23cc68becd4b01f2b30da03308eade40ac92911178268e5fb8",
+  "captured": {
+    "coverage": {
+      "omittedSources": [
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-c5ed6c58db4ebac5ef96893e8022fcf6e570ff1609694d0641dce7eabc5a2992",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-bea69cbd4df729ca9ea204d8481be67ad9f7c95743b3a2871dfe79120fd16e55",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-34d77784d88dac32c9604e73b811a6d33c11c913d8e21dc645ace10c089b2219",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-5041b0a3243ee0b46dff4ffa3570f291076d63b27a6dbcce9e1f32f9e877f648",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-b0f0edb456a854623b650eea0c6c5bfeaf14bf916f4050b486573ae3e70965d5",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-34e1f7c240f709012f1a20ee2c544a42abbc00244fd7e738ff503d2726533a16",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-decfe9127cec45611b0a05b0c141bd08f43ff4ad026d16a164f1ce07a4de7db9",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-c6bf009b40f8958f82acf3848822cd106ee7437fc014bca2715ba1c231026860",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-56011e365755b50da560e1f7964b42536aae7bd06c9862351da433ca4129da71",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-aec896e53f9c89274f969ef55f19cc36fa317819cd5e7174b865e95f84502c3c",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-8eeb01e6e08fce0161e6a588a2e284c526a06cda7c9d8f533f9d78f78c8b0b08",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-9e49b7d72d4296d239379a3a45c858edacb59bb6ca21283cbb4d102a283fb4d6",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-b90d0030a76aa7f10817b425360e92c12aa385041e1cdc6be89142a909b397cd",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-6d6ea0ba00721cd93287619e9ac4f2791c98fec2486607a427ddcf56324c2a35",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-3fc36e506a5fb02d185a54a993e323c41fa575bd1744096eaa993fe5d78c4a89",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-79c756323b57b2109750de8aa8b37f90d2ac9a49c33c625225ec1af3ca806d81",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-e30fc671dd62a841e6d9002dc71d2c9f1522f6a158f4b6e794116f70d4582bfb",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-ff8df678ecadfa33c81e6798fedda68da846186b51d1f6cfce8d6d135aba71dd",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-c585df6cf07223298a66dd68b46547f5a9dfb61cd9b95125ed347fa86b212545",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-23f19b480c0f0c867304c3cec2ec8f095020886412494fc01a405be21bac4f1f",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-d0e8dd5c880d9e9e8d94e934f7c48c75ba284f36e2c11fa03b7ee89334610aba",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-0249741e14710388da0b83eed4c223c0f0e783763bd0bbe82d26635ca70c0620",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-1b0c9335010b29a27381e36ee833c714c46e920e96ffb59e24ac59025d5c1903",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-7d922562e228ceffd5a2057f8c46ae0702914ebebfb830697626eb81e5eff9f5",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-74de46b8ba38fb5b4cd4badc6549f2e5293252d5c04f82896a561925d9aa432c",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-ca7263754ef350a48bf7d58f00fe6e8824c9e1e80ee88a2d95adb4695991986c",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-a3134d184075b90b4b2adf1aedeb47bfd84bd72dc1b0095c389da72f7046ff7b",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-a2742a044da57f4cdea078ed692d826364d817472312ca4aa390744305f2675d",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-0537249bd1579b797221a5aad6c3fbc1d729aa9c886bc400e42f19c3ae2eb305",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-7738f51ab1f4dbed5ecb66fc8ecea2b2dacf21bfdf5b34c03fc5ac0c6e55c204",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-07439da4f21d325d470ffd156bd3da7cce3ad3fb38fca60e4f8e14bfd7e82bfb",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-f71b8c45ca142ac64409f45903c40313a1b73af3935213f91e1295fe5bd077db",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-e15622a70c9dcc4ba3f9ba2c697d2e8c7aaecce538ba73c287fc7e6ec9e4d68f",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-488d8cd6f079b81fe366efcee17d50650f5c7f40c0f946e371fa4b7caac362a7",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-cff68eba529b6b64b8b2f60815b0cd4766b950c6bc8a26b07f3612bd2251aa2a",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-5dc2a10cb6c7b9afa352bae985cd781a039caabe76a0b26a87fb868f59aed7bc",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-335eeb709e1b490c4e815766978665c24a3ad961d1a301739fb1c8d3c30df890",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-7affca4232b1aefd15848cb8434b758d22d74997ef78aa43af06477e7ef3cf73",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-f1f0cfeb36df12a2be9031c853ca12073cc383f0a65069de997bd0385c77cde4",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-67acffd5d6ad42262faf173a5f34b8ab2187bcde452c884cafb504f7d2b880ff",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-a981aabe6e7780683268585315061d77e6f502775951aff31ffec3fb26f08839",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-a2a15c8fa357833f0fa018bc169c6a556539aa0977810db9716cc2a07d395ef7",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-8a61e5b68dc86b9b558f7d160797377ac3df3e473f3366b0b53e778b87c29784",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-824d5134d46877c15b19f3c00195db96292eaf3527482b209f375c581d5f01bc",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-3df58aebc3a455d644c3e52c4b0a29bb172acd9dcd3f73a0cc8e7c28536a60d0",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-b3a0064c37766da9d8965d2e00a33eab19e77e82b7a211c4aad24ce8fb98498b",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-4ecbfda11ffbf4b7869b20cdf8df89acb6ee7c06c79d6c96c8e605d9e1170b7a",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-da610d5c4c2afb49a4e189c316a94994d6c9b4f6246b065db94d84f7d40c0e3d",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        },
+        {
+          "reason": "withdrawn",
+          "source": {
+            "kind": "publication",
+            "publicationId": "context-peer-observation-1f535e6622987a16fb54ade74e0f1f04a7377e0794a1c24a34f4017e16a1f72b",
+            "revision": 52,
+            "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+          }
+        }
+      ],
+      "selectedSources": [
+        {
+          "kind": "task",
+          "revision": 52,
+          "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+        },
+        {
+          "kind": "publication",
+          "publicationId": "context-peer-ended-cefffad00b6c928451ece421d01b6776fb5149ac4a955c00c91dcf58e026d3f9",
+          "revision": 52,
+          "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+        }
+      ]
+    },
+    "inherited": [],
+    "mandatory": [
+      {
+        "basis": "current-task-as-reported",
+        "kind": "withdrawal",
+        "publication": {
+          "id": "context-peer-ended-cefffad00b6c928451ece421d01b6776fb5149ac4a955c00c91dcf58e026d3f9",
+          "peerContribution": {
+            "ended": "left",
+            "grant": {
+              "captureGeneration": "1815d2f6-f468-4d34-a16a-27c5ea123eab",
+              "captureId": "de29f60c-d95c-4bfa-9929-2388d635eb8e",
+              "contributorPeerId": "source-b33f31bc-139b-4b08-9483-c7d55b719767",
+              "expiresAt": 1791915269784,
+              "generation": "fdb4443dca38d91b209b87c1e72ef073219c6108095f985958444d81761fc83c",
+              "grantId": "5504eb2bec427d5625995fb5993d8fed11942670c5355a12225f78bb549cc0dd",
+              "maxSampleBytes": 8192,
+              "maxSamples": 49,
+              "ownerPeerId": "owner-efc4d9c4-779d-4d60-8105-de1a91b38ea0",
+              "source": {
+                "commands": [
+                  {
+                    "command": "node verify.cjs",
+                    "rootIndex": 0
+                  }
+                ],
+                "kind": "tool-observations",
+                "name": "session-work",
+                "tools": [
+                  "Write"
+                ],
+                "version": 4
+              },
+              "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249",
+              "version": 1
+            },
+            "version": 1
+          },
+          "publishedAt": 1791915152003,
+          "text": "Peer contribution 5504eb2bec427d5625995fb5993d8fed11942670c5355a12225f78bb549cc0dd ended (left). Earlier reports from this grant do not establish current facts."
+        },
+        "source": {
+          "kind": "publication",
+          "publicationId": "context-peer-ended-cefffad00b6c928451ece421d01b6776fb5149ac4a955c00c91dcf58e026d3f9",
+          "revision": 52,
+          "taskId": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249"
+        }
+      }
+    ],
+    "recipient": {
+      "participantId": "scope-recipient-b10fa2d0-861c-42dc-a0ba-e17648069ff0",
+      "sessionLabel": "Maintain the independently owned payment implementation and verification."
+    },
+    "sources": [],
+    "task": {
+      "id": "task-b7c3f512-fc71-48e2-aff1-ee2f23e4c249",
+      "objective": "Coordinate ordinary code and documentation work.",
+      "origin": {
+        "kind": "root"
+      },
+      "revision": 52,
+      "scope": "Authorized reports, not verified current file snapshots."
+    }
+  },
+  "reply": {
+    "version": 1,
+    "decisions": [],
+    "updates": []
+  },
+  "contextBytes": 7080,
+  "v6Bytes": 12475,
+  "v6Sha256": "7f0852a016c667f0731b257290200c3c600a0863637e12bf0cba43be0c0d2831"
+}

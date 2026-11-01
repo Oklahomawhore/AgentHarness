@@ -14,7 +14,7 @@ Agent 的 Cordis Context 拥有注册及其清理。Agent 身份则为某项操�
 
 ## 决策
 
-运行时接口在拥有身份的位置携带 Agent 身份。`AgentSetup` 接收 `(agentCtx, agent)`；创建与恢复 Agent 的 options 通过 `parentAgent` 标识运行时子级；作用域事件在 payload 中携带 Agent；Remote 转发校验 `request.agent` 就是 carrier key；Host Typert Context 解析则把协议身份映射到存活 Agent Context，不执行反向扫描。`agent.ctx` 继续拥有注册和生命周期，不暴露反向 Agent 属性。
+运行时接口在拥有身份的位置携带 Agent 身份。`AgentSetup` 接收 `(agentCtx, agent)`；创建与恢复 Agent 的 options 通过 `parentAgent` 标识运行时子级；作用域事件在 payload 中携带 Agent；Remote 转发校验 `request.agent` 就是 carrier key；Host Typert Context 解析则把协议身份映射到存活 Agent Context，不执行反向扫描。`agent.ctx` 继续拥有注册和生命周期，不暴露反向 Agent 属性。 Task 准入、其回执、自动标题处理及请求重建校验按所注入注册表或存储中的精确存活对象选择归属。不同服务隔离范围可以复用 ID，因此只有 ID 相同不能确定操作归属。
 
 感知作用域的注册表继续仅使用不透明作用域键判断注册成员关系。tool-subagent 不会分类该键，也不会从 Context 解析 Agent。直接 `AgentSetup` 显式传入尚未发布的 Session，并在发布前通过所给 Context 完成安装。对于由设置控制的常驻 preset，事件 payload 提供 Agent，其 Session 提供策略目标，其 Context 拥有注册项。
 

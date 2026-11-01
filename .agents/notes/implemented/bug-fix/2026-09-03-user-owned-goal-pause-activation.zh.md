@@ -12,6 +12,8 @@ Status: implemented
 
 `ctx.goals.get` 现在是一个只读 Remote 方法。`GoalService` 在进程本地 activation 变化时发出 `goal/activation-changed`，载荷为 `{ sessionId, goal: { id, revision, activation } }`，clear 后则不携带 goal。API Remote 允许列表把这份 JSON 载荷转发给 Web 客户端。
 
+Goal-round 驱动器在整个 Agent 空闲时处理取消。若取消前后 Agent 都处于 idle，`agent/cancel-requested` 会直接触发处理，无需等待状态切换。已预留的当前 goal round 会被暂停；没有预留时，取消只会停用续行，包括持久性检查点仍在等待的情况。确切 goal id 与修订栅栏防止取消暂停一个更新的、已恢复的 goal。
+
 GoalBar 消费由 slot inject 创建的 registrant-private activation hook source。该 source 仅在框架 hook 观察期间启动，读取 `ctx.remote.goals.get`、订阅 `goal/activation-changed`，并在 running 状态或连接 reset 时刷新。activation 边界推进 epoch，使在途读取失效，因此较旧的 HTTP 响应不能覆盖更新的边界；running 刷新会保留最后一次 activation，直到读取完成。Active goal 仅在 armed 时渲染 `Ongoing Goal`；active-but-disarmed goal 渲染 `Inactive Goal`，暴露 resume 而不是 pause；持久 paused goal 继续暴露 resume。暂停权威仍属于 goal 领域和人类 `/goal resume` 命令，它们仍可恢复每个可恢复 phase。
 
 `update_goal resume` 会在调用 goal 服务前用 `GOAL_TOOL_RESUME_PAUSED` 拒绝持久 paused goal。它仍会在会话恢复或 fork 后恢复 active-but-disarmed goal，并在人类要求继续时恢复 blocked goal。模型提示词和工具描述说明持久 paused 的恢复由用户独占。

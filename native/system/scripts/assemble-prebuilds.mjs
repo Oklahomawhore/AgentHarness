@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 /**
- * Assemble downloaded release artifacts into the platform packages and
- * verify the result. The Release workflow's build legs upload one
- * `prebuild-<package>` artifact per platform package (its `bin/` payload);
- * this script copies each into `packages/<package>/bin/` and then checks
- * every declared binary for presence and native architecture.
+ * Assemble `prebuild-<package>` directories containing each platform's `bin/`
+ * payload into `packages/<package>/bin/`, then verify every declared binary's
+ * presence and native architecture.
  *
  * Usage: `node scripts/assemble-prebuilds.mjs <artifact-root>`.
  */

@@ -1,8 +1,8 @@
 /** Authentication, complete-message budgets, and cancellation of the actual RPC consumer. */
 
-import { writeFile } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentHarnessRpcClient } from '../src/rpc.ts'
+import { AgentHarnessRpcClient, bridgeOrigin } from '../src/rpc.ts'
 import { connectionOptions } from './connection.ts'
 
 afterEach(() => { vi.useRealTimers() })
@@ -80,7 +80,7 @@ describe.skipIf(process.platform === 'win32')('bridge authenticated RPC', () => 
       entered.resolve(undefined)
       return await blocked(init?.signal)
     } })
-    const request = expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'request-timeout' })
+    const request = expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'authentication-timeout' })
     await entered.promise
     await vi.advanceTimersByTimeAsync(options.requestTimeoutMs)
     await request
@@ -88,20 +88,35 @@ describe.skipIf(process.platform === 'win32')('bridge authenticated RPC', () => 
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('cancels a stalled response body within the same deadline', async () => {
+  it.each([false, true])('cancels a stalled response body within the same deadline; cancel failure=%s', async (cancelFails) => {
     vi.useFakeTimers()
     const entered = Promise.withResolvers<undefined>()
-    const cancel = vi.fn()
+    const cancel = vi.fn(async () => { if (cancelFails) throw new Error('private cancellation failure') })
     const options = await connectionOptions(async () => {
       entered.resolve(undefined)
       return new Response(new ReadableStream<Uint8Array>({ cancel }))
+    })
+    const rpc = new AgentHarnessRpcClient(options)
+    const request = expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'response-timeout' })
+    await entered.promise
+    await vi.advanceTimersByTimeAsync(options.requestTimeoutMs)
+    await request
+    expect(cancel).toHaveBeenCalledOnce()
+    await rpc.dispose()
+  })
+
+  it('reports an API wait separately from authentication and response reading', async () => {
+    vi.useFakeTimers()
+    const entered = Promise.withResolvers<undefined>()
+    const options = await connectionOptions(async (_input, init) => {
+      entered.resolve(undefined)
+      return await blocked(init?.signal)
     })
     const rpc = new AgentHarnessRpcClient(options)
     const request = expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'request-timeout' })
     await entered.promise
     await vi.advanceTimersByTimeAsync(options.requestTimeoutMs)
     await request
-    expect(cancel).toHaveBeenCalledOnce()
     await rpc.dispose()
   })
 
@@ -127,5 +142,54 @@ describe.skipIf(process.platform === 'win32')('bridge authenticated RPC', () => 
     await expect(new AgentHarnessRpcClient(options).call('tasks/get', {}, control.signal))
       .rejects.toMatchObject({ message: 'agentharness bridge: cancelled' })
     expect(api).not.toHaveBeenCalled()
+  })
+
+  it.each(['not a URL', 'ftp://127.0.0.1', 'http://user:secret@localhost', 'http://localhost/?token=secret',
+    'http://localhost/#secret', 'http://example.com', 'http://127.0.0.1/nested'])(
+    'refuses the explicit origin pin %s without exposing it', (origin) => {
+      expect(() => bridgeOrigin(origin)).toThrow(/^agentharness bridge: (?:invalid-origin|non-loopback-origin)$/u)
+    },
+  )
+
+  it('refuses malformed endpoints before touching the Host and reports a missing descriptor safely', async () => {
+    const api = vi.fn<typeof fetch>()
+    const options = await connectionOptions(api)
+    const rpc = new AgentHarnessRpcClient(options)
+    await expect(rpc.call('not/an/endpoint', {})).rejects.toMatchObject({ code: 'invalid-endpoint' })
+    await rm(options.connectionPath)
+    await expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'descriptor-unavailable' })
+    expect(api).not.toHaveBeenCalled()
+    await rpc.dispose()
+  })
+
+  it.each(['{', 'null', '[]', '{}', '{"type":"other"}',
+    '{"type":"server-response","rpcId":"wrong","result":{"ok":true}}'])(
+    'refuses an invalid RPC response %s', async (body) => {
+      const options = await connectionOptions(async () => new Response(body))
+      const rpc = new AgentHarnessRpcClient(options)
+      await expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code: 'invalid-response' })
+      await rpc.dispose()
+    },
+  )
+
+  it.each([
+    ['missing body', () => new Response(null), 'invalid-response'],
+    ['invalid UTF-8', () => new Response(new Uint8Array([0xff])), 'invalid-response'],
+    ['HTTP failure', () => new Response('untrusted private text', { status: 503 }), 'http-503'],
+  ] as const)('handles %s with a safe failure code', async (_name, response, code) => {
+    const options = await connectionOptions(async () => response())
+    const rpc = new AgentHarnessRpcClient(options)
+    await expect(rpc.call('tasks/get', {})).rejects.toMatchObject({ code, message: `agentharness bridge: ${code}` })
+    await rpc.dispose()
+  })
+
+  it('uses the platform fetch when the caller supplies no override', async () => {
+    const { fetch: fetcher, ...options } = await connectionOptions(async (_input, init) => new Response(envelope(init, 'platform fetch')))
+    vi.stubGlobal('fetch', fetcher)
+    const rpc = new AgentHarnessRpcClient(options)
+    try { expect(await rpc.call('tasks/get', {})).toBe('platform fetch') } finally {
+      await rpc.dispose()
+      vi.unstubAllGlobals()
+    }
   })
 })

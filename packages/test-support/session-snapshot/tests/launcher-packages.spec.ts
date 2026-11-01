@@ -3,11 +3,29 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { materializeProfilePatch } from '../src/launcher.ts'
 
+const authoredLookups = vi.hoisted(() => new Map<string, string[]>())
+vi.mock('node:module', async (importOriginal) => {
+  const actual = await importOriginal<Pick<typeof import('node:module'), 'createRequire'>>()
+  return { ...actual, createRequire: (filename: string | URL) => {
+    const require = actual.createRequire(filename)
+    const lookup = authoredLookups.get(String(filename))
+    if (lookup !== undefined) {
+      const paths = require.resolve.paths.bind(require.resolve)
+      // Only the authored replay lookup excludes inherited Node paths.
+      require.resolve.paths = specifier => specifier === '@deepseek-ai/dsh-llm-replay' ? lookup : paths(specifier)
+    }
+    return require
+  } }
+})
+
 const roots: string[] = []
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => {
+  authoredLookups.clear()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 function fixture(packageName: string): { root: string; source: string; link: string } {
   const root = mkdtempSync(join(tmpdir(), 'snapshot-package-'))
@@ -21,6 +39,7 @@ describe('snapshot profile package resolution', () => {
   it('links its declared replay provider when the authored patch has no package alias', () => {
     const packageName = '@deepseek-ai/dsh-llm-replay'
     const { root, source, link } = fixture(packageName)
+    authoredLookups.set(pathToFileURL(source).href, [join(root, 'node_modules')])
     const authoredSearch = createRequire(pathToFileURL(source)).resolve.paths(packageName) ?? []
     expect(authoredSearch.some(path => existsSync(join(path, packageName, 'package.json')))).toBe(false)
 

@@ -8,7 +8,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`@deepseek-ai/dsh-development-task-mesh` registers `development-task/v1` on the generic Mesh. It sends content blocks before dependent Task creation events, then Task and session-binding deltas by per-origin heads. The receive queue resolves out-of-order parent, block, revision, and binding dependencies before persistence.
+`@deepseek-ai/dsh-development-task-mesh` registers `development-task/v1` on the generic Mesh. It sends content blocks before dependent Task creation events, then Task and session-binding deltas by per-origin heads. The receive queue resolves out-of-order parent, block, revision, and binding dependencies before persistence. Bindings wait for target Tasks; acknowledgements wait for delivered revisions across peers.
 
 Context publication, approved observations, interval queries, and terminal requests route to the Task owner. Cached remote Tasks remain readable while the owner is offline; owner requests fail with `RUNTIME_UNAVAILABLE`. Conflicting event identities produce `REPLICA_CONFLICT`, which the provider uses to isolate the peer.
 
@@ -52,4 +52,4 @@ No invariant companion is published because the Task service validates incoming 
 
 ### Dev Note
 
-Use this package’s source, tests, and architecture documentation as the maintainer reference.
+Assignment dependency checks defer `TASK_NOT_FOUND` and propagate other failures. Incoming schemas and typed owner commands determine the closed discriminants used by dispatch.

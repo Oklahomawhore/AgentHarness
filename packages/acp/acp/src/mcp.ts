@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { validateHeaderName, validateHeaderValue } from 'node:http'
 import { isAbsolute } from 'node:path'
 import type { McpServer } from '@agentclientprotocol/sdk'
+import McpService from '@deepseek-ai/dsh-mcp'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 
 const VALID_SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
@@ -18,7 +19,7 @@ export class AcpMcpConfigError extends Error {
 }
 
 /**
- * Validate and mount one session's complete standard MCP server list before Agent publication.
+ * Validate and mount one session's standard MCP servers in a private registry before Agent publication.
  * @param agentCtx - unpublished Agent scope that owns the MCP clients and tools.
  * @param servers - stable ACP stdio or HTTP server declarations.
  * @param sessionCwd - canonical primary workspace used by stdio servers.
@@ -29,7 +30,10 @@ export async function mountAcpMcpServers(
   sessionCwd: string,
 ): Promise<void> {
   const configs = resolveMcpConfigs(servers, sessionCwd)
-  for (const config of configs) await agentCtx.plugin(McpClient, config)
+  if (configs.length === 0) return
+  const mcpCtx = agentCtx.isolate('mcp')
+  await mcpCtx.plugin(McpService, { maxServers: configs.length })
+  for (const config of configs) await mcpCtx.plugin(McpClient, config)
 }
 
 /** Convert the stable stdio/HTTP ACP transports and reject every other transport. */

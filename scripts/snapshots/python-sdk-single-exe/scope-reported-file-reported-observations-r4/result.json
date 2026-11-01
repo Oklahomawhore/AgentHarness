@@ -1,0 +1,31 @@
+{
+  "turns": 3,
+  "finalResponse": "Withdrawn reported file is no longer current context.",
+  "hostCount": 2,
+  "executingSessionCount": 2,
+  "requestCounts": {
+    "owner": 8,
+    "receiver": 3
+  },
+  "sourceTools": [
+    "write",
+    "write",
+    "edit",
+    "edit",
+    "edit",
+    "edit"
+  ],
+  "contextBytes": [
+    3814,
+    3833,
+    2029
+  ],
+  "dependencyCount": 4,
+  "dependencyDigest": "ce91a16ed6bba5c9b919e360cd444d70ad8a68d2f84ca5cd4da871ce3d215a59",
+  "companionDependencyCount": 2,
+  "sharedGrantCount": 1,
+  "completeReportedFile": true,
+  "exactSourceWithdrawal": true,
+  "receiverDiskReconstruction": true,
+  "noRecall": true
+}

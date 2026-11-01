@@ -12,6 +12,7 @@ import messageFeedbackRemote from '@deepseek-ai/dsh-message-feedback/remote'
 import devWorkbenchRemote from '@deepseek-ai/dsh-host-dev-workbench/remote'
 import mcpClientSetupRemote from '@deepseek-ai/dsh-host-mcp-client-setup/remote'
 import claudeScopeRemote from '@deepseek-ai/dsh-claude-scope/remote'
+import codexScopeRemote from '@deepseek-ai/dsh-codex-scope/remote'
 import scopeAccessRemote from '@deepseek-ai/dsh-scope-access/remote'
 import scopeAgentContextRemote from '@deepseek-ai/dsh-scope-agent-context/remote'
 import scopeAgentContributionsRemote from '@deepseek-ai/dsh-scope-agent-contribution/remote'
@@ -38,6 +39,8 @@ export type {} from '@deepseek-ai/dsh-message-feedback/remote'
 export type {} from '@deepseek-ai/dsh-host-dev-workbench/remote'
 export type {} from '@deepseek-ai/dsh-host-mcp-client-setup/remote'
 export type {} from '@deepseek-ai/dsh-claude-scope/remote'
+export type {} from '@deepseek-ai/dsh-codex-scope/remote'
+export type * from '@deepseek-ai/dsh-codex-scope/types'
 export type {} from '@deepseek-ai/dsh-scope-access/remote'
 export type {} from '@deepseek-ai/dsh-scope-agent-context/remote'
 export type {} from '@deepseek-ai/dsh-scope-agent-contribution/remote'
@@ -116,6 +119,10 @@ export type {
   ClaudeScopeContributionDetail,
   ClaudeScopePrepareContributionRequest, ClaudeScopeContributionSource,
   ClaudeScopeRequestContributionRequest,
+  ClaudeScopeJointId,
+  ClaudeScopeJointSummary,
+  ClaudeScopeLeaveJointRequest,
+  ClaudeScopeRecoverJointRequest,
   ClaudeScopeContributionApplication,
   ClaudeScopeContributionPreparation,
   ClaudeScopeActivateContributionRequest,
@@ -269,7 +276,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       pluginInventoryRemote, messageFeedbackRemote, sessionFeedbackRemote, fileUploadsRemote, sessionReferencesRemote,
       subagentsRemote, sessionRemote, workspaceRemote, workspaceFilesRemote,
       devWorkbenchRemote, mcpClientSetupRemote, developmentRoomsRemote, developmentTasksRemote,
-      claudeScopeRemote, scopeAccessRemote, scopeAgentContextRemote, scopeAgentContributionsRemote,
+      claudeScopeRemote, codexScopeRemote, scopeAccessRemote, scopeAgentContextRemote, scopeAgentContributionsRemote,
     ]) {
       disposers.push(await ctx.remote.$mount(contribution))
     }

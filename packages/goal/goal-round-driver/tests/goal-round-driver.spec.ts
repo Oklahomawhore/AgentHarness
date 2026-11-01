@@ -303,6 +303,23 @@ describe('same-session goal driving', () => {
       && event.data.source.kind === 'goal' && event.data.source.round > 0)).toBe(false)
   })
 
+  it('pauses a reserved round cancelled during insertion while the agent is idle', async () => {
+    const test = await harness([])
+    const cancel = onInboxMessage(test.ctx, test.agent, (message) => {
+      if (message.source.kind !== 'goal' || message.source.round <= 0) return
+      cancel()
+      expect(test.agent.status).toBe('idle')
+      test.agent.cancel({ kind: 'user' })
+    })
+    test.ctx.goals.create(test.agent, { objective: 'stop before the activity begins' })
+
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.phase === 'paused')
+
+    expect(goal).toMatchObject({ roundsStarted: 0, activation: 'disarmed' })
+    expect(test.agent.inbox.nextTurn).toEqual([])
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
   it('pauses an admitted round when cancellation aborts an active step', async () => {
     const test = await harness(['hang'])
     test.ctx.goals.create(test.agent, { objective: 'stop in flight' })
@@ -843,6 +860,17 @@ describe('same-session goal driving', () => {
     expect(test.adapter.requests).toHaveLength(0)
   })
 
+  it('disarms a goal cancelled while its initial checkpoint has no reserved round', async () => {
+    const test = await harness([])
+    const created = test.ctx.goals.create(test.agent, { objective: 'cancel before reservation' })
+    test.agent.cancel({ kind: 'user' })
+
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.activation === 'disarmed')
+
+    expect(goal).toMatchObject({ id: created.id, phase: 'active', revision: 1, roundsStarted: 0 })
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
   it('disarms without durably pausing when cancellation belongs to unrelated human work', async () => {
     const test = await harness(['hang'])
     test.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'inspect something first' }], source: { kind: 'user' } }))
@@ -861,22 +889,25 @@ describe('same-session goal driving', () => {
     })
   })
 
-  it('falls back to disarming when a cancelled reservation cannot be paused', async () => {
+  it('disarms when a cancelled reservation cannot be paused', async () => {
     const test = await harness([])
+    const pause = vi.spyOn(test.ctx.goals, 'pause').mockImplementationOnce(() => {
+      throw new Error('pause failed')
+    })
     const cancel = onInboxMessage(test.ctx, test.agent, (message) => {
       if (message.source.kind !== 'goal' || message.source.round <= 0) return
       cancel()
-      vi.spyOn(test.ctx.goals, 'pause').mockImplementationOnce(() => {
-        throw new Error('pause failed')
-      })
       test.agent.cancel({ kind: 'user' })
     })
-    test.ctx.goals.create(test.agent, { objective: 'fail closed after cancellation' })
-
-    const goal = await waitForGoal(test.ctx, test.agent, current => current?.activation === 'disarmed')
-
-    expect(goal).toMatchObject({ phase: 'active', revision: 1, roundsStarted: 0 })
-    expect(test.adapter.requests).toHaveLength(0)
+    try {
+      test.ctx.goals.create(test.agent, { objective: 'fail closed after cancellation' })
+      await vi.waitFor(() => { expect(pause).toHaveBeenCalledOnce() })
+      const goal = await waitForGoal(test.ctx, test.agent, current => current?.activation === 'disarmed')
+      expect(goal).toMatchObject({ phase: 'active', revision: 1, roundsStarted: 0 })
+      expect(test.adapter.requests).toHaveLength(0)
+    } finally {
+      pause.mockRestore()
+    }
   })
 
   it('rejects the step when downstream cancellation clears the reservation', async () => {

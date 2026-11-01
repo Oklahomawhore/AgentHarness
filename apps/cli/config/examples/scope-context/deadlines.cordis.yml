@@ -6,7 +6,7 @@
   config:
     listenAddresses: !!js "process.env.AGENTHARNESS_SCOPE_LISTEN == null ? ['/ip4/127.0.0.1/tcp/0'] : JSON.parse(process.env.AGENTHARNESS_SCOPE_LISTEN)"
     maxRequestBytes: 16384
-    maxResponseBytes: 65536
+    maxResponseBytes: 262144
     maxInboundRequests: 16
     maxOutboundRequests: 16
     maxConnections: 32
@@ -20,7 +20,8 @@
     maxSubscriptions: 256
     maxProjections: 8192
     maxContextBytes: 6000
-    maxResponseBytes: 60000
+    maxResponseBytes: 240000
+    maxDecodedResponseBytes: 2097152
     requestTimeoutMs: 30000
     maxInvitationLifetimeMs: 604800000
     maxConcurrentReads: 16

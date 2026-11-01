@@ -1,0 +1,12 @@
+version: 1
+scenario: scope-self-management
+profile: sdk
+composition: sdk-scope-self-management
+recording: authored
+header:
+  class: scope-self-management
+  pin: true
+  systemPromptSource: sdk/task-context-disconnect
+replay:
+  override: true
+writer: separate

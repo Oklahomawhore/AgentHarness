@@ -1,10 +1,14 @@
 - text: 入口用途
 - combobox "入口用途":
+  - option "邀请多人加入同一目标"
   - option "邀请一个会话加入"
   - option "仅申请文件贡献" [selected]
 - text: 贡献来源
 - combobox "贡献来源":
   - option "授权目录内的 Write/Edit" [selected]
+  - option "正常完成的最终答复"
+  - option "同一会话的文件、命令与最终答复"
+  - option "原 Claude 会话的文件、命令与答复报告"
   - option "单个 OpenAPI 操作"
 - text: 申请入口有效期（小时）
 - spinbutton "申请入口有效期（小时）": "1"

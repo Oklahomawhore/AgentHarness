@@ -1,0 +1,73 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- insert:
+    - id: native-contribution-clock
+      name: './identity-fixture.mjs'
+    - id: native-contribution-room
+      name: '@deepseek-ai/dsh-development-room'
+      config:
+        nodeId: snapshot-group-join
+        presenceTtlMs: 60000
+        maxParticipants: 32
+        maxRooms: 32
+        maxTextBytes: 65536
+    - id: native-contribution-task
+      name: '@deepseek-ai/dsh-development-task'
+      config:
+        maxTasks: 32
+        maxEventsPerTask: 128
+        maxMergeParents: 8
+        maxContextBlockBytes: 65536
+        maxLineageTasks: 64
+        maxTextBytes: 65536
+        roomRetryIntervalMs: 10000
+    - id: native-contribution-text
+      name: '@deepseek-ai/dsh-development-task-context/text'
+    - id: native-contribution-transport
+      name: '../scope-native-contribution/transport-fixture.mjs'
+      config:
+        peerId: snapshot-group-join-peer
+    - id: native-contribution-access
+      name: '@deepseek-ai/dsh-scope-access'
+      config:
+        maxGrants: 16
+        maxSubscriptions: 16
+        maxProjections: 64
+        maxContextBytes: 12000
+        maxResponseBytes: 32768
+        maxDecodedResponseBytes: 2097152
+        requestTimeoutMs: 5000
+        maxInvitationLifetimeMs: 60000
+        maxConcurrentReads: 8
+        waitTimeoutMs: 3000
+        maxConcurrentWaits: 2
+        maxConcurrentContributions: 2
+        maxContributionRequestBytes: 65536
+        maxContributionApplications: 16
+        maxApplicationRequestBytes: 16384
+        maxApplicationLifetimeMs: 60000
+    - id: owner-local-context
+      name: '@deepseek-ai/dsh-development-task-context'
+      config:
+        maxContextBytesPerStep: 12000
+    - id: owner-local-source
+      name: '@deepseek-ai/dsh-scope-agent-contribution'
+      config:
+        maxSessions: 16
+        maxLeases: 64
+        maxObservationBytes: 65536
+        contributionPollIntervalMs: 25
+    - id: owner-local-scheduler
+      name: '@deepseek-ai/dsh-scope-agent-context'
+      config:
+        maxContextBytes: 12000
+        maxLocalContextBytes: 6000
+        coalesceMs: 10
+        retryDelayMs: 1000
+    - id: native-contribution-assertions
+      name: './native-fixture.mjs'

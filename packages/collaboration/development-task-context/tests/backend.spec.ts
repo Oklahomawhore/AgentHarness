@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import DevelopmentTaskContextBackend from '../src/backend.ts'
 import * as TaskContext from '../src/index.ts'
 import TextBackend from '../src/text.ts'
@@ -209,6 +209,130 @@ function holdNextComputation(ctx: Context, rejectsOnAbort = false) {
 }
 
 describe('recipient Task context backend', () => {
+  it.each([0, -1, 1])('selects the last bound assignment when the clock advances by %s while an older Session binding remains', async (advance) => {
+    const live = await harness()
+    const older = await live.create('OLDER_BOUND_TASK')
+    const newer = await live.create('CURRENT_BOUND_TASK')
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      await live.ctx.developmentTasks.checkout({ taskId: older.id, participantId: live.agentId,
+        bindingId: 'binding-a-older' as DevelopmentTaskBindingId })
+      clock.mockReturnValue(now + advance)
+      await live.ctx.developmentTasks.checkout({ taskId: newer.id, participantId: live.agentId,
+        bindingId: 'binding-z-current' as DevelopmentTaskBindingId })
+    } finally { clock.mockRestore() }
+    expect(live.ctx.developmentTasks.assignmentList()).toHaveLength(2)
+    await live.followup('Continue with my current assignment')
+    expect(requestText(live.adapter.requests[0])).toContain('CURRENT_BOUND_TASK')
+    expect(requestText(live.adapter.requests[0])).not.toContain('OLDER_BOUND_TASK')
+    await expect.poll(() => live.ctx.developmentTasks.assignmentList().find(item => item.taskId === newer.id)?.acknowledgedRevision).toBe(1)
+    expect(live.ctx.developmentTasks.assignmentList().find(item => item.taskId === older.id)?.acknowledgedRevision).toBeUndefined()
+  })
+
+  it('shares one pending acknowledgement across admitted requests for the same captured revision', async () => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const acknowledge = live.ctx.developmentTasks.acknowledge.bind(live.ctx.developmentTasks)
+    const calls = vi.spyOn(live.ctx.developmentTasks, 'acknowledge').mockImplementationOnce(async (request) => {
+      entered.resolve(undefined)
+      await release.promise
+      return await acknowledge(request)
+    })
+    const first = live.followup('First request while acknowledgement is pending')
+    const settled = Promise.allSettled([first])
+    try {
+      await entered.promise
+      await first
+      await live.followup('Second request using the same captured revision')
+      expect(live.adapter.requests).toHaveLength(2)
+      expect(calls).toHaveBeenCalledTimes(1)
+      expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(1)
+      release.resolve(undefined)
+      await expect.poll(() => live.ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBe(1)
+    } finally {
+      release.resolve(undefined)
+      await settled
+    }
+  })
+
+  it.each(['reject', 'cancel'] as const)('does not compute or adopt Task context when an adjacent pre-step listener chooses %s', async (choice) => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    const compute = vi.spyOn(live.ctx.developmentTaskContextBackend, 'compute')
+    live.ctx.on('agent/pre-step', async ({ agent }, next) => {
+      if (choice === 'reject') return { kind: 'reject' }
+      agent.cancel({ kind: 'user' })
+      return await next()
+    })
+    await live.followup('Do not run after the admission decision')
+    expect(compute).not.toHaveBeenCalled()
+    expect(live.adapter.requests).toHaveLength(0)
+    expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(0)
+    expect(live.agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')?.data)
+      .toMatchObject({ reason: { kind: choice === 'reject' ? 'blocked' : 'aborted' } })
+  })
+
+  it('retains claimed input when its consumer unloads before delegated admission starts', async () => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    live.ctx.on('development-task-context/admit', async (_input, next) => {
+      entered.resolve(undefined)
+      await release.promise
+      return await next()
+    })
+    const original = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Preserve this undispatched request' }] })
+    live.agent.followup(original)
+    const pending = live.agent.whenIdle()
+    const settled = Promise.allSettled([pending])
+    try {
+      await entered.promise
+      const entry = [...live.ctx.loader.entries()].find(item => item.options.name === '@deepseek-ai/dsh-development-task-context')
+      if (entry === undefined) throw new Error('actual Task consumer entry is missing')
+      await entry.update({ disabled: true })
+      await live.ctx.loader.await()
+      release.resolve(undefined)
+      await pending
+      expect(live.adapter.requests).toHaveLength(0)
+      expect(live.agent.inbox.nextStep.filter(message => message.id === original.id)).toEqual([original])
+      expect(live.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(0)
+    } finally {
+      release.resolve(undefined)
+      await settled
+    }
+  })
+
+  it('retains the original request when mandatory context cannot fit and admits it once after configuration repair', async () => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    const entry = [...live.ctx.loader.entries()].find(item => item.options.name === '@deepseek-ai/dsh-development-task-context')
+    if (entry === undefined) throw new Error('actual Task consumer entry is missing')
+    await entry.update({ config: { maxContextBytesPerStep: 1 } })
+    await live.ctx.loader.await()
+    const original = createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'Keep my original implementation request through context failure' }] })
+    live.agent.followup(original)
+    await live.agent.whenIdle()
+    expect(live.adapter.requests).toHaveLength(0)
+    expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(0)
+    expect(live.agent.inbox.nextStep.filter(message => message.id === original.id)).toEqual([original])
+    await entry.update({ config: { maxContextBytesPerStep: 8192 } })
+    await live.ctx.loader.await()
+    await live.followup('Continue after the context allowance is repaired')
+    expect(live.adapter.requests).toHaveLength(1)
+    expect(live.adapter.requests[0]!.messages.filter(message => message.id === original.id)).toHaveLength(1)
+    expect(live.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(1)
+    expect(live.agent.inbox.nextStep).toHaveLength(0)
+  })
+
   it('blocks a cached peer projection when expiry cannot persist and keeps the claimed input for retry', async () => {
     const live = await harness(FactsBackend)
     const task = await live.create()
@@ -256,6 +380,58 @@ describe('recipient Task context backend', () => {
     expect(delivered).toContain('Use current declarations')
     expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(1)
     expect(contextEvents(live.agent.session.snapshotEvents())[0]).toMatchObject({ data: { source: { revision: 4 } } })
+  })
+
+  it('recomputes a slow native projection when an individual observed artifact is revoked', async () => {
+    const live = await harness(FactsBackend)
+    const task = await live.create()
+    await live.checkout(task.id)
+    const participantId = 'local-api-sampler' as DevelopmentParticipantId
+    await live.ctx.developmentRooms.announce({ id: participantId, kind: 'agent', displayName: 'Local API sampler' })
+    const { assignment } = await live.ctx.developmentTasks.checkout({ taskId: task.id, participantId,
+      bindingId: 'local-api-binding' as DevelopmentTaskBindingId })
+    const epoch = live.ctx.developmentTasks.assignmentLog().at(-1)!
+    const identity = { taskId: task.id, participantId, bindingId: assignment.bindingId,
+      expectedBindingEpoch: { nodeId: epoch.nodeId, seq: epoch.seq } }
+    const artifact: DevelopmentTaskOpenApiObservationIdentity = {
+      kind: 'openapi-artifact', version: 1,
+      artifactId: 'local-orders' as DevelopmentTaskOpenApiObservationIdentity['artifactId'],
+      sourceName: 'Local Orders API', grantId: 'local-grant' as DevelopmentTaskOpenApiObservationIdentity['grantId'],
+      sequence: 1, operation: { method: 'post', path: '/orders' },
+    }
+    const admitted = await live.ctx.developmentTasks.admitObservedContext({ ...identity,
+      sourceId: 'a'.repeat(64) as DevelopmentTaskObservedSourceId, text: 'Sampled local API declaration',
+      observation: { ...artifact, state: 'valid', sha256: 'b'.repeat(64), facts: { requestBodyRequired: true,
+        requiredRequestFields: ['REVOKED_NATIVE_API_CANARY'], responseStatuses: ['201'], deprecated: false } },
+    })
+    const held = holdNextComputation(live.ctx)
+    const original = createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'Preserve my ordinary implementation request during artifact revocation' }] })
+    live.agent.followup(original)
+    const pending = live.agent.whenIdle()
+    const settled = Promise.allSettled([pending])
+    try {
+      const captured = await held.started
+      expect(captured.view.task.context).toContainEqual(admitted.publication)
+      await live.ctx.developmentTasks.revokeObservedArtifact({ ...identity,
+        sourceId: 'c'.repeat(64) as DevelopmentTaskObservedSourceId, text: 'Local API permission ended',
+        observation: { ...artifact, sequence: 2, state: 'revoked', reason: 'grant-ended' },
+      })
+      held.release()
+      await pending
+      expect(live.adapter.requests).toHaveLength(1)
+      const request = live.adapter.requests[0]!
+      expect(request.messages.filter(message => message.id === original.id)).toHaveLength(1)
+      expect(requestText(request)).toContain('Preserve my ordinary implementation request during artifact revocation')
+      expect(live.agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.id === original.id)).toHaveLength(1)
+      expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(1)
+      expect(requestText(request)).not.toContain('REVOKED_NATIVE_API_CANARY')
+      expect(requestText(request)).toContain('"evidence":"revoked"')
+      expect(held.spy).toHaveBeenCalledTimes(2)
+    } finally {
+      held.release()
+      await settled
+    }
   })
 
   it.each(['before-compute', 'after-compute'] as const)('rechecks binding after authority read %s', async (position) => {
@@ -372,7 +548,7 @@ describe('recipient Task context backend', () => {
         .replaceAll(task.id, '{{taskId}}').replaceAll(producer.intervalId, '{{intervalId}}')
         .replaceAll(withdrawalSource, '{{withdrawalSourceId}}')
     }).join('\n\n--- next request ---\n\n') + '\n'
-    await expect(recordedText).toMatchFileSnapshot(new URL('./expected/facts-remote-lifecycle.txt', import.meta.url).pathname)
+    await expect(recordedText).toMatchFileSnapshot(fileURLToPath(new URL('./expected/facts-remote-lifecycle.txt', import.meta.url)))
     const complete = await live.ctx.developmentTaskContextBackend.compute({
       view: current, recipient: { participantId: live.agentId },
       maxContextBytes: 65536, signal: new AbortController().signal,
@@ -562,7 +738,46 @@ describe('recipient Task context backend', () => {
     expect(contextEvents(agent.session.snapshotEvents())[0]).toMatchObject({ data: { source: { revision: 1 } } })
     await followup()
     expect(requestText(adapter.requests[1])).toContain('new fact 3')
+    const messages = adapter.requests[1]!.messages
+    expect(messages.findIndex(message => message.role === 'assistant'))
+      .toBeLessThan(messages.findIndex(message => message.role === 'user' && message.source.kind === 'development-task-context'))
     expect(contextEvents(agent.session.snapshotEvents()).at(-1)).toMatchObject({ data: { source: { revision: 4 } } })
+  })
+
+  it.each(['before-compute', 'after-compute'] as const)('stops admission when cancellation occurs during the authority read %s', async (position) => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    const started = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const read = live.ctx.developmentTasks.currentContextView.bind(live.ctx.developmentTasks)
+    const compute = vi.spyOn(live.ctx.developmentTaskContextBackend, 'compute')
+    let reads = 0
+    vi.spyOn(live.ctx.developmentTasks, 'currentContextView').mockImplementation(async (id) => {
+      const view = await read(id)
+      if (++reads === (position === 'before-compute' ? 1 : 2)) {
+        started.resolve(undefined)
+        await release.promise
+      }
+      return view
+    })
+    const pending = live.followup('Cancel while checking current authority')
+    const settled = Promise.allSettled([pending])
+    try {
+      await started.promise
+      live.agent.cancel({ kind: 'user' })
+      release.resolve(undefined)
+      await pending
+      expect(compute).toHaveBeenCalledTimes(position === 'before-compute' ? 0 : 1)
+      expect(live.adapter.requests).toHaveLength(0)
+      expect(contextEvents(live.agent.session.snapshotEvents())).toHaveLength(0)
+      expect(live.ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBeUndefined()
+      expect(live.agent.session.snapshotEvents().findLast(event => event.type === 'turn/end'))
+        .toMatchObject({ data: { reason: { kind: 'aborted' } } })
+    } finally {
+      release.resolve(undefined)
+      await settled
+    }
   })
 
   it('does not commit a computed projection when cancellation wins before adoption', async () => {
@@ -669,6 +884,38 @@ describe('recipient Task context backend', () => {
     expect(adapter.requests).toHaveLength(0)
     expect(contextEvents(agent.session.snapshotEvents())).toHaveLength(0)
     expect(agent.inbox.nextStep).toEqual([expect.objectContaining({ content: [{ type: 'text', text: 'retain this input' }] })])
+  })
+
+  it('does not acknowledge a final Session projection published during admission shutdown', async () => {
+    const live = await harness()
+    const task = await live.create()
+    await live.checkout(task.id)
+    await live.followup()
+    await expect.poll(() => live.ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBe(1)
+    const recorded = contextEvents(live.agent.session.snapshotEvents())[0]
+    if (recorded?.type !== 'user/message' || recorded.data.source.kind !== 'development-task-context'
+      || recorded.data.source.form !== 'snapshot' || recorded.data.source.version !== 2) throw new Error('expected passive Task projection')
+    const updated = await live.ctx.developmentTasks.publishContext({ taskId: task.id, participantId: live.owner, text: 'A final updated fact' })
+    const projection = await live.ctx.developmentTaskContextBackend.compute({
+      view: await live.ctx.developmentTasks.currentContextView(task.id), recipient: { participantId: live.agentId },
+      maxContextBytes: recorded.data.source.maxContextBytes, signal: new AbortController().signal,
+    })
+    const final = createUserMessage({ content: [{ type: 'text', text: projection.text }],
+      source: { ...recorded.data.source, revision: updated.revision,
+        selectedSources: projection.selectedSources, omittedSources: projection.omittedSources } })
+    const acknowledge = vi.spyOn(live.ctx.developmentTasks, 'acknowledge')
+    const signal = live.ctx.developmentTaskContextAdmission.signalFor(live.agent)!
+    const onAbort = (): void => { live.agent.session.append('user/message', final, { surfaceOp: 'append' }) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      const entry = [...live.ctx.loader.entries()].find(item => item.options.name === '@deepseek-ai/dsh-development-task-context')!
+      await entry.update({ disabled: true })
+      await live.ctx.loader.await()
+      expect(signal.aborted).toBe(true)
+      expect(live.agent.session.snapshotEvents()).toContainEqual(expect.objectContaining({ type: 'user/message', data: final }))
+      expect(acknowledge).not.toHaveBeenCalled()
+      expect(live.ctx.developmentTasks.assignmentList()[0]?.acknowledgedRevision).toBe(1)
+    } finally { signal.removeEventListener('abort', onAbort) }
   })
 
   it('awaits an owned acknowledgement during consumer disposal without blocking the model request', async () => {

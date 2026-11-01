@@ -39,6 +39,10 @@
     "./contribution": {
       "types": "./lib/types/contribution-client.d.ts",
       "default": "./lib/types/contribution-client.js"
+    },
+    "./receiving": {
+      "types": "./lib/types/receiving.d.ts",
+      "default": "./lib/types/receiving.js"
     }
   },
   "files": [
@@ -78,6 +82,8 @@
     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^"
+    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^",
+    "@deepseek-ai/dsh-credentials-local": "workspace:^",
+    "@deepseek-ai/dsh-app-boot": "workspace:^"
   }
 }

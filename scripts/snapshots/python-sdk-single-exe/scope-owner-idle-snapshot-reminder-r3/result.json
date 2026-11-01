@@ -1,0 +1,35 @@
+{
+  "first": {
+    "text": "Owner local permission is ready.",
+    "finishReason": "completed"
+  },
+  "last": {
+    "text": "Local Task left; automatic work and local sharing ended.",
+    "finishReason": "completed"
+  },
+  "automaticUserInputs": 0,
+  "automaticPulses": 1,
+  "automaticRequests": [
+    {
+      "turn": 2,
+      "step": 1
+    },
+    {
+      "turn": 2,
+      "step": 2
+    }
+  ],
+  "contextRevisions": [
+    3,
+    4,
+    5,
+    null,
+    null
+  ],
+  "blockedCurrentRevision": 6,
+  "coveragePauses": 1,
+  "fileWrites": 1,
+  "finalMode": "left",
+  "usedBudget": 1,
+  "wirePreservesExactLocalRequestEvidence": true
+}

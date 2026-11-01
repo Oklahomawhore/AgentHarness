@@ -4,14 +4,14 @@ import type {
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 export const agentId = 'native-source' as SessionId
-export const applicationEntry: ScopeContributionEntry = {
+export const applicationEntry = {
   version: 1, kind: 'contribution-entry', sourceKind: 'tool-observations',
   entryId: 'entry-a' as ScopeContributionEntry['entryId'], taskId: 'task-a' as ScopeContributionEntry['taskId'],
   ownerPeerId: 'owner-peer' as ScopeContributionEntry['ownerPeerId'],
   ownerAddress: '/ip4/127.0.0.1/tcp/1/p2p/owner-peer', expiresAt: 2100000000000,
-}
-export const capture: ScopeAgentContributionCapture = {
-  routeRevision: 0,
+} satisfies ScopeContributionEntry
+export const capture: Extract<ScopeAgentContributionCapture, { readonly sourceKind: 'tool-observations' }> & { readonly entry: typeof applicationEntry } = {
+  sourceKind: 'tool-observations', routeRevision: 0,
   selection: {
     captureId: 'capture-a' as ScopeAgentContributionCapture['selection']['captureId'],
     captureGeneration: 'generation-a' as ScopeAgentContributionCapture['selection']['captureGeneration'],

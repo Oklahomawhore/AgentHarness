@@ -64,5 +64,9 @@ describe('development-room invariants', () => {
         participantIds: ['unexpected' as never],
       }, current, { kind: 'local', nodeId: room.creationNodeId })
     }).toThrow(invariantViolation)
+
+    expect(() => {
+      ctx.emit('development-room/changed', room, { ...current }, { kind: 'local', nodeId: room.creationNodeId })
+    }).toThrow(invariantViolation)
   })
 })

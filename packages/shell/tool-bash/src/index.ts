@@ -22,9 +22,64 @@ import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandb
 import { ESCALATION_TARGETS, approveEscalation, canonicalPath, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
-import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type { ShellExecutor, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { processOutcome } from './background.ts'
 import { parseExitStatus, renderProcessRead, renderResult } from './render.ts'
+
+/** Actual foreground dispatch after policy approval and request resolution; excludes resolved environment and stdin. */
+export interface ToolBashExecution {
+  readonly execution: Readonly<ToolExecution>
+  readonly shell: ShellExecutor
+  readonly command: string
+  /** Resolved process path in the executor's filesystem execution world. */
+  readonly workdir: string
+  readonly timeoutMs: number
+}
+
+/** The same foreground operation and its returned provider facts, before final tool settlement. */
+export interface ToolBashCompletion {
+  readonly operation: ToolBashExecution
+  readonly result: Readonly<ShellRunResult>
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Observe an admitted foreground invocation immediately before its actual provider run.
+     * This does not establish process startup or completion. Observers own asynchronous work; failures are contained.
+     * @param operation - exact registry execution, provider, and resolved command settings.
+     * @mode emit
+     */
+    'tool-bash/foreground-start'(operation: ToolBashExecution): void
+    /**
+     * Observe returned provider facts, including timeout or abort, before the tool pipeline settles.
+     * Sharing requires separate permission and durable final-result correlation; background calls and provider rejections do not emit.
+     * @param completion - original operation identity and its actual provider result; no spill file is read.
+     * @mode emit
+     */
+    'tool-bash/foreground-completed'(completion: ToolBashCompletion): void
+  }
+}
+
+interface ForegroundEvents {
+  'tool-bash/foreground-start': ToolBashExecution
+  'tool-bash/foreground-completed': ToolBashCompletion
+}
+
+/** Observer failures cannot change execution or prevent other observers from receiving the same facts. */
+function notifyForeground<E extends keyof ForegroundEvents>(ctx: Context, event: E, payload: ForegroundEvents[E]): void {
+  const reportFailure = (error: unknown): void => {
+    ctx.logger.warn('tool-bash: %s observer failed: %s', event, String(error))
+  }
+  for (const callback of ctx.events.dispatch('emit', [event, payload])) {
+    try {
+      const returned: unknown = callback(payload)
+      void Promise.resolve(returned).catch(reportFailure)
+    } catch (error) {
+      reportFailure(error)
+    }
+  }
+}
 
 export const name = 'tool-bash'
 export const inject = ['tools', 'shell', 'systemPrompt', 'shellEnv']
@@ -376,10 +431,13 @@ export function apply(ctx: Context, config: Config = {}): void {
         })
         return { kind: 'background' as const, jobId: id }
       }
-      const result = await ctx.shell.run(ctx.shell.resolve({
-        ...request,
-        signal: exec.signal,
-      }))
+      const shell = ctx.shell
+      const spec = shell.resolve({ ...request, signal: exec.signal })
+      const operation: ToolBashExecution = { execution: exec, shell,
+        command: spec.command, workdir: spec.workdir, timeoutMs: spec.timeoutMs }
+      notifyForeground(ctx, 'tool-bash/foreground-start', operation)
+      const result = await shell.run(spec)
+      notifyForeground(ctx, 'tool-bash/foreground-completed', { operation, result })
       if (result.aborted) {
         const error = new HarnessError('tool call aborted', TOOL_ABORTED)
         error.name = 'AbortError'

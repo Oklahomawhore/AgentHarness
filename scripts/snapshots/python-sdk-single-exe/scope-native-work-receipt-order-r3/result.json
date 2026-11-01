@@ -1,0 +1,60 @@
+{
+  "turns": 4,
+  "sourceSessions": 1,
+  "receiverSessions": 1,
+  "localTasks": 2,
+  "sourceTools": [
+    "write",
+    "read",
+    "edit",
+    "bash",
+    "bash"
+  ],
+  "sampleSequences": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "source": {
+    "kind": "native-work",
+    "version": 6,
+    "name": "session-work",
+    "tools": [
+      "Write",
+      "Edit"
+    ],
+    "commands": [
+      {
+        "command": "bash verify.sh",
+        "rootIndex": 0
+      }
+    ],
+    "completedTurns": true
+  },
+  "commandExitCodes": [
+    0,
+    7
+  ],
+  "selectedPublications": [
+    0,
+    4,
+    5,
+    1
+  ],
+  "contextBytes": [
+    820,
+    6099,
+    7233,
+    2071
+  ],
+  "maxContextBytes": 8000,
+  "durableBeforeSend": true,
+  "completeIndependentAnswers": 2,
+  "originalSessionsRetained": true,
+  "allCategoriesWithdrawn": true,
+  "readingRetained": true,
+  "automaticStarts": 0
+}

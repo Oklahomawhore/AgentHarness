@@ -1,0 +1,61 @@
+{
+  "turns": [
+    {
+      "text": "Fixture response 1.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 2.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 3.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Fixture response 4.",
+      "finishReason": "completed"
+    }
+  ],
+  "contextRevisions": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "states": [
+    "valid",
+    "valid",
+    "invalid",
+    "revoked"
+  ],
+  "observerPeerId": "12D3KooWFCgiTqWhtsJ1Zj49VtnbFN7F3t1NoMhpZHZnQiF5mr3E",
+  "capture": {
+    "id": "capture-orders-peer-snapshot",
+    "generation": "capture-generation-one"
+  },
+  "attribution": "authenticated-peer-report",
+  "withdrawal": {
+    "version": 1,
+    "grant": {
+      "version": 1,
+      "taskId": "task-peer-facts-snapshot",
+      "grantId": "grant-orders-peer-snapshot",
+      "generation": "grant-generation-one",
+      "ownerPeerId": "12D3KooWCMEyhAgjMNJghrqKxvCpLipFmnepRNXXPBxVrz1VBXVe",
+      "contributorPeerId": "12D3KooWFCgiTqWhtsJ1Zj49VtnbFN7F3t1NoMhpZHZnQiF5mr3E",
+      "captureId": "capture-orders-peer-snapshot",
+      "captureGeneration": "capture-generation-one",
+      "source": {
+        "name": "Orders API",
+        "method": "post",
+        "path": "/orders"
+      },
+      "expiresAt": 1790985660000,
+      "maxSamples": 3,
+      "maxSampleBytes": 4096
+    },
+    "ended": "revoked"
+  },
+  "wirePreservesExactContextMessages": true
+}

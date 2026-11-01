@@ -10,13 +10,14 @@
 // theme/layout golden: aria snapshots are color-blind (lane scope: the
 // browser-e2e-lane Agent Note); the hero's waiting state gets the one golden
 // here.
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type { Browser, Page, WebSocketRoute } from 'playwright'
+import type { Browser, Page, Request, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { createCodexCliFixture } from '../../cli/tests/profiles/mcp/fixtures/codex-cli.ts'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria,
   captureStableAria, compareOrRefreshGolden, fixtureUserPrompts,
@@ -39,6 +40,8 @@ const CONNECTION_ERROR_EXPECTED = join(SNAPSHOT_DIR, 'connection-error.expected.
 // persistence + history — byte-equal rendering is exactly the recovery claim.
 const RELOADED_EXPECTED = join(SNAPSHOT_DIR, 'reloaded.expected.md')
 const RELOADED_EXPANDED_EXPECTED = join(SNAPSHOT_DIR, 'reloaded-expanded.expected.md')
+const MCP_SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/lifecycle-chrome', import.meta.url))
+const CODEX_DISABLED_EXPECTED = join(MCP_SNAPSHOT_DIR, 'codex-disabled.expected.md')
 const MODE = webSnapshotMode()
 
 const PROMPT = 'Reply with the single word LIGHTHOUSE and stop.'
@@ -52,9 +55,8 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
   const sessionEvents: SessionEvent[] = []
 
   beforeAll(async () => {
-    scaffold = await launchWebScaffold(MODE === 'record'
-      ? {}
-      : { replayFixture: FIXTURE, replayOverride: REPLAY_OVERRIDE, paceMs: REPLAY_PACE_MS })
+    scaffold = await launchWebScaffold({ hermeticMcpClients: true,
+      ...(MODE === 'record' ? {} : { replayFixture: FIXTURE, replayOverride: REPLAY_OVERRIDE, paceMs: REPLAY_PACE_MS }) })
     scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
@@ -341,6 +343,44 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     const sockets: WebSocketRoute[] = []
     let rejectConnections = false
     let holdConnections = false
+    let generationReady = false
+    const workbenchRequests = new Set<Request>()
+    recoveryPage.on('request', (request) => {
+      if (generationReady && request.method() === 'POST'
+        && new URL(request.url()).pathname === '/api/devWorkbench/list') workbenchRequests.add(request)
+    })
+    const readyWire = recoveryPage.waitForEvent('websocket', {
+      predicate: async (socket) => {
+        if (new URL(socket.url()).pathname !== '/api/remote.mux') return false
+        let eventsStream: string | undefined
+        socket.on('framesent', (frame) => {
+          const message = JSON.parse(String(frame.payload)) as { type?: unknown; endpoint?: unknown; streamId?: unknown }
+          if (message.type === 'open' && message.endpoint === '$events' && typeof message.streamId === 'string') {
+            eventsStream = message.streamId
+          }
+        })
+        await socket.waitForEvent('framereceived', {
+          predicate: (frame) => {
+            const message = JSON.parse(String(frame.payload)) as {
+              type?: unknown
+              streamId?: unknown
+              value?: { type?: unknown; clientId?: unknown; host?: { home?: unknown } }
+            }
+            if (message.type !== 'item' || message.streamId !== eventsStream || message.value?.type !== 'ready'
+              || typeof message.value.clientId !== 'string' || typeof message.value.host?.home !== 'string') return false
+            generationReady = true
+            return true
+          },
+          timeout: 30_000,
+        })
+        return true
+      },
+      timeout: 30_000,
+    })
+    const inventoryBaseline = recoveryPage.waitForResponse(response => workbenchRequests.has(response.request()), {
+      timeout: 30_000,
+    })
+    const initialBaseline = Promise.allSettled([readyWire, inventoryBaseline])
     await recoveryPage.routeWebSocket('**/api/remote.mux', (route) => {
       sockets.push(route)
       if (rejectConnections || holdConnections) return
@@ -352,6 +392,14 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await recoveryPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await recoveryPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await expect.poll(() => sockets.length).toBe(1)
+      const [ready, inventory] = await initialBaseline
+      if (ready.status === 'rejected') throw new Error('Initial Host event generation did not become ready', { cause: ready.reason })
+      if (inventory.status === 'rejected') throw new Error('Current Workbench inventory did not complete', { cause: inventory.reason })
+      expect(inventory.value.ok()).toBe(true)
+      const body = await inventory.value.json() as { result?: { ok?: unknown; value?: { entries?: unknown } } }
+      expect(body.result?.ok).toBe(true)
+      expect(body.result?.value?.entries).toEqual([])
+      await recoveryPage.getByRole('button', { name: 'Open development workbench', exact: true }).waitFor({ state: 'hidden' })
       rejectConnections = true
       await recoveryPage.context().setOffline(true)
       await expect.poll(() => recoveryPage.evaluate(() => navigator.onLine)).toBe(false)
@@ -399,6 +447,9 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       expect(await connectionIndicatorGeometry(indicator)).toEqual(connectingGeometry)
       expect(await connectionIndicatorTextAlignment(indicator)).toBe('left')
       await indicator.hover()
+      // Failed connection attempts preserve the established empty workbench inventory.
+      await recoveryPage.getByRole('button', { name: 'Open development workbench', exact: true })
+        .waitFor({ state: 'hidden' })
       const snapshot = await captureStableAria(recoveryPage, '[class*="footArea"]', scaffold.workspaceCwd)
       await compareOrRefreshGolden(CONNECTION_ERROR_EXPECTED, snapshot, MODE)
       const style = await indicator.evaluate((element) => {
@@ -461,6 +512,83 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await recoveryPage.close()
     }
   }, 60_000)
+
+  // Private local MCP authentication supports macOS and Linux.
+  it.skipIf(MODE === 'record' || process.platform === 'win32')('keeps disabled Codex manual without changing the recorded Session', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-codex-disabled'))
+    const persisted = (await readdir(scaffold.persistenceRoot, { recursive: true }))
+      .filter(path => path.endsWith('.jsonl') || path.endsWith('.jsonl.zstd')).sort()
+    expect(persisted.length).toBeGreaterThan(0)
+    const before = await Promise.all(persisted.map(async path => ({ path, bytes: await readFile(join(scaffold.persistenceRoot, path)) })))
+    const eventsBefore = structuredClone(sessionEvents)
+    const fixtureHome = join(scaffold.workspaceCwd, '.codex-disabled-fixture')
+    const bin = join(scaffold.workspaceCwd, '.mcp-client-fixture', 'bin')
+    const panel = page.locator('[data-emergence-center]')
+    try {
+      const fixture = await createCodexCliFixture(fixtureHome, bin)
+      const setup = await scaffold.hostFetch('/api/mcpClientSetup/setup', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: 'chrome-codex-setup', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(setup.ok).toBe(true)
+      expect(await setup.json()).toMatchObject({ result: { ok: true, value: { outcome: 'configured' } } })
+      const settings = JSON.parse(await readFile(fixture.settingsPath, 'utf8')) as {
+        servers: { name: string; enabled: boolean }[]
+      }
+      const codex = settings.servers.find(server => server.name === 'agentharness')
+      if (codex === undefined) throw new Error('Host setup did not register Codex')
+      codex.enabled = false
+      await writeFile(fixture.settingsPath, JSON.stringify(settings))
+      const disabledSettings = await readFile(fixture.settingsPath, 'utf8')
+      const registrations = await readFile(fixture.registrationLogPath, 'utf8')
+      const announce = await scaffold.hostFetch('/api/developmentRooms/announce', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: 'chrome-mcp-owner', method: 'developmentRooms/announce',
+          payload: { args: { request: { id: 'chrome-mcp-owner', kind: 'human', displayName: 'Chrome MCP owner' } } } }),
+      })
+      expect(announce.ok).toBe(true)
+      expect(await announce.json()).toMatchObject({ result: { ok: true } })
+      const create = await scaffold.hostFetch('/api/developmentTasks/create', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: 'chrome-mcp-task', method: 'developmentTasks/create',
+          payload: { args: { request: { origin: { kind: 'root' }, createdBy: 'chrome-mcp-owner',
+            objective: 'Inspect independent client configuration', scope: 'Keep the existing recorded Session private.' } } } }),
+      })
+      expect(create.ok).toBe(true)
+      expect(await create.json()).toMatchObject({ result: { ok: true } })
+      await page.getByRole('button', { name: 'Open the Emergence Center', exact: true }).click()
+      await panel.getByRole('heading', { name: 'Inspect independent client configuration' }).waitFor({ timeout: 10_000 })
+      await panel.getByRole('button', { name: 'Refresh', exact: true }).click()
+      const selector = '[data-emergence-center] article:has(strong:text-is("Codex"))'
+      const card = page.locator(selector)
+      await card.getByText('Manual setup', { exact: true }).waitFor({ timeout: 10_000 })
+      expect(await card.getByRole('button', { name: 'Configure automatically', exact: true }).count()).toBe(0)
+      const snapshot = await captureStableAria(page, selector, scaffold.workspaceCwd)
+      await compareOrRefreshGolden(CODEX_DISABLED_EXPECTED, snapshot, MODE)
+      const disabledSetup = await scaffold.hostFetch('/api/mcpClientSetup/setup', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: 'chrome-codex-disabled', method: 'mcpClientSetup/setup',
+          payload: { args: { request: { clientId: 'codex' } } } }),
+      })
+      expect(disabledSetup.ok).toBe(true)
+      expect(await disabledSetup.json()).toMatchObject({ result: { ok: true,
+        value: { outcome: 'manual', client: { state: 'manual', canSetup: false, restartRequired: false } } } })
+      expect(await readFile(fixture.settingsPath, 'utf8')).toBe(disabledSettings)
+      expect(await readFile(fixture.registrationLogPath, 'utf8')).toBe(registrations)
+      expect(scaffold.ctx.developmentTasks.assignmentList()).toEqual([])
+      expect((await readdir(scaffold.persistenceRoot, { recursive: true }))
+        .filter(path => path.endsWith('.jsonl') || path.endsWith('.jsonl.zstd')).sort()).toEqual(persisted)
+      for (const { path, bytes } of before) expect(await readFile(join(scaffold.persistenceRoot, path))).toEqual(bytes)
+      expect(sessionEvents).toEqual(eventsBefore)
+      expect(tripwire.pageErrors).toEqual([])
+      await assertFixtureInventory(MCP_SNAPSHOT_DIR, ['codex-disabled.expected.md'])
+    } finally {
+      if (await panel.count() > 0) await panel.getByRole('button', { name: 'Close the Emergence Center', exact: true }).click()
+      await rm(join(bin, 'codex'), { force: true })
+      await rm(fixtureHome, { recursive: true, force: true })
+    }
+  })
 
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     expect(tripwire.warnings).toEqual([])

@@ -4,7 +4,7 @@ Status: implemented
 
 [English](2026-07-06-parallel-pre-push-gates.md) | 中文
 
-本记录中的本地钩子部分已由[快速本地 Git 钩子](../../archived/process/2026-07-22-fast-local-git-hooks.md) 取代。有界门禁调度器和包级 `publint` 并行机制仍用于 CI、`doc-sync` 和显式本地命令。调度器的快速失败选项记录在[门禁运行器快速失败](../../archived/process/2026-08-27-gate-runner-fail-fast.md)。
+本记录中的本地钩子部分已由[快速本地 Git 钩子](../../archived/process/2026-07-22-fast-local-git-hooks.md) 取代。有界门禁调度器和包级 `publint` 并行机制仍用于 CI、`doc-sync` 和显式本地命令。独立完成与中断限制记录在[完整运行独立验证门禁](2026-10-26-complete-independent-gates.zh.md)。
 
 ## 问题
 
@@ -16,11 +16,11 @@ Status: implemented
 
 自身子进程能够保留有效归因的长时间协调门禁可以选择 `streamOutput`。其 stdout 与 stderr 会立即到达父进程，不会被缓冲，也不会在结束时重复打印。分区覆盖率与并行 Web 快照使用该模式，使运行中途的失败无需等待兄弟工作结束就能显示。
 
-Node 24 消费方任务采用单个包含 10 道门禁的模式，而非由 shell 管理的进程池。其默认 worker 数等于门禁数，拉取请求 CI 则把活动门禁限制为 8 道，并由依赖关系控制就绪状态。构建与源码兼容性立即启动；构建完成后，`publint` 与已构建包不变式验证并行运行。lint、两套快照、文档类型检查、NodeNext 类型检查和 built-bin 冒烟测试等待不变式验证器清除临时包视图。
+消费方聚合在配置的 worker 上限内独立启动构建与源码兼容性检查。构建完成后，`publint` 与已构建包不变式验证可以并行运行。lint、两套快照、文档类型检查、NodeNext 类型检查和 built-bin 冒烟测试等待不变式验证器清除临时包视图。
 
 [scripts/publint-all.ts](../../../../scripts/publint-all.ts) 从 `packages/<group>/<pkg>` 发现包，并以根据 `availableParallelism()` 确定大小的 worker 池运行 `publint`。`DSH_PUBLINT_CONCURRENCY` 可以针对资源配置不同的本地机器和 CI runner 限制或提高 worker 数量。结果按包缓冲，并按确定性的包顺序打印，因此并行执行不会打乱各包的日志块。
 
-各门禁的包脚本仍是临时本地运行所用的命令入口。`hygiene` 调用包含相同十三道检查且限制为本地四个 worker 的调度器模式，而 `doc-sync` 的成员列表由调度器管理（[通过门禁调度器运行 doc-sync](../../archived/process/2026-07-21-doc-sync-through-gate-scheduler.md)）。
+各门禁的包脚本仍是临时本地运行所用的命令入口。`hygiene` 与 `doc-sync` 从调度器选择叶子清单和 worker 默认值（[通过门禁调度器运行 doc-sync](../../archived/process/2026-07-21-doc-sync-through-gate-scheduler.md)）。
 
 ## 验证
 
@@ -30,7 +30,7 @@ Node 24 消费方任务采用单个包含 10 道门禁的模式，而非由 shel
 
 - **保持聚合 job 串行**：执行更简单，但墙钟时间等于各独立检查之和，并重复启动命令包装器。
 - **每个叶子门禁声明一个 CI job**：暴露最大工作流并行度，但会重复 checkout、设置和安装开销，并在 YAML 中复制调度器清单。
-- **在 shell 脚本内后台运行子命令**：可以并行处理，但会失去各门禁计时、确定性的失败分组和直接的信号处理。
+- **在 shell 脚本内后台运行子命令**：可以并行处理，但会失去各门禁计时、确定性的失败分组和独立进程结果。
 - **让所有门禁继承 stdio**：可以立即显示进度，但会交错普通独立门禁的输出，并丢失调度器可归因的输出记录。流式输出仍是显式的门禁属性。
 - **每个包声明一个 `publint` job**：暴露最大包级并行度，但会创建手工维护的包清单，包发生变化时就会漂移。
 - **以无界并发运行 `publint`**：虽能最大限度缩短小型仓库的耗时，却会拿进程数量、内存压力、包 tarball 创建开销和日志可读性冒险。

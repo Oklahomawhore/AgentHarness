@@ -12,11 +12,13 @@ import { createLibp2p } from 'libp2p'
 import { tcp } from '@libp2p/tcp'
 import { noise } from '@libp2p/noise'
 import { yamux } from '@libp2p/yamux'
-import { generateKeyPair, privateKeyToProtobuf } from '@libp2p/crypto/keys'
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyFromRaw, privateKeyToProtobuf } from '@libp2p/crypto/keys'
+import { peerIdFromPrivateKey, peerIdFromString } from '@libp2p/peer-id'
 import { multiaddr } from '@multiformats/multiaddr'
 import Transport, { type Config } from '../src/libp2p.ts'
-import type { ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
-import { identityKey } from '../src/identity.ts'
+import type { ScopePeerId, ScopeTransportIdentity, ScopeTransportTarget } from '../src/types.ts'
+import { identityKey, loadIdentity } from '../src/identity.ts'
+import { encode, readJson, responsePayload, writeJson } from '../src/wire.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -133,6 +135,24 @@ describe('direct authenticated scope transport', () => {
     expect(calls).toBe(1)
   })
 
+  it('rejects a hashed target identity after Noise authenticates a different peer without invoking its handler', async () => {
+    const owner = await boot()
+    const peer = await boot()
+    const destination = target(await owner.scopeTransport.identity())
+    const hashedIdentity = peerIdFromString(peerIdFromPrivateKey(await generateKeyPair('RSA', 2048)).toString())
+    expect(hashedIdentity.type).toBe('RSA')
+    expect(hashedIdentity.publicKey).toBeUndefined()
+    const peerId = hashedIdentity.toString() as ScopePeerId
+    const wrongIdentity = { peerId, address: destination.address.replace(destination.peerId, peerId) }
+    const handler = vi.fn(async () => 'allowed')
+    register(owner, handler)
+    await expect(peer.scopeTransport.request(wrongIdentity, protocol, null, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'scope-transport/invalid-target' })
+    expect(handler).not.toHaveBeenCalled()
+    expect(await peer.scopeTransport.request(destination, protocol, null, new AbortController().signal)).toBe('allowed')
+    expect(handler).toHaveBeenCalledOnce()
+  })
+
   it('reuses one atomically committed key across concurrent starts and restart', async () => {
     const path = await directory()
     const [first, concurrent] = await Promise.all([boot({}, path), boot({}, path)])
@@ -227,10 +247,47 @@ describe('direct authenticated scope transport', () => {
     expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
   })
 
-  it('rejects a stored key whose public half does not match its signing key', async () => {
+  it.each([64, 96])('rejects a stored key whose public half does not match its signing key (%i-byte material)', async (size) => {
+    const path = await directory()
+    const ctx = await credentials(path)
+    const signingKey = await generateKeyPair('Ed25519')
+    const otherKey = await generateKeyPair('Ed25519')
+    const raw = new Uint8Array([...signingKey.raw.subarray(0, 32), ...otherKey.publicKey.raw])
+    // The legacy protobuf carries a valid 64-byte key plus an independent public key.
+    const bytes = size === 64 ? privateKeyToProtobuf(privateKeyFromRaw(raw))
+      : new Uint8Array([0x08, 0x01, 0x12, 96, ...signingKey.raw, ...otherKey.publicKey.raw])
+    const decoded = privateKeyFromProtobuf(bytes)
+    expect(decoded.type).toBe('Ed25519')
+    expect(decoded.raw).toEqual(size === 64 ? raw : signingKey.raw)
+    expect(decoded.publicKey.raw).toEqual(otherKey.publicKey.raw)
+    const message = new Uint8Array()
+    const signature = await (size === 64 ? signingKey : decoded).sign(message)
+    expect(await signingKey.publicKey.verify(message, signature)).toBe(true)
+    expect(await decoded.publicKey.verify(message, signature)).toBe(false)
+    const record = { kind: 'grant', payload: { version: 1, privateKey: Buffer.from(bytes).toString('base64') } } as const
+    await ctx.credentials.modifyRecord(identityKey, () => Promise.resolve(record))
+    const persisted = await readFile(join(path, 'credentials.yml'))
+    const failure = await loadIdentity(ctx.credentials, new AbortController().signal).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: 'scope-transport/identity-invalid', message: 'scope-transport/identity-invalid',
+    })
+    expect(failure).not.toHaveProperty('cause')
+    expect(await ctx.credentials.readRecord(identityKey)).toEqual(record)
+    expect(await readFile(join(path, 'credentials.yml'))).toEqual(persisted)
+    await ctx.fiber.dispose()
+    const restarted = await credentials(path)
+    const restartedFailure = await loadIdentity(restarted.credentials, new AbortController().signal).catch((error: unknown) => error)
+    expect(restartedFailure).toMatchObject({
+      code: 'scope-transport/identity-invalid', message: 'scope-transport/identity-invalid',
+    })
+    expect(restartedFailure).not.toHaveProperty('cause')
+    expect(await restarted.credentials.readRecord(identityKey)).toEqual(record)
+    expect(await readFile(join(path, 'credentials.yml'))).toEqual(persisted)
+  })
+
+  it('rejects a well-formed stored key of an unsupported signing type without replacing its record', async () => {
     const ctx = await credentials(await directory())
-    const bytes = privateKeyToProtobuf(await generateKeyPair('Ed25519'))
-    bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1
+    const bytes = privateKeyToProtobuf(await generateKeyPair('secp256k1'))
     const record = { kind: 'grant', payload: { version: 1, privateKey: Buffer.from(bytes).toString('base64') } } as const
     await ctx.credentials.modifyRecord(identityKey, () => Promise.resolve(record))
     await expect(ctx.plugin(Transport, config)).rejects.toMatchObject({ code: 'scope-transport/identity-invalid' })
@@ -417,6 +474,61 @@ describe('direct authenticated scope transport', () => {
     expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual({ version: 1, ok: false, code: 'invalid-json' })
     expect(calls).toBe(0)
     expect(await peer.scopeTransport.request(destination, protocol, null, new AbortController().signal)).toBe('valid')
+  })
+
+  it('rejects JSON numeric overflow before invoking a handler', async () => {
+    const owner = await boot()
+    const raw = await createLibp2p({
+      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] }, transports: [tcp()],
+      connectionEncrypters: [noise()], streamMuxers: [yamux()],
+      peerDiscovery: [], services: {}, connectionMonitor: { enabled: false },
+    })
+    cleanups.push(async () => { await raw.stop() })
+    const handler = vi.fn(async () => 'unreachable')
+    register(owner, handler)
+    const destination = target(await owner.scopeTransport.identity())
+    const stream = await raw.dialProtocol(multiaddr(destination.address), protocol)
+    try {
+      stream.send(Buffer.from('{"version":1,"payload":1e400}'))
+      await stream.close()
+      const chunks: Uint8Array[] = []
+      for await (const chunk of stream) chunks.push(chunk.subarray())
+      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual({ version: 1, ok: false, code: 'invalid-json' })
+      expect(handler).not.toHaveBeenCalled()
+    } finally { stream.abort(new Error('test request cleanup')) }
+  })
+
+  it('drains real Yamux backpressure without truncating a complete multibyte request', async () => {
+    // The payload exceeds Yamux's fixed 256 KiB initial stream window.
+    const payload = '🧭'.repeat(100_000)
+    const limit = Buffer.byteLength(JSON.stringify({ version: 1, payload }))
+    const owner = await boot({ maxRequestBytes: limit })
+    const raw = await createLibp2p({
+      addresses: { listen: ['/ip4/127.0.0.1/tcp/0'] }, transports: [tcp()],
+      connectionEncrypters: [noise()], streamMuxers: [yamux()],
+      peerDiscovery: [], services: {}, connectionMonitor: { enabled: false },
+    })
+    cleanups.push(async () => { await raw.stop() })
+    const handler = vi.fn(async ({ payload: received }: { payload: unknown }) => ({ exact: received === payload }))
+    register(owner, handler)
+    const destination = target(await owner.scopeTransport.identity())
+    const stream = await raw.dialProtocol(multiaddr(destination.address), protocol)
+    stream.maxWriteBufferLength = limit
+    const drained = vi.spyOn(stream, 'onDrain')
+    const signal = AbortSignal.timeout(config.requestTimeoutMs)
+    const abort = (): void => { stream.abort(new Error('test request deadline')) }
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await writeJson(stream, encode({ version: 1, payload }, limit, 'scope-transport/request-too-large'), signal)
+      expect(responsePayload(await readJson(stream, config.maxResponseBytes, 'scope-transport/response-too-large', signal)))
+        .toEqual({ exact: true })
+      expect(drained).toHaveBeenCalled()
+      expect(handler).toHaveBeenCalledOnce()
+    } finally {
+      signal.removeEventListener('abort', abort)
+      stream.abort(new Error('test request cleanup'))
+      drained.mockRestore()
+    }
   })
 
   it('rejects invalid UTF-8 and receiver-side request overflow without admitting a handler', async () => {

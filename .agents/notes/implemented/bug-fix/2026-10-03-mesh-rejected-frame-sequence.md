@@ -12,6 +12,8 @@ The WebSocket provider assigned a connection sequence before serializing and che
 
 The [Mesh WebSocket provider](../../../../packages/collaboration/development-mesh-websocket/README.md) constructs the candidate sequence and validates the complete serialized envelope before committing the sequence immediately before `socket.send`. No asynchronous work separates these operations, so concurrent callers cannot reuse a sequence. Rejection before sending leaves the connection usable for the next bounded command or error result.
 
+Replication splits a complete delta into ordered frames using the existing event-count and signed-envelope byte limits. A frame rejected before sending may be split without consuming a sequence; an individual oversized event still fails. Event frames are processed serially per connection, while commands and results remain independent. Context blocks can precede the events that advance heads, so frame progression cannot wait solely for an advancing acknowledgement. Asynchronous reads and handlers retain their original socket; stale completion cannot send on or close a replacement connection.
+
 The existing [Mesh architecture](../architecture/2026-08-27-emergence-center-task-lineage.md) still owns authenticated transport and replay rejection. This correction does not change wire fields, receiver ordering, channel event identities, or durable Session formats.
 
 ## Alternatives considered
@@ -22,4 +24,4 @@ The existing [Mesh architecture](../architecture/2026-08-27-emergence-center-tas
 
 ## Consequences
 
-Oversized frames do not invalidate the sequence of subsequent bounded traffic. The byte limit remains unchanged. Large replication deltas still need bounded pagination, and ambiguous socket-write failures do not roll back assigned sequences.
+Oversized frames do not invalidate the sequence of subsequent bounded traffic. The byte limit remains unchanged. Complete replication deltas use bounded frames without truncating events. Ambiguous socket-write failures do not roll back assigned sequences.

@@ -11,7 +11,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,7 +44,7 @@ const jsExprType = new yaml.Type('tag:yaml.org,2002:js', {
 const configSchema = yaml.JSON_SCHEMA.extend(jsExprType)
 
 /** Boot the built Web CLI, wait for its settled URL, then dispose through SIGTERM. */
-function runBuiltWeb(cwd: string): Promise<{ stdout: string; stderr: string; code: number }> {
+function runBuiltWeb(cwd: string, patch: string): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolveRun, rejectRun) => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -57,6 +57,8 @@ function runBuiltWeb(cwd: string): Promise<{ stdout: string; stderr: string; cod
     const child = spawn(process.execPath, [
       builtBin,
       'web',
+      '--patch',
+      patch,
       '--no-open',
       '--host',
       '127.0.0.1',
@@ -117,10 +119,15 @@ describe.skipIf(!requireBuiltArtifacts)('built CLI lazy-search startup', () => {
 
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-cli-lazy-search-'))
     try {
-      const result = await runBuiltWeb(cwd)
+      const index = join(cwd, 'disabled-fulltext.sqlite')
+      const patch = join(cwd, 'index-path.patch.yml')
+      await writeFile(patch, yaml.dump([{ id: 'session-query-sqlite', config: { ...webRow!.config, path: index } }]))
+      const result = await runBuiltWeb(cwd, patch)
       expect(result.stdout).toMatch(/dsh web: http:\/\/127\.0\.0\.1:\d+/u)
       expect(result.code).toBe(0)
-      expect(result.stderr).not.toMatch(/ExperimentalWarning: SQLite/u)
+      // Task KV storage uses SQLite independently of the disabled full-text index.
+      expect(existsSync(join(cwd, '.dsh', 'development-tasks.sqlite'))).toBe(true)
+      expect(existsSync(index)).toBe(false)
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

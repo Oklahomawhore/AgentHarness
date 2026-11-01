@@ -38,8 +38,6 @@ export interface Config {
   maxResponseBytes: number
   /** Milliseconds between failed presence attempts. */
   leaseRetryMs: number
-  /** Milliseconds used when the Host omits a valid TTL. */
-  leaseFallbackTtlMs: number
   /** Minimum renewal interval in milliseconds. */
   leaseMinHeartbeatMs: number
   /** Maximum renewal interval in milliseconds. */
@@ -55,7 +53,6 @@ export const Config: s<Config> = s.object({
   maxRequestBytes: s.natural().min(1).required(),
   maxResponseBytes: s.natural().min(1).required(),
   leaseRetryMs: s.natural().min(1).max(MAX_TIMER_DELAY_MS).required(),
-  leaseFallbackTtlMs: s.natural().min(1).max(MAX_TIMER_DELAY_MS).required(),
   leaseMinHeartbeatMs: s.natural().min(1).max(MAX_TIMER_DELAY_MS).required(),
   leaseMaxHeartbeatMs: s.natural().min(1).max(MAX_TIMER_DELAY_MS).required(),
 })
@@ -109,15 +106,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const lifetime = new AbortController()
   const server = createAgentHarnessBridge({ ...selected, signal: lifetime.signal })
   const lease = new AgentHarnessBridgePresenceLease({
-    ...selected, retryMs: selected.leaseRetryMs, fallbackTtlMs: selected.leaseFallbackTtlMs,
+    ...selected, retryMs: selected.leaseRetryMs,
     minHeartbeatMs: selected.leaseMinHeartbeatMs, maxHeartbeatMs: selected.leaseMaxHeartbeatMs,
   })
   const transport = new StdioServerTransport()
   let opening: Promise<void> = Promise.resolve()
-  let cancelClosed = (): void => {}
   ctx.effect(() => async () => {
     lifetime.abort()
-    cancelClosed()
     try { await opening } catch {
       // connect failure is reported by Loader; disposal still closes partially acquired resources.
     }
@@ -127,12 +122,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   opening = server.connect(transport)
   await opening
   if (lifetime.signal.aborted) return
-  const protocolClose = transport.onclose
-  transport.onclose = () => {
-    protocolClose?.()
-    if (!lifetime.signal.aborted) cancelClosed = ready.onReady(() => { exit(0) })
-  }
   ctx.effect(() => ready.onReady(() => {
-    if (!lifetime.signal.aborted) void lease.start()
+    void lease.start()
   }), 'mcp: start presence after readiness')
 }

@@ -105,7 +105,7 @@ export async function apply(ctx) {
     const visible = contexts(options.messages)
     assert.equal(visible.length, 1)
     const message = visible[0]
-    assert.deepEqual(message.source.backend, { id: 'text', revision: '7' })
+    assert.deepEqual(message.source.backend, { id: 'text', revision: '9' })
     assert.ok(Buffer.byteLength(content(message), 'utf8') <= 6000, 'the complete context must fit the default read budget')
     assert.equal(message.source.revision, observedTurn + 2)
     assert.deepEqual(message.source.bindingEpoch, { nodeId, seq: 1 })

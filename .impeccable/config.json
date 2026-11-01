@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "packages/client/ui-dev-workbench/src/client/DevWorkbenchPanel.module.css"
+        ],
+        "createdAt": "2026-10-29T10:28:10.296Z",
+        "reason": "Agent review: line 43 draws the lower-left resize grip for the panel separator wired to onPointerDown resizeFromLeft; existing panel tests exercise corner resizing. It is an interaction affordance, not a card accent."
+      }
+    ]
+  }
+}

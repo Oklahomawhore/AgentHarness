@@ -36,6 +36,18 @@ export type {
 } from './types.ts'
 
 /**
+ * Terminal initialization failed and provider cleanup did not complete.
+ * @param spawnError - original initialization failure.
+ * @param cleanupError - failure that may leave provider-owned resources alive.
+ */
+export class SubprocessTerminalCleanupError extends AggregateError {
+  constructor(readonly spawnError: unknown, readonly cleanupError: unknown) {
+    super([spawnError, cleanupError], 'Terminal initialization and cleanup failed', { cause: spawnError })
+    this.name = 'SubprocessTerminalCleanupError'
+  }
+}
+
+/**
  * Credential-shaped environment names are NOT forwarded to children (the
  * harness's own `DEEPSEEK_API_KEY`/secrets must not leak into a spawned
  * process implicitly). One heuristic for every in-repo spawner; a
@@ -149,6 +161,7 @@ export abstract class SubprocessRuntime extends Service {
    * foreground groups, signals, and whole-session quiescence.
    * @param spec - fully specified argv, cwd, environment, dimensions, grace, and allocation cancellation.
    * @returns the live terminal handle after allocation succeeds.
+   * @throws {@link SubprocessTerminalCleanupError} when initialization and provider cleanup both fail.
    */
   abstract spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle>
 }

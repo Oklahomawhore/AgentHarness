@@ -840,6 +840,6 @@ async function main() {
 try {
   await main()
 } catch (error) {
-  console.error(`[install-lefthook] ${error instanceof Error ? error.message : String(error)}`)
+  console.error('[install-lefthook]', error)
   process.exitCode = 1
 }

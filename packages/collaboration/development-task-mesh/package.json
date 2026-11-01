@@ -28,6 +28,7 @@
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-development-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-room": "workspace:^",
+    "@deepseek-ai/dsh-development-room-mesh": "workspace:^",
     "@deepseek-ai/dsh-development-task": "workspace:^"
   }
 }

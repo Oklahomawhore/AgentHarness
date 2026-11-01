@@ -1,0 +1,40 @@
+{
+  "turns": 3,
+  "reportedBackend": {
+    "id": "reported-files",
+    "revision": "6"
+  },
+  "sourceSessionCount": 2,
+  "receiverSessionCount": 1,
+  "sourceBashCalls": 9,
+  "answerSamples": 1,
+  "commandExitCodes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    7
+  ],
+  "answerDigest": "21e3c784aefad631a9ce5997ece9221280e63695765b8ce9d0ea9d49f5ad1774",
+  "contextBytes": [
+    7020,
+    7052,
+    7671
+  ],
+  "selectedSourceCounts": [
+    3,
+    3,
+    4
+  ],
+  "independentAnswerRetained": true,
+  "latestCommandFailureRetained": true,
+  "exactAnswerWithdrawal": true,
+  "durableBeforeSend": true,
+  "wirePreservesContext": true,
+  "privateHistoryExcluded": true,
+  "noRecall": true
+}

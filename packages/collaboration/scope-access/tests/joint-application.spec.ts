@@ -113,19 +113,37 @@ it('restores the original planned read and contribution after read commits but T
 it('reserves a planned read slot before a failed read write and does not let another invitation consume it', async () => {
   const fixture = await application('join', { maxGrants: 1 })
   await fixture.b.access.applyContribution(fixture.request, signal())
-  const stop = fixture.a.ctx.on('scope-access/contribution-application-changed', () => {
+  const observations: { taskId: typeof fixture.task.id; inventory: ReturnType<typeof fixture.a.access.list> }[] = []
+  const stopObserving = fixture.a.ctx.on('scope-access/contribution-application-changed', ({ taskId }) => {
+    const inventory = fixture.a.access.list()
+    void inventory.catch(() => undefined) // The assertions and finally below own every inventory read.
+    observations.push({ taskId, inventory })
+  })
+  const stopFailing = fixture.a.ctx.on('scope-access/contribution-application-changed', () => {
     if (fixture.retained().readInvitation !== undefined) fixture.a.pool.failNextWrites = 1
   })
-  await expect(fixture.approve()).rejects.toMatchObject({ code: 'scope-contribution/unavailable' })
-  stop()
-  const planned = fixture.retained()
-  expect(planned.readInvitation).toBeDefined()
-  expect((await fixture.a.access.list()).grants).toEqual([])
-  await expect(fixture.a.access.invite({ taskId: fixture.task.id, recipientPeerId: peer('another-source'),
-    ownerAddress: fixture.ownerAddress, expiresAt: fixture.request.limits.expiresAt, responsibility: 'Other' })).rejects.toThrow('capacity')
-  const recovered = await fixture.b.access.contributionApplicationStatus(fixture.request, signal())
-  expect(recovered).toMatchObject({ status: 'approved', readInvitation: planned.readInvitation })
-  expect((await fixture.a.access.list()).grants).toHaveLength(1)
+  try {
+    try { await expect(fixture.approve()).rejects.toMatchObject({ code: 'scope-contribution/unavailable' }) }
+    finally { stopFailing() }
+    const planned = fixture.retained()
+    expect(planned.readInvitation).toBeDefined()
+    expect((await fixture.a.access.list()).grants).toEqual([])
+    expect(observations.map(item => item.taskId)).toEqual([fixture.task.id])
+    expect((await observations[0]!.inventory).grants).toEqual([])
+    await expect(fixture.a.access.invite({ taskId: fixture.task.id, recipientPeerId: peer('another-source'),
+      ownerAddress: fixture.ownerAddress, expiresAt: fixture.request.limits.expiresAt, responsibility: 'Other' })).rejects.toThrow('capacity')
+    const recovered = await fixture.b.access.contributionApplicationStatus(fixture.request, signal())
+    expect(recovered).toMatchObject({ status: 'approved', readInvitation: planned.readInvitation })
+    const committed = [{ invitation: planned.readInvitation, state: 'active' }]
+    expect((await fixture.a.access.list()).grants).toEqual(committed)
+    expect(observations.map(item => item.taskId)).toEqual([fixture.task.id, fixture.task.id])
+    expect((await observations[1]!.inventory).grants).toEqual(committed)
+    await expect(fixture.b.access.contributionApplicationStatus(fixture.request, signal())).resolves.toEqual(recovered)
+    expect(observations).toHaveLength(2)
+  } finally {
+    stopFailing(); stopObserving()
+    await Promise.allSettled(observations.map(item => item.inventory))
+  }
 })
 
 it('keeps contribution active when the independent read grant is revoked', async () => {
@@ -169,6 +187,46 @@ it('serializes cancellation after held approval and never reopens either permiss
     await expect(fixture.b.access.applyContribution(fixture.request, signal())).resolves.toEqual(result)
     expect((await fixture.a.access.list()).grants[0]?.state).toBe('revoked')
   } finally { release.resolve(undefined); await Promise.allSettled([approval]) }
+})
+
+it('observes an independent revocation committed while its opening grant waits to return', async () => {
+  const fixture = await application()
+  await fixture.b.access.applyContribution(fixture.request, signal())
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const open = fixture.a.tasks.openPeerContribution.bind(fixture.a.tasks)
+  const opening = vi.spyOn(fixture.a.tasks, 'openPeerContribution').mockImplementationOnce(async (grant) => {
+    const result = await open(grant)
+    entered.resolve(undefined)
+    await release.promise
+    return result
+  })
+  const approval = fixture.approve()
+  const settled = Promise.allSettled([approval])
+  try {
+    await Promise.race([entered.promise, approval.then(() => { throw new Error('Approval returned before its committed-grant barrier') })])
+    const grant = fixture.retained().grant
+    if (grant === null) throw new Error('Approval did not retain its original planned grant')
+    expect(fixture.a.tasks.peerContributions({ taskId: fixture.task.id })).toMatchObject([{ state: 'active', grant }])
+    const ended = await fixture.a.access.revokeContribution({ grant })
+    if (ended.status !== 'ended') throw new Error('Independent owner revocation did not commit')
+    release.resolve(undefined)
+    expect(await settled).toMatchObject([{ status: 'rejected', reason: { code: 'scope-contribution/grant-ended' } }])
+    const events = fixture.a.tasks.log()
+    const result = await fixture.b.access.contributionApplicationStatus(fixture.request, signal())
+    expect(result).toMatchObject({ status: 'ended', reason: 'revoked', receipt: ended.receipt, readState: 'active' })
+    if (result.status !== 'ended' || result.readInvitation === undefined) throw new Error('Joint read permission was not retained')
+    const subscription = await fixture.b.access.join({ invitation: result.readInvitation })
+    expect((await fixture.b.access.retrieve(subscription.id, signal())).status).toBe('active')
+    await expect(fixture.approve()).rejects.toMatchObject({ code: 'scope-contribution/grant-ended' })
+    expect(fixture.a.tasks.log()).toEqual(events)
+    expect(events.filter(event => event.change.kind === 'peer-contribution-opened')).toHaveLength(1)
+    expect(events.filter(event => event.change.kind === 'peer-contribution-ended')).toHaveLength(1)
+  } finally {
+    release.resolve(undefined)
+    await settled
+    opening.mockRestore()
+  }
 })
 
 it('recovers a failed read revocation before confirming cancellation after owner restart', async () => {
@@ -248,13 +306,13 @@ it('reports independent read expiration and rejects a restored mismatched read p
   expect(restored.exit).toHaveBeenCalledWith(1)
 })
 
-it('cancels an unapproved joint entry without inventing reading when an independent contribution already exists', async () => {
+it('cancels an unapproved joint entry without ending an independently granted contribution', async () => {
   const fixture = await application()
   const grant = plannedContributionGrant(fixture.request.entry.ownerPeerId, { taskId: fixture.task.id,
     proposal: fixture.request.proposal, ownerAddress: fixture.ownerAddress, ...fixture.request.limits })
   await fixture.a.access.inviteContribution({ ownerAddress: fixture.ownerAddress, grant })
   expect(await fixture.b.access.cancelContributionApplication(fixture.request, signal())).toEqual({ status: 'cancelled' })
-  expect(fixture.a.tasks.peerContributions({})[0]?.state).toBe('ended')
+  expect(fixture.a.tasks.peerContributions({})[0]?.state).toBe('active')
   expect((await fixture.a.access.list()).grants).toEqual([])
 })
 

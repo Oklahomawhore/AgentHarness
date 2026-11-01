@@ -2,16 +2,19 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import type { Config as McpClientConfig } from '@deepseek-ai/dsh-mcp-client'
+import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import { mountAcpMcpServers } from '../src/mcp.ts'
 
 /** Context stand-in that captures validated MCP configs without opening transports. */
 function captureContext(): { ctx: Context; configs: McpClientConfig[] } {
   const configs: McpClientConfig[] = []
   const plugin = vi.fn((_plugin: unknown, config: McpClientConfig) => {
-    configs.push(config)
+    if (_plugin === McpClient) configs.push(config)
     return Promise.resolve(undefined)
   })
-  return { ctx: { plugin } as unknown as Context, configs }
+  const ctx = { plugin, isolate: vi.fn() }
+  ctx.isolate.mockReturnValue(ctx)
+  return { ctx: ctx as unknown as Context, configs }
 }
 
 describe('ACP MCP declaration mapping', () => {

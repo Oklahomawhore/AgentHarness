@@ -67,7 +67,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
   private exited = false
   private trackedDescendants: ProcessIdentity[] = []
   /** The spawned shell's start identity; scans stop adopting members once the root pid no longer carries it. */
-  private readonly rootIdentity: ProcessIdentity | undefined
+  private rootIdentity: ProcessIdentity | undefined
 
   /**
    * @param terminal - allocated node-pty process.
@@ -84,7 +84,6 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
     private readonly resolveManagedOutcome?: (outcome: SubprocessOutcome) => SubprocessOutcome,
   ) {
     this.pid = terminal.pid
-    this.rootIdentity = inspector.snapshot().tree(this.pid).find(member => member.pid === this.pid)
     this.done = this.outcome.promise
     this.dataDisposable = terminal.onData((data) => { this.output.write(Buffer.from(data, 'utf8')) })
     this.exitDisposable = terminal.onExit(({ exitCode, signal: exitSignal }) => {
@@ -101,6 +100,11 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
         this.outcome.reject(error)
       }
     })
+  }
+
+  /** Capture the spawned shell's identity once, after provider ownership is registered and before publication. */
+  captureRootIdentity(): void {
+    this.rootIdentity = this.inspector.snapshot().tree(this.pid).find(member => member.pid === this.pid)
   }
 
   /** Whether node-pty has not yet published the top-level exit event. */
@@ -182,7 +186,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
       return
     }
     try {
-      this.terminal.kill('SIGKILL')
+      this.terminal.kill(this.platform === 'win32' ? undefined : 'SIGKILL')
     } catch (_unidentifiedShellExitedDuringHostExit) {
       // Without a captured identity, node-pty is the only root kill primitive.
     }
@@ -258,6 +262,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
   }
 
   private async stopDescendants(): Promise<ProcessIdentity[]> {
+    if (this.rootIdentity === undefined) return []
     const captured = this.descendants(this.inspector.snapshot())
     this.signalMembers(captured, 'SIGTERM')
     const capturedSurvivors = await this.waitForMembers(captured)
@@ -289,7 +294,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
       }
       await Promise.race([this.done.then(() => undefined), delay(this.graceMs)])
     }
-    if (!this.exited) throw new Error(`terminal cleanup failed; surviving pid: ${this.pid}`)
+    if (!this.exited) throw new Error(`terminal cleanup failed; exit unconfirmed for pid: ${this.pid}`)
   }
 
   private async stopShellWindows(): Promise<void> {
@@ -319,7 +324,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
       this.inspector.signalProcess(this.rootIdentity, 'SIGKILL')
       await this.waitForWindowsShellExit()
     }
-    if (!shellGone()) throw new Error(`terminal cleanup failed; surviving pid: ${this.pid}`)
+    if (!shellGone()) throw new Error(`terminal cleanup failed; exit unconfirmed for pid: ${this.pid}`)
   }
 
   private async waitForWindowsShellExit(): Promise<void> {
@@ -363,6 +368,13 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
 
   private async closeManagedRange(owner: BoundProcessOwner): Promise<void> {
     owner.signal('SIGTERM')
+    const nativeExit = this.done.then(() => undefined, () => undefined)
+    if (!this.exited) await raceWithDelay(nativeExit, this.graceMs, undefined)
+    if (!this.exited) {
+      owner.signal('SIGKILL')
+      await raceWithDelay(nativeExit, this.graceMs, undefined)
+    }
+    if (!this.exited) throw new Error(`terminal cleanup failed; exit unconfirmed for pid: ${this.pid}`)
     const observation = owner.waitForExit()
     const first = await raceWithDelay(observation.then(
       () => ({ kind: 'stopped' as const }),
@@ -382,10 +394,6 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
       }
       await observation
     }
-    if (!this.exited) {
-      await raceWithDelay(this.done.then(() => undefined), this.graceMs, undefined)
-    }
-    if (!this.exited) throw new Error(`terminal cleanup failed; surviving pid: ${this.pid}`)
   }
 
   private settleExitIfGone(): void {

@@ -126,7 +126,7 @@ export class LanPeerDiscovery {
     private readonly callbacks: LanDiscoveryCallbacks,
   ) {}
 
-  /** Bind multicast, publish immediately, and start announcement and expiry timers. */
+  /** Bind multicast and start discovery; datagram send failures report through callbacks without closing the listener. */
   async start(): Promise<void> {
     if (!this.config.enabled || this.socket !== undefined) return
     const socket = createSocket({ type: 'udp4', reuseAddr: true })
@@ -149,9 +149,9 @@ export class LanPeerDiscovery {
         socket.once('listening', ready)
         socket.bind(this.config.port, '0.0.0.0')
       })
-      await this.announce('online')
+      await this.announce(socket, 'online')
       this.announceTimer = setInterval(() => {
-        void this.announce('online').catch((error: unknown) => {
+        void this.announce(socket, 'online').catch((error: unknown) => {
           this.callbacks.error(error instanceof Error ? error : new Error(String(error)))
         })
       }, this.config.announceIntervalMs)
@@ -168,9 +168,10 @@ export class LanPeerDiscovery {
     this.stopping = true
     if (this.announceTimer !== undefined) clearInterval(this.announceTimer)
     if (this.expireTimer !== undefined) clearInterval(this.expireTimer)
-    if (this.socket !== undefined) {
-      await this.announce('offline').catch(() => {})
-      try { this.socket.dropMembership(this.config.multicastAddress) } catch {
+    const socket = this.socket
+    if (socket !== undefined) {
+      await this.announce(socket, 'offline').catch(() => {})
+      try { socket.dropMembership(this.config.multicastAddress) } catch {
         // A failed socket may never have joined the multicast group.
       }
     }
@@ -221,9 +222,7 @@ export class LanPeerDiscovery {
     }
   }
 
-  private announce(state: Announcement['state']): Promise<void> {
-    const socket = this.socket
-    if (socket === undefined) return Promise.resolve()
+  private announce(socket: Socket, state: Announcement['state']): Promise<void> {
     const announcement: Announcement = {
       product: PRODUCT,
       version: DISCOVERY_VERSION,
@@ -240,8 +239,11 @@ export class LanPeerDiscovery {
     if (bytes.byteLength > this.config.maxDatagramBytes) {
       return Promise.reject(new Error('development-mesh discovery announcement exceeds maxDatagramBytes'))
     }
-    return new Promise((resolve, reject) => {
-      socket.send(bytes, this.config.port, this.config.multicastAddress, (error) => { if (error === null) resolve(); else reject(error) })
+    return new Promise((resolve) => {
+      socket.send(bytes, this.config.port, this.config.multicastAddress, (error) => {
+        if (error !== null) this.callbacks.error(error)
+        resolve()
+      })
     })
   }
 

@@ -13,13 +13,18 @@
  * The corpus is the build output, so this skips on a tree that has none.
  */
 import { spawnSync } from 'node:child_process'
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { expect, test, TestRunner } from 'vitest'
+import { afterEach, expect, test, TestRunner } from 'vitest'
 
 const runner = fileURLToPath(new URL('./transform-corpus-check.ts', import.meta.url))
+const roots: string[] = []
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 test('every built bundle imports under Node', (context) => {
-  const finished = spawnSync(process.execPath, ['--import', 'tsx/esm', runner], { encoding: 'utf8' })
+  const finished = spawnSync(process.execPath, [runner], { encoding: 'utf8' })
   const output = `${finished.stdout}${finished.stderr}`
   if (output.includes('no built bundles found')) {
     context.skip('the workspace has no build output to sweep')
@@ -31,50 +36,74 @@ test('every built bundle imports under Node', (context) => {
   expect(finished.status, output).toBe(0)
 }, 900_000)
 
-// The hook replaces only the chosen bundle; shared build artifacts stay intact.
-test.each([
-  ['expected-css', 0, 'baselineExempt=1 unexpectedBaselineFailure=0'],
-  ['error', 1, '- UNEXPECTED BASELINE FAILURE'],
-  ['other-css', 1, '- UNEXPECTED BASELINE FAILURE'],
-  ['other-code', 1, '- UNEXPECTED BASELINE FAILURE'],
-  ['clean', 1, '- STALE EXEMPTION'],
-] as const)('classifies dockkit import: %s', (mode, status, finding) => {
-  const root = new URL('../../../../../', import.meta.url)
-  const bundle = 'packages/client/ui-dockkit/lib/index.js'
-  const css = fileURLToPath(new URL('packages/client/ui-dockkit/lib/components/dockkit.module.css', root))
-  const message = mode === 'error'
-    ? 'dockkit-negative-control'
-    : `Unknown file extension ".css" for ${mode === 'other-css' ? `${css}.other.css` : css}`
-  const source = mode === 'clean'
-    ? 'export {}'
-    : `throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(mode === 'other-code' ? 'ERR_OTHER' : 'ERR_UNKNOWN_FILE_EXTENSION')} })`
-  const script = `
-    import { registerHooks } from 'node:module'
-    const target = ${JSON.stringify(new URL(bundle, root).href)}
-    registerHooks({
-      resolve(specifier, context, nextResolve) {
-        if (specifier === target) return { url: target, shortCircuit: true }
-        return nextResolve(specifier, context)
-      },
-      load(url, context, nextLoad) {
-        if (url === target) {
-          return { format: 'module', shortCircuit: true, source: ${JSON.stringify(source)} }
-        }
-        return nextLoad(url, context)
-      },
+// Each classification owns its artifact files; loader hooks replace only the chosen bundle.
+for (const bundle of [
+  'packages/client/ui-dockkit/lib/index.js',
+  'packages/client/ui-primitives/lib/index.js',
+  'packages/client/web/lib/index.js',
+] as const) {
+  test.each([
+    ['expected-css', 0, 'baselineExempt=1 unexpectedBaselineFailure=0'],
+    ['dependency-css', 0, 'baselineExempt=1 unexpectedBaselineFailure=0'],
+    ['error', 1, '- UNEXPECTED BASELINE FAILURE'],
+    ['other-css', 1, '- UNEXPECTED BASELINE FAILURE'],
+    ['source-css', 1, '- UNEXPECTED BASELINE FAILURE'],
+    ['foreign-css', 1, '- UNEXPECTED BASELINE FAILURE'],
+    ['other-code', 1, '- UNEXPECTED BASELINE FAILURE'],
+    ['clean', 1, '- STALE EXEMPTION'],
+  ] as const)(`classifies ${bundle}: %s`, (mode, status, finding) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-corpus-classification-')))
+    roots.push(root)
+    writeFileSync(join(root, 'package.json'), '{"type":"module"}\n')
+    const driver = join(root, 'packages/experimental/webworker-runtime/tests/compile/transform-corpus-check.ts')
+    mkdirSync(dirname(driver), { recursive: true })
+    copyFileSync(runner, driver)
+    const styles = {
+      own: 'packages/client/ui-dockkit/lib/components/dockkit.module.css',
+      dependency: 'packages/client/ui-primitives/lib/StateDot.module.css',
+      source: 'packages/client/ui-primitives/src/StateDot.module.css',
+      foreign: 'unrelated/style.css',
+    }
+    for (const path of Object.values(styles)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true })
+      writeFileSync(join(root, path), '.fixture {}\n')
+    }
+    const css = join(root, mode === 'dependency-css' ? styles.dependency
+      : mode === 'source-css' ? styles.source : mode === 'foreign-css' ? styles.foreign : styles.own)
+    const message = mode === 'error'
+      ? 'dockkit-negative-control'
+      : `Unknown file extension ".css" for ${mode === 'other-css' ? `${css}.other.css` : css}`
+    const source = mode === 'clean'
+      ? 'export {}'
+      : `throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(mode === 'other-code' ? 'ERR_OTHER' : 'ERR_UNKNOWN_FILE_EXTENSION')} })`
+    const script = `
+      import { registerHooks } from 'node:module'
+      const target = ${JSON.stringify(pathToFileURL(join(root, bundle)).href)}
+      registerHooks({
+        resolve(specifier, context, nextResolve) {
+          if (specifier === target) return { url: target, shortCircuit: true }
+          return nextResolve(specifier, context)
+        },
+        load(url, context, nextLoad) {
+          if (url === target) {
+            return { format: 'module', shortCircuit: true, source: ${JSON.stringify(source)} }
+          }
+          return nextLoad(url, context)
+        },
+      })
+      process.argv = [process.execPath, 'corpus-classification', ${JSON.stringify(bundle)}]
+      await import(${JSON.stringify(pathToFileURL(driver).href)})
+    `
+    const finished = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: root, encoding: 'utf8', timeout: TestRunner.getCurrentTest()!.timeout,
     })
-    process.argv = [process.execPath, 'corpus-classification', ${JSON.stringify(bundle)}]
-    await import(${JSON.stringify(pathToFileURL(runner).href)})
-  `
-  const finished = spawnSync(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script], {
-    cwd: fileURLToPath(root), encoding: 'utf8', timeout: TestRunner.getCurrentTest()!.timeout,
+    const output = `${finished.stdout}${finished.stderr}`
+    expect(finished.error).toBeUndefined()
+    expect(finished.signal).toBeNull()
+    expect(finished.status, output).toBe(status)
+    expect(output).toContain(finding)
+    if (status === 1 && mode !== 'clean') {
+      expect(output).toContain(`- UNEXPECTED BASELINE FAILURE ${bundle}: ${message}\n`)
+    }
   })
-  const output = `${finished.stdout}${finished.stderr}`
-  expect(finished.error).toBeUndefined()
-  expect(finished.signal).toBeNull()
-  expect(finished.status, output).toBe(status)
-  expect(output).toContain(finding)
-  if (mode === 'error' || mode === 'other-css' || mode === 'other-code') {
-    expect(output).toContain(`- UNEXPECTED BASELINE FAILURE ${bundle}: ${message}\n`)
-  }
-})
+}

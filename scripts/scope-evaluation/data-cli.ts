@@ -8,29 +8,35 @@ import { z } from 'zod'
 import { gradeDataArtifacts } from './data-artifacts.ts'
 import { createDataStudy, dataStudyConditions, parseDataStudyConfig } from './data-study.ts'
 import { createContinuityStudy, gradeContinuityPhase, continuityConditions, continuityAutomatic } from './continuity-study.ts'
+import { createMixedStudy, gradeMixedArtifacts, mixedStudyConditions, parseMixedStudyConfig } from './mixed-study.ts'
+import type { NativeDataRunResult } from './native-data-run.ts'
+import type { NativeMixedRunResult } from './native-mixed-run.ts'
 import { resolveNativeModules } from './native-dependencies.ts'
+import { resolveDataNetwork } from './data-network.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '../..')
 const hash = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
 const fingerprintSchema = z.record(z.string().refine(isAbsolute), z.string().regex(/^[a-f0-9]{64}$/))
-const manifestSchema = z.object({ version: z.literal(1), id: z.enum(['payment-json-work-v1', 'payment-policy-continuity-v1']),
-  protocol: z.enum(['single-wave', 'continuity']).default('single-wave'),
+const manifestSchema = z.object({ version: z.literal(1), id: z.enum(['payment-json-work-v1', 'payment-policy-continuity-v1', 'payment-mixed-work-v1']),
+  protocol: z.enum(['single-wave', 'continuity', 'mixed']).default('single-wave'),
   root: z.string().refine(isAbsolute), repo: z.string().refine(isAbsolute), head: z.string(), createdAt: z.iso.datetime(),
   nodePath: z.string().refine(isAbsolute), nodeVersion: z.string(), seed: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   execution: z.enum(['live', 'transport-calibration']), config: z.unknown(), studySha256: z.string().regex(/^[a-f0-9]{64}$/),
   sourceHashes: fingerprintSchema, artifactHashes: fingerprintSchema,
-  conditions: z.array(z.enum(['N', 'E', 'R'])).min(1).max(3),
+  conditions: z.array(z.enum(['N', 'E', 'R', 'reported', 'semantic'])).min(1).max(3),
   fingerprintScope: z.string(), scope: z.string(), maximumDispatches: z.number().int().positive(),
 }).strict()
 type Manifest = z.infer<typeof manifestSchema>
 
 type Protocol = Manifest['protocol']
 function registeredStudy(protocol: Protocol, seed: number, config: Parameters<typeof createDataStudy>[1]) {
-  return protocol === 'continuity' ? { protocol, ...createContinuityStudy(seed, config) }
-    : { protocol, ...createDataStudy(seed, config) }
+  if (protocol === 'mixed') return { protocol, ...createMixedStudy(seed, config) }
+  if (protocol === 'continuity') return { protocol, ...createContinuityStudy(seed, config) }
+  return { protocol, ...createDataStudy(seed, config) }
 }
-function studyConditions(protocol: Protocol): readonly ('N' | 'E' | 'R')[] {
+function studyConditions(protocol: Protocol): readonly Manifest['conditions'][number][] {
+  if (protocol === 'mixed') return mixedStudyConditions
   return protocol === 'continuity' ? continuityConditions : dataStudyConditions
 }
 function maximumDispatches(protocol: Protocol, config: Parameters<typeof createDataStudy>[1]): number {
@@ -78,8 +84,9 @@ export async function prepareDataStudy(input: {
   protocol?: Protocol
 }): Promise<Manifest> {
   if (!isAbsolute(input.root)) throw new Error('study directory must be absolute')
-  const config = parseDataStudyConfig(input.config, input.execution)
   const protocol = input.protocol ?? 'single-wave'
+  const config = protocol === 'mixed' ? parseMixedStudyConfig(input.config, input.execution)
+    : parseDataStudyConfig(input.config, input.execution)
   const study = registeredStudy(protocol, input.seed, config)
   const paths = await fingerprintPaths()
   const manifest: Manifest = { version: 1, id: study.runtime.id, protocol, root: resolve(input.root), repo,
@@ -89,17 +96,21 @@ export async function prepareDataStudy(input: {
     artifactHashes: await fingerprints(paths.artifacts),
     conditions: [...studyConditions(protocol)], maximumDispatches: maximumDispatches(protocol, config),
     fingerprintScope: 'Evaluation root sources, resolved public JS entries, their resolver manifests and CLI entry; not the complete dependency graph.',
-    scope: protocol === 'continuity'
-      ? 'One existing B Session across initial evidence, correction, and source contribution withdrawal with read authority retained; E/R mechanism trials. No N opportunity comparison, two-recipient concurrency, live benefit or cross-device claim.'
-      : 'One synthetic post-update wave; B and C ordinary Agents work independently. N has no update, E original admitted reports, R recipient semantic projection. No shared-summary S, existing-Session withdrawal, representative benefit or cross-device claim.',
+    scope: protocol === 'mixed'
+      ? 'Five named dsh Hosts on one device: separate scope owner, policy and document sources, and two existing receiving Sessions/local Tasks. N/reported/semantic mixed work with 8000 context bytes and independent artifacts. No physical-device or real-model benefit claim.'
+      : protocol === 'continuity'
+        ? 'One existing B Session across initial evidence, correction, and source contribution withdrawal with read authority retained; E/R mechanism trials. No N opportunity comparison, two-recipient concurrency, live benefit or cross-device claim.'
+        : 'One synthetic post-update wave; B and C ordinary Agents work independently. N has no update, E original admitted reports, R recipient semantic projection. No shared-summary S, existing-Session withdrawal, representative benefit or cross-device claim.',
   }
   await mkdir(manifest.root, { mode: 0o700 })
   await json(join(manifest.root, 'manifest.json'), manifest)
   await json(join(manifest.root, 'registration.json'), { modelDispatches: 0, liveModelDispatches: 0,
     credentialRead: false, conditions: manifest.conditions, maximumDispatches: manifest.maximumDispatches,
-    budgetScope: protocol === 'continuity'
-      ? 'ordinary.maxCalls across all three automatic turns of the same B Session per condition; semantic.maxCalls across the R owner. No retries or monetary cap.'
-      : 'ordinary.maxCalls per recipient per condition; semantic.maxCalls for the R owner. No automatic retries or monetary cap.',
+    budgetScope: protocol === 'mixed'
+      ? 'ordinary.maxCalls is cumulative across initial and mixed work for each receiving Session per condition; semantic.maxCalls covers the semantic owner. Maximum dispatches is a ceiling, not a completion promise, account approval or monetary cap. No retries.'
+      : protocol === 'continuity'
+        ? 'ordinary.maxCalls across all three automatic turns of the same B Session per condition; semantic.maxCalls across the R owner. No retries or monetary cap.'
+        : 'ordinary.maxCalls per recipient per condition; semantic.maxCalls for the R owner. No automatic retries or monetary cap.',
     cells: manifest.conditions.map(condition => ({ condition, status: 'unattempted' })) })
   return manifest
 }
@@ -112,7 +123,8 @@ export async function inspectDataStudy(root: string): Promise<{ manifest: Manife
   if (!isAbsolute(root)) throw new Error('study directory must be absolute')
   const manifest = manifestSchema.parse(JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8')) as unknown)
   if (manifest.root !== resolve(root)) throw new Error('prepared study must stay at its frozen location')
-  const config = parseDataStudyConfig(manifest.config, manifest.execution)
+  const config = manifest.protocol === 'mixed' ? parseMixedStudyConfig(manifest.config, manifest.execution)
+    : parseDataStudyConfig(manifest.config, manifest.execution)
   const study = registeredStudy(manifest.protocol, manifest.seed, config)
   if (manifest.id !== study.runtime.id || JSON.stringify(manifest.conditions) !== JSON.stringify(studyConditions(manifest.protocol))) {
     throw new Error('registered protocol identity or conditions changed')
@@ -130,6 +142,11 @@ export async function inspectDataStudy(root: string): Promise<{ manifest: Manife
  */
 export async function runDataPhase(command: 'preflight' | 'execute', root: string): Promise<{ readonly failed: boolean; readonly [key: string]: unknown }> {
   const { manifest, study } = await inspectDataStudy(root)
+  if (command === 'execute') {
+    for (const route of [study.runtime.ordinary, study.runtime.semantic]) {
+      resolveDataNetwork(route.network, process.env, process.allowedNodeEnvironmentFlags.has('--use-env-proxy'))
+    }
+  }
   const output = join(root, command)
   await mkdir(output, { mode: 0o700 })
   if (command === 'preflight') {
@@ -145,17 +162,28 @@ export async function runDataPhase(command: 'preflight' | 'execute', root: strin
   process.on('SIGINT', onInterrupt); process.on('SIGTERM', onTerminate)
   const results = []
   try {
-    const { runNativeData } = await import('./native-data-run.ts')
     for (const condition of manifest.conditions) {
       cancellation.signal.throwIfAborted()
       await verify(manifest)
       cancellation.signal.throwIfAborted()
-      const result = await runNativeData({ repo, nodePath: process.execPath, output: join(output, condition),
-        condition, signal: cancellation.signal, study: study.runtime, execution: { kind: manifest.execution },
-        ...study.protocol === 'continuity' ? { continuity: { decisionPath: 'current-work.json', automatic: continuityAutomatic,
-          grade: (phase, artifacts) => gradeContinuityPhase({ phase, ...artifacts, oracle: study.oracle }) } }
-          : { grade: artifacts => gradeDataArtifacts({ ...artifacts, ...study.oracle }) },
-      })
+      let result: NativeDataRunResult | NativeMixedRunResult
+      if (study.protocol === 'mixed') {
+        if (condition === 'E' || condition === 'R') throw new Error('mixed study condition changed')
+        const { runNativeMixed } = await import('./native-mixed-run.ts')
+        result = await runNativeMixed({ repo, nodePath: process.execPath, output: join(output, condition),
+          condition, signal: cancellation.signal, study: study.runtime, execution: { kind: manifest.execution },
+          grade: artifacts => gradeMixedArtifacts({ condition, ...artifacts, oracle: study.oracle }),
+        })
+      } else {
+        if (condition === 'reported' || condition === 'semantic') throw new Error('ordinary study condition changed')
+        const { runNativeData } = await import('./native-data-run.ts')
+        result = await runNativeData({ repo, nodePath: process.execPath, output: join(output, condition),
+          condition, signal: cancellation.signal, study: study.runtime, execution: { kind: manifest.execution },
+          ...study.protocol === 'continuity' ? { continuity: { decisionPath: 'current-work.json', automatic: continuityAutomatic,
+            grade: (phase, artifacts) => gradeContinuityPhase({ phase, ...artifacts, oracle: study.oracle }) } }
+            : { grade: artifacts => gradeDataArtifacts({ ...artifacts, ...study.oracle }) },
+        })
+      }
       results.push(result)
       await json(join(output, `${condition}.json`), result)
       if (result.dispatchBlocked || result.failed) break
@@ -202,7 +230,7 @@ if (entry !== undefined && resolve(entry) === fileURLToPath(import.meta.url)) {
     if (seed === undefined || !/^(0|[1-9]\d*)$/.test(seed) || path === undefined || !isAbsolute(path)
       || (execution !== 'live' && execution !== 'transport-calibration')) throw new Error('invalid registration arguments')
     const protocol = options['protocol'] ?? 'single-wave'
-    if (protocol !== 'single-wave' && protocol !== 'continuity') throw new Error('invalid study protocol')
+    if (protocol !== 'single-wave' && protocol !== 'continuity' && protocol !== 'mixed') throw new Error('invalid study protocol')
     const manifest = await prepareDataStudy({ root, seed: Number(seed), execution, protocol,
       config: JSON.parse(await readFile(path, 'utf8')) as unknown })
     process.stdout.write(JSON.stringify({ prepared: manifest.root, liveModelDispatches: 0 }) + '\n')

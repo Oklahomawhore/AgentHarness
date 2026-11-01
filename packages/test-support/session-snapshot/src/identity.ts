@@ -105,7 +105,7 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
       if (record.type === 'feedback/message-put' && isRecord(record.data) && isRecord(record.data.item)) {
         claim(record.data.item.version, 'id')
       }
-      if (record.type === 'scope-agent-context/route' && isRecord(record.data) && record.data.version === 1
+      if (record.type === 'scope-agent-context/route' && isRecord(record.data) && (record.data.version === 1 || record.data.version === 2)
         && isRecord(record.data.subscription)) {
         claim(record.data.subscription.generation, 'id')
       }

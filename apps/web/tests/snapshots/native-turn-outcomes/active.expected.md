@@ -1,0 +1,22 @@
+- group:
+  - text: 分享本会话的工作
+  - paragraph: 授权生效后，本会话由用户输入发起并正常完成的最终答复会自动分享，无需逐条发送。答复仍是 Agent 报告，不代表已核实的事实。
+  - status: 正在采集已授权的最终答复
+  - term: 目标 Task
+  - definition: {{taskId}}
+  - term: 任务所有者设备
+  - definition: {{ownerPeerId}}
+  - term: 贡献来源
+  - definition: 正常完成的最终答复
+  - term: 授权到期时间
+  - definition: {{permissionExpiresLocal}}
+  - term: 最多样本数
+  - definition: "4"
+  - term: 每份样本字节上限
+  - definition: "8192"
+  - paragraph: 停止这份分享会撤回它贡献的答复，保留原会话和独立的读取、执行权限。更换分享来源须先停止原许可。
+  - group: 已批准的权限
+  - paragraph: 等待提交的观察：0
+  - button "停止分享并撤回"
+  - group: 更新所有者连接地址
+  - button "重新读取分享状态"

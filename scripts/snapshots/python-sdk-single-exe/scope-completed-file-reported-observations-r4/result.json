@@ -1,0 +1,27 @@
+{
+  "turns": 3,
+  "finalResponse": "Withdrawn completed file is no longer shared context.",
+  "hostCount": 2,
+  "executingSessionCount": 2,
+  "requestCounts": {
+    "owner": 6,
+    "receiver": 3
+  },
+  "sourceTools": [
+    "read",
+    "edit",
+    "edit",
+    "edit"
+  ],
+  "contextBytes": [
+    2229,
+    2253,
+    2085
+  ],
+  "originalReportCount": 3,
+  "completedContentDigest": "8d7f35dc815b127682d715aee17ef147d6f77b8b3c1e57cbae266356c8081771",
+  "explicitCompleteFilePermission": true,
+  "exactSourceWithdrawal": true,
+  "receiverDiskReconstruction": true,
+  "noRecall": true
+}

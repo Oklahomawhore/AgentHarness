@@ -9,8 +9,8 @@
 import type { GenerateOptions } from './types.ts'
 import type { ReasoningEffortId } from './brand.ts'
 
-/** Process-local identities of request objects assembled by dsh-agent-loop. */
-const AGENT_LOOP_REQUESTS = new WeakSet<GenerateOptions>()
+/** Process-local requests and the exact Session objects from which the loop assembled them. */
+const AGENT_LOOP_REQUESTS = new WeakMap<GenerateOptions, object>()
 
 // TODO(call-config-shape): Revisit which fields are epoch-level for cache reuse
 // and where provider-specific request options belong.
@@ -61,18 +61,20 @@ export function callConfigEquals(a: LlmCallConfig, b: LlmCallConfig): boolean {
 /**
  * Mark one exact request object as assembled by dsh-agent-loop.
  * @param request - loop-owned request envelope before LLM dispatch.
+ * @param session - exact owning Session object; retained by identity without importing Session into the LLM service.
  * @returns the same request object marked as created by the process-local agent loop.
  */
-export function markAgentLoopRequest<T extends GenerateOptions>(request: T): T {
-  AGENT_LOOP_REQUESTS.add(request)
+export function markAgentLoopRequest<T extends GenerateOptions>(request: T, session: object): T {
+  AGENT_LOOP_REQUESTS.set(request, session)
   return request
 }
 
 /**
  * Test whether the exact request object was assembled by dsh-agent-loop.
  * @param request - request envelope observed at the LLM waterfall.
- * @returns whether {@link markAgentLoopRequest} recorded this object.
+ * @param session - optional exact Session identity required by a Session-owning consumer.
+ * @returns whether the loop marked this request and, when supplied, its Session matches.
  */
-export function isAgentLoopRequest(request: GenerateOptions): boolean {
-  return AGENT_LOOP_REQUESTS.has(request)
+export function isAgentLoopRequest(request: GenerateOptions, session?: object): boolean {
+  return session === undefined ? AGENT_LOOP_REQUESTS.has(request) : AGENT_LOOP_REQUESTS.get(request) === session
 }

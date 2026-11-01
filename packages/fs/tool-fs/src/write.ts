@@ -14,6 +14,7 @@ import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
+import type { ToolFsMutation } from './index.ts'
 
 /**
  * Validate value constraints the schema DSL can't express: only a non-blank
@@ -112,7 +113,8 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
       // Single-slot decision: the policy plugin produces createIfAbsent/
       // replaceIfVersion; the bare default is undefined (unconditional). No stat.
       const intent = await ctx.waterfall('fs/write-intent', target, exec, () => undefined)
-      ctx.emit('tool-fs/mutation-start', { execution: exec, filesystem: ctx.fs, target, tool: 'write', input: { content: input.content } })
+      const mutation: ToolFsMutation = { execution: exec, filesystem: ctx.fs, target, tool: 'write', input: { content: input.content } }
+      ctx.emit('tool-fs/mutation-start', mutation)
       let outcome: FsWriteOutcome
       try {
         outcome = await ctx.fs.writeText(target, input.content, intent, exec.signal, sandboxPolicy)
@@ -122,7 +124,11 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
         // stable model-facing diagnostic; anything else passes through.
         throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
       }
+      // Successful tool events stay beside the actual provider result; edit retains its own intent and error scope.
+      /* jscpd:ignore-start */
       ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
+      ctx.emit('tool-fs/mutation-completed', { mutation, content: outcome.after })
+      /* jscpd:ignore-end */
       return {
         path: target.displayPath,
         operation: outcome.operation,

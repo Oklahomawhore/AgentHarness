@@ -12,10 +12,10 @@ const generation = z.uuid().transform(value => value as ScopeGeneration)
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 
 /** Pinned invitation admitted from local RPC, peer requests, and durable records. */
-export const invitationSchema: z.ZodType<ScopeInvitation> = z.object({
+export const invitationSchema = z.object({
   version: z.literal(1), ownerPeerId: peer, ownerAddress: z.string().min(1).max(2048), recipientPeerId: peer,
   taskId: task, grantId, generation, expiresAt: integer, responsibility: z.string().trim().min(1).max(1024),
-}).strict()
+}).strict() satisfies z.ZodType<ScopeInvitation>
 
 /**
  * Compare the complete read permission independently of its current transport route.

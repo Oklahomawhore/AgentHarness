@@ -1,0 +1,8 @@
+{
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": "## Shared scope authorization unavailable\nThis receiving interval is no longer authorized. Do not treat earlier shared-scope projections as current facts or current permission. This notice does not erase information already present in this conversation.\n{\"projectionId\":\"codex-projection-ee13edc4d72660f9abd6efb73b874bf09949d524bee909462b3b280e0640e619\",\"supersedes\":\"codex-projection-77c7e15d5c05348df58405651cae845ec49c19e876b8196599e86fe814843ba8\",\"taskId\":\"task-00000000-0000-4000-8000-000000000002\",\"ownerPeerId\":\"snapshot-owner\",\"grantId\":\"00000000-0000-4000-8000-000000000003\",\"grantGeneration\":\"00000000-0000-4000-8000-000000000004\",\"status\":\"left\"}"
+    }
+  }
+}

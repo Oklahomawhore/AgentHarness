@@ -57,7 +57,7 @@ Mount a [credentials provider](../../credentials/credentials/README.md), then th
 
 The [configuration catalog](../../../docs/config-catalog.md) derives accepted fields from the provider schema.
 
-Listeners accept only explicit IPv4/IPv6 TCP multiaddrs. Port zero lets the OS allocate a port. `identity()` waits for initialization and returns the public PeerId and bound addresses with their `/p2p/<PeerId>` suffix. A request target must include exactly the expected PeerId in that suffix; Noise verifies the destination's possession of the corresponding key.
+Listeners accept only explicit IPv4/IPv6 TCP multiaddrs. Port zero lets the OS allocate a port. `identity()` waits for initialization and returns the public PeerId and bound addresses with their `/p2p/<PeerId>` suffix. A request target must include exactly the expected PeerId in that suffix. Noise authenticates the connected peer; the provider compares its PeerId with the target before opening an application stream.
 
 `@deepseek-ai/dsh-scope-transport/address` exposes the same direct-address validation to consumers that persist recovery routes. A destination must retain the expected PeerId and use an explicit IP/TCP address with a nonzero port. Validation checks address syntax and identity selection, not network reachability.
 

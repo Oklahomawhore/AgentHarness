@@ -630,7 +630,7 @@ export class ClientModuleRegistry extends Service {
    * Re-hash one bundle (the HMR watch's registration hook — the only entry
    * point through which bundle content changes reach the graph).
    * @param id - entry id (package name).
-   * @returns the new rev, or undefined for an unknown id.
+   * @returns advertised revision, retained for identical bytes, or undefined for an unknown id.
    */
   rebuilt(id: string): string | undefined {
     const record = this.table.get(id)
@@ -640,7 +640,7 @@ export class ClientModuleRegistry extends Service {
     const sourceMap = this.readSourceMapSnapshot(record.meta.clientPath)
     const rev = artifactRevision(bundle, sourceMap)
     record.baseline = baseline
-    if (rev === record.entry.rev) return rev
+    if (rev === record.entry.rev || rev === artifactRevision(record.bundle, record.sourceMap)) return record.entry.rev
     record.entry = graphRow(id, rev, record.meta)
     record.bundle = bundle
     if (sourceMap === undefined) delete record.sourceMap

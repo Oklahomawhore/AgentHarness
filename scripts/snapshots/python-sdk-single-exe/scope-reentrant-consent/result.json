@@ -1,0 +1,24 @@
+{
+  "bootstrap": {
+    "text": "The existing local responsibility is ready.",
+    "finishReason": "completed"
+  },
+  "automaticTurnReasons": [
+    "aborted",
+    "completed"
+  ],
+  "automaticRequestTurns": [
+    2,
+    3
+  ],
+  "ordinaryInputs": 1,
+  "automaticPulses": 2,
+  "usedBudget": 2,
+  "mode": "enabled",
+  "goal": "Complete the explicitly selected replacement responsibility.",
+  "oldTurnRetiredBeforeReplacementConsent": true,
+  "independentConsentAndActivation": true,
+  "currentContext": "REENTRANT_REPLACEMENT_LOCAL_FACT",
+  "finalAutomaticResponse": "The replacement consent completed its own local work.",
+  "wirePreservesStatesRequestsAndTurnEnds": true
+}

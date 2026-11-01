@@ -24,7 +24,7 @@ The text provider admits each retained file segment as a whole under the recipie
 
 **Keep only the latest report.** A final Edit may require an earlier base, and a final failure does not establish new contents. A complete successful Write provides a narrower, explicit replacement signal.
 
-**Reconstruct the current file by applying Edit reports.** Authorized reports do not include every possible external write or read. Reconstruction would imply filesystem knowledge that the backend does not possess.
+**Reconstruct the current file by applying Edit reports.** Authorized reports do not include every possible external write or read. Reconstruction would imply filesystem knowledge that the backend does not possess. The separate [reported-file provider](2026-10-07-reported-file-context.md) derives only explicitly attributed report state without claiming current disk contents.
 
 **Ask the semantic model to resolve all repeated history.** This spends input budget on deterministic replacement and makes supersession depend on inference. The model remains responsible for relevance and summarization of retained evidence.
 

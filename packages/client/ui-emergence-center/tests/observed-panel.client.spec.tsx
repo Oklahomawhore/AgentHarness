@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSyncExternalStore } from 'react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
   DevelopmentNodeId, DevelopmentParticipantId, DevelopmentTaskBindingId, DevelopmentTaskId,
   DevelopmentTaskObservedCandidate, DevelopmentTaskObservedInterval, DevelopmentTaskObservedIntervalId,
@@ -52,6 +52,33 @@ async function mount(overrides: Partial<ObservedScopePort> = {}) {
 }
 
 describe('Remote observation owner controls', () => {
+  it('uses participant identity when the observed Session has no label throughout approval and termination', async () => {
+    const { port } = await mount({ candidates: async () => [IDENTITY] })
+    expect(screen.getByText(IDENTITY.participantId, { exact: true })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['observed.approve'] }))
+    await screen.findByText(zh['observed.active'])
+    expect(screen.getByText(IDENTITY.participantId, { exact: true })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh['observed.end'] }))
+    await screen.findByText(zh['observed.ended'])
+    expect(screen.getByText(IDENTITY.participantId, { exact: true })).toBeTruthy()
+    expect(port.approve).toHaveBeenCalledExactlyOnceWith(IDENTITY)
+    expect(port.end).toHaveBeenCalledExactlyOnceWith(IDENTITY)
+  })
+
+  it('recovers a failed owner read without approving an observed binding automatically', async () => {
+    const intervals = vi.fn<ObservedScopePort['intervals']>()
+      .mockRejectedValueOnce(new RemoteError('gateway/internal', 'private owner read failure', {})).mockResolvedValue([])
+    const { port } = await mount({ intervals })
+    expect(screen.getByRole('alert').textContent).toBe(zh['observed.readFailed'])
+    expect(screen.queryByText('private owner read failure')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: zh['observed.refresh'] }))
+    await screen.findByRole('button', { name: zh['observed.approve'] })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(intervals).toHaveBeenCalledTimes(2)
+    expect(port.approve).not.toHaveBeenCalled()
+    expect(port.end).not.toHaveBeenCalled()
+  })
+
   it('approves exactly one replicated binding and then ends its interval', async () => {
     const { port, container } = await mount()
     expect(screen.getByText(zh['observed.candidate'])).toBeTruthy()

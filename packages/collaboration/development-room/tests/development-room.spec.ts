@@ -146,4 +146,46 @@ describe('DevelopmentRoomService', () => {
       code: 'REPLICA_CONFLICT',
     })
   })
+
+  it('restores an identical local log without persisting or announcing it twice', async () => {
+    const source = setup()
+    const restored = setup()
+    const alice = participant('alice')
+    await source.rooms.announce({ id: alice, kind: 'human', displayName: 'Alice' })
+    const room = await source.rooms.create({ objective: 'Retained local history' })
+    await source.rooms.join({ roomId: room.id, participantId: alice })
+    await source.rooms.leave({ roomId: room.id, participantId: alice })
+    const persisted = vi.fn()
+    const changed = vi.fn()
+    restored.ctx.on('development-room/persist', persisted)
+    restored.ctx.on('development-room/changed', changed)
+    restored.rooms.restoreLocalLog(source.rooms.log())
+    restored.rooms.restoreLocalLog(source.rooms.log())
+    expect(restored.rooms.log()).toEqual(source.rooms.log())
+    expect(restored.rooms.list().rooms).toEqual(source.rooms.list().rooms)
+    expect(persisted).not.toHaveBeenCalled()
+    expect(changed).toHaveBeenCalledTimes(3)
+    expect(() => {
+      restored.rooms.restoreLocalLog([{
+        ...source.rooms.log()[0]!, change: { kind: 'room-created', objective: 'Divergent local history' },
+      }])
+    }).toThrow(expect.objectContaining({ code: 'RESTORE_CONFLICT' }))
+  })
+
+  it.each([
+    ['empty listener rejection', '', 'listener rejected without a message'],
+    ['unnamed Error', new Error(''), 'Error'],
+    ['non-Error rejection', 'storage disconnected', 'storage disconnected'],
+  ])('preserves state and reports %s during persistence', async (_name, failure, message) => {
+    const { ctx, rooms } = setup()
+    const stop = ctx.on('development-room/persist', () => { throw failure })
+    await expect(rooms.create({ objective: 'Wait for durable publication' }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED', message: `room persistence failed: ${message}` })
+    expect(rooms.log()).toEqual([])
+    expect(rooms.list().rooms).toEqual([])
+    stop()
+    await rooms.create({ objective: 'Wait for durable publication' })
+    expect(rooms.log()).toHaveLength(1)
+    expect(rooms.log()[0]?.seq).toBe(1)
+  })
 })

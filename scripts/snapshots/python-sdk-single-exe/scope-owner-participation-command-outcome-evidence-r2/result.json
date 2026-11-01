@@ -1,0 +1,25 @@
+{
+  "turns": [
+    {
+      "text": "Both existing Agents received the other source.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Owner sharing ended; peer sharing remains.",
+      "finishReason": "completed"
+    },
+    {
+      "text": "Both source captures ended; historical evidence remains.",
+      "finishReason": "completed"
+    }
+  ],
+  "contextRevisions": [
+    4,
+    5,
+    6,
+    7
+  ],
+  "ownerFileCalls": 1,
+  "withdrawnSources": 2,
+  "wirePreservesExactContextMessages": true
+}

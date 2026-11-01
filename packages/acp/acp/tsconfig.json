@@ -33,6 +33,9 @@
       "path": "../../llm/token-meter"
     },
     {
+      "path": "../../mcp/mcp"
+    },
+    {
       "path": "../../mcp/mcp-client"
     },
     {

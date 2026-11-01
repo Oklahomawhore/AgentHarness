@@ -103,7 +103,8 @@ export function deriveEventMessage(event: SessionEvent): Message | null {
     // deferred design note in
     // ../../../../.agents/notes/implemented/simplification/2026-07-20-unwrap-injected-content-envelopes.md
     case 'user/message': {
-      return event.data
+      // Empty replacements retire injected text without an empty provider message.
+      return event.data.content.length === 0 ? null : event.data
     }
     // An empty-content message projects to no wire message. For
     // system/message the node records "no system prompt" while keeping its

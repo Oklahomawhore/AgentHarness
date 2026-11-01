@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { PROTOCOL_VERSION, type SessionNotification } from '@agentclientprotocol/sdk'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,8 +11,20 @@ import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceRevision, type SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import McpService from '@deepseek-ai/dsh-mcp'
+import * as McpInvariant from '@deepseek-ai/dsh-mcp/invariant'
 import { makeBridgeHarness, textResponse, type BridgeHarness } from './harness.ts'
 import { startHttpMcpFixture } from '../../../mcp/mcp-client/tests/http-fixture.ts'
+import { AcpSession } from '../src/session.ts'
+
+function createConfigSession(harness: BridgeHarness, notify: (notification: SessionNotification) => Promise<void>): Promise<AcpSession> {
+  return AcpSession.create(harness.ctx, {
+    sessionId: SessionId(randomUUID()), cwd: process.cwd(), mcpServers: [],
+    agentOptions: { provider: 'mock', model: 'mock' },
+    fallbackSelection: { provider: 'mock', model: 'mock' },
+    signal: new AbortController().signal, notify,
+  })
+}
 
 /** Wrap a bare header as the snapshot shape `SessionPersistence.list` now returns. */
 function snapshotOf(header: SessionHeader): SessionPersistenceSnapshot {
@@ -548,6 +561,105 @@ describe('automation-only ACP bridge', () => {
     expect(harness.sessionUpdates.at(-1)?.sessionId).toBe(created.sessionId)
   })
 
+  it('keeps an unchanged initial config in the new-session reply during a topology commit', async () => {
+    harness = await makeBridgeHarness({ script: [textResponse('ready')] })
+    await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    const entered: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<void> = Promise.withResolvers()
+    const original = harness.ctx.sessions.flush.bind(harness.ctx.sessions)
+    const flush = vi.spyOn(harness.ctx.sessions, 'flush').mockImplementationOnce(async (...args) => {
+      entered.resolve()
+      await release.promise
+      return original(...args)
+    })
+    const creating = harness.client.newSession({ cwd: process.cwd(), mcpServers: [] })
+    try {
+      await entered.promise
+      harness.replacePrimaryProviders(['mock'])
+      release.resolve()
+      const created = await creating
+      await harness.client.prompt({ sessionId: created.sessionId, prompt: [{ type: 'text', text: 'continue' }] })
+      expect(harness.updates.filter(update => update.sessionUpdate === 'config_option_update')).toEqual([])
+      expect(harness.updates[0]?.sessionUpdate).toBe('agent_message_chunk')
+      expect(created.configOptions?.find(option => option.id === 'model')).toMatchObject({ currentValue: '["mock","mock"]' })
+    } finally {
+      release.resolve()
+      await Promise.allSettled([creating])
+      flush.mockRestore()
+    }
+  })
+
+  it('coalesces equal topology states while the first changed notification is still pending', async () => {
+    harness = await makeBridgeHarness()
+    const started: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<void> = Promise.withResolvers()
+    const notifications: SessionNotification[] = []
+    const record = await createConfigSession(harness, async (notification) => {
+      notifications.push(notification)
+      started.resolve()
+      await release.promise
+    })
+    try {
+      await record.configOptions()
+      harness.registerCatalogProvider('other')
+      record.topologyChanged()
+      await started.promise
+      record.topologyChanged()
+      // This serialized read completes after the second topology state was resolved.
+      await record.configOptions()
+      release.resolve()
+      await record.drainUpdates()
+      expect(notifications).toHaveLength(1)
+      expect(notifications[0]?.update).toMatchObject({ sessionUpdate: 'config_option_update' })
+    } finally {
+      release.resolve()
+      await record.close('test complete')
+    }
+  })
+
+  it('does not republish a successful config response for an unchanged catalog commit', async () => {
+    harness = await makeBridgeHarness()
+    const notifications: SessionNotification[] = []
+    const changed: PromiseWithResolvers<void> = Promise.withResolvers()
+    const record = await createConfigSession(harness, async (notification) => {
+      notifications.push(notification)
+      if (notification.update.sessionUpdate === 'config_option_update') {
+        const model = notification.update.configOptions.find(option => option.id === 'model')
+        if (model?.type === 'select' && model.options.some(option => 'group' in option && option.group === 'later')) changed.resolve()
+      }
+    })
+    const entered: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<void> = Promise.withResolvers()
+    const original = harness.ctx.llm.listModels.bind(harness.ctx.llm)
+    let catalog: MockInstance<BridgeHarness['ctx']['llm']['listModels']> | undefined
+    try {
+      await record.configOptions()
+      const selected = await record.setConfig('model', '["mock","plain"]')
+      expect(selected.find(option => option.id === 'model')).toMatchObject({ currentValue: '["mock","plain"]' })
+      catalog = vi.spyOn(harness.ctx.llm, 'listModels').mockImplementationOnce(async (provider) => {
+        const models = await original(provider)
+        entered.resolve()
+        await release.promise
+        return models
+      })
+      harness.ctx.llm.registerConfigurableProviders([{
+        provider: 'dormant', displayName: 'Dormant', settingsNs: 'config-test', settingsPath: [],
+      }])
+      record.topologyChanged()
+      await entered.promise
+      harness.registerCatalogProvider('later')
+      record.topologyChanged()
+      release.resolve()
+      await changed.promise
+      await record.drainUpdates()
+      expect(notifications).toHaveLength(1)
+    } finally {
+      release.resolve()
+      catalog?.mockRestore()
+      await record.close('test complete')
+    }
+  })
+
   it('does not let hung topology discovery block prompt completion or close', async () => {
     harness = await makeBridgeHarness({ script: [textResponse('still responsive')] })
     await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
@@ -774,7 +886,9 @@ describe('automation-only ACP bridge', () => {
   }, 30_000)
 
   it('allows the same MCP server namespace in independent sessions', async () => {
-    harness = await makeBridgeHarness()
+    harness = await makeBridgeHarness({ script: [textResponse('first'), textResponse('second'), textResponse('still connected')] })
+    await harness.ctx.plugin(McpService, { maxServers: 1 })
+    await harness.ctx.plugin(McpInvariant)
     await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
     const fixtureServer = fileURLToPath(new URL('../../../mcp/mcp-client/tests/fixture-server.ts', import.meta.url))
     const mcpServers = [{ name: 'fixture', command: process.execPath, args: [fixtureServer], env: [] }]
@@ -782,10 +896,16 @@ describe('automation-only ACP bridge', () => {
     const first = await harness.client.newSession({ cwd: process.cwd(), mcpServers })
     const second = await harness.client.newSession({ cwd: process.cwd(), mcpServers })
 
-    await Promise.all([
-      harness.client.closeSession({ sessionId: first.sessionId }),
-      harness.client.closeSession({ sessionId: second.sessionId }),
-    ])
+    await harness.client.prompt({ sessionId: first.sessionId, prompt: [{ type: 'text', text: 'first' }] })
+    await harness.client.prompt({ sessionId: second.sessionId, prompt: [{ type: 'text', text: 'second' }] })
+    expect(harness.adapter.requests.slice(0, 2).map(request => request.tools?.map(tool => tool.name)))
+      .toEqual([expect.arrayContaining(['mcp__fixture__add']), expect.arrayContaining(['mcp__fixture__add'])])
+    expect(harness.ctx.mcp.listServers()).toEqual([])
+
+    await harness.client.closeSession({ sessionId: first.sessionId })
+    await harness.client.prompt({ sessionId: second.sessionId, prompt: [{ type: 'text', text: 'continue' }] })
+    expect(harness.adapter.requests[2]?.tools?.map(tool => tool.name)).toContain('mcp__fixture__add')
+    await harness.client.closeSession({ sessionId: second.sessionId })
   }, 30_000)
 
   it('validates standard MCP declarations before publishing an Agent', async () => {

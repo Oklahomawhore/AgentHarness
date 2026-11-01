@@ -108,6 +108,7 @@ describe('web e2e: Cordis tools use their owned cards', () => {
     }
     const input = page.locator('[data-composer-input]').first()
     await input.waitFor({ timeout: 10_000 })
+    const documentEpoch = await page.evaluate(() => performance.timeOrigin)
     const runTurnSettled = scaffold.whenTurnSettled()
     await input.fill(PROMPT)
     await input.press('Enter')
@@ -144,6 +145,8 @@ describe('web e2e: Cordis tools use their owned cards', () => {
           && String(event.data.message.source.callId) === String(stop.data.callId),
       )
     }, { timeout: 15_000 }).toBe(true)
+    await expect.poll(() => page.locator('[data-conversation-scroll]').count(), { timeout: 15_000 }).toBe(1)
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentEpoch)
     if (MODE === 'record') {
       assertCompleteCordisLifecycle(sessionEvents)
       await expect.poll(() => page.getByText('CORDIS_UI_DONE', { exact: true }).count(), { timeout: 15_000 })

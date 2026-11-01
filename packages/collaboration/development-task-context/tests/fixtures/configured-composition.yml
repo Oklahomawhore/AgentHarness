@@ -1,0 +1,35 @@
+# Private per-test roots are substituted by the composition owner.
+- id: llm
+  name: cordis:context-test-llm
+- id: sessions
+  name: cordis:context-test-sessions
+- id: projections
+  name: cordis:context-test-projections
+- id: settings
+  name: cordis:context-test-settings
+  config:
+    path: __SETTINGS_PATH__
+    watch: false
+- id: ordinary-persistence
+  name: cordis:context-test-jsonl
+  config:
+    root: __ORDINARY_ROOT__
+    compression: none
+- id: ordinary-query
+  name: cordis:context-test-query
+  config:
+    path: ':memory:'
+- id: context-audit
+  name: cordis:group
+  group: true
+  isolate:
+    sessionPersistence: true
+  config:
+    - id: audit-persistence
+      name: cordis:context-test-jsonl
+      config:
+        root: __AUDIT_ROOT__
+        compression: none
+    - id: configured-context
+      name: cordis:context-test-configured
+      config: __CONTEXT_CONFIG__

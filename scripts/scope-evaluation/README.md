@@ -8,6 +8,10 @@ This reference covers controlled artifact checking and native Session calibratio
 
 The separate [existing Session protocol](continuity-study/README.md) checks automatic adoption across initial work, correction and contribution withdrawal in one continuing receiver.
 
+The separate [per-device Web calibration](two-device/README.md) uses independent shipped Web processes, ordinary file tools and read-only actual-request evidence.
+
+The separate [mixed-work protocol](mixed-study/README.md) compares actual inputs and independently graded artifacts under the same fixed budget, through Loader calibration or five named application profiles.
+
 ## Table of Contents
 
 - [Offline verification](#offline-verification)

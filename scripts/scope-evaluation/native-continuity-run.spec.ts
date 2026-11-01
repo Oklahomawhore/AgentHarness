@@ -74,7 +74,9 @@ async function run(condition: 'E' | 'R', fault: Fault = 'none', driver = false) 
   const root = await mkdtemp(join(tmpdir(), 'native-continuity-spec-'))
   const cancellation = new AbortController()
   const http = await calibration(fault, cancellation)
-  const route = { provider: 'deepseek-official' as const, model: 'controlled-http-replies', endpoint: http.endpoint,
+  const route = { provider: 'deepseek-official' as const,
+    endpointSource: { kind: 'openai-compatible-gateway' as const, name: 'local-http-calibration' }, network: { kind: 'direct' as const },
+    model: 'controlled-http-replies', endpoint: http.endpoint,
     apiKeyEnv: 'DSH_DATA_CALIBRATION_KEY', credentialsPath: null, maxCalls: 12, maxInputBytes: 262144,
     maxOutputTokens: 2048, maxOutputBytes: 65536, timeoutMs: 20000 }
   const config = { ordinary: route, semantic: route, limits: { contextBytes: 16000, maxArtifactBytes: 65536,
@@ -152,7 +154,11 @@ async function run(condition: 'E' | 'R', fault: Fault = 'none', driver = false) 
       const evidence = process.env.DSH_CONTINUITY_EVIDENCE_ROOT
       if (evidence !== undefined) {
         await mkdir(evidence, { recursive: true, mode: 0o700 })
+        // Continuity and mixed-study fixtures retain evidence under independent opt-in roots before
+        // their own cleanup.
+        /* jscpd:ignore-start */
         await cp(root, join(evidence, basename(root)), { recursive: true, errorOnExist: true, force: false })
+        /* jscpd:ignore-end */
       }
     } finally { await rm(root, { recursive: true, force: true }) }
   }

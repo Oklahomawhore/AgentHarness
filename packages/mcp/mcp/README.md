@@ -23,14 +23,14 @@ This seam is intentionally separate from model tool execution. A background inde
 
 ## Configuration
 
-`maxServers` is the maximum number of live transport registrations in one Host process. It is required and validated at load. Server ids match `[A-Za-z0-9_-]{1,32}`; duplicate and over-limit registrations fail loud.
+`maxServers` is the maximum number of live transport registrations in one service instance. It is required and validated at load. Server ids match `[A-Za-z0-9_-]{1,32}`; duplicate and over-limit registrations fail loud.
 
 ## Extension points
 
 - `ctx.mcp.registerServer(provider)` registers one live generation and returns its disposer.
 - `ctx.mcp.listServers()` returns deterministic detached identities.
 - `ctx.mcp.call(request, signal)` routes one raw `tools/call` request to the exact live provider.
-- `mcp/server-changed` reports provider lifecycle for diagnostics and invariants.
+- `mcp/server-changed` reports provider lifecycle within the same Cordis service isolation realm for diagnostics and invariants.
 
 `@deepseek-ai/dsh-mcp-client` is the shipped Service Provider. An external Consumer depends on this package, not on that concrete transport.
 

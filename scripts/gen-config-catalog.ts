@@ -43,6 +43,7 @@ const PLUGIN_SUBPATHS: Readonly<Record<string, readonly { subpath: string; sourc
     { subpath: '/libp2p-settings', source: 'src/libp2p-settings.ts' },
   ],
   '@deepseek-ai/dsh-development-task-context': [
+    { subpath: '/configured', source: 'src/configured.ts' },
     { subpath: '/facts', source: 'src/facts.ts' },
     { subpath: '/semantic', source: 'src/semantic.ts' },
   ],

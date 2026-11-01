@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 
 Launch `dsh --profile mcp --connection /absolute/private/connection.json`. The shipped descriptor location is `$DSH_HOME/mcp/connection.json`. `--participant-id` and `--display-name` override the local identity; omitted identity fields resolve once from the OS user and hostname. `--url` is an optional origin pin and never bypasses descriptor authentication. `--help` prints usage without reading the descriptor or connecting to the Host.
 
-The bundle patch supplies every timing and byte limit: `requestTimeoutMs`, `maxDescriptorBytes`, `maxRequestBytes`, `maxResponseBytes`, `leaseRetryMs`, `leaseFallbackTtlMs`, `leaseMinHeartbeatMs`, and `leaseMaxHeartbeatMs`. Replace the row's complete Config to change deployment policy. The request deadline covers descriptor authentication, the API request, and complete response reading. Request and response bounds include the RPC JSON envelope.
+The bundle patch supplies every timing and byte limit: `requestTimeoutMs`, `maxDescriptorBytes`, `maxRequestBytes`, `maxResponseBytes`, `leaseRetryMs`, `leaseMinHeartbeatMs`, and `leaseMaxHeartbeatMs`. Replace the row's complete Config to change deployment policy. The request deadline covers descriptor authentication, the API request, and complete response reading. Timeout codes identify the active wait: `authentication-timeout`, `request-timeout`, or `response-timeout`; one shared deadline remains in force throughout. Request and response bounds include the RPC JSON envelope.
 
 Each RPC reads the current private descriptor and exchanges its launch token for the normal Connection cookie. The cookie stays in HTTP headers; neither token nor cookie belongs in argv or diagnostics. A missing descriptor or unavailable Host produces a safe error code and presence retries. The descriptor grants the installed same-user client normal local Host authority; it is not a per-Task read grant or independent-owner credential.
 
@@ -35,9 +35,11 @@ Each RPC reads the current private descriptor and exchanges its launch token for
 
 The server exposes nine `agentharness_task_*` tools and `agentharness://tasks/{taskId}/context`. Task has no lifecycle tools. `agentharness_task_connect` returns an opaque `bindingId`; only the calling conversation retains and reuses it. A connection without a `bindingId` creates an independent session binding, even for the same participant identity.
 
+`agentharness_codex_hook` is a separate receiving tool for reviewed Codex `UserPromptSubmit` and `PostToolUse` hooks. The bridge fixes `clientId` to its configured participant and forwards Codex's logical session identity to [Codex scope context](../../collaboration/codex-scope/README.md). Its MCP text contains the exact hook-output JSON, including fresh authorized context or an authorization-unavailable notice. It does not publish local work or wake an idle Agent. Hook installation and review are described in [client setup](../../host/mcp-client-setup/README.md).
+
 Context publication requires a binding connected to the requested Task; otherwise it returns `POLICY_REJECTED` with the binding's assignment. Status and publication record the returned Task revision before the MCP response is delivered. The server reads binding state from the Host and keeps no local Task replica.
 
-Stdout is reserved for MCP JSON-RPC while the transport is active. Stdin EOF, SIGINT, and SIGTERM use the dsh launcher's bounded shutdown. Presence starts after application readiness, renews at a bounded fraction of the Host TTL, and re-announces after failed renewal. Disposal cancels ordinary requests and renewals, waits for them, and attempts a separately bounded withdrawal, including after an unacknowledged announcement. Host unavailability leaves TTL expiry as the fallback. MCP cancellation reaches authentication and every subsequent RPC step; it cannot undo a Host mutation that already committed. Profile changes take effect at the next process start.
+Stdout is reserved for MCP JSON-RPC while the transport is active. Stdin EOF, SIGINT, and SIGTERM use the dsh launcher's bounded shutdown. The protocol SDK owns transport callbacks. Presence starts after application readiness, requires a positive integer Host TTL, renews at a bounded fraction of that TTL, and re-announces after invalid lease replies or failed renewal. Disposal cancels ordinary requests and renewals, waits for them, and attempts a separately bounded withdrawal, including after an unacknowledged announcement. Host unavailability leaves TTL expiry as the fallback. MCP cancellation reaches authentication and every subsequent RPC step; it cannot undo a Host mutation that already committed. Profile changes take effect at the next process start.
 
 <a id="model-experience"></a>
 
@@ -47,7 +49,7 @@ Stdout is reserved for MCP JSON-RPC while the transport is active. Stdin EOF, SI
 
 #### What the model sees
 
-Nine bounded `agentharness_task_*` tools, one `agentharness://tasks/{taskId}/context` resource template, session-binding instructions, safe RPC failure codes, and stored context views. Private Harness Sessions and editor actions performed outside MCP are not visible.
+The receiving hook tool, nine bounded `agentharness_task_*` tools, one `agentharness://tasks/{taskId}/context` resource template, session-binding instructions, safe RPC failure codes, and stored context views. Private Harness Sessions and editor actions performed outside MCP are not visible.
 
 #### Token effect
 

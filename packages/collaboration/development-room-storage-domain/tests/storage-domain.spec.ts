@@ -126,7 +126,7 @@ describe('development-room storage-domain composition', () => {
       error instanceof Error && error.message.includes('cannot persist foreign log entry'))).toBe(true)
   })
 
-  it('fails startup instead of accepting a durable log from another node', async () => {
+  it.each(['entry author', 'row key'])('fails startup instead of accepting another node’s durable %s', async (position) => {
     const first = await boot()
     await first.developmentRooms.create({ objective: 'Preserve local log' })
     await first.fiber.dispose()
@@ -138,9 +138,12 @@ describe('development-room storage-domain composition', () => {
     }
     const record = Object.values(document.tables.logs)[0]
     if (record === undefined) throw new Error('expected one persisted log')
-    for (const entry of record.entries) entry.nodeId = 'node-b'
+    if (position === 'row key') document.tables.logs = { 'node-b': record }
+    else for (const entry of record.entries) entry.nodeId = 'node-b'
     await writeFile(storagePath, `${JSON.stringify(document, null, 2)}\n`)
 
-    await expect(boot()).rejects.toThrow('restored log contains an entry from another node')
+    await expect(boot()).rejects.toThrow(position === 'row key'
+      ? 'durable log belongs to another node'
+      : 'restored log contains an entry from another node')
   })
 })

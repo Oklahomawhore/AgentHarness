@@ -4,5 +4,6 @@
   name: '@deepseek-ai/dsh-scope-agent-context'
   config:
     maxContextBytes: 8000
+    maxLocalContextBytes: 4000
     coalesceMs: 1
     retryDelayMs: 1000

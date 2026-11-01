@@ -2,6 +2,7 @@
 
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { createRequire } from 'node:module'
@@ -65,7 +66,8 @@ function cleanEnvironment(root: string, dshHome: string): NodeJS.ProcessEnv {
 }
 
 /** Start the public source CLI and wait for its authenticated readiness URL. */
-async function startWeb(root: string, dshHome: string, port: number): Promise<RunningWeb> {
+async function startWeb(root: string, dshHome: string, port: number,
+  environment: NodeJS.ProcessEnv = {}): Promise<RunningWeb> {
   const child = spawn(process.execPath, [
     '--import', TSX_LOADER,
     DSH_SOURCE_BIN,
@@ -74,11 +76,11 @@ async function startWeb(root: string, dshHome: string, port: number): Promise<Ru
     '--port', String(port),
   ], {
     cwd: root,
-    env: cleanEnvironment(root, dshHome),
+    env: { ...cleanEnvironment(root, dshHome), ...environment },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
-  const launchUrl = await new Promise<string>((resolve, reject) => {
+  const ready = new Promise<string>((resolve, reject) => {
     let settled = false
     const fail = (error: Error): void => {
       if (settled) return
@@ -106,11 +108,16 @@ async function startWeb(root: string, dshHome: string, port: number): Promise<Ru
       fail(new Error(`dsh web exited before readiness (${String(code)}):\n${redact(output)}`))
     })
   })
-  return { child, launchUrl, output: () => output }
+  try {
+    return { child, launchUrl: await ready, output: () => output }
+  } catch (error) {
+    await stopWeb({ child })
+    throw error
+  }
 }
 
-async function stopWeb(running: RunningWeb): Promise<void> {
-  if (running.child.exitCode !== null) return
+async function stopWeb(running: Pick<RunningWeb, 'child'>): Promise<void> {
+  if (running.child.exitCode !== null || running.child.signalCode !== null) return
   const exited = new Promise<void>((resolve) => { running.child.once('exit', () => { resolve() }) })
   running.child.kill('SIGTERM')
   const forced = setTimeout(() => { running.child.kill('SIGKILL') }, 10_000)
@@ -152,6 +159,33 @@ function describeSettings(port: number, host: string, cookie?: string): Promise<
 }
 
 describe('dsh web authentication through the real CLI', () => {
+  it('serves authenticated local requests when the first enabled LAN discovery send is unreachable', { timeout: 180_000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-web-mesh-first-send-'))
+    let running: RunningWeb | undefined
+    try {
+      const fixture = new URL('./fixtures/mesh-first-send-unreachable.mjs', import.meta.url).href
+      running = await startWeb(root, join(root, '.dsh'), 0, {
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${fixture}`,
+        AGENTHARNESS_NODE_ID: `mesh-test-${randomUUID()}`,
+        AGENTHARNESS_CLUSTER: `mesh-test-${randomUUID()}`,
+        AGENTHARNESS_MESH_SECRET: 'mesh-first-send-test-secret-with-at-least-32-bytes',
+      })
+      expect(redact(running.output())).toContain('Mesh fixture: first multicast send is unreachable')
+      // The shipped discovery interval is 2 s, longer than Vitest's default polling window.
+      await expect.poll(() => redact(running!.output()), { timeout: 10_000 })
+        .toContain('Mesh fixture: discovery announcement continued')
+      const exchange = await fetch(running.launchUrl, { redirect: 'manual' })
+      expect(exchange.status).toBe(303)
+      const cookie = exchange.headers.get('set-cookie')?.split(';', 1)[0]
+      if (cookie === undefined) throw new Error('real CLI token exchange omitted Set-Cookie')
+      const url = new URL(running.launchUrl)
+      expect((await describeSettings(Number(url.port), url.host, cookie)).status).toBe(200)
+    } finally {
+      if (running !== undefined) await stopWeb(running)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a forged loopback Host and preserves the browser cookie across restart', { timeout: 180_000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-web-auth-real-cli-'))
     const dshHome = join(root, '.dsh')

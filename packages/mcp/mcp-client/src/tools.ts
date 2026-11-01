@@ -112,27 +112,31 @@ export async function callMcpTool(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<McpCallResult> {
-  const result = await callToolUncached(client, rawName, args, signal, timeoutMs)
+  const value = normalizeCallResult(await callToolUncached(client, rawName, args, signal, timeoutMs), rawName)
+  return Object.freeze({ ...value, content: Object.freeze(value.content) })
+}
+
+/** Normalize external MCP and compatibility results before either caller applies its output policy. */
+function normalizeCallResult(result: Record<string, unknown>, rawName: string): McpResult {
+  let content: JsonValue[]
+  let text: string
   if (!Array.isArray(result.content)) {
     const rendered: unknown = 'toolResult' in result ? JSON.stringify(result.toolResult) : '(no output)'
-    const text = typeof rendered === 'string' ? rendered : '(no output)'
-    if (result.isError === true) throw new Error(text)
-    return Object.freeze({
-      content: Object.freeze([{ type: 'text', text }]),
-      ...result.structuredContent !== undefined
-        ? { structuredContent: result.structuredContent as JsonValue }
-        : {},
-    })
+    text = typeof rendered === 'string' ? rendered : '(no output)'
+    content = [{ type: 'text', text }]
+  } else {
+    // Protocol content is external data; extractText validates each block before either caller receives it.
+    const blocks = result.content as unknown as JsonValue[]
+    text = extractText(blocks, rawName)
+    content = blocks
   }
-  const content = result.content as unknown as JsonValue[]
-  const text = extractText(content, rawName)
   if (result.isError === true) throw new Error(text)
-  return Object.freeze({
-    content: Object.freeze(content),
+  return {
+    content,
     ...result.structuredContent !== undefined
       ? { structuredContent: result.structuredContent as JsonValue }
       : {},
-  })
+  }
 }
 
 /**
@@ -367,40 +371,8 @@ function createExecutor(
     // string/number/null). Fallback to {} lets the MCP server produce a
     // specific "missing required param" error the model can learn from.
     const argsObj = (typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>
-    const result = await callToolUncached(client, rawName, argsObj, exec.signal, opts.toolCallTimeoutMs)
-
-    // The SDK may return a legacy `toolResult` shape; normalize to content array.
-    if (!Array.isArray(result.content)) {
-      const rendered: unknown = 'toolResult' in result
-        ? JSON.stringify(result.toolResult)
-        : '(no output)'
-      const text = typeof rendered === 'string' ? rendered : '(no output)'
-      if (result.isError === true) throw new Error(text)
-      return {
-        content: [{ type: 'text', text }],
-        ...result.structuredContent !== undefined
-          ? { structuredContent: result.structuredContent as JsonValue }
-          : {},
-      }
-    }
-
-    // Trust boundary: the SDK's return type erases to `any[]` due to the
-    // union of CallToolResult | CompatibilityCallToolResult; extractText
-    // validates each element.
-    const content = result.content as unknown as JsonValue[]
-    const text = extractText(content, rawName)
-
-    // MCP isError → throw so ToolRuntime produces an isError result for the model.
-    if (result.isError === true) {
-      throw new Error(text)
-    }
-
-    const value: McpResult = {
-      content,
-      ...result.structuredContent !== undefined
-        ? { structuredContent: result.structuredContent as JsonValue }
-        : {},
-    }
+    const value = normalizeCallResult(await callToolUncached(client, rawName, argsObj, exec.signal, opts.toolCallTimeoutMs), rawName)
+    const { content } = value
     if (containsImage(content)) {
       const fallback: ContentBlock[] = [{ type: 'text', text: extractText(content, rawName) }]
       const projected = await prepareImageProjection(ctx, exec, content, rawName)

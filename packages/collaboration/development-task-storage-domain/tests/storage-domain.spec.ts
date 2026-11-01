@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,6 +17,7 @@ import type {
 import { peerContributionGrantSchema, peerContributionRequestSchema } from '@deepseek-ai/dsh-development-task/schema'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageSqlite from '@deepseek-ai/dsh-storage-sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as DevelopmentTaskStorageDomain from '../src/index.ts'
@@ -32,18 +33,26 @@ afterEach(async () => {
   root = undefined
 })
 
-async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes = 1024): Promise<Context> {
+async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes = 1024, medium: 'sqlite' | 'json' | 'bootstrap' = 'sqlite'): Promise<Context> {
   if (root === undefined) root = await mkdtemp(join(tmpdir(), 'dsh-task-storage-'))
   const configPath = join(root, `cordis-${nodeId}.yml`)
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-storage'",
-    "- name: '@deepseek-ai/dsh-storage-sqlite'",
-    '  config:',
-    `    path: ${JSON.stringify(join(root, nodeId === 'node-a' ? 'tasks.sqlite' : `tasks-${nodeId}.sqlite`))}`,
-    '    journalMode: wal',
+    ...medium === 'sqlite' ? [] : [
+      "- name: '@deepseek-ai/dsh-storage-json'", '  config:',
+      `    root: ${JSON.stringify(join(root, 'storage'))}`,
+    ],
+    ...medium === 'json' ? [] : [
+      "- name: '@deepseek-ai/dsh-storage-sqlite'",
+      '  config:',
+      `    path: ${JSON.stringify(join(root, nodeId === 'node-a' ? 'tasks.sqlite' : `tasks-${nodeId}.sqlite`))}`,
+      '    journalMode: wal',
+      ...medium === 'bootstrap' ? ['    bootstrapFrom: json'] : [],
+    ],
     "- name: '@deepseek-ai/dsh-storage-domain'",
     '  config:',
-    '    backend: sqlite',
+    `    backend: ${medium === 'sqlite' ? 'sqlite' : 'json'}`,
+    ...medium === 'bootstrap' ? ['    routes:', '      development_context_tasks: sqlite'] : [],
     "- name: '@deepseek-ai/dsh-development-room'",
     '  config:',
     `    nodeId: ${nodeId}`,
@@ -76,6 +85,7 @@ async function boot(orphanGraceMs = 86_400_000, nodeId = 'node-a', maxTextBytes 
     ['@deepseek-ai/dsh-storage', Storage],
     ['@deepseek-ai/dsh-storage-sqlite', StorageSqlite],
     ['@deepseek-ai/dsh-storage-domain', StorageDomain],
+    ['@deepseek-ai/dsh-storage-json', StorageJson],
     ['@deepseek-ai/dsh-development-room', DevelopmentRoomService],
     ['@deepseek-ai/dsh-development-room-storage-domain', DevelopmentRoomStorageDomain],
     ['@deepseek-ai/dsh-development-task', DevelopmentTaskService],
@@ -107,6 +117,13 @@ function storedTaskRows() {
       unit: database.prepare('SELECT version FROM units WHERE name = ?').get('development_context_tasks'),
     }
   } finally { database.close() }
+}
+
+function storedAssignmentRows() {
+  if (root === undefined) throw new Error('Task storage fixture has not started')
+  const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+  try { return database.prepare('SELECT key, value FROM u_development_context_tasks_assignments ORDER BY key').all() }
+  finally { database.close() }
 }
 
 async function remoteBinding(owner: Context, peer: Context, taskId: DevelopmentTaskId): Promise<DevelopmentTaskObservedIntervalIdentity> {
@@ -142,6 +159,259 @@ function remoteSample(identity: DevelopmentTaskObservedIntervalIdentity, sequenc
 }
 
 describe('development-task SQLite storage composition', () => {
+  it.each([
+    ['seq', 0], ['revision', 1.5], ['at', Number.MAX_SAFE_INTEGER + 1],
+  ] as const)('rejects persisted %s=%s at domain decoding and preserves the invalid row for repair', async (field, value) => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const target = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Validated recovery', scope: 'Schema authority', createdBy: owner })
+    await close(first)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const path = join(root, 'tasks.sqlite')
+    const database = new DatabaseSync(path)
+    let original: string
+    let corrupted: string
+    try {
+      const row = database.prepare('SELECT value FROM u_development_context_tasks_events WHERE key = ?').get('node-a:1')
+      if (typeof row?.value !== 'string') throw new Error('Expected the persisted creation event')
+      original = row.value
+      const parsed = JSON.parse(original) as Record<string, unknown>
+      corrupted = JSON.stringify({ ...parsed, [field]: value })
+      database.prepare('UPDATE u_development_context_tasks_events SET value = ? WHERE key = ?').run(corrupted, 'node-a:1')
+    } finally { database.close() }
+    await expect(boot()).rejects.toThrow('does not match its schema')
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.developmentTasks.log()).toEqual([])
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
+    await close(failed)
+    const repair = new DatabaseSync(path)
+    try {
+      expect(repair.prepare('SELECT value FROM u_development_context_tasks_events WHERE key = ?').get('node-a:1'))
+        .toEqual({ value: corrupted })
+      repair.prepare('UPDATE u_development_context_tasks_events SET value = ? WHERE key = ?').run(original, 'node-a:1')
+    } finally { repair.close() }
+    const restored = await boot()
+    expect(restored.developmentTasks.get({ taskId: target.id })).toEqual(target)
+  })
+
+  it('preserves JSON Tasks, inherited blocks and bindings during one-way SQLite adoption', async () => {
+    const first = await boot(86_400_000, 'node-a', 1024, 'json')
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const parent = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Retained contract', scope: 'api', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: parent.id, participantId: owner, text: 'API revision one' })
+    const child = await first.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: parent.id, revision: parent.revision + 1 } },
+      objective: 'Retained frontend', scope: 'frontend', createdBy: owner })
+    await first.developmentTasks.checkout({ taskId: child.id, participantId: agent })
+    const retained = { log: first.developmentTasks.log(), blocks: first.developmentTasks.blocks(),
+      assignments: first.developmentTasks.assignmentLog() }
+    await close(first)
+    const source = join(root!, 'storage', 'development_context_tasks.json')
+    const sourceBytes = await readFile(source)
+    const restored = await boot(86_400_000, 'node-a', 1024, 'bootstrap')
+    expect(restored.developmentTasks.log()).toEqual(retained.log)
+    expect(restored.developmentTasks.blocks()).toEqual(retained.blocks)
+    expect(restored.developmentTasks.assignmentLog()).toEqual(retained.assignments)
+    expect(storedTaskRows().events).toHaveLength(retained.log.length)
+    expect(storedTaskRows().blocks).toHaveLength(retained.blocks.length)
+    expect(storedAssignmentRows()).toHaveLength(retained.assignments.length)
+    await restored.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await restored.developmentTasks.publishContext({ taskId: child.id, participantId: owner, text: 'SQLite revision' })
+    expect(await readFile(source)).toEqual(sourceBytes)
+    const current = restored.developmentTasks.log()
+    await close(restored)
+    await writeFile(source, '{invalid stale backup')
+    const reopened = await boot(86_400_000, 'node-a', 1024, 'bootstrap')
+    expect(reopened.developmentTasks.log()).toEqual(current)
+    expect(await readFile(source, 'utf8')).toBe('{invalid stale backup')
+  })
+
+  it('keeps SQLite assignment rows restorable after a delayed context acknowledgement is rejected', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Ordered context', scope: 'api', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text: 'Revision two' })
+    const { assignment } = await first.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+    const request = { taskId: task.id, participantId: agent, bindingId: assignment.bindingId }
+    await first.developmentTasks.acknowledge({ ...request, revision: 2 })
+    const rows = storedAssignmentRows
+    const retained = rows()
+    expect(retained).toHaveLength(2)
+    await expect(first.developmentTasks.acknowledge({ ...request, revision: 1 })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(rows()).toEqual(retained)
+    const acknowledged = await first.developmentTasks.acknowledge({ ...request, revision: 2 })
+    const committed = rows()
+    expect(committed).toHaveLength(3)
+    expect(committed.slice(0, 2)).toEqual(retained)
+    await close(first)
+    const restored = await boot()
+    expect(restored.developmentTasks.assignmentList()).toEqual([acknowledged])
+    expect(rows()).toEqual(committed)
+  })
+
+  it('preserves a committed Task row when another persistence observer fails before publication', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const stopFailing = first.on('development-task/persist', () => { throw new Error('Secondary persistence observer failed') })
+    try {
+      await expect(first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Committed original',
+        scope: 'storage settlement', createdBy: owner })).rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const retained = storedTaskRows()
+    expect(retained.events).toHaveLength(1)
+    expect(first.developmentTasks.log()).toEqual([])
+    await expect(first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Conflicting retry',
+      scope: 'storage settlement', createdBy: owner })).rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(storedTaskRows()).toEqual(retained)
+    expect(first.developmentTasks.log()).toEqual([])
+    await close(first)
+    const restored = await boot()
+    const [task] = restored.developmentTasks.list({ limit: 10 })
+    expect(task?.objective).toBe('Committed original')
+    expect(storedTaskRows()).toEqual(retained)
+  })
+
+  it('preserves a committed assignment row when another persistence observer loses its outcome', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    const agent = participant('agent')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    await first.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Assignment settlement',
+      scope: 'storage settlement', createdBy: owner })
+    const stopFailing = first.on('development-task/assignment-persist', () => { throw new Error('Secondary assignment observer failed') })
+    try {
+      await expect(first.developmentTasks.checkout({ taskId: task.id, participantId: agent }))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const retained = storedAssignmentRows()
+    expect(retained).toHaveLength(1)
+    expect(first.developmentTasks.assignmentLog()).toEqual([])
+    await expect(first.developmentTasks.checkout({ taskId: task.id, participantId: agent }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    expect(storedAssignmentRows()).toEqual(retained)
+    expect(first.developmentTasks.assignmentLog()).toEqual([])
+    await close(first)
+    const restored = await boot()
+    expect(restored.developmentTasks.assignmentList()).toHaveLength(1)
+    expect(storedAssignmentRows()).toEqual(retained)
+  })
+
+  it('reuses the original durable Task replica after a secondary observer loses the first outcome', async () => {
+    const recipient = await boot()
+    const source = await boot(undefined, 'node-b')
+    const owner = participant('source-owner')
+    await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+    const task = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Stable replica',
+      scope: 'recover original durable write', createdBy: owner })
+    const [entry] = source.developmentTasks.log()
+    if (entry === undefined) throw new Error('Source Task did not retain its creation event')
+    const stopFailing = recipient.on('development-task/persist', () => { throw new Error('Secondary replica observer failed') })
+    try {
+      await expect(recipient.developmentTasks.acceptLogReplica(entry, entry.nodeId))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const committed = storedTaskRows()
+    expect(committed.events).toHaveLength(1)
+    expect(recipient.developmentTasks.log()).toEqual([])
+    await expect(recipient.developmentTasks.acceptLogReplica(entry, entry.nodeId)).resolves.toMatchObject({ id: task.id, revision: 1 })
+    expect(storedTaskRows()).toEqual(committed)
+    expect(recipient.developmentTasks.log()).toEqual([entry])
+  })
+
+  it('reuses the original durable assignment replica after a secondary observer loses the first outcome', async () => {
+    const recipient = await boot()
+    const source = await boot(undefined, 'node-b')
+    const owner = participant('source-owner')
+    const agent = participant('source-agent')
+    await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+    await source.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Source Agent' })
+    const task = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Stable binding replica',
+      scope: 'recover original durable write', createdBy: owner })
+    const [creation] = source.developmentTasks.log()
+    if (creation === undefined) throw new Error('Source Task did not retain its creation event')
+    await recipient.developmentTasks.acceptLogReplica(creation, creation.nodeId)
+    const checked = await source.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+    const [entry] = source.developmentTasks.assignmentLog()
+    if (entry === undefined) throw new Error('Source checkout did not retain its assignment event')
+    const stopFailing = recipient.on('development-task/assignment-persist', () => { throw new Error('Secondary assignment observer failed') })
+    try {
+      await expect(recipient.developmentTasks.acceptAssignmentReplica(entry, entry.nodeId))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_FAILED' })
+    } finally { stopFailing() }
+    const committed = storedAssignmentRows()
+    expect(committed).toHaveLength(1)
+    expect(recipient.developmentTasks.assignmentLog()).toEqual([])
+    await expect(recipient.developmentTasks.acceptAssignmentReplica(entry, entry.nodeId)).resolves.toEqual(checked.assignment)
+    expect(storedAssignmentRows()).toEqual(committed)
+    expect(recipient.developmentTasks.assignmentLog()).toEqual([entry])
+  })
+
+  it('closes the opened Task domain when a durable event has lost its predecessor', async () => {
+    const first = await boot()
+    const owner = participant('owner')
+    await first.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+    const task = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Interrupted recovery',
+      scope: 'missing predecessor', createdBy: owner })
+    await first.developmentTasks.publishContext({ taskId: task.id, participantId: owner, text: 'Retained second event' })
+    await close(first)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+    try { database.prepare('DELETE FROM u_development_context_tasks_events WHERE key = ?').run('node-a:1') }
+    finally { database.close() }
+    await expect(boot()).rejects.toThrow('unresolved lineage or sequence dependencies')
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
+  })
+
+  it.each(['context_blocks', 'events', 'assignments'] as const)('rejects a persisted %s row whose key differs from its valid value', async (table) => {
+    const recipient = await boot()
+    const owner = participant('owner')
+    if (table === 'context_blocks') {
+      const source = await boot(undefined, 'node-b')
+      await source.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Source owner' })
+      const parent = await source.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Source parent',
+        scope: 'valid orphan block', createdBy: owner })
+      await source.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: parent.id, revision: parent.revision } },
+        objective: 'Source child', scope: 'valid inherited context', createdBy: owner })
+      const [block] = source.developmentTasks.blocks()
+      if (block === undefined) throw new Error('Source fork did not retain its context block')
+      await recipient.developmentTasks.acceptContextReplica(block)
+      expect(recipient.developmentTasks.log()).toEqual([])
+    } else {
+      await recipient.developmentRooms.announce({ id: owner, kind: 'human', displayName: 'Owner' })
+      const task = await recipient.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Valid durable Task',
+        scope: 'row identity', createdBy: owner })
+      if (table === 'assignments') {
+        const agent = participant('agent')
+        await recipient.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Agent' })
+        await recipient.developmentTasks.checkout({ taskId: task.id, participantId: agent })
+      }
+    }
+    await close(recipient)
+    if (root === undefined) throw new Error('Task storage fixture has not started')
+    const database = new DatabaseSync(join(root, 'tasks.sqlite'))
+    try {
+      const physicalTable = `u_development_context_tasks_${table}`
+      const row = database.prepare(`SELECT key FROM ${physicalTable} LIMIT 1`).get()
+      if (typeof row?.key !== 'string') throw new Error('Expected a persisted fixture row')
+      database.prepare(`UPDATE ${physicalTable} SET key = ? WHERE key = ?`).run('mismatched-row-key', row.key)
+    } finally { database.close() }
+    await expect(boot().then(() => 'started')).rejects.toThrow(/key/u)
+    const failed = contexts.at(-1)
+    if (failed === undefined) throw new Error('Failed Host fixture is missing')
+    expect(failed.storageDomain.get(DevelopmentTaskStorageDomain.DEVELOPMENT_TASK_DOMAIN_NAME)).toBeUndefined()
+  })
+
   it('restores owner receipts and terminal remote evidence without rewriting prior SQLite rows', async () => {
     const first = await boot()
     const peer = await boot(undefined, 'node-b')
@@ -451,6 +721,44 @@ it('restores an independent contribution end-before-open tombstone and its origi
   expect(storedTaskRows()).toEqual(before)
 })
 
+it('reopens exact Claude command and Stop reports without changing legacy rows or permission', async () => {
+  const first = await boot(86_400_000, 'node-a', 8192)
+  const human = participant('claude-owner')
+  await first.developmentRooms.announce({ id: human, kind: 'human', displayName: 'Claude owner' })
+  const target = await first.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Original Claude reports', scope: 'Selected work', createdBy: human })
+  await first.developmentTasks.publishContext({ taskId: target.id, participantId: human, text: 'Existing ordinary context' })
+  const legacy = storedTaskRows()
+  const grant = peerContributionGrantSchema.parse({ version: 1, taskId: target.id, grantId: 'claude-grant', generation: 'generation',
+    ownerPeerId: 'owner', contributorPeerId: 'source', captureId: 'capture', captureGeneration: 'capture-generation',
+    source: { kind: 'claude-work', version: 7, name: 'Claude reports', tools: [], commands: [{ command: 'verify', rootIndex: 0 }], stopReports: true },
+    expiresAt: Date.now() + 60000, maxSamples: 2, maxSampleBytes: 8192 })
+  await first.developmentTasks.openPeerContribution(grant)
+  const command = peerContributionRequestSchema.parse({ grant, sourceId: '1'.repeat(64), sequence: 1,
+    result: { kind: 'claude-command-observation', version: 7, tool: 'Bash', hookEvent: 'PostToolUse',
+      fields: { rootIndex: 0, command: 'verify', stdout: 'original stdout', stderr: '', interrupted: false }, omissions: [] } })
+  await first.developmentTasks.admitPeerContribution(command, grant.contributorPeerId)
+  const text = 'Complete official Stop message🙂\r\n'
+  const stop = peerContributionRequestSchema.parse({ grant, sourceId: '2'.repeat(64), sequence: 2,
+    result: { kind: 'claude-stop-report', version: 7, text, sha256: createHash('sha256').update(text).digest('hex'), stopHookActive: false } })
+  const admitted = await first.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)
+  const frozen = await first.developmentTasks.create({ origin: { kind: 'fork', parent: { taskId: target.id, revision: admitted.receipt.revision } },
+    objective: 'Frozen original reports', scope: 'History', createdBy: human })
+  const before = storedTaskRows()
+  await close(first)
+  const second = await boot(86_400_000, 'node-a', 8192)
+  expect(storedTaskRows()).toEqual(before)
+  expect((await second.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)).receipt).toEqual(admitted.receipt)
+  expect(second.developmentTasks.contextView(frozen.id).inherited?.sources[0]?.context.at(-1)?.peerStopReport?.text).toBe(text)
+  await second.developmentTasks.endPeerContribution({ grant, reason: 'left' }, grant.contributorPeerId)
+  const ended = storedTaskRows()
+  for (const row of legacy.events) expect(ended.events).toContainEqual(row)
+  await close(second)
+  const third = await boot(86_400_000, 'node-a', 8192)
+  expect(storedTaskRows()).toEqual(ended)
+  expect(ended.unit).toEqual({ version: 1 })
+  expect((await third.developmentTasks.admitPeerContribution(stop, grant.contributorPeerId)).receipt).toEqual(admitted.receipt)
+  expect(third.developmentTasks.contextView(target.id).task.context.at(-1)?.peerContribution?.ended).toBe('left')
+})
 
 it('returns committed sample and terminal receipts after restarting with a lower new-admission byte limit', async () => {
   const first = await boot()

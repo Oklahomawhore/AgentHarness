@@ -137,11 +137,6 @@ export default class Libp2pScopeTransport extends ScopeTransport {
           outboundStreamProtocolNegotiationTimeout: this.config.connectionTimeoutMs,
           reconnectRetries: 0, resolvers: {},
         },
-        connectionGater: {
-          denyInboundRelayReservation: () => true,
-          denyOutboundRelayedConnection: () => true,
-          denyInboundRelayedConnection: () => true,
-        },
       })
       this.node = node
       this.lifetime.signal.throwIfAborted()
@@ -210,7 +205,8 @@ export default class Libp2pScopeTransport extends ScopeTransport {
       const node = await this.waitUntilReady(operation.signal)
       operation.signal.throwIfAborted()
       const connection = await node.dial(address, { signal: operation.signal })
-      if (connection.remotePeer.toString() !== peerId || connection.encryption !== '/noise') throw new ScopeTransportError('scope-transport/invalid-target')
+      // Hashed PeerIds may omit the public key Noise needs to pin this destination.
+      if (connection.remotePeer.toString() !== peerId) throw new ScopeTransportError('scope-transport/invalid-target')
       stream = await connection.newStream(protocol, { signal: operation.signal, maxOutboundStreams: this.config.maxOutboundRequests })
       stream.maxReadBufferLength = this.config.maxResponseBytes
       stream.maxWriteBufferLength = this.config.maxRequestBytes
@@ -254,7 +250,6 @@ export default class Libp2pScopeTransport extends ScopeTransport {
     stream.maxWriteBufferLength = this.config.maxResponseBytes
     stream.inactivityTimeout = this.config.requestTimeoutMs
     try {
-      if (connection.encryption !== '/noise') throw new ScopeTransportError('scope-transport/invalid-target')
       const payload = requestPayload(await readJson(stream, this.config.maxRequestBytes, 'scope-transport/request-too-large', operation.signal))
       operation.signal.throwIfAborted()
       const result = await registration.handler({

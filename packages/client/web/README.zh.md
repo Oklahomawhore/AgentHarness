@@ -57,7 +57,7 @@ kind: "package-library"
 
 ### 设计理念
 
-内核恰好拥有三样东西：模块系统、Cordis Loader 与启动页。Graph、批次 preload 与 loader facade 归 Host 所有，因此 `AppWebEntry` 永不感知 bootstrap package id，也不解析协议格式。动态 UI 渲染器只在每个客户端 entry 激活后收到挂载点。
+内核恰好拥有三样东西：模块系统、Cordis Loader 与启动页。Graph、批次 preload 与 loader facade 归 Host 所有，因此 `AppWebEntry` 永不感知 bootstrap package id，也不解析协议格式。动态 UI 渲染器只在每个客户端 entry 激活后收到挂载点。替换 entry 时，内核在旧 entry 释放资源前卸载 React 应用，并在完整名册激活后重新挂载。卸载期间显示原有的加载与错误视图。entry 删除完成后也会核对剩余名册，因此停止动态插件会恢复应用。React 本地状态重置，未变更 fiber 拥有的 store 保持存活。
 
 ### 两阶段启动
 

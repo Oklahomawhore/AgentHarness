@@ -24,7 +24,8 @@ export class ClaudeScopeSetupError extends Error {
 }
 
 const MARKER = '# agentharness-claude-scope:v1'
-const EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd'] as const
+const LEGACY_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd'] as const
+const EVENTS = [...LEGACY_EVENTS, 'Stop', 'StopFailure'] as const
 const TOOL_EVENTS = new Set<string>(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'])
 type JsonObject = Record<string, unknown>
 interface Target {
@@ -79,7 +80,10 @@ async function readText(path: string, limit: number, signal: AbortSignal): Promi
     const bytes = Buffer.alloc(limit + 1)
     let length = 0
     while (length < bytes.length) {
+      // Settings retain separate identity, UTF-8, and conflict checks around this bounded handle-read step.
+      /* jscpd:ignore-start */
       const read = await file.read(bytes, length, bytes.length - length, length)
+      /* jscpd:ignore-end */
       signal.throwIfAborted()
       if (read.bytesRead === 0) break
       length += read.bytesRead
@@ -143,6 +147,7 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
   if (document.hooks !== undefined && !object(document.hooks)) fail('configuration-invalid')
   const hooks = new Map<string, JsonObject[]>()
   let owned = 0
+  const ownedEvents = new Set<string>()
   for (const [event, entries] of Object.entries(document.hooks ?? {})) {
     if (!Array.isArray(entries)) fail('configuration-invalid')
     const groups: JsonObject[] = []
@@ -153,6 +158,7 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
       if (entry.hooks.some(hook => typeof hook.command === 'string' && hook.command.includes(MARKER))) {
         if (!EVENTS.some(candidate => candidate === event) || !isDeepStrictEqual(entry, group(target, event, options))) fail('configuration-conflict')
         eventOwned++
+        ownedEvents.add(event)
       }
       groups.push(entry)
     }
@@ -160,7 +166,8 @@ async function settings(target: Target, options: ClaudeScopeProjectSetupOptions,
     owned += eventOwned
     hooks.set(event, groups)
   }
-  if (owned !== 0 && owned !== EVENTS.length) fail('configuration-conflict')
+  if (owned !== 0 && owned !== EVENTS.length
+    && !(owned === LEGACY_EVENTS.length && LEGACY_EVENTS.every(event => ownedEvents.has(event)))) fail('configuration-conflict')
   return { text, document, hooks, owned }
 }
 
@@ -233,7 +240,8 @@ async function mutate(
       for (const event of EVENTS) {
         const previous = hooks.get(event) ?? []
         const entries = install
-          ? current.owned === 0 ? [...previous, group(selected, event, options)] : [...previous]
+          ? previous.some(entry => isDeepStrictEqual(entry, group(selected, event, options)))
+            ? [...previous] : [...previous, group(selected, event, options)]
           : previous.filter(entry => !isDeepStrictEqual(entry, group(selected, event, options)))
         if (entries.length === 0) hooks.delete(event)
         else hooks.set(event, entries)
@@ -268,7 +276,7 @@ async function mutate(
 }
 
 /**
- * Install seven owned hook groups after preparing their complete shared dsh profile.
+ * Install the owned project hook groups after preparing their complete shared dsh profile.
  * Writes use cooperative file locks and atomic replacement; interrupted profile creation can resume.
  * Cancellation is checked before each write; an atomic replacement already started may commit.
  * The caller must await settlement before completing disposal; committed settings stay durable.

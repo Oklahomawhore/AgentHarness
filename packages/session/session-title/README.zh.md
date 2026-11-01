@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-挂载服务，让会话获得客户端可以显示、且绝不触及模型的标题。常用路径是显式的：加载会话存储、以必填上限挂载服务，并可选挂载一个提供方插件。
+挂载服务，让会话获得客户端可以显示、且绝不触及模型的标题。 自动更新只处理本服务存储中精确匹配的存活 Session。常用路径是显式的：加载会话存储、以必填上限挂载服务，并可选挂载一个提供方插件。
 
 ### 选择标题来源
 
@@ -54,7 +54,7 @@ kind: "package-reference"
 
 ### 添加提供方
 
-可选异步提供方可通过 `ctx.sessionTitle.register(provider)` 注册一个；第二次注册会立即抛出。随附的模型支持提供方是[首消息](../session-title-first-prompt-llm/README.zh.md)与[全消息](../session-title-all-prompts-llm/README.zh.md)，两者都使用共享的 [LLM 生成策略](../session-title-llm/README.zh.md)。提供方只有在带标记、由循环构建的请求的确切路由与已记录 `request/header` 匹配时才启动，较新的修订会取代并中止旧工作。
+可选异步提供方可通过 `ctx.sessionTitle.register(provider)` 注册一个；第二次注册会立即抛出。随附的模型支持提供方是[首消息](../session-title-first-prompt-llm/README.zh.md)与[全消息](../session-title-all-prompts-llm/README.zh.md)，两者都使用共享的 [LLM 生成策略](../session-title-llm/README.zh.md)。提交 `request/header` 可以启动排队中的生成工作。路由未变时，必须由精确所属 Session 的带标记循环请求包含待处理用户消息，才能启动生成。较新的修订会取代并中止旧工作。
 
 ### 读取标题
 

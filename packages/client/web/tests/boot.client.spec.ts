@@ -89,6 +89,97 @@ describe('bootstrap failure rendering', () => {
   })
 })
 
+describe('mounted client lifecycle', () => {
+  it.each(['replacement', 'optional disable', 'remove', 'failed replacement', 'failed import', 'disable after failure'] as const)('follows client entry %s without mounting a partial application', async (operation) => {
+    const events: string[] = []
+    let failApply = false
+    let failImport = false
+    let provider: Context | undefined
+    const container = document.createElement('div')
+    document.body.append(container)
+    const target = installFacade()
+    const entries = [MODULES_ID, 'renderer', 'lifecycle-provider'].map(id => ({ id, url: `/${id}.js?rev=1`, rev: '1' }))
+    win.__DSH_BOOT__ = { rev: 'graph', entries, batches: [{ phase: 'application', url: '/application.js',
+      rev: 'batch', entries: entries.map(row => row.id) }] }
+    const providerRegistration: ClientBundleRegistration = { id: 'lifecycle-provider', factory: () => {
+      if (failImport) throw new Error('fixture import failed')
+      return { apply: (ctx: Context) => {
+        if (failApply) throw new Error('fixture apply failed')
+        provider = ctx
+        ctx.effect(() => () => { events.push('provider-unload') })
+      } }
+    } }
+    const entry = new AppWebEntry(container, {
+      loadBundle: async () => {
+        target.load({ id: 'renderer', factory: () => ({ apply: (ctx: Context) => {
+          ctx.reflect.provide('uiRenderer', { mount: (element: HTMLElement) => {
+            events.push('mount')
+            element.textContent = 'mounted'
+            return () => { events.push('unmount'); element.textContent = '' }
+          } })
+        } }) })
+        target.load(providerRegistration)
+      },
+    })
+    try {
+      await entry.run()
+      expect(container.textContent).toBe('mounted')
+      if (provider === undefined) throw new Error('fixture provider did not activate')
+      const loader = provider.get('loader')
+      if (loader === undefined) throw new Error('fixture provider has no Loader')
+      const modules = provider.get('modules')
+      if (modules === undefined) throw new Error('fixture provider has no module system')
+      const owner = [...loader.entries()].find(item => item.options.name === 'lifecycle-provider')
+      if (owner === undefined || owner.fiber === undefined) throw new Error('fixture provider has no entry')
+      if (operation === 'optional disable') {
+        await owner.update({ disabled: true })
+        expect(events).toEqual(['mount', 'provider-unload'])
+        expect(container.textContent).toBe('mounted')
+        return
+      }
+      if (operation === 'remove') {
+        await loader.remove(owner.id)
+        await expect.poll(() => container.textContent).toBe('mounted')
+        expect(events).toEqual(['mount', 'unmount', 'provider-unload', 'mount'])
+        return
+      }
+      const oldFiber = owner.fiber
+      const runtime = oldFiber.runtime
+      if (runtime === null) throw new Error('fixture provider has no runtime')
+      owner.ctx.registry.delete(runtime.callback)
+      while (oldFiber.inertia !== undefined) await oldFiber.inertia
+      expect(events.slice(0, 3)).toEqual(['mount', 'unmount', 'provider-unload'])
+      expect(container.textContent).toContain('Loading plugins…')
+      delete owner.fiber
+      if (operation === 'failed replacement' || operation === 'disable after failure') {
+        failApply = true
+        await expect(owner.refresh()).rejects.toThrow('fixture apply failed')
+        expect(container.textContent).toContain('Failed to load plugins')
+        expect(container.textContent).toContain('lifecycle-provider')
+        failApply = false
+      }
+      if (operation === 'failed import') {
+        modules.invalidate('lifecycle-provider', 'broken')
+        failImport = true
+        target.load(providerRegistration)
+        await expect(owner.refresh()).rejects.toThrow('fixture import failed')
+        expect(container.textContent).toContain('Failed to load plugins')
+        expect(container.textContent).toContain('lifecycle-provider')
+        modules.invalidate('lifecycle-provider', 'recovered')
+        failImport = false
+        target.load(providerRegistration)
+      }
+      if (operation === 'disable after failure') await owner.update({ disabled: true })
+      else await owner.refresh()
+      await loader.await()
+      await expect.poll(() => container.textContent).toBe('mounted')
+      expect(events).toEqual(['mount', 'unmount', 'provider-unload', 'mount'])
+    } finally {
+      await entry.dispose()
+    }
+  })
+})
+
 describe('plugin activation', () => {
   it('prefetches a parser-loaded immediate row through the injected bundle transport', async () => {
     const container = document.createElement('div')

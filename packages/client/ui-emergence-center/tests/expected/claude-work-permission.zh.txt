@@ -1,0 +1,2 @@
+来源名称session-work贡献来源原 Claude 会话的文件、命令与答复报告允许采集的工具Write, Edit分享指定命令的结果printf " exact text "
+node check.mjs  --flag — 目录 2分享完整答复报告（Stop）已选择答复报告范围分享未来 Stop 事件提供的完整答复文本，其中可能引用用户输入。Stop 不保证原回合已经结束，其他 Hook 可能让它继续。只分享答复报告时无需填写目录。

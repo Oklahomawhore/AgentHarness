@@ -2,9 +2,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceNotFoundError, type SessionHandle } from '@deepseek-ai/dsh-session-persistence'
-import { restoreSemanticInput, restoreSemanticProjection } from './semantic-input.ts'
+import { restoreSemanticRequestInput, restoreSemanticProjection } from './semantic-input.ts'
 import { semanticRequestKey, semanticRequestSchema, semanticResultSchema,
-  type SemanticRequestRecord, type SemanticResultRecord } from './semantic-schema.ts'
+  type SemanticRequestRecord, type SemanticRequestReservation, type SemanticResultRecord } from './semantic-schema.ts'
 
 interface RecordPair {
   readonly request: SemanticRequestRecord
@@ -52,13 +52,11 @@ export class SemanticAudit {
     if (event.type === 'session/end-seed') return
     if (event.type === 'context/semantic-request') {
       const request = semanticRequestSchema.parse(event.data)
+      restoreSemanticRequestInput(request)
       if (request.key !== semanticRequestKey(request) || request.ordinal !== this.reservations + 1
         || (this.entries.has(request.key) && this.entries.get(request.key)?.result?.status !== 'failed')) {
         throw new Error('semantic audit: invalid request key, duplicate reservation, or call ordinal')
       }
-      const text = request.messages[0]?.content[0]?.text
-      if (text === undefined) throw new Error('semantic audit: missing captured request')
-      restoreSemanticInput(text)
       this.reservations++
       this.entries.set(request.key, { request, seq: event.seq })
       return
@@ -96,13 +94,15 @@ export class SemanticAudit {
    * @param maxCalls - Cumulative reservation limit.
    * @returns Request sequence used by the result.
    */
-  reserve(fields: Omit<SemanticRequestRecord, 'ordinal'>, maxCalls: number): Promise<number> {
+  reserve(fields: SemanticRequestReservation, maxCalls: number): Promise<number> {
     return this.enqueue(async () => {
+      const request = semanticRequestSchema.parse({ ...fields, ordinal: this.reservations + 1 })
+      restoreSemanticRequestInput(request)
+      if (request.key !== semanticRequestKey(request)) throw new Error('semantic audit: invalid reservation key')
       if (this.entries.has(fields.key) && this.entries.get(fields.key)?.result?.status !== 'failed') {
         throw new Error('semantic audit: request is already reserved')
       }
       if (this.reservations >= maxCalls) throw new Error('semantic audit: cumulative maxCalls exhausted')
-      const request = semanticRequestSchema.parse({ ...fields, ordinal: this.reservations + 1 })
       const event = this.session.append('context/semantic-request', request)
       await this.persist(event)
       this.reservations++

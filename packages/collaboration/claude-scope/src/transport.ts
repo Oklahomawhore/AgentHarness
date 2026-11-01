@@ -70,11 +70,13 @@ export async function readBoundedUtf8(
 
 /**
  * Publish the Host capability through Connection and remove it with this plugin.
- * @param ctx - Host Connection, WebServer, and dsh launcher lifecycle context.
+ * @param ctx - owning Host context with Connection and a listening WebServer.
  * @param config - leased descriptor path in an owner-only directory.
- * @returns the generation every Claude Remote Hook must match.
+ * @returns the Hook generation and the publication promise awaited by service initialization.
  */
-export function createClaudeScopeDescriptor(ctx: Context, config: ClaudeScopeDescriptorConfig): { readonly generation: string } {
+export function createClaudeScopeDescriptor(
+  ctx: Context, config: ClaudeScopeDescriptorConfig,
+): { readonly generation: string; readonly ready: Promise<void> } {
   return publishLocalConnectionDescriptor(ctx, config, 'claude-scope')
 }
 

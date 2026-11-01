@@ -87,7 +87,7 @@ This section explains the design decisions behind the tool suite and points at t
 
 The tools are the executor; policy is an event gate. The tools inject no policy service and inspect no cache — each mutation asks the single intent slot for its guard through `ctx.waterfall`, and each operation emits `fs/observed` only after it succeeded. Reads do exactly one provider `stat` (type and size routing plus the observed version); mutations do none, because the guard comes from the intent slot and the provider re-checks under its lock.
 
-The `write` and `edit` executors emit an admitted attempt before the provider mutation. [Filesystem observation types](../../../docs/subsystems/filesystem.md#file-tool-observation) associate its actual provider and target with the registry execution; consumers still require a final logged outcome and their own source-sharing consent. No prior file contents enter this event.
+The `write` and `edit` executors emit an admitted attempt before the provider mutation. [Filesystem observation types](../../../docs/subsystems/filesystem.md#file-tool-observation) associate its actual provider and target with the registry execution; consumers still require a final logged outcome and their own source-sharing consent. No prior file contents enter this event. A successful provider operation also emits `tool-fs/mutation-completed` with the same mutation identity and its complete LF-normalized result text, including unchanged parts. Sharing that text requires separate complete-content permission and successful durable tool settlement; a later cancellation or failure prevents publication. The event neither rereads the file nor proves its state at delivery.
 
 ### Source map
 

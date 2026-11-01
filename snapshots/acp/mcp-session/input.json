@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "op": "initialize"
+    },
+    {
+      "op": "newSession",
+      "nodeMcpServers": [
+        {
+          "name": "fixture",
+          "script": "mcp-server.mjs"
+        }
+      ]
+    },
+    {
+      "op": "prompt",
+      "text": "Use the attached add tool to add 2 and 3, then report its result."
+    }
+  ]
+}

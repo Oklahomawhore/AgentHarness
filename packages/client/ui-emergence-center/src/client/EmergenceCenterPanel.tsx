@@ -1,6 +1,6 @@
 /** Task lineage, shared context, and prominent Agent-session connection panel. */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { graphlib, layout as dagreLayout } from '@dagrejs/dagre'
 import {
@@ -116,7 +116,7 @@ export function taskGraph(
           <small>{presentation.creator} · {presentation.runtime}</small>
         </div>,
       },
-      style: { width, padding: 0, borderRadius: 14, border: '1px solid #d0d5dd', overflow: 'hidden' },
+      style: { width, padding: 0, borderRadius: 14, overflow: 'hidden' },
     }
   })
   return { nodes, edges }
@@ -129,7 +129,8 @@ export function EmergenceCenterPanel({
   useTasks,
   useMcpClients,
   useClaudeScopes,
-  useSourceContributions, useOwnerContributions,
+  useCodexScopes,
+  useSourceContributions, useOwnerContributions, useScopeAccess,
   useObservedScopes,
   initialProfile,
   setProfile,
@@ -147,9 +148,12 @@ export function EmergenceCenterPanel({
   endObservedScope,
   refreshObservedScopes,
   readScopeAccess, inviteScope, revokeScope, receiveClaudeScope, stopClaudeReceive,
+  readCodexScopes, receiveCodexScope, stopCodexReceive,
   readContribution, requestContribution, prepareContribution, activateContribution, stopContribution, previewContributionText,
+  leaveJointContribution, recoverJointContribution, probeContributionEntry,
   readOwnedContributions, moreOwnedContributions, approveContribution, recoverContribution, revokeContribution,
   createContributionEntry, recoverContributionEntry, approveContributionApplication, rejectContributionApplication,
+  createGroupEntry, closeGroupEntry,
   refresh,
   t,
 }: EmergenceCenterPanelProps) {
@@ -157,9 +161,12 @@ export function EmergenceCenterPanel({
   const taskState = useTasks(value => value)
   const mcpClients = useMcpClients(value => value)
   const claudeScopes = useClaudeScopes(value => value)
+  const codexScopes = useCodexScopes(value => value.inventory)
   const sourceContributions = useSourceContributions(value => value)
   const ownerContributions = useOwnerContributions(value => value)
+  const scopeAccess = useScopeAccess(value => value.inventory)
   const emptyContext = claudeScopes.sessions.some(session => session.receiveSubscriptionId !== undefined)
+    || codexScopes?.value?.some(session => session.receiveSubscriptionId !== undefined)
     ? t('panel.receivingContext') : t('panel.emptyContext')
   const observedScopes = useObservedScopes(value => value)
   const [open, setOpen] = useState(() => window.location.hash === '#agentharness=collaboration')
@@ -176,11 +183,13 @@ export function EmergenceCenterPanel({
   const [profileName, setProfileName] = useState(initialProfile.displayName)
   const [confirmedProfileName, setConfirmedProfileName] = useState<string>()
   const [profileSaving, setProfileSaving] = useState(false)
-  const [contextText, setContextText] = useState('')
+  const [contextDraft, setContextDraft] = useState<{ readonly taskId: DevelopmentTaskId; readonly text: string }>()
+  const actionInFlight = useRef(false)
   const [pendingAction, setPendingAction] = useState<PendingAction>()
   const [actionError, setActionError] = useState<string>()
   const participantId = profile.id
-  const selectedTask = taskState.tasks.find(task => task.id === selectedTaskId) ?? taskState.tasks[0]
+  const selectedTask = selectedTaskId === undefined ? taskState.tasks[0] : taskState.tasks.find(task => task.id === selectedTaskId)
+  const contextText = contextDraft !== undefined && contextDraft.taskId === selectedTask?.id ? contextDraft.text : ''
   const taskCount = taskState.tasks.filter(task => task.createdBy === participantId).length
 
   useEffect(() => {
@@ -189,7 +198,7 @@ export function EmergenceCenterPanel({
 
   useEffect(() => {
     if (selectedTaskId !== undefined) void focusTask(selectedTaskId).catch(() => {})
-  }, [focusTask, selectedTaskId, participants.nodeId])
+  }, [focusTask, selectedTaskId, selectedTask?.id, selectedTask?.ownerNodeId, participants.nodeId])
 
   const participantMap = useMemo(
     () => new Map(participants.participants.map(participant => [participant.id, participant])),
@@ -236,6 +245,8 @@ export function EmergenceCenterPanel({
 
   const pending = pendingAction !== undefined
   const perform = async (kind: PendingAction, operation: () => Promise<unknown>): Promise<void> => {
+    if (actionInFlight.current) return
+    actionInFlight.current = true
     setPendingAction(kind)
     setActionError(undefined)
     try {
@@ -245,6 +256,7 @@ export function EmergenceCenterPanel({
       const key = typeof code === 'string' ? TASK_ERROR_KEYS[code as keyof typeof TASK_ERROR_KEYS] : undefined
       setActionError(t(key ?? 'error.generic'))
     } finally {
+      actionInFlight.current = false
       setPendingAction(undefined)
     }
   }
@@ -265,13 +277,11 @@ export function EmergenceCenterPanel({
       return { kind: 'fork', parent: { taskId: selectedTask.id, revision: selectedTask.revision } }
     }
     if (createKind === 'merge' && mergeParents.length >= 2) {
+      const parents = mergeParents.map(taskId => taskState.tasks.find(candidate => candidate.id === taskId))
+      if (!parents.every((task): task is DevelopmentTaskSnapshot => task !== undefined)) return undefined
       return {
         kind: 'merge',
-        parents: mergeParents.map((taskId) => {
-          const task = taskState.tasks.find(candidate => candidate.id === taskId)
-          if (task === undefined) throw new Error(`Task ${taskId} is unavailable`)
-          return { taskId, revision: task.revision }
-        }),
+        parents: parents.map(task => ({ taskId: task.id, revision: task.revision })),
       }
     }
     return undefined
@@ -469,19 +479,23 @@ export function EmergenceCenterPanel({
             contributions={sourceContributions} readContribution={readContribution}
             requestContribution={requestContribution} prepareContribution={prepareContribution}
             activateContribution={activateContribution} stopContribution={stopContribution}
-            previewContributionText={previewContributionText} t={t} />
+            leaveJointContribution={leaveJointContribution} recoverJointContribution={recoverJointContribution}
+            probeContributionEntry={probeContributionEntry} previewContributionText={previewContributionText} t={t} />
           <OwnerContributionPanel key={selectedTask?.id ?? ''}
             taskId={selectedTask !== undefined && selectedTask.ownerNodeId === participants.nodeId && selectedTask.origin.kind === 'root' ? selectedTask.id : undefined}
             entry={selectedTask === undefined ? undefined : ownerContributions[selectedTask.id]}
             readOwnedContributions={readOwnedContributions} moreOwnedContributions={moreOwnedContributions}
             createContributionEntry={createContributionEntry} recoverContributionEntry={recoverContributionEntry}
+            createGroupEntry={createGroupEntry} closeGroupEntry={closeGroupEntry}
             approveContributionApplication={approveContributionApplication} rejectContributionApplication={rejectContributionApplication}
             approveContribution={approveContribution} recoverContribution={recoverContribution} revokeContribution={revokeContribution}
             previewContributionText={previewContributionText} t={t} />
-          <ScopeAccessPanel sessions={claudeScopes} refreshSessions={refreshClaudeScopes}
+          <ScopeAccessPanel sessions={claudeScopes} codexScopes={codexScopes} entry={scopeAccess}
+            codexClient={mcpClients.clients.find(client => client.id === 'codex')} setupClient={setupClient}
             {...(selectedTask?.ownerNodeId === participants.nodeId && selectedTask?.origin.kind === 'root' ? { taskId: selectedTask.id } : {})}
             readScopeAccess={readScopeAccess} inviteScope={inviteScope} revokeScope={revokeScope}
-            receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive} t={t} />
+            receiveClaudeScope={receiveClaudeScope} stopClaudeReceive={stopClaudeReceive}
+            readCodexScopes={readCodexScopes} receiveCodexScope={receiveCodexScope} stopCodexReceive={stopCodexReceive} t={t} />
           {selectedTask === undefined ? <div className={css.center}>{emptyContext}</div> : <>
             <header className={css.taskHeader}>
               <div>
@@ -535,14 +549,20 @@ export function EmergenceCenterPanel({
                       : t('context.independentSource', { peerId: item.peerContribution.grant.contributorPeerId })}</small>
                   </article>)}
                 </div>
-                <textarea value={contextText} onChange={(event) => { setContextText(event.target.value) }} placeholder={t('context.placeholder')} />
+                <textarea value={contextText} onChange={(event) => {
+                  setContextDraft({ taskId: selectedTask.id, text: event.target.value })
+                }} placeholder={t('context.placeholder')} />
                 <button
                   type="button"
                   disabled={pending || contextText.trim() === ''}
-                  onClick={() => { void perform('context', async () => {
-                    await publishContext({ taskId: selectedTask.id, participantId, text: contextText.trim() })
-                    setContextText('')
-                  }) }}
+                  onClick={() => {
+                    if (contextDraft?.taskId !== selectedTask.id || contextDraft.text.trim() === '') return
+                    const submitted = contextDraft
+                    void perform('context', async () => {
+                      await publishContext({ taskId: submitted.taskId, participantId, text: submitted.text.trim() })
+                      setContextDraft(current => current === submitted ? undefined : current)
+                    })
+                  }}
                 >{t('context.publish')}</button>
               </section>
             </div>

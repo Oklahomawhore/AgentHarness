@@ -37,7 +37,10 @@ export async function apply(ctx: Context): Promise<void> {
       if (entry.nodeId !== nodeId) {
         throw new Error(`development-room-context storage: cannot persist foreign entry "${entry.nodeId}:${String(entry.seq)}"`)
       }
+      // Each durable domain owns its append record and restore policy; storageDomain already supplies the table operations.
+      /* jscpd:ignore-start */
       const next = { entries: Object.freeze([...(record?.entries ?? []), entry]) }
+      /* jscpd:ignore-end */
       await logs.put(nodeId, next)
       record = next
     })

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeScopeSessionKey, ClaudeScopeSessionSummary, ClaudeScopeSetupResult, DevelopmentTaskId } from '@deepseek-ai/dsh-api-remotes/client'
 import { createClaudeScopeDirectory, type ClaudeScopePort } from '../src/client/claude-scopes.ts'
 
-const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false }
+const A: ClaudeScopeSessionSummary = { sessionKey: 'a' as ClaudeScopeSessionKey, sessionId: 'claude-a', cwd: '/project', observedAt: 1, ended: false, readRevision: 0 }
 const B: ClaudeScopeSessionSummary = { ...A, sessionKey: 'b' as ClaudeScopeSessionKey, sessionId: 'claude-b' }
 const TASK = 'task' as DevelopmentTaskId
 const PROJECT = { projectPath: '/project', settingsPath: '/project/.claude/settings.local.json', profileName: 'scope-hook' }
@@ -30,6 +30,65 @@ function port(overrides: Partial<ClaudeScopePort> = {}): ClaudeScopePort {
 }
 
 describe('Claude scope directory', () => {
+  it.each(['reset', 'dispose'] as const)('does not confirm a previous membership failure after %s', async (operation) => {
+    const mutation = Promise.withResolvers<ClaudeScopeSessionSummary>()
+    const sessions = vi.fn<ClaudeScopePort['sessions']>(async () => [A, B])
+    const directory = createClaudeScopeDirectory(port({ sessions, join: () => mutation.promise }), vi.fn())
+    try {
+      await vi.waitFor(() => { expect(directory.getSnapshot().status).toBe('ready') })
+      const error = new Error('Previous Host response failed')
+      const rejected = expect(directory.join(GRANT)).rejects.toBe(error)
+      directory[operation]()
+      if (operation === 'reset') await vi.waitFor(() => { expect(directory.getSnapshot().status).toBe('ready') })
+      const reads = sessions.mock.calls.length
+      const observed = directory.getSnapshot()
+      mutation.reject(error)
+      await rejected
+      expect(sessions).toHaveBeenCalledTimes(reads)
+      expect(directory.getSnapshot()).toBe(observed)
+    } finally { mutation.resolve(A); directory.dispose() }
+  })
+
+  it.each(['join', 'leave'] as const)('confirms Host authority after a committed %s loses its reply without another notification', async (method) => {
+    const joined: ClaudeScopeSessionSummary = { ...A, taskId: TASK, responsibility: GRANT.responsibility }
+    const before = method === 'join' ? [A, B] : [joined, B]
+    const after = method === 'join' ? [joined, B] : [A, B]
+    let authority: readonly ClaudeScopeSessionSummary[] = before
+    const sessions = vi.fn<ClaudeScopePort['sessions']>(async () => authority)
+    const error = new Error('Response lost after commit')
+    const mutate = vi.fn(async () => { authority = after; throw error })
+    const directory = createClaudeScopeDirectory(port({ sessions, join: mutate, leave: mutate }), vi.fn())
+    try {
+      await vi.waitFor(() => { expect(directory.getSnapshot().sessions).toEqual(before) })
+      const sent = method === 'join' ? directory.join(GRANT) : directory.leave({ sessionKey: A.sessionKey })
+      await expect(sent).rejects.toBe(error)
+      await vi.waitFor(() => { expect(directory.getSnapshot().sessions).toEqual(after) })
+      expect(sessions).toHaveBeenCalledTimes(2)
+      expect(mutate).toHaveBeenCalledOnce()
+    } finally { directory.dispose() }
+  })
+
+  it.each(['reset', 'dispose'] as const)('ignores a rejected session read after %s', async (operation) => {
+    const old = Promise.withResolvers<readonly ClaudeScopeSessionSummary[]>()
+    const sessions = vi.fn().mockImplementationOnce(() => old.promise).mockResolvedValue([B])
+    const report = vi.fn()
+    const directory = createClaudeScopeDirectory(port({ sessions }), report)
+    try {
+      directory[operation]()
+      if (operation === 'reset') await vi.waitFor(() => { expect(directory.getSnapshot().sessions).toEqual([B]) })
+      const current = directory.getSnapshot()
+      old.reject(new Error('previous connection closed'))
+      await Promise.allSettled([old.promise])
+      expect(directory.getSnapshot()).toBe(current)
+      expect(report).not.toHaveBeenCalled()
+    } finally { directory.dispose() }
+    const disposed = directory.getSnapshot()
+    directory.refresh()
+    directory.reset()
+    expect(directory.getSnapshot()).toBe(disposed)
+    expect(sessions).toHaveBeenCalledTimes(operation === 'reset' ? 2 : 1)
+  })
+
   it('deduplicates refresh and rejects an older list after an exact-session join', async () => {
     const read = Promise.withResolvers<readonly ClaudeScopeSessionSummary[]>()
     const sessions = vi.fn().mockImplementationOnce(() => read.promise).mockResolvedValue([{ ...A, taskId: TASK }, B])

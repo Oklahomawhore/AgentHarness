@@ -9,7 +9,7 @@ The entry package exports the Landlock API at `./landlock-run` and the asynchron
 - Linux: `bin/landlock-run`, `bin/glibc/system.node`, and `bin/musl/system.node`.
 - macOS: `bin/system.node`.
 
-`package.json` supplies OS/CPU metadata; `prebuilds.json` supplies tool, binary kind, path, and addon Node-API/libc metadata. CI matrices and release assembly derive from those files. Nested paths remain intact in uploaded artifacts and tarballs.
+`package.json` supplies OS/CPU metadata; `prebuilds.json` supplies tool, binary kind, path, and addon Node-API/libc metadata. Native build, release assembly and prepack validation read those declarations. Nested paths remain intact in uploaded artifacts and tarballs.
 
 ## Installation and use
 

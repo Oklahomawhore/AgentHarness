@@ -1,18 +1,20 @@
 /** Safe local AI-client detection and AgentHarness MCP registration. */
 
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, lstat, mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { homedir, userInfo } from 'node:os'
+import { homedir, hostname, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { publishLocalConnectionDescriptor } from '@deepseek-ai/dsh-client-connection/local-access'
+import { configureCodexHooks, inspectCodexHooks } from './codex-hooks.ts'
 import type {
   McpClientId,
   McpClientSetupRequest,
@@ -25,8 +27,6 @@ export type * from './types.ts'
 
 const runFile = promisify(execFile)
 const SERVER_NAME = 'agentharness'
-const CLIENT_ID_PATTERN = /^[a-z][a-z0-9-]*$/
-const COMMAND_TIMEOUT_MS = 10_000
 
 /** Runtime facts shared by the installed command and Host Remote service. */
 export interface McpClientSetupOptions extends Config {
@@ -48,6 +48,8 @@ export interface Config {
   readonly dshPath: string
   /** Explicit Node arguments; source launch uses the ESM-only tsx hook. */
   readonly nodeArgs: string[]
+  /** Complete official client inspection or registration command deadline, in milliseconds. */
+  readonly commandTimeoutMs: number
   /** Absolute workspace tsconfig for source-mode module resolution; omit for built dsh. */
   readonly sourceTsconfigPath?: string
   /** Absolute private local Connection descriptor published by this Host. */
@@ -70,7 +72,7 @@ interface ClientDefinition {
   readonly id: McpClientId
   readonly label: string
   readonly mechanism: McpClientSnapshot['mechanism']
-  readonly executable?: string
+  readonly executable: string
   readonly executableCandidates?: readonly string[]
   readonly applications: readonly string[]
   readonly configPaths?: readonly string[]
@@ -101,7 +103,7 @@ const CLIENTS: readonly ClientDefinition[] = [
   },
   {
     id: 'codex', label: 'Codex', mechanism: 'cli', executable: 'codex',
-    executableCandidates: ['ChatGPT.app/Contents/Resources/codex'], applications: ['ChatGPT.app'],
+    executableCandidates: ['ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex', 'ChatGPT.app/Contents/Resources/codex'], applications: ['ChatGPT.app'],
     addArguments: entry => ['mcp', 'add', SERVER_NAME, ...entryEnvironment(entry), '--', entry.command, ...entry.args],
   },
   {
@@ -134,6 +136,9 @@ const CLIENTS: readonly ClientDefinition[] = [
 ]
 
 function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
+  if (!Number.isSafeInteger(options.commandTimeoutMs) || options.commandTimeoutMs < 1 || options.commandTimeoutMs > 2_147_483_647) {
+    throw new TypeError('mcp-client-setup: commandTimeoutMs must be an integer from 1 through 2147483647')
+  }
   if (![options.nodePath, options.dshPath, options.descriptorPath, options.harnessHome].every(isAbsolute)) {
     throw new TypeError('mcp-client-setup: launcher, descriptor, and Harness home paths must be absolute')
   }
@@ -164,6 +169,7 @@ function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
     nodePath: options.nodePath,
     dshPath: options.dshPath,
     nodeArgs,
+    commandTimeoutMs: options.commandTimeoutMs,
     ...(options.sourceTsconfigPath === undefined ? {} : { sourceTsconfigPath: options.sourceTsconfigPath }),
     descriptorPath: options.descriptorPath,
     harnessHome: options.harnessHome,
@@ -172,10 +178,9 @@ function resolveOptions(options: McpClientSetupOptions): ResolvedOptions {
   }
 }
 
-function identity(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '')
-  const prefixed = /^[a-z]/u.test(normalized) ? normalized : `agent-${normalized || 'local'}`
-  return prefixed.slice(0, 80)
+function clientParticipantId(username: string, clientId: McpClientId): string {
+  const account = createHash('sha256').update(JSON.stringify([hostname(), username])).digest('hex').slice(0, 32)
+  return `agentharness-${account}-${clientId}`
 }
 
 function entryEnvironment(entry: McpEntry): string[] {
@@ -187,7 +192,7 @@ function entryFor(definition: ClientDefinition, options: ResolvedOptions, reques
   participantId: string
   displayName: string
 } {
-  const participantId = identity(`agentharness-${options.username}-${definition.id}`)
+  const participantId = clientParticipantId(options.username, definition.id)
   const displayName = requestedDisplayName?.trim() || `${options.username} / ${definition.label}`
   return {
     participantId,
@@ -221,16 +226,13 @@ async function exists(path: string): Promise<boolean> {
 async function executable(definition: ClientDefinition, options: ResolvedOptions): Promise<string | undefined> {
   const override = options.executableOverrides[definition.id]
   if (override !== undefined) return override
-  const names = definition.executable === undefined ? [] : [definition.executable]
   for (const directory of options.path.split(delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = join(directory, name)
-      try {
-        await access(candidate, constants.X_OK)
-        return candidate
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'EACCES') throw error
-      }
+    const candidate = join(directory, definition.executable)
+    try {
+      await access(candidate, constants.X_OK)
+      return candidate
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'EACCES') throw error
     }
   }
   for (const root of options.applicationRoots) {
@@ -288,7 +290,7 @@ async function inspectJson(path: string, expected: McpEntry): Promise<{ state: M
     raw = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'not-configured' }
-    return { state: 'failed', detail: error instanceof Error ? error.message : String(error) }
+    return { state: 'failed', detail: (error as Error).message }
   }
   try {
     const document: unknown = JSON.parse(raw)
@@ -300,8 +302,8 @@ async function inspectJson(path: string, expected: McpEntry): Promise<{ state: M
     return compatibleEntry(current, expected)
       ? { state: 'configured' }
       : { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
-  } catch (error) {
-    return { state: 'conflict', detail: `Configuration is not strict JSON: ${error instanceof Error ? error.message : String(error)}` }
+  } catch {
+    return { state: 'conflict', detail: 'Configuration is not strict JSON.' }
   }
 }
 
@@ -309,23 +311,28 @@ async function inspectCodex(
   command: string,
   expected: McpEntry,
   environment: NodeJS.ProcessEnv,
+  commandTimeoutMs: number,
 ): Promise<{ state: McpClientSnapshot['state']; detail?: string }> {
   try {
     const { stdout } = await runFile(command, ['mcp', 'list', '--json'], {
       encoding: 'utf8',
       env: environment,
-      timeout: COMMAND_TIMEOUT_MS,
+      timeout: commandTimeoutMs,
     })
     const list: unknown = JSON.parse(stdout)
     if (!Array.isArray(list)) return { state: 'failed', detail: 'Codex returned an invalid MCP list.' }
     const current: unknown = (list as unknown[]).find((item: unknown) => isRecord(item) && item.name === SERVER_NAME)
     if (!isRecord(current)) return { state: 'not-configured' }
     const transport = current.transport
-    return isRecord(transport) && compatibleEntry(transport, expected)
-      ? { state: 'configured' }
-      : { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
-  } catch (error) {
-    return { state: 'failed', detail: `Could not inspect Codex MCP settings: ${error instanceof Error ? error.message : String(error)}` }
+    if (!isRecord(transport) || !compatibleEntry(transport, expected)) {
+      return { state: 'conflict', detail: `A different ${SERVER_NAME} entry already exists.` }
+    }
+    if (current.enabled === false) return {
+      state: 'manual', detail: 'The AgentHarness MCP server is disabled in Codex. Enable it in Codex MCP settings.',
+    }
+    return { state: 'configured' }
+  } catch {
+    return { state: 'failed', detail: 'Could not inspect Codex MCP settings; run codex mcp list --json locally for diagnostics.' }
   }
 }
 
@@ -334,28 +341,39 @@ async function inspectClient(
   options: ResolvedOptions,
   requestedDisplayName?: string,
 ): Promise<InspectedClient> {
-  const command = await executable(definition, options)
-  const isDetected = await detected(definition, options, command)
-  const path = await configPath(definition, options)
   const { entry, participantId, displayName } = entryFor(definition, options, requestedDisplayName)
+  let command: string | undefined
+  let path: string | undefined
+  let isDetected = false
   let observation: { state: McpClientSnapshot['state']; detail?: string }
-  if (options.platform === 'win32') observation = {
-    state: 'unsupported', detail: 'Private local MCP authentication currently supports macOS and Linux only.',
+  let automaticContext: McpClientSnapshot['automaticContext']
+  try {
+    command = await executable(definition, options)
+    isDetected = await detected(definition, options, command)
+    path = await configPath(definition, options)
+    if (options.platform === 'win32') observation = {
+      state: 'unsupported', detail: 'Private local MCP authentication currently supports macOS and Linux only.',
+    }
+    else if (!isDetected) observation = { state: 'not-installed' }
+    else if (definition.mechanism === 'manual') observation = {
+      state: 'manual',
+      detail: definition.manualDetail as string,
+    }
+    else if (definition.mechanism === 'cli' && command === undefined) observation = {
+      state: 'manual',
+      detail: 'The supported registration command is not available on PATH.',
+    }
+    else if (definition.id === 'codex' && command !== undefined) {
+      observation = await inspectCodex(command, entry, options.environment, options.commandTimeoutMs)
+      const codexHome = options.environment.CODEX_HOME ?? join(options.home, '.codex')
+      if (!isAbsolute(codexHome)) throw new Error('CODEX_HOME must be absolute')
+      automaticContext = await inspectCodexHooks(join(codexHome, 'hooks.json'))
+    }
+    // Remaining registry entries declare the JSON path used for inspection.
+    else observation = await inspectJson(path as string, entry)
+  } catch (error) {
+    observation = { state: 'failed', detail: (error as Error).message }
   }
-  else if (!isDetected) observation = { state: 'not-installed' }
-  else if (definition.mechanism === 'manual') observation = {
-    state: 'manual',
-    ...(definition.manualDetail === undefined ? {} : { detail: definition.manualDetail }),
-  }
-  else if (definition.mechanism === 'cli' && command === undefined) observation = {
-    state: 'manual',
-    detail: 'The supported registration command is not available on PATH.',
-  }
-  else if (definition.id === 'codex' && command !== undefined) {
-    observation = await inspectCodex(command, entry, options.environment)
-  }
-  else if (path !== undefined) observation = await inspectJson(path, entry)
-  else observation = { state: 'manual', detail: 'No supported registration mechanism is available.' }
   return {
     definition,
     executable: command,
@@ -367,13 +385,15 @@ async function inspectClient(
       detected: isDetected,
       mechanism: definition.mechanism,
       state: observation.state,
-      canSetup: isDetected && observation.state === 'not-configured' && definition.mechanism !== 'manual'
-        && (definition.mechanism !== 'cli' || command !== undefined),
+      canSetup: (observation.state === 'not-configured'
+        || (observation.state === 'configured' && automaticContext?.state === 'not-configured'))
+        && automaticContext?.state !== 'conflict' && automaticContext?.state !== 'failed',
       participantId,
       displayName,
       restartRequired: observation.state === 'configured',
       ...(path === undefined ? {} : { configPath: path }),
       ...(observation.detail === undefined ? {} : { detail: observation.detail }),
+      ...(automaticContext === undefined ? {} : { automaticContext }),
     },
   }
 }
@@ -381,7 +401,7 @@ async function inspectClient(
 /**
  * Read every supported client's current safe setup state.
  * @param options - runtime, filesystem, environment, and executable lookup inputs.
- * @returns detected clients and their independently verified setup states.
+ * @returns Per-client setup states; discovery and read failures remain failed entries.
  */
 export async function listMcpClients(options: McpClientSetupOptions): Promise<McpClientSetupSnapshot> {
   const resolved = resolveOptions(options)
@@ -390,8 +410,8 @@ export async function listMcpClients(options: McpClientSetupOptions): Promise<Mc
 }
 
 async function configureJson(client: InspectedClient): Promise<void> {
-  const path = client.configPath
-  if (path === undefined) throw new Error('client has no JSON configuration path')
+  // JSON setup is admitted only after inspection resolves its configuration path.
+  const path = client.configPath as string
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await withFileLock(path, async () => {
     let document: Record<string, unknown> = {}
@@ -420,14 +440,14 @@ async function configureJson(client: InspectedClient): Promise<void> {
   })
 }
 
-async function configureCli(client: InspectedClient, environment: NodeJS.ProcessEnv): Promise<void> {
-  if (client.executable === undefined || client.definition.addArguments === undefined) {
-    throw new Error('supported registration command is unavailable')
-  }
-  await runFile(client.executable, [...client.definition.addArguments(client.entry)], {
+async function configureCli(client: InspectedClient, environment: NodeJS.ProcessEnv, commandTimeoutMs: number): Promise<void> {
+  // CLI preflight retains a command from the fixed registry's registration mechanism.
+  await runFile(client.executable as string, [
+    ...(client.definition.addArguments as NonNullable<ClientDefinition['addArguments']>)(client.entry),
+  ], {
     encoding: 'utf8',
     env: environment,
-    timeout: COMMAND_TIMEOUT_MS,
+    timeout: commandTimeoutMs,
   })
 }
 
@@ -441,22 +461,27 @@ export async function setupMcpClient(
   options: McpClientSetupOptions,
   request: McpClientSetupRequest,
 ): Promise<McpClientSetupResult> {
-  if (!CLIENT_ID_PATTERN.test(request.clientId)) throw new TypeError('mcp-client-setup: invalid client id')
   const definition = CLIENTS.find(client => client.id === request.clientId)
-  if (definition === undefined) throw new TypeError(`mcp-client-setup: unsupported client ${request.clientId}`)
+  if (definition === undefined) throw new TypeError('mcp-client-setup: unsupported client')
   const resolved = resolveOptions(options)
   const before = await inspectClient(definition, resolved, request.displayName)
   if (before.snapshot.state === 'unsupported') return { outcome: 'unsupported', client: before.snapshot }
-  if (before.snapshot.state === 'configured') return { outcome: 'already-configured', client: before.snapshot }
+  if (before.snapshot.automaticContext?.state === 'conflict') return { outcome: 'conflict', client: before.snapshot }
+  if (before.snapshot.automaticContext?.state === 'failed') return { outcome: 'failed', client: before.snapshot }
+  if (before.snapshot.state === 'configured' && !before.snapshot.canSetup) return { outcome: 'already-configured', client: before.snapshot }
   if (before.snapshot.state === 'not-installed') return { outcome: 'not-installed', client: before.snapshot }
   if (before.snapshot.state === 'manual') return { outcome: 'manual', client: before.snapshot }
   if (before.snapshot.state === 'conflict') return { outcome: 'conflict', client: before.snapshot }
   if (!before.snapshot.canSetup) return { outcome: 'failed', client: before.snapshot }
   try {
-    if (definition.mechanism === 'json') await configureJson(before)
-    else await configureCli(before, resolved.environment)
+    if (before.snapshot.state !== 'configured') {
+      if (definition.mechanism === 'json') await configureJson(before)
+      else await configureCli(before, resolved.environment, resolved.commandTimeoutMs)
+    }
+    if (before.snapshot.automaticContext !== undefined) await configureCodexHooks(before.snapshot.automaticContext.configPath)
     const after = await inspectClient(definition, resolved, request.displayName)
-    if (after.snapshot.state !== 'configured') {
+    if (after.snapshot.state !== 'configured'
+      || (after.snapshot.automaticContext !== undefined && after.snapshot.automaticContext.state !== 'configured')) {
       return { outcome: 'failed', client: { ...after.snapshot, detail: after.snapshot.detail ?? 'Registration completed but verification did not pass.' } }
     }
     return { outcome: 'configured', client: after.snapshot }
@@ -467,7 +492,10 @@ export async function setupMcpClient(
         ...before.snapshot,
         state: 'failed',
         canSetup: false,
-        detail: error instanceof Error ? error.message : String(error),
+        detail: definition.mechanism === 'cli'
+          ? 'Client MCP registration command failed.'
+          : error instanceof SyntaxError ? 'Configuration is not strict JSON.'
+            : (error as Error).message,
       },
     }
   }
@@ -499,18 +527,26 @@ export class McpClientSetupService extends TypertRemoteService {
     nodePath: s.string().required(),
     dshPath: s.string().required(),
     nodeArgs: s.array(s.string()).required(),
+    commandTimeoutMs: s.number().step(1).min(1).max(2_147_483_647).required(),
     sourceTsconfigPath: s.string(),
     descriptorPath: s.string().required(),
     harnessHome: s.string().required(),
   })
 
   private readonly options: McpClientSetupOptions
+  private readonly publication: Promise<void>
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'mcpClientSetup')
     resolveOptions(config)
     this.options = config
-    if (process.platform !== 'win32') publishLocalConnectionDescriptor(ctx, config, 'mcp-client-setup')
+    this.publication = process.platform === 'win32'
+      ? Promise.resolve()
+      : publishLocalConnectionDescriptor(ctx, config, 'mcp-client-setup').ready
+  }
+
+  async [Service.init](): Promise<void> {
+    await this.publication
   }
 
   /**

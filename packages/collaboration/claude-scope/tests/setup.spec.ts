@@ -17,7 +17,7 @@ vi.mock('@deepseek-ai/dsh-atomic-write', async (original) => {
 const atomic = await vi.importActual<typeof import('@deepseek-ai/dsh-atomic-write')>('@deepseek-ai/dsh-atomic-write')
 const directories: string[] = []
 const signal = new AbortController().signal
-const events = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd']
+const events = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'PostToolBatch', 'SessionEnd', 'Stop', 'StopFailure']
 interface Settings {
   hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> }>>
   [key: string]: unknown
@@ -70,7 +70,7 @@ describe.skipIf(process.platform === 'win32')('project-local Claude hook setup',
     expect(await readdir(f.projectPath)).toEqual([])
   })
 
-  it('merges seven owned hooks, preserves existing settings, and is byte-idempotent', async () => {
+  it('merges nine owned hooks, preserves existing settings, and is byte-idempotent', async () => {
     const f = await fixture()
     const original = foreign()
     await existingSettings(f.settingsPath, original)
@@ -78,7 +78,7 @@ describe.skipIf(process.platform === 'win32')('project-local Claude hook setup',
     const settings = await readSettings(f.settingsPath)
     expect(settings.permissions).toEqual(original.permissions)
     expect(settings.env).toEqual(original.env)
-    expect(settings.hooks.Stop).toEqual(original.hooks.Stop)
+    expect(settings.hooks.Stop?.[0]).toEqual(original.hooks.Stop[0])
     expect(settings.hooks.SessionStart?.[0]).toEqual(original.hooks.SessionStart[0])
     for (const event of events) {
       const owned = settings.hooks[event]?.at(-1)
@@ -117,6 +117,28 @@ describe.skipIf(process.platform === 'win32')('project-local Claude hook setup',
     const bytes = await readFile(f.settingsPath)
     expect((await removeClaudeScopeProject(f.options, f.request, signal)).outcome).toBe('already-removed')
     expect(await readFile(f.settingsPath)).toEqual(bytes)
+  })
+
+  it.each(['upgrade', 'remove'])('accepts an exact seven-event installation for %s without altering foreign hooks', async (action) => {
+    const f = await fixture()
+    const original = foreign()
+    await existingSettings(f.settingsPath, original)
+    await setupClaudeScopeProject(f.options, f.request, signal)
+    const settings = await readSettings(f.settingsPath)
+    settings.hooks.Stop = settings.hooks.Stop!.slice(0, -1)
+    delete settings.hooks.StopFailure
+    await writeFile(f.settingsPath, JSON.stringify(settings))
+    expect((await inspectClaudeScopeProject(f.options, f.request, signal)).state).toBe('not-configured')
+    if (action === 'remove') {
+      expect((await removeClaudeScopeProject(f.options, f.request, signal)).outcome).toBe('removed')
+      expect(await readSettings(f.settingsPath)).toEqual(original)
+    } else {
+      expect((await setupClaudeScopeProject(f.options, f.request, signal)).outcome).toBe('configured')
+      const upgraded = await readSettings(f.settingsPath)
+      expect(upgraded.hooks.Stop).toHaveLength(2)
+      expect(upgraded.hooks.StopFailure).toHaveLength(1)
+      expect(upgraded.hooks.Stop?.[0]).toEqual(original.hooks.Stop[0])
+    }
   })
 
   it('quotes every launch argument and home without shell expansion', async () => {

@@ -109,7 +109,8 @@ function profileEntries(mode, manifest, output) {
   }
   const auditSessionId = 'semantic-pilot-six-call-audit'
   const isolated = [entry('audit-persistence', m.Jsonl, { root: join(output, 'audit'), compression: 'none' })]
-  if (mode === 'execute') isolated.push(entry('semantic', m.Semantic, { auditSessionId, ...manifest.fixture.semantic }))
+  if (mode === 'execute') isolated.push(entry('semantic', m.Semantic, { auditSessionId, ...manifest.fixture.semantic,
+    maxCapturedInputBytes: manifest.fixture.semantic.maxInputBytes }))
   isolated.push(entry('pilot', pathToFileURL(join(manifest.root, 'runner.mjs')).href, { mode, output,
     modules: m, fixturePath: join(manifest.root, 'fixtures.json'), auditSessionId }))
   ordinary.push({ id: 'private-audit', name: 'cordis:group', group: true, isolate: { sessionPersistence: true }, config: isolated })

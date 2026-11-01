@@ -522,6 +522,24 @@ Source: [`packages/fs/fs/src/index.ts`](../../packages/fs/fs/src/index.ts)
 
 ### `tool-fs/*` events
 
+<a id="tool-fsmutation-completed--emit"></a>
+
+#### `tool-fs/mutation-completed` — emit
+
+Observe the same provider's successful result before tool settlement; later failure or cancellation remains possible. Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.
+
+```ts cordis-catalog
+/**
+ * Observe the same provider's successful result before tool settlement; later failure or cancellation remains possible.
+ * Complete text includes unchanged file contents. Consumers require separate sharing permission and durable successful settlement.
+ * @param completion - Original mutation identity and produced text, without a second filesystem read.
+ * @mode emit
+ */
+'tool-fs/mutation-completed'(completion: ToolFsCompletion): void
+```
+
+Source: [`packages/fs/tool-fs/src/index.ts`](../../packages/fs/tool-fs/src/index.ts)
+
 <a id="tool-fsmutation-start--emit"></a>
 
 #### `tool-fs/mutation-start` — emit
@@ -557,4 +575,14 @@ type ToolFsMutation = {
   | { readonly tool: 'write'; readonly input: { readonly content: string } }
   | { readonly tool: 'edit'; readonly input: { readonly oldString: string; readonly newString: string; readonly replaceAll: boolean } }
 )
+```
+
+`tool-fs/mutation-completed` associates the successful provider result with the exact admitted mutation. Its complete LF-normalized text includes unchanged file contents and does not establish successful final tool settlement or current disk state. Consumers require independent complete-content permission before retaining or sharing it, and reject publication after failed or cancelled settlement. No additional filesystem read occurs.
+
+```ts type-equiv
+/** Successful provider result; content is the complete LF-normalized text produced by this exact mutation. */
+interface ToolFsCompletion {
+  readonly mutation: ToolFsMutation
+  readonly content: string
+}
 ```

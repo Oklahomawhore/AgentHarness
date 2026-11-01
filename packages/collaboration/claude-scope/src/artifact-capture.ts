@@ -119,7 +119,9 @@ export async function prepareArtifactSamples(
     const retained = records.get(id)
     if (retained?.revocation !== undefined) throw new Error('claude-scope: artifact grant is being revoked')
     const sequence = (retained?.sequence ?? 0) + 1
-    if (!Number.isSafeInteger(sequence)) throw new Error('claude-scope: artifact sample sequence is exhausted')
+    if (!Number.isSafeInteger(sequence) || sequence >= Number.MAX_SAFE_INTEGER) {
+      throw new Error('claude-scope: artifact sample sequence is exhausted')
+    }
     const chain: ScopeArtifactChain = {
       sessionKey: session.sessionKey, taskId: grant.taskId, epoch: grant.epoch, policyRevision: grant.policy.revision,
       source, artifactId: scopeDigest([grant.taskId, source.name, source.method, source.path]) as DevelopmentTaskArtifactId,
@@ -153,19 +155,18 @@ export async function prepareArtifactSamples(
  * @param domain - durable grants and pending retirement, accessed from the service mutation queue.
  * @param session - local identity whose capture permission has already been removed.
  * @param signal - service lifetime; client cancellation cannot abandon a queued revocation.
- * @returns after every known chain has been retired or found never admitted.
+ * @returns after retiring live observations and clearing every matching local record.
  */
 export async function revokeArtifactSamples(ctx: Context, domain: ScopeDomain, session: ScopeSession, signal: AbortSignal): Promise<void> {
   const records = domain.table('artifacts')
   for (const [key, chain] of records.entries()) {
     if (chain.sessionKey !== session.sessionKey) continue
     signal.throwIfAborted()
-    const publications = ctx.developmentTasks.get({ taskId: chain.taskId }).context
-      .filter(publication => publication.observation?.grantId === chain.grantId)
-    const latest = publications.sort((left, right) =>
-      (right.observation?.sequence ?? 0) - (left.observation?.sequence ?? 0))[0]?.observation
+    const latest = ctx.developmentTasks.get({ taskId: chain.taskId }).context
+      .flatMap(publication => publication.observation?.grantId === chain.grantId ? [publication.observation] : [])
+      .sort((left, right) => right.sequence - left.sequence)[0]
     if (latest !== undefined && latest.state !== 'revoked') {
-      const sequence = Math.max(chain.sequence, latest.sequence) + 1
+      const sequence = chain.revocation?.observation.sequence ?? Math.max(chain.sequence, latest.sequence) + 1
       if (!Number.isSafeInteger(sequence)) throw new Error('claude-scope: artifact sample sequence is exhausted')
       const sample = chain.revocation ?? sampled(
         scopeDigest([chain.grantId, 'grant-ended']) as DevelopmentTaskObservedSourceId,

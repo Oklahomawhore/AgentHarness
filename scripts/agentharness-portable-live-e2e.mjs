@@ -34,7 +34,7 @@ async function connect() {
       ...(process.env.HOME === undefined ? {} : { HOME: process.env.HOME }),
       ...entry.env,
     },
-    stderr: 'pipe',
+    stderr: 'inherit',
   })
   try {
     await client.connect(transport)

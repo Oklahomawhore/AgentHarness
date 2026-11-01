@@ -1,5 +1,5 @@
 - group:
-  - text: 分享本会话的文件工作
+  - text: 分享本会话的工作
   - paragraph: 另行授权后，本会话在指定目录执行的写入和编辑会自动提交给任务所有者。接收共享上下文或启用自动工作都不会授予此权限。
   - status: 等待所有者批准；批准后自动启用
   - term: 目标 Task
@@ -8,6 +8,8 @@
   - definition: {{ownerPeerId}}
   - term: 允许采集的目录
   - definition: {{cwd}}/remote-native/project
+  - term: 文件内容范围
+  - definition: 原始工具参数及完成状态
   - term: 允许分享的文件操作
   - definition: 写入文件（write）
   - term: 授权到期时间
@@ -16,6 +18,7 @@
   - definition: "8"
   - term: 每份样本字节上限
   - definition: "8192"
+  - paragraph: 既有文件许可不包含命令结果。要加入命令许可，请结束这份分享；联合加入须先退出此次协作，再重新申请。
   - status: 读取正在等待所有者批准
   - paragraph: 此次申请未附自动许可；可在读取面板另行启用。
   - button "退出此次协作"

@@ -115,6 +115,76 @@ const wrongResponses: readonly { readonly name: string; readonly change: (value:
 ]
 
 describe('remote observation receipt attribution', () => {
+  it('refuses a locally pending source approval before contacting its owner', async () => {
+    const test = await fixture()
+    const before = structuredClone(test.owner.developmentTasks.log())
+    test.network.respond = async () => { throw new Error('unexpected owner request') }
+    await expect(admitScopeObservation(test.ctx, test.session, {
+      ...test.grant, remote: { ownerNodeId: OWNER },
+    }, test.sample)).rejects.toThrow('remote source approval is pending')
+    expect(test.owner.developmentTasks.log()).toEqual(before)
+    expect(test.domain.table('leases').get('lease-one')).toEqual(test.lease)
+  })
+
+  it('rejects a revoked artifact as a tool completion before contacting its owner', async () => {
+    const test = await fixture()
+    const before = structuredClone(test.owner.developmentTasks.log())
+    test.network.respond = async () => { throw new Error('unexpected owner request') }
+    await expect(admitScopeObservation(test.ctx, test.session, test.grant, { ...test.sample, observation: {
+      kind: 'openapi-artifact', version: 1, artifactId: 'api-one' as DevelopmentTaskArtifactId,
+      sourceName: 'Orders API', grantId: 'grant-one' as DevelopmentTaskArtifactGrantId, sequence: 2,
+      operation: { method: 'post', path: '/orders' }, state: 'revoked', reason: 'grant-ended',
+    } })).rejects.toThrow('a tool sample cannot revoke a source grant')
+    expect(test.owner.developmentTasks.log()).toEqual(before)
+    expect(test.domain.table('leases').get('lease-one')).toEqual(test.lease)
+  })
+
+  it.each(['terminal', 'text', 'source'] as const)('retains a corrupted pending %s without publishing it to the owner', async (field) => {
+    const test = await fixture()
+    const completion = { ...test.sample,
+      ...(field === 'text' ? { text: 'unobserved replacement' } : {}),
+      ...(field === 'source' ? { sourceId: 'e'.repeat(64) as DevelopmentTaskObservedSourceId } : {}),
+    }
+    const lease = { ...test.lease, completion, ...(field === 'terminal' ? { terminal: undefined } : {}) }
+    await test.domain.table('leases').put('lease-one', lease)
+    await expect(flushCompletionSamples(test.ctx, test.domain, test.session, test.grant, new AbortController().signal, () => true))
+      .rejects.toThrow('pending completion does not match its original Task interval')
+    expect(test.domain.table('leases').get('lease-one')).toEqual(lease)
+    expect(test.owner.developmentTasks.get({ taskId: test.grant.taskId }).context).toHaveLength(0)
+  })
+
+  it('stops an outbox drain when local permission changes during admission while retaining the committed receipt', async () => {
+    const test = await fixture()
+    const toolUseId = 'tool-two'
+    const completion = { ...test.sample, sourceId: scopeDigest([
+      test.domain.global.get().installationId, test.session.sessionId, toolUseId, test.lease.terminal!.event, test.grant.epoch,
+    ]) as DevelopmentTaskObservedSourceId }
+    const second = { ...test.lease, toolUseId, completion }
+    await test.domain.table('leases').put('lease-two', second)
+    let current = false
+    await expect(flushCompletionSamples(test.ctx, test.domain, test.session, test.grant, new AbortController().signal, () => current))
+      .resolves.toBe(false)
+    expect(test.owner.developmentTasks.get({ taskId: test.grant.taskId }).context).toHaveLength(0)
+    current = true
+    test.network.respond = async (payload) => {
+      const result = await test.reply(payload)
+      current = false
+      return result
+    }
+    await expect(flushCompletionSamples(test.ctx, test.domain, test.session, test.grant, new AbortController().signal, () => current))
+      .resolves.toBe(false)
+    expect(test.domain.table('leases').get('lease-one')).toMatchObject({ completionAdmitted: true,
+      completion: { receipt: { publicationId: `context-observation-${test.sample.sourceId}` } } })
+    expect(test.domain.table('leases').get('lease-two')).toEqual(second)
+    expect(test.owner.developmentTasks.get({ taskId: test.grant.taskId }).context).toHaveLength(1)
+    current = true
+    test.network.respond = test.reply
+    await expect(flushCompletionSamples(test.ctx, test.domain, test.session, test.grant, new AbortController().signal, () => current))
+      .resolves.toBe(true)
+    expect(test.owner.developmentTasks.get({ taskId: test.grant.taskId }).context).toHaveLength(2)
+    expect(test.domain.table('leases').get('lease-two')).toMatchObject({ completionAdmitted: true })
+  })
+
   it.each(wrongResponses)('retains its exact pending tool source after a well-formed wrong $name response', async ({ change }) => {
     const test = await fixture()
     test.network.respond = async payload => change(await test.reply(payload))

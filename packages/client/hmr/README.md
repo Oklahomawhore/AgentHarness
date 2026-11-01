@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-hmr` reloads a browser client plugin in place when its bundle is rebuilt, so a developer editing plugin source sees the change without a full page reload. The reload chain stays idle without a rebuild watcher: only a `pnpm run dev:web`-style process rewriting client bundles produces the rebuilds it reacts to. Each reload swaps one plugin with fresh component state while the data layer (connection, runtime, and Session objects) stays untouched. Everything here is development machinery in the browser; the model never sees it.
+`dsh-client-hmr` reloads a browser client plugin in place when its bundle is rebuilt, so a developer editing plugin source sees the change without a full page reload. The reload chain stays idle without a rebuild watcher: only a `pnpm run dev:web`-style process rewriting client bundles produces the rebuilds it reacts to. Each reload swaps one plugin; the boot kernel remounts the React application after the enabled client roster activates. React-local state resets while data owned by unchanged fibers stays live. Everything here is development machinery in the browser; the model never sees it.
 
 ## Table of Contents
 
@@ -45,7 +45,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Observing success
 
-A successful swap shows the edited UI immediately with no page reload, and the plugin keeps working after the swap. Remember the trade-off: React state inside the reloaded plugin is lost, while session, workspace, and connection state survives.
+A successful swap shows the edited UI immediately with no page reload, and the plugin keeps working after the swap. Remember the trade-off: React-local state resets across the application, while stores owned by unchanged fibers survive.
 
 -----
 
@@ -113,7 +113,7 @@ None; this package neither assembles nor sends a provider request.
 
 These limits define what the reload driver does not preserve or restore. They are current package constraints, not a task backlog.
 
-- **Reload is coarse by design** — a fresh fiber and fresh components; React state inside the reloaded plugin is lost while the data layer (connection/runtime fibers, Session objects) is untouched. react-refresh-grade state preservation conflicts with re-executing the bundle and is deliberately out.
+- **Reload is coarse by design** — a fresh fiber and fresh components; React-local state resets across the application while stores owned by unchanged fibers survive. react-refresh-grade state preservation conflicts with re-executing the bundle and is deliberately out.
 - **No failure rollback** — a reload that fails leaves the entry FAILED and visible in the loader status projection; the previous bundle is not restored automatically.
 - **Rebuilt frames do not replace the boot graph** — each frame carries the plugin-artifact revision needed for its one-resource combo reload; a page reload receives the recomposed startup graph.
 

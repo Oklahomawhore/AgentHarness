@@ -1,0 +1,28 @@
+{
+  "turns": 3,
+  "sourceSessionCount": 2,
+  "sourceHostCount": 1,
+  "sourceMaxLeases": 3,
+  "retainedSamples": {
+    "before": 1,
+    "afterAdmission": 3,
+    "afterLimit": 3
+  },
+  "actualWriteCount": 1,
+  "transmittedSamples": 2,
+  "backend": {
+    "id": "text",
+    "revision": "9"
+  },
+  "contextBytes": [
+    0,
+    4688,
+    3693
+  ],
+  "historicalPlanDigestMatches": true,
+  "durableBeforeSend": true,
+  "capacityRejectionKeepsLocalWork": true,
+  "independentAnswerRetained": true,
+  "exactInitializationWithdrawal": true,
+  "originalReceivingSessionRetained": true
+}

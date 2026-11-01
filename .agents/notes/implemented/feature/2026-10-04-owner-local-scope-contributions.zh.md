@@ -12,7 +12,7 @@ Status: implemented
 
 [Task 服务](../../../../packages/collaboration/development-task/README.zh.md)拥有独立的本地贡献区间。仅 Host 可调用的准入绑定 Root Task、本地 Agent 参与者、精确绑定代际、采集代际、获准工具、到期时间及样本限额。开启、样本和终结记录沿用 Task 的串行持久化与原始回执。已结束采集不能通过改变限额重新开启。Agent 断开后仍保留终结证据，当前投影排除该来源此前的报告。
 
-[原生来源消费者](../../../../packages/collaboration/scope-agent-contribution/README.zh.md)通过 `requestLocal` 接受本地同意，通过 `localStatus` 暴露当前绑定。本地与独立 peer 模式共用真实文件工具观察、Session 归属、有限完成记录保留和来源限额。本地记录使用独立存储域，现有远端记录保持原表示。同一 Session 不能同时持有两种采集模式。停止、更换绑定和单个 Agent 销毁终结旧本地授权。重启终结恢复的采集，不向新的 live 实例授予许可。
+[原生来源消费者](../../../../packages/collaboration/scope-agent-contribution/README.zh.md)通过 `requestLocal` 接受本地同意，通过 `localStatus` 暴露当前绑定。本地与独立 peer 模式共用真实文件工具观察、Session 归属、有限完成记录保留和来源限额。本地记录使用独立存储域，现有远端记录保持原表示。[独立采集目标](2026-10-06-independent-native-capture-destinations.zh.md)允许一个 Session 保留两份分别授权的采集。停止、更换绑定和单个 Agent 销毁终结旧本地授权。重启终结恢复的采集，不向新的 live 实例授予许可。
 
 Owner 继续通过现有 [Task 上下文消费者](../../../../packages/collaboration/development-task-context/README.zh.md)接收。Backend 根据发布者身份排除 owner 自己的报告。Text、facts 和 semantic provider 识别本地终结区间；来源终结后读取许可仍保留。[Scope access](../../../../packages/collaboration/scope-access/README.zh.md)还会在慢 backend 计算完成和投影持久化后检查终结版本，防止晚到结果恢复已结束来源。
 
@@ -23,6 +23,8 @@ Backend 身份保持不变，因为此前有效输入的处理完全不变。此
 **允许 self-peer 邀请。** Peer 身份标识 Host，不表示获准采集其中某个 Agent。独立本地授权保留来源选择及 Task 绑定检查，不人为增加网络往返。
 
 **使用普通本地发布。** 停止、到期或重启后，它们无法终结同一采集的全部报告。持久区间让撤回不依赖 Agent 或绑定仍然存活。
+
+**投影时重新解析每份本地报告。** 请求与事件 schema 执行相同的来源／结果权限校验，没有转换或默认值。按类型重建请求不引入需要校验的新输入。投影检查独立保留的授权状态、规范正文、序号与额度。Peer 报告仍保留解析，因为请求与持久化记录的序号上限不同。
 
 **新增另一套工具观察器。** 独立观察器容易在文件系统提供者、PTC 归属、持久完成及失败操作上分歧。消费者共用这些机制，只改变准入授权。
 

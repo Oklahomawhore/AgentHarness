@@ -1,0 +1,52 @@
+{
+  "turns": 6,
+  "finalResponse": "Recorded and live sharing ended; my local responsibility and the other member remain.",
+  "coverage": {
+    "recorded": 5,
+    "selected": 4,
+    "omitted": 1,
+    "unconfirmed": 0,
+    "inFlight": 0,
+    "acknowledged": 4
+  },
+  "hostCount": 3,
+  "executingSessionCount": 2,
+  "requestCounts": {
+    "b": 14,
+    "c": 9
+  },
+  "contextBytes": {
+    "b": [
+      738,
+      738,
+      738,
+      738,
+      738,
+      738,
+      738,
+      1626,
+      1626,
+      1626,
+      1674,
+      3395,
+      914,
+      914
+    ],
+    "c": [
+      738,
+      738,
+      10520,
+      5635,
+      5635,
+      5635,
+      2821,
+      2821,
+      2821
+    ]
+  },
+  "noFileScan": true,
+  "noConsentHistoryOmitted": true,
+  "localTaskRetained": true,
+  "subsequentLiveWorkVisible": true,
+  "otherMemberContinues": true
+}

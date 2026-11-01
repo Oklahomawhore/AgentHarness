@@ -1,6 +1,7 @@
 /** Experimental-package publication and dependency constraints. */
 
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   checkDshFamilyVersion,
@@ -168,7 +169,7 @@ describe('CLI publication assets', () => {
     ['a missing overlay', files.slice(0, 2)],
   ])('rejects %s in the CLI publication list', (_name, invalidFiles) => {
     expect(checkWorkspaceManifest({ ...cli, manifest: { ...cli.manifest, files: invalidFiles } })).toEqual([
-      `apps/cli/package.json: @deepseek-ai/dsh: package.json files must be ${JSON.stringify(files)}`,
+      `${join(cli.dir, 'package.json')}: @deepseek-ai/dsh: package.json files must be ${JSON.stringify(files)}`,
     ])
   })
 })

@@ -1,0 +1,225 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "capture-b-baseline",
+          "name": "write",
+          "arguments": "{\"file_path\":\"project/baseline.ts\",\"content\":\"export const B_BASELINE = true;\\n\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "B original local baseline is retained."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "B original local baseline is retained."
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "capture-b-self",
+          "name": "write",
+          "arguments": "{\"file_path\":\"project/client.ts\",\"content\":\"export const B_SELF = 'B_OWN_REPORT_共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界共同维护职责边界';\\n\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "B shared work is saved and only independent reports are returned."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "B shared work is saved and only independent reports are returned."
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "B receives both C captures; C retains the other Session on its own peer."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "B receives both C captures; C retains the other Session on its own peer."
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "B contribution ended; its withdrawal remains visible and reading is still active."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "B contribution ended; its withdrawal remains visible and reading is still active."
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "capture-b-final",
+          "name": "write",
+          "arguments": "{\"file_path\":\"project/final.ts\",\"content\":\"export const B_LOCAL_FINAL = true;\\n\"}"
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "B left the shared goal; its original local work and the other members remain."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "B left the shared goal; its original local work and the other members remain."
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  }
+]

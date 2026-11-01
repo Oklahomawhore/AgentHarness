@@ -85,7 +85,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }[T]
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:405`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:413`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:435`](../packages/core/session/src/types.ts) · [`packages/core/session/src/types.ts:466`](../packages/core/session/src/types.ts)
 
 ## 事件
 
@@ -212,7 +212,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:336`](../packages/core/session/src/types.ts)
 
 <a id="assistantmessage--surface"></a>
 
@@ -242,7 +242,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TokenUsage](subsystems/llm-streaming.zh.md)
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:322`](../packages/core/session/src/types.ts)
 
 ### `command/*`
 
@@ -409,7 +409,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'context/semantic-request': SemanticRequestRecord
 ```
 
-来源：[`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+来源：[`packages/collaboration/development-task-context/src/semantic.ts:22`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 <a id="contextsemantic-result--log-only"></a>
 
@@ -420,7 +420,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'context/semantic-result': SemanticResultRecord
 ```
 
-来源：[`packages/collaboration/development-task-context/src/semantic.ts:23`](../packages/collaboration/development-task-context/src/semantic.ts)
+来源：[`packages/collaboration/development-task-context/src/semantic.ts:24`](../packages/collaboration/development-task-context/src/semantic.ts)
 
 ### `deliverables/*`
 
@@ -631,7 +631,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'request/context': RequestContext
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:378`](../packages/core/session/src/types.ts)
 
 <a id="requestheader--log-only"></a>
 
@@ -650,7 +650,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:366`](../packages/core/session/src/types.ts)
 
 ### `sandbox/*`
 
@@ -706,7 +706,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentEvaluation](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:279`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:406`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextjoin-read--log-only"></a>
 
@@ -717,7 +717,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'scope-agent-context/join-read': ScopeAgentJoinReadEvent
 ```
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:275`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:402`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextrequest--log-only"></a>
 
@@ -730,7 +730,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentRequestEvidence](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:281`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:408`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextroute--log-only"></a>
 
@@ -743,7 +743,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentRouteEvent](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:277`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:404`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 <a id="scope-agent-contextstate--log-only"></a>
 
@@ -756,7 +756,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型： [ScopeAgentBindingStatus](subsystems/development-room.zh.md)
 
-来源： [`packages/collaboration/scope-agent-context/src/types.ts:273`](../packages/collaboration/scope-agent-context/src/types.ts)
+来源： [`packages/collaboration/scope-agent-context/src/types.ts:400`](../packages/collaboration/scope-agent-context/src/types.ts)
 
 ### `session/*`
 
@@ -790,7 +790,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'session/end-seed': { inherited?: true }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:401`](../packages/core/session/src/types.ts)
 
 <a id="sessiontitle--log-only"></a>
 
@@ -852,7 +852,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'step/end': { turn: number; step: number }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:289`](../packages/core/session/src/types.ts)
 
 <a id="stepstart--log-only"></a>
 
@@ -863,7 +863,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'step/start': { turn: number; step: number }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:287`](../packages/core/session/src/types.ts)
 
 ### `subagent/*`
 
@@ -939,7 +939,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'system/message': { turn: number; step: number; message: SystemMessage }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:311`](../packages/core/session/src/types.ts)
 
 ### `team/*`
 
@@ -1032,7 +1032,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[ToolCallId](subsystems/core.zh.md)
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:342`](../packages/core/session/src/types.ts)
 
 <a id="toolptc-dispatch--log-only"></a>
 
@@ -1108,7 +1108,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:354`](../packages/core/session/src/types.ts)
 
 ### `tool-workflow/*`
 
@@ -1188,7 +1188,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TurnEndReason](subsystems/session.zh.md)
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:285`](../packages/core/session/src/types.ts)
 
 <a id="turnstart--log-only"></a>
 
@@ -1204,7 +1204,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'turn/start': { turn: number }
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:276`](../packages/core/session/src/types.ts)
 
 ### `user/*`
 
@@ -1218,12 +1218,13 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
  * (the queued message claimed for this turn), a synthetic `agent.inject()`
  * context (file-change notices, subdir AGENTS.md, skill content, cron
  * notifications, …), or an entered goal continuation round. All three
- * project their `content` verbatim; `source` tells them apart.
+ * project nonempty `content` verbatim; `source` tells them apart. An empty
+ * content array retires a replaced node without producing a model message.
  */
 'user/message': UserMessage
 ```
 
-来源：[`packages/core/session/src/types.ts:297`](../packages/core/session/src/types.ts)
+来源：[`packages/core/session/src/types.ts:298`](../packages/core/session/src/types.ts)
 
 ### `web/*`
 

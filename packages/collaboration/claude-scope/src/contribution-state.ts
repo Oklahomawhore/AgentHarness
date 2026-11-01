@@ -41,10 +41,11 @@ export interface ScopeContributionLease {
 }
 
 const opaque = z.string().min(1).max(256)
-const proposal = peerContributionProposalSchema
+const proposal = peerContributionProposalSchema.refine(value => value.source.kind !== 'completed-turn-outcomes' && value.source.kind !== 'native-work'
+  && (value.source.kind !== 'tool-observations' || (value.source.version !== 3 && value.source.version !== 4)))
 
 /** Strict additive record; missing records in older adapter data grant no contribution permission. */
-export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
+const contributionRecord = z.object({
   proposal,
   policy: z.object({ roots: z.array(z.string().min(1)), bashCommands: z.array(z.never()), revision: z.string().min(1) }).strict(),
   source: contributionSourceSchema,
@@ -52,12 +53,15 @@ export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   application: z.object({ entry: contributionEntrySchema, limits: contributionLimitsSchema,
     state: z.enum(['applying', 'waiting', 'cancelling', 'rejected', 'expired']) }).strict().optional(),
-  invitation: contributionInvitationSchema.optional(),
+  invitation: contributionInvitationSchema.refine(value => value.grant.source.kind !== 'completed-turn-outcomes' && value.grant.source.kind !== 'native-work'
+    && (value.grant.source.kind !== 'tool-observations' || (value.grant.source.version !== 3 && value.grant.source.version !== 4))).optional(),
   endReceipt: peerContributionReceiptSchema.optional(),
   issue: z.enum(['owner-unavailable', 'capacity', 'rejected']).optional(),
 }).strict().superRefine((value, context) => {
   const source = value.source
-  const allowed = 'kind' in source ? value.policy.roots.length > 0 && value.policy.roots.every(isAbsolute)
+  const allowed = 'kind' in source ? value.policy.roots.every(isAbsolute)
+    && (value.policy.roots.length > 0 || (source.kind === 'claude-work' && source.tools.length === 0 && source.commands.length === 0))
+    && (source.kind !== 'claude-work' || source.commands.every(command => command.rootIndex < value.policy.roots.length))
     : isAbsolute(source.filePath) && value.policy.roots.some((root) => {
       const suffix = relative(root, source.filePath)
       return isAbsolute(root) && suffix !== '' && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`)
@@ -72,6 +76,19 @@ export const contributionSchema: z.ZodType<ScopeContribution> = z.object({
   }
 })
 
+/** Historical rows retain their original single-entry parser. */
+export const contributionSchema: z.ZodType<ScopeContribution> = contributionRecord.superRefine((value, context) => {
+  if (('kind' in value.source && value.source.kind === 'claude-work') || value.application?.entry.kind === 'scope-group-entry') {
+    context.addIssue({ code: 'custom', message: 'legacy contribution does not support reusable joint entries' })
+  }
+})
+
+/** Group entries require the containing version-2 Session's separately validated consent. */
+export const jointContributionSchema: z.ZodType<ScopeContribution> = contributionRecord.refine(value => !('kind' in value.source) || value.source.kind !== 'claude-work')
+
+/** Session generation 3 explicitly accepts Claude command and Stop-report consent. */
+export const workContributionSchema: z.ZodType<ScopeContribution> = contributionRecord
+
 /** Complete original sample is parsed without manufacturing a Task binding or node identity. */
 export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.object({
   sessionKey: z.string().min(1).transform(value => value as ClaudeScopeSessionKey),
@@ -81,5 +98,6 @@ export const contributionLeaseSchema: z.ZodType<ScopeContributionLease> = z.obje
   authorizedInputDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   completionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   terminal: z.enum(['PostToolUse', 'PostToolUseFailure']).optional(),
-  sample: peerContributionSampleSchema.optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
+  sample: peerContributionSampleSchema.refine(value => !('kind' in value.result)
+    || (value.result.kind === 'tool-observation' && (value.result.version === 1 || value.result.version === 2))).optional(), receipt: peerContributionAdmissionReceiptSchema.optional(),
 }).strict()

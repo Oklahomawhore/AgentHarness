@@ -123,6 +123,30 @@ export function apply(ctx: Context): void {
     }
   }
 
+  /** Settle cancelled goal authority at whole-agent idle, including cancellation without a status transition. */
+  function settleIdle(agent: Agent): void {
+    const state = stateFor(agent)
+    state.competingQueued = false
+    const attempt = state.attempt
+    const goal = currentGoal(state)
+    // Fence the pause to the exact dropped attempt's ref. A resume bumps
+    // the revision, so a host pause followed by an immediate resume (before
+    // the aborted turn converges to idle) must not re-pause the resumed goal.
+    if (attempt !== undefined
+      && (attempt.phase === 'queued' || attempt.phase === 'claimed' || attempt.cancelled)
+      && goal !== undefined && goal.phase === 'active' && goal.activation === 'armed'
+      && attempt.goalId === goal.id && attempt.revision === goal.revision) {
+      state.attempt = undefined
+      try {
+        ctx.goals.pause(agent, goalRef(goal))
+      } catch (error: unknown) {
+        ctx.logger.warn(`goal-round-driver: could not pause cancelled goal for agent "${agent.id}": ${renderThrown(error)}`)
+        disarm(state)
+      }
+    }
+    requestDrive(state)
+  }
+
   /** Preserve claimed step context when this driver drops only its own round. */
   function restoreOtherClaimed(agent: Agent, messages: UserMessage[], messageId: MessageId): void {
     const retained = messages.filter(message => message.id !== messageId
@@ -257,28 +281,13 @@ export function apply(ctx: Context): void {
       state.needsCheckpoint = false
     })
     ctx.on('agent/status', ({ agent, status }) => {
+      if (status === 'idle') settleIdle(agent)
+    })
+    ctx.on('agent/cancel-requested', ({ agent }) => {
+      if (agent.status !== 'idle') return
       const state = stateFor(agent)
-      if (status === 'idle') {
-        state.competingQueued = false
-        const attempt = state.attempt
-        const goal = currentGoal(state)
-        // Fence the pause to the exact dropped attempt's ref. A resume bumps
-        // the revision, so a host pause followed by an immediate resume (before
-        // the aborted turn converges to idle) must not re-pause the resumed goal.
-        if (attempt !== undefined
-          && (attempt.phase === 'queued' || attempt.phase === 'claimed' || attempt.cancelled)
-          && goal !== undefined && goal.phase === 'active' && goal.activation === 'armed'
-          && attempt.goalId === goal.id && attempt.revision === goal.revision) {
-          state.attempt = undefined
-          try {
-            ctx.goals.pause(agent, goalRef(goal))
-          } catch (error: unknown) {
-            ctx.logger.warn(`goal-round-driver: could not pause cancelled goal for agent "${agent.id}": ${renderThrown(error)}`)
-            disarm(state)
-          }
-        }
-        requestDrive(state)
-      }
+      if (state.attempt === undefined) disarm(state)
+      settleIdle(agent)
     })
     ctx.on('goal/changed', ({ agent, change }) => {
       const state = stateFor(agent)

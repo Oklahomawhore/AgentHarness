@@ -210,6 +210,7 @@ export async function apply(ctx, config) {
       await save(`${item.case.id}-review.json`, { case: item.case, status: 'unreviewed',
         rubricFile: join(dirname(config.fixturePath), 'rubric.json'), claims: output.updates.map(update => update.text),
         updatesWithExactQuotes: output.updates, coverage: output.coverage,
+        sourceReferences: output.sourceReferences, sourceTable: output.sourceTable, authorizationTable: output.authorizationTable,
         warning: 'Judge update claims; historical 3 or failed 9 in a quote is not itself an error. No keyword-based semantic pass.' })
       const auditBeforeCache = await readAudit()
       const attemptsBeforeCache = state.streamAttempts

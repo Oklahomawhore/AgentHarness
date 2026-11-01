@@ -36,6 +36,8 @@ There are no plugin-load auto-start sessions. `terminal_open` creates a session 
 
 Agent-scope disposal closes registrations first, then awaits quiescent teardown of every owned PTY. Unpublished backend setup is a tracked lifecycle operation: owner or service disposal aborts its service-owned signal, waits for backend settlement and rollback, and only then returns. Caller cancellation retains its exact `AbortSignal.reason` even when the backend rejects or returns a session whose rollback close fails; that cleanup failure remains tracked for later owner or service disposal instead of replacing the caller reason. A lifecycle-triggered rollback close failure rejects both the spawn and the disposing lifecycle, while `TerminalBackendCleanupError` lets a backend preserve its own failed startup cleanup for the disposing lifecycle without replacing a caller cancellation. When caller cancellation settles before disposal, the cleanup failure remains tracked owner activity until later owner or service disposal consumes and reports it, so sandbox-mode policy cannot mistake failed cleanup for quiescence. Backend or tool-plugin reload does not orphan sessions: ownership lives in `TerminalSessionService` until the agent ends, following the same service-owned-record pattern as [`ctx.jobs`](../../../../packages/jobs/jobs/README.md). The service reserves the session synchronously for one active send before returning its operation, including before a background job id becomes visible; a second send fails with `SEND_ACTIVE`, so output and cancellation cannot cross operation ownership.
 
+The subprocess provider reports simultaneous terminal-initialization and cleanup failures through `SubprocessTerminalCleanupError`. The shell backend maps that failure to `TerminalBackendCleanupError` before its pending owner reservation is released. A generic rejection would lose the cleanup distinction and permit a sandbox-mode change while the provider cannot confirm quiescence.
+
 ### Security and process boundary
 
 A registered `shell` backend constrains how a terminal starts; it does not constrain commands typed after startup. `dsh-terminal-bash` therefore applies two protections before spawning:
@@ -83,6 +85,8 @@ Tier 2 returns `inferred_idle` after `idleSilenceMs` without output. A sleeping 
 Once a send settles under any tier, `TerminalSendOperation.append` stops accepting output, so later child output no longer reaches that settled operation; it still reaches the scrollback, and any send that is active when it arrives. A test that waits for a marker on the operation it started must therefore set `idleSilenceMs` and `timeoutMs` above the child's own startup latency; interpreter startup on a loaded macOS runner otherwise ends the send before the marker is printed.
 
 `node-pty` data notifications feed one terminal parser. Parser carry state handles control sequences and a trailing carriage return split across callbacks, so a divided CRLF produces one newline rather than a pagination-changing blank line. The implementation normalizes line-oriented output, but it does not promise correct interaction with a full-screen application.
+
+Pwsh startup submits encoding and prompt setup once, then waits for `stdin_read` under one absolute deadline. Startup output comes from the existing bounded scrollback read, so an empty readiness probe cannot replace earlier output with an empty MOTD.
 
 ### Model-visible output and durability
 
