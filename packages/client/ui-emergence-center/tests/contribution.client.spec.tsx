@@ -143,10 +143,15 @@ describe('source contribution onboarding', () => {
     expect(screen.queryByLabelText(zh['contribution.file'])).toBeNull()
     expect(screen.queryByLabelText(zh['contribution.apiPath'])).toBeNull()
     expect(screen.getByText(zh['contribution.toolPermit'])).toBeTruthy()
+    const request = screen.getByRole('button', { name: zh['contribution.application.request'] })
+    fireEvent.submit(request.closest('form')!)
+    expect(actions.requestContribution).not.toHaveBeenCalled()
     paste(zh['contribution.application.paste'], 'tool-entry')
     fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.verify'] }))
     await screen.findByText(G.ownerPeerId)
     expect(screen.getByLabelText<HTMLSelectElement>(zh['contribution.sourceKind']).disabled).toBe(true)
+    fireEvent.submit(request.closest('form')!)
+    expect(actions.requestContribution).not.toHaveBeenCalled()
     paste(zh['contribution.roots'], '/project\n/project/docs')
     paste(zh['contribution.hours'], '1'); paste(zh['contribution.maxSamples'], '8'); paste(zh['contribution.maxBytes'], '4096')
     fireEvent.click(screen.getByRole('button', { name: zh['contribution.application.request'] }))
@@ -681,6 +686,8 @@ describe('owner joint application decisions', () => {
     const create = () => screen.getByRole<HTMLButtonElement>('button', { name: zh['contribution.join.create'] })
     expect(create().disabled).toBe(true)
     expect(screen.getByText(zh['access.addressSetupHint'])).toBeTruthy()
+    fireEvent.submit(create().closest('form')!)
+    expect(actions.createContributionEntry).not.toHaveBeenCalled()
     paste(zh['access.address'], network)
     fireEvent.click(create())
     expect(vi.mocked(actions.createContributionEntry).mock.calls[0]?.[0].ownerAddress).toBe(network)
@@ -688,6 +695,8 @@ describe('owner joint application decisions', () => {
       value: { ...value, identity: { ...owned.identity, addresses: [invitation.ownerAddress] } } }} {...actions} t={t} />)
     expect(screen.getByLabelText<HTMLSelectElement>(zh['access.address']).value).toBe('')
     expect(create().disabled).toBe(true)
+    fireEvent.submit(create().closest('form')!)
+    expect(actions.createContributionEntry).toHaveBeenCalledOnce()
     paste(zh['access.address'], invitation.ownerAddress)
     expect(screen.getByText(zh['access.addressLocalHint'])).toBeTruthy()
     expect(create().disabled).toBe(false)
@@ -722,6 +731,9 @@ describe('owner joint application decisions', () => {
     expect(approve().disabled).toBe(true)
     expect(screen.queryByRole('button', { name: zh['contribution.application.approve'] })).toBeNull()
     expect(screen.getByText(zh['contribution.join.approvalHint'])).toBeTruthy()
+    paste(zh['contribution.join.responsibility'], '   ')
+    fireEvent.submit(approve().closest('form')!)
+    expect(actions.approveContributionApplication).not.toHaveBeenCalled()
     paste(zh['contribution.join.responsibility'], '  Frontend integration  ')
     fireEvent.click(approve())
     expect(actions.approveContributionApplication).toHaveBeenCalledExactlyOnceWith(TASK, { entryId: jointEntry.entryId,
@@ -731,6 +743,7 @@ describe('owner joint application decisions', () => {
     expect(approve().disabled).toBe(true)
     expect(screen.getByLabelText<HTMLInputElement>(zh['contribution.join.responsibility']).value).toBe('  Frontend integration  ')
     fireEvent.click(approve())
+    fireEvent.submit(approve().closest('form')!)
     expect(actions.approveContributionApplication).toHaveBeenCalledOnce()
   })
 })
@@ -816,7 +829,15 @@ it.each(['join', 'group'] as const)('requires a supported source after changing 
   paste(zh['contribution.join.purpose'], participation)
   expect(screen.getByLabelText<HTMLSelectElement>(zh['contribution.sourceKind']).value).toBe('tool-observations')
   expect(screen.queryByRole('option', { name: zh['contribution.openApi'] })).toBeNull()
-  if (participation === 'group') paste(zh['contribution.group.capacity'], '2')
+  if (participation === 'group') {
+    const create = screen.getByRole('button', { name: zh['contribution.group.create'] })
+    for (const capacity of ['', '0', '1.5']) {
+      paste(zh['contribution.group.capacity'], capacity)
+      fireEvent.submit(create.closest('form')!)
+      expect(actions.createGroupEntry).not.toHaveBeenCalled()
+    }
+    paste(zh['contribution.group.capacity'], '2')
+  }
   fireEvent.click(screen.getByRole('button', { name: zh[participation === 'group' ? 'contribution.group.create' : 'contribution.join.create'] }))
   const sent = participation === 'group' ? vi.mocked(actions.createGroupEntry).mock.calls[0]?.[0]
     : vi.mocked(actions.createContributionEntry).mock.calls[0]?.[0]

@@ -225,11 +225,10 @@ export function SourceContributionPanel({ session, entry, readContribution, requ
       </Button>
       {!jointEntry && <details data-contribution-manual-source><summary>{t('contribution.application.manual')}</summary>
         <p className={css.hint}>{t('contribution.application.manualHint')}</p>
-        <Button type="button" variant="outline" disabled={busy || !sourceValid} onClick={() => {
-          if (source === null || !sourceValid) return
+        <Button type="button" variant="outline" disabled={busy || !sourceValid} onClick={sourceValid ? () => {
           void prepareContribution({ sessionKey: session.sessionKey, expectedCapture: null, roots: parsedRoots,
             source })
-        }}>{t('contribution.prepare')}</Button>
+        } : undefined}>{t('contribution.prepare')}</Button>
       </details>}
     </form>}
     {capture != null && <>
