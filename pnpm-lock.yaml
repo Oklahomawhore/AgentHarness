@@ -5317,6 +5317,9 @@ importers:
       '@deepseek-ai/dsh-development-room':
         specifier: workspace:^
         version: link:../development-room
+      '@deepseek-ai/dsh-development-room-mesh':
+        specifier: workspace:^
+        version: link:../development-room-mesh
       '@deepseek-ai/dsh-development-task':
         specifier: workspace:^
         version: link:../development-task

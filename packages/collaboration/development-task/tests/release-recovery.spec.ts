@@ -543,3 +543,123 @@ describe('Task inherited-context replica validation', () => {
     }
   })
 })
+
+
+describe('Task assignment admission authority', () => {
+  it.each(['offline', 'human', 'foreign-agent'] as const)(
+    'rejects Remote checkout by an %s participant without changing the retained binding', async (unavailable) => {
+      const current = await setup('checkout-authority-owner')
+      const agentId = 'checkout-authority-agent' as DevelopmentParticipantId
+      await current.rooms.announce({ id: agentId, kind: 'agent', displayName: 'Current local Agent' })
+      const first = await current.tasks.create({ origin: { kind: 'root' }, objective: 'Original responsibility',
+        scope: 'Retained checkout', createdBy: current.owner })
+      const target = await current.tasks.create({ origin: { kind: 'root' }, objective: 'Another responsibility',
+        scope: 'Rejected checkout', createdBy: current.owner })
+      const retained = await current.ctx.developmentTaskAssignments.checkout({ taskId: first.id, participantId: agentId })
+      let selected = agentId
+      if (unavailable === 'offline') await current.rooms.withdraw({ participantId: agentId })
+      if (unavailable === 'human') selected = current.owner
+      if (unavailable === 'foreign-agent') {
+        const other = await setup('checkout-authority-other')
+        selected = 'checkout-authority-foreign-agent' as DevelopmentParticipantId
+        await other.rooms.announce({ id: selected, kind: 'agent', displayName: 'Other owner Agent' })
+        const profile = other.rooms.list().participants.find(item => item.id === selected)
+        if (profile === undefined) throw new Error('Foreign Agent profile was not announced')
+        await current.rooms.acceptPresenceReplica(profile, profile.nodeId)
+      }
+      const assignments = current.ctx.developmentTaskAssignments.list()
+      const log = current.tasks.assignmentLog()
+      const taskLog = current.tasks.log()
+      const rooms = current.rooms.list().rooms
+      const persisted = vi.fn()
+      const changed = vi.fn()
+      current.ctx.on('development-task/assignment-persist', persisted)
+      current.ctx.on('development-task/assignment-changed', changed)
+      await expect(current.ctx.developmentTaskAssignments.checkout({ taskId: target.id,
+        participantId: selected, bindingId: retained.assignment.bindingId }))
+        .rejects.toMatchObject({ code: 'PARTICIPANT_NOT_AVAILABLE' })
+      expect(persisted).not.toHaveBeenCalled()
+      expect(changed).not.toHaveBeenCalled()
+      expect(current.ctx.developmentTaskAssignments.list()).toEqual(assignments)
+      expect(current.tasks.assignmentLog()).toEqual(log)
+      expect(current.tasks.log()).toEqual(taskLog)
+      expect(current.rooms.list().rooms).toEqual(rooms)
+      if (unavailable === 'offline') await current.rooms.announce({ id: agentId, kind: 'agent', displayName: 'Current local Agent' })
+      await expect(current.ctx.developmentTaskAssignments.checkout({ taskId: target.id,
+        participantId: agentId, bindingId: retained.assignment.bindingId })).resolves.toMatchObject({
+        assignment: { bindingId: retained.assignment.bindingId, participantId: agentId, taskId: target.id },
+      })
+      expect(persisted).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(['participant-home', 'binding-owner', 'previous-task'] as const)(
+    'rejects a parsed assignment with a conflicting %s relation before persistence', async (conflict) => {
+      const source = await setup('assignment-authority-source')
+      const recipient = await setup('assignment-authority-recipient')
+      const firstAgent = 'assignment-authority-first-agent' as DevelopmentParticipantId
+      const secondAgent = 'assignment-authority-second-agent' as DevelopmentParticipantId
+      for (const id of [firstAgent, secondAgent]) await source.rooms.announce({ id, kind: 'agent', displayName: id })
+      const first = await source.tasks.create({ origin: { kind: 'root' }, objective: 'First responsibility',
+        scope: 'First binding', createdBy: source.owner })
+      const second = await source.tasks.create({ origin: { kind: 'root' }, objective: 'Second responsibility',
+        scope: 'Second binding', createdBy: source.owner })
+      const bound = await source.ctx.developmentTaskAssignments.checkout({ taskId: first.id, participantId: firstAgent })
+      await source.ctx.developmentTaskAssignments.checkout({ taskId: second.id, participantId: secondAgent })
+      await source.ctx.developmentTaskAssignments.clear({ participantId: firstAgent, bindingId: bound.assignment.bindingId })
+      for (const profile of source.rooms.list().participants) await recipient.rooms.acceptPresenceReplica(profile, profile.nodeId)
+      for (const event of developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(source.tasks.log())))) {
+        await recipient.tasks.acceptLogReplica(event, event.nodeId)
+      }
+      const entries = developmentTaskAssignmentEventSchema.array().parse(JSON.parse(JSON.stringify(source.tasks.assignmentLog())))
+      const [firstBound, secondBound, cleared] = entries
+      if (firstBound === undefined || secondBound === undefined || cleared === undefined) throw new Error('Generated assignment history is missing')
+      await recipient.tasks.acceptAssignmentReplica(firstBound, firstBound.nodeId)
+      let original = secondBound
+      if (conflict === 'previous-task') {
+        await recipient.tasks.acceptAssignmentReplica(secondBound, secondBound.nodeId)
+        original = cleared
+      }
+      if (conflict === 'participant-home') {
+        const other = await setup('assignment-authority-other')
+        const otherAgent = 'assignment-authority-other-agent' as DevelopmentParticipantId
+        await other.rooms.announce({ id: otherAgent, kind: 'agent', displayName: 'Another owner Agent' })
+        const task = await other.tasks.create({ origin: { kind: 'root' }, objective: 'Separate owner responsibility',
+          scope: 'Separate binding', createdBy: other.owner })
+        await other.ctx.developmentTaskAssignments.checkout({ taskId: task.id, participantId: otherAgent })
+        for (const profile of other.rooms.list().participants) await recipient.rooms.acceptPresenceReplica(profile, profile.nodeId)
+        for (const event of developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(other.tasks.log())))) {
+          await recipient.tasks.acceptLogReplica(event, event.nodeId)
+        }
+        const [entry] = developmentTaskAssignmentEventSchema.array().parse(JSON.parse(JSON.stringify(other.tasks.assignmentLog())))
+        if (entry === undefined) throw new Error('Other owner assignment was not retained')
+        original = entry
+      }
+      const candidate = developmentTaskAssignmentEventSchema.parse({ ...original,
+        ...(conflict === 'participant-home' ? { participantId: firstAgent }
+          : conflict === 'binding-owner' ? { bindingId: firstBound.bindingId }
+            : { change: { kind: 'task-cleared', previousTaskId: second.id } }),
+      })
+      const assignments = recipient.ctx.developmentTaskAssignments.list()
+      const log = recipient.tasks.assignmentLog()
+      const taskLog = recipient.tasks.log()
+      const persisted = vi.fn()
+      const changed = vi.fn()
+      recipient.ctx.on('development-task/assignment-persist', persisted)
+      recipient.ctx.on('development-task/assignment-changed', changed)
+      const message = conflict === 'participant-home' ? 'assignment event is not authored by the participant home node'
+        : conflict === 'binding-owner' ? 'Task binding participant changed' : 'assignment clear does not match current Task'
+      await expect(recipient.tasks.acceptAssignmentReplica(candidate, original.nodeId))
+        .rejects.toMatchObject({ code: 'REPLICA_CONFLICT', message })
+      expect(persisted).not.toHaveBeenCalled()
+      expect(changed).not.toHaveBeenCalled()
+      expect(recipient.ctx.developmentTaskAssignments.list()).toEqual(assignments)
+      expect(recipient.tasks.assignmentLog()).toEqual(log)
+      expect(recipient.tasks.log()).toEqual(taskLog)
+      await recipient.tasks.acceptAssignmentReplica(original, original.nodeId)
+      expect(persisted).toHaveBeenCalledExactlyOnceWith(original)
+      expect(recipient.tasks.assignmentLog()).toEqual([...log, original])
+      expect(changed).toHaveBeenCalledOnce()
+    },
+  )
+})

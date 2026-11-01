@@ -1756,8 +1756,7 @@ export class DevelopmentTaskService extends TypertRemoteService {
     if (samples.length >= sample.grant.maxSamples) throw new DevelopmentTaskError('peer contribution sample capacity reached', 'LIMIT_EXCEEDED')
     const previous = samples.at(-1)?.peerObservation ?? samples.at(-1)?.peerToolObservation
       ?? samples.at(-1)?.peerTurnOutcome ?? samples.at(-1)?.peerStopReport
-    if (!Number.isSafeInteger(sample.sequence) || sample.sequence < 1 || sample.sequence >= Number.MAX_SAFE_INTEGER
-      || (previous !== undefined && sample.sequence <= previous.sequence)
+    if ((previous !== undefined && sample.sequence <= previous.sequence)
       || task.context.some(item => item.id === publication.id)) {
       throw new DevelopmentTaskError('peer sample must advance its chain without repeating a source', code)
     }

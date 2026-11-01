@@ -283,6 +283,27 @@ function refreshPanel(): void {
 }
 
 describe('Collaboration client registration lifecycle', () => {
+  it('creates a Task with the confirmed owner name without announcing the same profile again', async () => {
+    const subject = await mountPanel()
+    try {
+      fireEvent.change(screen.getByLabelText(zh['profile.name']), { target: { value: 'Frontend owner' } })
+      fireEvent.click(screen.getByRole('button', { name: zh['profile.save'] }))
+      await screen.findByRole('button', { name: zh['profile.online'] })
+      expect(subject.announce).toHaveBeenCalledExactlyOnceWith({ id: task.createdBy, kind: 'human', displayName: 'Frontend owner' })
+      fireEvent.click(screen.getByRole('button', { name: zh['create.open'] }))
+      fireEvent.click(screen.getByRole('button', { name: zh['create.root'] }))
+      fireEvent.change(screen.getByLabelText(zh['create.objective']), { target: { value: 'Connect frontend work' } })
+      fireEvent.change(screen.getByLabelText(zh['create.scope']), { target: { value: 'Shared API decisions' } })
+      fireEvent.click(screen.getByRole('button', { name: zh['create.submit'] }))
+      await waitFor(() => { expect(subject.create).toHaveBeenCalledExactlyOnceWith({ origin: { kind: 'root' },
+        objective: 'Connect frontend work', scope: 'Shared API decisions', createdBy: task.createdBy }) })
+      expect(subject.announce).toHaveBeenCalledOnce()
+      expect(subject.inviteScope).not.toHaveBeenCalled()
+      expect(subject.join).not.toHaveBeenCalled()
+      expect(subject.bind).not.toHaveBeenCalled()
+    } finally { await subject.runtime.dispose() }
+  })
+
   it('refreshes the original selected Session from committed source notifications while retaining its unsubmitted draft', async () => {
     const other: ClaudeScopeSessionSummary = { ...session, sessionKey: 'other-observed-session' as typeof session.sessionKey,
       sessionId: 'other-independent-session', cwd: '/other-project' }

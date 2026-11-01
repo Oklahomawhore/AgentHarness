@@ -92,6 +92,35 @@ it('rejects self-contribution authority and expired new grants without publishin
   expect(tasks.peerContributions({})).toEqual([])
 })
 
+it('reserves the final safe sequence for withdrawal while rejecting a parsed active sample that consumes it', async () => {
+  const { tasks, task, grant } = await scenario()
+  await tasks.openPeerContribution(grant)
+  const sequence = Number.MAX_SAFE_INTEGER - 1
+  await tasks.admitPeerContribution(sample(grant, sequence), source)
+  const active = tasks.log()
+  const admitted = active.at(-1)
+  if (admitted?.change.kind !== 'context-published') throw new Error('Missing admitted peer sample')
+  const overflow = developmentTaskEventSchema.parse(JSON.parse(JSON.stringify(admitted)
+    .replaceAll(String(sequence), String(Number.MAX_SAFE_INTEGER))))
+  const restored = await setup()
+  restored.tasks.restoreLog(active.slice(0, -1))
+  const retained = restored.tasks.log()
+  const persisted = vi.fn()
+  restored.ctx.on('development-task/persist', persisted)
+  expect(() => { restored.tasks.restoreLog([overflow]) }).toThrow('peer sample does not match its permitted source and tools')
+  expect(restored.tasks.log()).toEqual(retained)
+  expect(restored.tasks.get({ taskId: task.id }).context).toEqual([])
+  expect(persisted).not.toHaveBeenCalled()
+
+  await tasks.endPeerContribution({ grant, reason: 'left' }, source)
+  const entries = developmentTaskEventSchema.array().parse(JSON.parse(JSON.stringify(tasks.log())))
+  const ended = await setup()
+  ended.tasks.restoreLog(entries)
+  expect(ended.tasks.log()).toEqual(entries)
+  expect(ended.tasks.get({ taskId: task.id }).context.find(item => item.peerObservation?.state === 'revoked')?.peerObservation?.sequence)
+    .toBe(Number.MAX_SAFE_INTEGER)
+})
+
 it('durably expires an existing peer approval before refusing to reopen it', async () => {
   const { tasks, grant } = await scenario()
   await tasks.openPeerContribution(grant)

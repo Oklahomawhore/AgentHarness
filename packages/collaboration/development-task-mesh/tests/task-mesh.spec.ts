@@ -6,6 +6,7 @@ import DevelopmentRoomService, {
   type DevelopmentParticipantId,
   type DevelopmentRoomId,
 } from '@deepseek-ai/dsh-development-room'
+import DevelopmentRoomMeshService from '@deepseek-ai/dsh-development-room-mesh'
 import DevelopmentTaskService from '@deepseek-ai/dsh-development-task'
 import type {
   DevelopmentTaskAdmitRemoteObservedContextRequest,
@@ -129,6 +130,94 @@ async function approvedSource() {
 }
 
 describe('development Task Mesh channel', () => {
+  it.each(['connected', 'target-join-offline', 'previous-leave-offline', 'clear-leave-offline'] as const)(
+    'keeps Task authority distinct from actual remote Room reconciliation: %s', async (failure) => {
+      const owner = await setup('room-owner')
+      const home = await setup('agent-home')
+      await owner.plugin(DevelopmentRoomMeshService)
+      await home.plugin(DevelopmentRoomMeshService)
+      const ownerNode = owner.developmentRooms.list().nodeId
+      const homeNode = home.developmentRooms.list().nodeId
+      const creator = 'owner-human' as DevelopmentParticipantId
+      const agent = 'home-agent' as DevelopmentParticipantId
+      await owner.developmentRooms.announce({ id: creator, kind: 'human', displayName: 'Task owner' })
+      await home.developmentRooms.announce({ id: agent, kind: 'agent', displayName: 'Home Agent' })
+      const first = await owner.developmentTasks.create({ origin: { kind: 'root' }, objective: 'First Task', scope: 'A', createdBy: creator })
+      const second = await owner.developmentTasks.create({ origin: { kind: 'root' }, objective: 'Second Task', scope: 'B', createdBy: creator })
+      const ownerRooms = owner.developmentMesh.channel('development-room/v1')!
+      const homeRooms = home.developmentMesh.channel('development-room/v1')!
+      const ownerTasks = owner.developmentMesh.channel('development-task/v1')!
+      const homeTasks = home.developmentMesh.channel('development-task/v1')!
+      await ownerRooms.receive(await homeRooms.read({}), homeNode)
+      await homeRooms.receive(await ownerRooms.read({}), ownerNode)
+      await homeTasks.receive(await ownerTasks.read({}), ownerNode)
+      let attempts = 0
+      const transport = vi.spyOn(home.developmentMesh, 'command').mockImplementation(async (nodeId, channel, payload) => {
+        expect(nodeId).toBe(ownerNode)
+        expect(channel).toBe('development-room/v1')
+        attempts++
+        if ((failure === 'target-join-offline' && attempts === 2)
+          || (failure === 'previous-leave-offline' && attempts === 3)
+          || (failure === 'clear-leave-offline' && attempts === 2)) {
+          throw Object.assign(new Error('Room owner transport disconnected'), { code: 'RUNTIME_UNAVAILABLE' })
+        }
+        return await ownerRooms.command!(payload, homeNode)
+      })
+      try {
+        const selected = await home.developmentTasks.checkout({ taskId: first.id, participantId: agent })
+        expect(selected.runtime).toEqual({ targetJoined: true, previousLeft: true, warnings: [] })
+        expect(owner.developmentRooms.list().rooms.find(room => room.id === first.hiddenRoomId)?.participantIds).toContain(agent)
+        await ownerTasks.receive(await homeTasks.read(await ownerTasks.heads()), homeNode)
+        expect(owner.developmentTasks.assignmentList()).toEqual(home.developmentTasks.assignmentList())
+        const bindingId = selected.assignment.bindingId
+        if (failure === 'clear-leave-offline') {
+          const bound = home.developmentTasks.assignmentLog().at(-1)!
+          await expect(home.developmentTasks.clear({ bindingId, participantId: agent,
+            expectedBindingEpoch: { nodeId: bound.nodeId, seq: bound.seq } })).resolves.toBeUndefined()
+          expect(home.developmentTasks.assignmentList()).toEqual([])
+          expect(owner.developmentRooms.list().rooms.find(room => room.id === first.hiddenRoomId)?.participantIds).toContain(agent)
+        } else {
+          const changed = await home.developmentTasks.checkout({ taskId: second.id, participantId: agent, bindingId })
+          expect(changed.assignment).toMatchObject({ bindingId, taskId: second.id, participantId: agent })
+          expect(changed.runtime).toEqual({ targetJoined: failure !== 'target-join-offline',
+            previousLeft: failure !== 'previous-leave-offline', warnings: failure === 'connected' ? [] : [
+              `${failure === 'target-join-offline' ? 'target' : 'previous'} Room reconciliation failed: Room owner transport disconnected`,
+            ] })
+          expect(owner.developmentRooms.list().rooms.find(room => room.id === first.hiddenRoomId)?.participantIds.includes(agent))
+            .toBe(failure === 'previous-leave-offline')
+          expect(owner.developmentRooms.list().rooms.find(room => room.id === second.hiddenRoomId)?.participantIds.includes(agent))
+            .toBe(failure !== 'target-join-offline')
+          await ownerTasks.receive(await homeTasks.read(await ownerTasks.heads()), homeNode)
+          expect(owner.developmentTasks.assignmentList()).toEqual(home.developmentTasks.assignmentList())
+          expect(owner.developmentTasks.latestAssignment(agent)?.taskId).toBe(second.id)
+          if (failure === 'connected') {
+            const bound = home.developmentTasks.assignmentLog().at(-1)!
+            await home.developmentTasks.clear({ bindingId, participantId: agent,
+              expectedBindingEpoch: { nodeId: bound.nodeId, seq: bound.seq } })
+            expect(home.developmentTasks.assignmentList()).toEqual([])
+            expect(owner.developmentRooms.list().rooms.find(room => room.id === second.hiddenRoomId)?.participantIds).not.toContain(agent)
+          }
+        }
+        await ownerTasks.receive(await homeTasks.read(await ownerTasks.heads()), homeNode)
+        expect(owner.developmentTasks.assignmentList()).toEqual(home.developmentTasks.assignmentList())
+        await homeRooms.receive(await ownerRooms.read(await homeRooms.heads()), ownerNode)
+        for (const task of [first, second]) {
+          expect(home.developmentRooms.list().rooms.find(room => room.id === task.hiddenRoomId)?.participantIds)
+            .toEqual(owner.developmentRooms.list().rooms.find(room => room.id === task.hiddenRoomId)?.participantIds)
+        }
+        const commands = [{ method: 'join', request: { roomId: first.hiddenRoomId, participantId: agent } }]
+        if (failure === 'clear-leave-offline') {
+          commands.push({ method: 'leave', request: { roomId: first.hiddenRoomId, participantId: agent } })
+        } else {
+          commands.push({ method: 'join', request: { roomId: second.hiddenRoomId, participantId: agent } },
+            { method: 'leave', request: { roomId: first.hiddenRoomId, participantId: agent } })
+          if (failure === 'connected') commands.push({ method: 'leave', request: { roomId: second.hiddenRoomId, participantId: agent } })
+        }
+        expect(transport.mock.calls).toEqual(commands.map(command => [ownerNode, 'development-room/v1', command]))
+      } finally { transport.mockRestore() }
+    },
+  )
+
   it.each([
     ['seq', 0], ['seq', 1.5], ['seq', Number.MAX_SAFE_INTEGER + 1],
     ['revision', 0], ['revision', 1.5], ['revision', Number.MAX_SAFE_INTEGER + 1],

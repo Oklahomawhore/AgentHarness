@@ -69,7 +69,7 @@ Task owner 显式批准远端 Agent、binding 及 binding epoch 后，该来源�
 
 已认证的 Host facade 为本地 Root Task、贡献者 PeerId、capture 代际及精确来源许可调用 `openPeerContribution`：来源可以是一个 OpenAPI 操作、明确的文件／命令观察许可、完整最终答复许可，或组合的原生或 Claude 来源选择。Grant 限制有效期、样本数和完整样本字节。它不授予本地采集、Task 读取、Room membership 或任意发布权限。来源适配器单独授权采集，transport 提供已认证 peer。Peer publication 记录 `peerContribution`，以及 OpenAPI 的 `peerObservation`、有序的 `peerToolObservation`、`peerTurnOutcome` 或 `peerStopReport`，不虚构 participant 或 Mesh node。解析公开 capture 申请不会建立授权。
 
-批准、样本准入和终结共用 Task owner 队列与事件日志。`admitPeerContribution` 派生来源归属及规范报告正文；OpenAPI 来源还获得逻辑工件身份。新样本必须在该 grant 内递增序号；重复不消耗额度。即使终结或降低新准入字节上限后，精确样本和终结重试仍返回原 receipt，不触发新的到期写入。更改内容或授权会被拒绝。Receipt 包含原事件种类、revision、来源身份和完整 payload digest；它证明持久准入，不证明工具执行、文件真实性、模型交付或内容真相。
+批准、样本准入和终结共用 Task owner 队列与事件日志。`admitPeerContribution` 派生来源归属及规范报告正文；OpenAPI 来源还获得逻辑工件身份。新样本序号必须为小于 `Number.MAX_SAFE_INTEGER` 的正安全整数，并在该 grant 内递增；最后一个安全值预留给撤回。重复不消耗额度。即使终结或降低新准入字节上限后，精确样本和终结重试仍返回原 receipt，不触发新的到期写入。更改内容或授权会被拒绝。Receipt 包含原事件种类、revision、来源身份和完整 payload digest；它证明持久准入，不证明工具执行、文件真实性、模型交付或内容真相。
 
 文件工具样本包含报告结果、根目录序号、相对路径、工具字段及明确的整字段省略。失败报告不包含被尝试的成功正文。Owner 在派生归属和规范文本前核对允许的工具及来源种类；绝对根目录和 Session 标识不属于元数据字段。工具观察按序追加，不替代文件快照。结束 grant 会撤回该区间的全部当前报告，同时保留历史。[工具观察决策](../../../.agents/notes/implemented/architecture/2026-10-03-independent-tool-observations.zh.md)说明证据限制。
 
