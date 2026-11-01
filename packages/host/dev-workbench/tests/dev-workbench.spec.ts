@@ -136,12 +136,15 @@ describe('DevWorkbenchService', () => {
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(LocalSubprocessRuntime)
-    const plugin = await ctx.plugin(DevWorkbenchService, config(['-e', 'setInterval(() => {}, 1000)']))
+    const plugin = await ctx.plugin(DevWorkbenchService, config(['-e', 'console.log("ready"); setInterval(() => {}, 1000)']))
     const service = ctx.devWorkbench
     await service.start(id('fixture'))
+    await expect.poll(() => service.list().entries[0]?.stdout, { timeout: 10_000 }).toBe('ready\n')
     await plugin.dispose()
-    expect(service.list().entries[0]).toMatchObject({ phase: 'exited' })
-    expect(service.list().entries[0]?.outcome).toBeDefined()
+    const settled = service.list().entries[0]
+    expect(settled?.error).toBeUndefined()
+    expect(settled).toMatchObject({ phase: 'exited' })
+    expect(settled?.outcome).toBeDefined()
     await expect(service.start(id('fixture'))).rejects.toThrow('service is disposing')
     await expect(service.stop(id('fixture'))).rejects.toThrow('service is disposing')
   })
