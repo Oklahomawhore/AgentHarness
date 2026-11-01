@@ -505,7 +505,7 @@ export class ContributionAccess {
         signal.throwIfAborted()
       }
       const current = this.authority(grant, input.peerId, peerId)
-      if (current === undefined) return this.reply(request, { status: 'denied' })
+      if (current === undefined) throw new Error('scope-access: contribution authority missing after Task commit')
       return this.reply(request, current.state === 'active' ? { status: 'active', receipt: current.openReceipt }
         : { status: 'ended', reason: current.reason, receipt: current.endReceipt })
     } catch (error) {

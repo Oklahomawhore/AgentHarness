@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ScopeTransportError } from '@deepseek-ai/dsh-scope-transport'
 import { contributionProposalSchema } from '../src/contribution-schema.ts'
-import { applicationRequestSchema, applicationResponseSchema } from '../src/application-schema.ts'
+import { applicationRecordSchema, applicationRequestSchema, applicationResponseSchema } from '../src/application-schema.ts'
 import { plannedContributionGrant } from '../src/contribution.ts'
 import type { Config } from '../src/index.ts'
 import type { ScopeSubscription } from '../src/types.ts'
@@ -47,6 +47,66 @@ it('claims one entry, approves narrower permission, and retrieves original Task 
   await expect(b.access.applyContribution(request, signal())).resolves.toEqual(result)
   expect(a.tasks.get({ taskId: task.id }).revision).toBe(revision)
   expect((await b.access.list()).subscriptions).toEqual([])
+})
+
+it.each(['approve', 'reject', 'end', 'revoke'] as const)('retains the original %s decision when a committed Task grant disappears from the next authority read', async (action) => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+  const f = await application()
+  await f.b.access.applyContribution(f.request, signal())
+  const approval = action === 'approve' ? undefined : await f.approve()
+  const inspect = f.a.tasks.peerContributions.bind(f.a.tasks)
+  let committed = false
+  let lost = false
+  // Task persistence and the following consumer query are independent observations.
+  vi.spyOn(f.a.tasks, 'peerContributions').mockImplementation((request) => {
+    if (committed && !lost && request.taskId === f.task.id) { lost = true; return [] }
+    return inspect(request)
+  })
+  if (action === 'approve') {
+    const open = f.a.tasks.openPeerContribution.bind(f.a.tasks)
+    vi.spyOn(f.a.tasks, 'openPeerContribution').mockImplementationOnce(async (...args) => {
+      const receipt = await open(...args)
+      committed = true
+      return receipt
+    })
+  } else {
+    const end = f.a.tasks.endPeerContribution.bind(f.a.tasks)
+    vi.spyOn(f.a.tasks, 'endPeerContribution').mockImplementationOnce(async (...args) => {
+      const receipt = await end(...args)
+      committed = true
+      return receipt
+    })
+  }
+  const operation = async () => {
+    if (action === 'approve') return await f.approve()
+    if (approval === undefined) throw new Error('Fixture grant is missing')
+    if (action === 'reject') return await f.a.access.rejectContributionApplication({ entryId: f.request.entry.entryId,
+      expectedProposal: f.request.proposal })
+    if (action === 'end') return await f.b.access.endContribution({ invitation: approval.invitation }, signal())
+    return await f.a.access.revokeContribution({ grant: approval.invitation.grant })
+  }
+  await expect(operation()).rejects.toThrow(action === 'revoke' ? 'contribution termination was not committed'
+    : action === 'end' ? 'contribution authority missing after Task commit' : 'application authority missing after Task commit')
+  expect(lost).toBe(true)
+  const [authority] = inspect({ taskId: f.task.id })
+  if (authority === undefined) throw new Error('Committed Task authority was lost')
+  const retained = applicationRecordSchema.parse(f.a.pool.media.get('scope_access')?.tables.get('applications')?.get(f.request.entry.entryId))
+  expect(retained).toMatchObject({ decision: action === 'reject' ? 'rejected' : 'approved',
+    proposal: f.request.proposal, grant: authority.grant })
+  const events = structuredClone(f.a.tasks.log())
+  const recovered = await operation()
+  if (authority.state === 'active') {
+    expect(action).toBe('approve')
+    expect(recovered).toMatchObject({ invitation: { grant: authority.grant } })
+  } else {
+    expect(authority.reason).toBe(action === 'end' ? 'left' : 'revoked')
+    expect(recovered).toMatchObject(action === 'reject' ? { result: { status: 'ended', receipt: authority.endReceipt } }
+      : { status: 'ended', receipt: authority.endReceipt })
+  }
+  expect(await f.b.access.contributionApplicationStatus(f.request, signal())).toMatchObject(authority.state === 'active'
+    ? { status: 'approved', invitation: { grant: authority.grant }, receipt: authority.openReceipt }
+    : { status: 'ended', reason: authority.reason, receipt: authority.endReceipt })
+  expect(f.a.tasks.log()).toEqual(events)
 })
 
 it.each([false, true])('expires pending source consent before the entry deadline with owner restore=%s', async (restoreOwner) => {

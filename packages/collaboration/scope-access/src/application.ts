@@ -403,7 +403,7 @@ export class ContributionApplications {
     }
     retained = this.authority(record.entry, grant, grant)
     this.owner.signal.throwIfAborted()
-    if (retained === undefined) return { status: record.decision === 'approved' ? 'unavailable' : record.decision }
+    if (retained === undefined) throw new Error('scope-access: application authority missing after Task commit')
     const invitation = contributionInvitationSchema.parse({ version: 1,
       kind: contributionKind(retained.grant.source),
       ownerAddress: address, grant: retained.grant })

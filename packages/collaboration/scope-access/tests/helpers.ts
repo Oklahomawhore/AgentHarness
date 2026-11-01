@@ -58,10 +58,12 @@ class ControlledTransport extends ScopeTransport {
 }
 
 export async function cleanup(): Promise<void> {
-  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  const disposed = await Promise.allSettled(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
   network.clear()
   vi.restoreAllMocks()
   vi.useRealTimers()
+  const failures = disposed.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : [])
+  if (failures.length > 0) throw new AggregateError(failures, 'Scope access fixture cleanup failed')
 }
 
 export async function host(id: string, pool = new MemoryMediaPool(), overrides: Partial<Config> = {},
